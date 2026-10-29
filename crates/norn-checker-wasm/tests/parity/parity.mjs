@@ -48,6 +48,7 @@ const evaluationInputText = (c) =>
     selection: Array.from({ length: c.inputSelectionCount ?? 0 }, () => ({ qty: 1 })),
   });
 const contextText = (c) => {
+  if (typeof c.contextText === "string") return c.contextText;
   const members = [`"base":${arrayText(c, "base")}`];
   for (const [key, value] of Object.entries(c.context ?? {})) {
     members.push(`${JSON.stringify(key)}:${JSON.stringify(value)}`);
