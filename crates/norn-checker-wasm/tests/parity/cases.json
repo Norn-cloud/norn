@@ -555,6 +555,62 @@
       "expr": "true",
       "inputJson": "{\"record\":{},\"recordKey\":\"\"}",
       "expectedError": "expr.input.invalid"
+    },
+    {
+      "name": "context-array",
+      "call": "checkArtifactSet",
+      "artifactsText": "[]",
+      "contextText": "[]"
+    },
+    {
+      "name": "context-string",
+      "call": "checkArtifactSet",
+      "artifactsText": "[]",
+      "contextText": "\"context\""
+    },
+    {
+      "name": "context-number",
+      "call": "checkArtifactSet",
+      "artifactsText": "[]",
+      "contextText": "42"
+    },
+    {
+      "name": "context-boolean",
+      "call": "checkArtifactSet",
+      "artifactsText": "[]",
+      "contextText": "true"
+    },
+    {
+      "name": "context-tenant-array",
+      "call": "checkArtifactSet",
+      "artifactsText": "[]",
+      "context": {
+        "tenant": []
+      }
+    },
+    {
+      "name": "context-tenant-string",
+      "call": "checkArtifactSet",
+      "artifactsText": "[]",
+      "context": {
+        "tenant": "tenant_acme"
+      }
+    },
+    {
+      "name": "context-tenant-number",
+      "call": "checkArtifactSet",
+      "artifactsText": "[]",
+      "context": {
+        "tenant": 7
+      }
+    },
+    {
+      "name": "context-tenant-boolean",
+      "call": "checkArtifactSet",
+      "artifactsText": "[]",
+      "context": {
+        "tenant": false
+      }
     }
   ]
 }
