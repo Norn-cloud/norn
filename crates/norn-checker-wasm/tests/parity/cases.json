@@ -560,25 +560,25 @@
       "name": "context-array",
       "call": "checkArtifactSet",
       "artifactsText": "[]",
-      "contextText": "\"[]\""
+      "contextText": "[]"
     },
     {
       "name": "context-string",
       "call": "checkArtifactSet",
       "artifactsText": "[]",
-      "contextText": "\"\\\"context\\\"\""
+      "contextText": "\"context\""
     },
     {
       "name": "context-number",
       "call": "checkArtifactSet",
       "artifactsText": "[]",
-      "contextText": "\"42\""
+      "contextText": "42"
     },
     {
       "name": "context-boolean",
       "call": "checkArtifactSet",
       "artifactsText": "[]",
-      "contextText": "\"true\""
+      "contextText": "true"
     },
     {
       "name": "context-tenant-array",
