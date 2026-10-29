@@ -1224,7 +1224,7 @@
     },
     {
       "path": "crates/norn-cell/src/read.rs",
-      "sha256": "8f0d06bfdbfe715dec87e93fdd03206a00b8f6b3f1e811f50e502e2b11c31525",
+      "sha256": "28501d3218762b547a8bebf8d8c70f62b13da07c4aeefb678ffb334db655194b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1260,7 +1260,7 @@
     },
     {
       "path": "crates/norn-cell/src/store.rs",
-      "sha256": "0042f3ca768fc588c90c7d831eeab5ce40a2a315286622671a61746fe38d9d54",
+      "sha256": "e4355c080ae86857a5bc53eaea3c30625a20cfec2e69cc93f1770d2f0ebeb2c9",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1278,7 +1278,7 @@
     },
     {
       "path": "crates/norn-cell/src/system.rs",
-      "sha256": "785cffe65d72666020a5577c7b30077fd7ea1f1a04751d3276f2a073a070185a",
+      "sha256": "9cc6c38adfd860ab835cfe51e077218b90b0eb8d0fc25904dc623085d89791e9",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1296,7 +1296,7 @@
     },
     {
       "path": "crates/norn-cell/src/write.rs",
-      "sha256": "c258146bddc4cf7d995b0f741872a7423e136a385028b39fb52deafa533900b6",
+      "sha256": "6c7f0aca9eb99a94f702cb05be120b0c5dfc0b8a63f81f65c7d64f8059096c28",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1494,7 +1494,7 @@
     },
     {
       "path": "crates/norn-cell/tests/markings.rs",
-      "sha256": "20affc12c076b32852486982cb3b2564277c8f98b812c02d585c168855f1fe9d",
+      "sha256": "6cb3180db0c452f2610521b101bb7ed5b8975949daa16af6cc0d9b7b40571b94",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

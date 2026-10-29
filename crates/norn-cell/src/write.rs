@@ -25,7 +25,7 @@ use crate::store::{
 use crate::system::{
     INBOX, LEDGER, LINK_CREATION, LINK_VERSIONS, MARKING_CURRENT, MARKING_OCCURRENCE,
     MARKING_SNAPSHOT, MARKING_VERSION, OUTBOX, PENDING_LINK_INDEX, PERFORM_CLAIM, RECEIPT, RUN,
-    TIMER, VERSIONS,
+    TIMER, VERSIONS, ensure_marking_subject, marking_subject,
 };
 
 struct NamingCounterAttribution {
@@ -997,11 +997,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
     }
 
     fn clear_current_markings(&self, concrete: &str, key: &str) -> Result<(), CellError> {
+        let subject = marking_subject(self.conn, self.world, concrete, key)?;
         self.conn.execute(
             &format!(
-                "DELETE FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3"
+                "DELETE FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3"
             ),
-            params![self.world, concrete, key],
+            params![self.world, concrete, subject],
         )?;
         self.conn.execute(
             &format!(
@@ -1035,6 +1036,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         key: &str,
         version: u64,
     ) -> Result<(), CellError> {
+        let subject = ensure_marking_subject(self.conn, self.world, object_type, key)?;
         let fact_version = version;
         let mut markings = self.current_markings(object_type, key)?;
         let declared_markings = self.model.effective_property_markings(object_type)?;
@@ -1089,15 +1091,15 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             let version = to_i64(version, "marking snapshot version")?;
             self.conn.execute(
                 &format!(
-                    "INSERT INTO \"{MARKING_CURRENT}\" (\"world\", \"object_type\", \"id\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"id\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
+                    "INSERT INTO \"{MARKING_CURRENT}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
                 ),
-                params![self.world, object_type, key, property, version, encoded],
+                params![self.world, object_type, subject, property, version, encoded],
             )?;
             self.conn.execute(
                 &format!(
-                    "INSERT INTO \"{MARKING_VERSION}\" (\"world\", \"object_type\", \"id\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+                    "INSERT INTO \"{MARKING_VERSION}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
                 ),
-                params![self.world, object_type, key, property, version, encoded],
+                params![self.world, object_type, subject, property, version, encoded],
             )?;
         }
         let version = to_i64(version, "marking snapshot version")?;
@@ -1139,11 +1141,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         object_type: &str,
         key: &str,
     ) -> Result<BTreeMap<String, BTreeSet<String>>, CellError> {
+        let subject = marking_subject(self.conn, self.world, object_type, key)?;
         let rows = self.conn.query(
             &format!(
-                "SELECT \"property\", \"markings\" FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 ORDER BY \"property\""
+                "SELECT \"property\", \"markings\" FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 ORDER BY \"property\""
             ),
-            params![self.world, object_type, key],
+            params![self.world, object_type, subject],
         )?;
         rows.into_iter()
             .map(|row| {
@@ -1729,19 +1732,20 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 CellError::Engine("emitted version lacks complete marking snapshot".to_owned())
             })?;
         labels.extend(inherited.iter().cloned());
+        let subject = marking_subject(self.conn, self.world, object_type, key)?;
         let encoded = serde_json::to_string(&labels).map_err(CellError::Json)?;
         let version = to_i64(version, "marking snapshot version")?;
         self.conn.execute(
             &format!(
-                "INSERT INTO \"{MARKING_VERSION}\" (\"world\", \"object_type\", \"id\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"id\", \"property\", \"version\") DO UPDATE SET \"markings\" = excluded.\"markings\""
+                "INSERT INTO \"{MARKING_VERSION}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\", \"version\") DO UPDATE SET \"markings\" = excluded.\"markings\""
             ),
-            params![self.world, object_type, key, MARKING_OCCURRENCE, version, encoded],
+            params![self.world, object_type, subject, MARKING_OCCURRENCE, version, encoded],
         )?;
         self.conn.execute(
             &format!(
-                "INSERT INTO \"{MARKING_CURRENT}\" (\"world\", \"object_type\", \"id\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"id\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
+                "INSERT INTO \"{MARKING_CURRENT}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
             ),
-            params![self.world, object_type, key, MARKING_OCCURRENCE, version, encoded],
+            params![self.world, object_type, subject, MARKING_OCCURRENCE, version, encoded],
         )?;
         Ok(())
     }
@@ -2458,11 +2462,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         version: u64,
         additions: &BTreeSet<String>,
     ) -> Result<(), CellError> {
+        let subject = marking_subject(self.conn, self.world, object_type, key)?;
         let current: Option<String> = self.conn.query_optional(
             &format!(
-                "SELECT \"markings\" FROM \"{MARKING_VERSION}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
+                "SELECT \"markings\" FROM \"{MARKING_VERSION}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
             ),
-            params![self.world, object_type, key, property, to_i64(version, "marking snapshot version")?],
+            params![self.world, object_type, subject, property, to_i64(version, "marking snapshot version")?],
             |row| row.get(0),
         )?;
         let mut labels: BTreeSet<String> = current
@@ -2479,15 +2484,15 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         let version = to_i64(version, "marking snapshot version")?;
         self.conn.execute(
             &format!(
-                "UPDATE \"{MARKING_CURRENT}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"id\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"
+                "UPDATE \"{MARKING_CURRENT}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"subject\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"
             ),
-            params![encoded, self.world, object_type, key, property, version],
+            params![encoded, self.world, object_type, subject, property, version],
         )?;
         self.conn.execute(
             &format!(
-                "UPDATE \"{MARKING_VERSION}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"id\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"
+                "UPDATE \"{MARKING_VERSION}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"subject\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"
             ),
-            params![encoded, self.world, object_type, key, property, version],
+            params![encoded, self.world, object_type, subject, property, version],
         )?;
         Ok(())
     }
@@ -2585,14 +2590,15 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 actual: (actual != 0).then_some(actual),
             });
         }
+        let subject = marking_subject(self.conn, self.world, &change.object_type, &change.key)?;
         let current: Option<String> = self.conn.query_optional(
             &format!(
-                "SELECT \"markings\" FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
+                "SELECT \"markings\" FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
             ),
             params![
                 self.world,
                 change.object_type,
-                change.key,
+                subject,
                 change.property,
                 to_i64(change.expected_version, "marking snapshot version")?,
             ],
@@ -2624,13 +2630,13 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .map_err(CellError::Json)?;
         self.conn.execute(
             &format!(
-                "UPDATE \"{MARKING_CURRENT}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"id\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"
+                "UPDATE \"{MARKING_CURRENT}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"subject\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"
             ),
             params![
                 labels,
                 self.world,
                 change.object_type,
-                change.key,
+                subject,
                 change.property,
                 to_i64(change.expected_version, "marking snapshot version")?,
             ],

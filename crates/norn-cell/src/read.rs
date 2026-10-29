@@ -29,8 +29,8 @@ use crate::store::{Consumption, OutboxCommand, Receipt, ReceiptBody, TimerEntry}
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
     DEFINITION_VERSION, GENESIS_HASH, INBOX, LEDGER, LINK_CREATION, LINK_VERSIONS, MARKING_CURRENT,
-    MARKING_OCCURRENCE, MARKING_SNAPSHOT, MARKING_VERSION, OUTBOX, PENDING_LINK_INDEX,
-    PERFORM_CLAIM, RECEIPT, RUN, TIMER, VERSIONS,
+    MARKING_OCCURRENCE, MARKING_SNAPSHOT, MARKING_SUBJECT, MARKING_VERSION, OUTBOX,
+    PENDING_LINK_INDEX, PERFORM_CLAIM, RECEIPT, RUN, TIMER, VERSIONS, marking_subject,
 };
 
 const MAX_LINK_PAGE_CANDIDATES: usize = 1_000;
@@ -1468,15 +1468,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         } else {
             MARKING_VERSION
         };
+        let subject = marking_subject(self.conn, world, object_type, id)?;
         let sql = format!(
-            "SELECT \"property\", \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"version\" = ?4 ORDER BY \"property\""
+            "SELECT \"property\", \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"version\" = ?4 ORDER BY \"property\""
         );
         let rows = self.conn.query(
             &sql,
             params![
                 world,
                 object_type,
-                id,
+                subject,
                 to_i64(version, "marking snapshot version")?
             ],
         )?;
@@ -1529,11 +1530,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             Some(version) => version,
             None => self.version(world, object_type, id)?,
         };
+        let subject = marking_subject(self.conn, world, object_type, id)?;
         let encoded: Option<String> = self.conn.query_optional(
             &format!(
-                "SELECT \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
+                "SELECT \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
             ),
-            params![world, object_type, id, MARKING_OCCURRENCE, to_i64(version, "marking snapshot version")?],
+            params![world, object_type, subject, MARKING_OCCURRENCE, to_i64(version, "marking snapshot version")?],
             |row| row.get(0),
         )?;
         encoded
@@ -1597,7 +1599,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             )?.ok_or_else(|| CellError::Engine("marking snapshot count query returned no row".to_owned()))?;
             let property_rows: i64 = self.conn.query_optional(
                 &format!(
-                    "SELECT COUNT(*) FROM {} AS o JOIN \"{MARKING_CURRENT}\" AS m ON m.\"world\" = o.{} AND m.\"object_type\" = o.{} AND m.\"id\" = o.{} AND m.\"version\" = o.{} AND m.\"property\" = ?3 WHERE o.{} = ?1 AND o.{} = ?2",
+                    "SELECT COUNT(*) FROM {} AS o JOIN \"{MARKING_CURRENT}\" AS m ON m.\"world\" = o.{} AND m.\"object_type\" = o.{} AND m.\"subject\" = (SELECT \"subject\" FROM \"{MARKING_SUBJECT}\" WHERE \"world\" = m.\"world\" AND \"object_type\" = m.\"object_type\" AND \"id\" = o.{}) AND m.\"version\" = o.{} AND m.\"property\" = ?3 WHERE o.{} = ?1 AND o.{} = ?2",
                     quote_identifier(&root.table),
                     quote_identifier(WORLD_COLUMN),
                     quote_identifier(TYPE_COLUMN),
