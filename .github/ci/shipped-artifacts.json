@@ -176,7 +176,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "8e7bda9f1ca6cee90ad691b9c3c71b76742c605ab40e7b66a0d12d1c1ca1c080",
+      "sha256": "cc8c2f2f5c3229ca5c966feb21ec8fe355633eeb3f623d96179a9c803da1110f",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
