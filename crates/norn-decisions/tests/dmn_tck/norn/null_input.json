@@ -1,0 +1,215 @@
+{
+  "description": "Norn case: a null input datum is refused at the closed input schema (typed error, zero effects), never matched as null.",
+  "rule": {
+    "ruleId": "norn.dmn.null_input",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "n"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "decision",
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [],
+    "graph": {
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "table",
+          "name": "table",
+          "type": "decisionTableNode",
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [
+              {
+                "id": "i0",
+                "name": "n",
+                "field": "slice.n"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "o0",
+                "name": "v",
+                "field": "v"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "r1",
+                "i0": "> 1",
+                "o0": "'a'"
+              }
+            ],
+            "outputPath": "hit",
+            "passThrough": true
+          }
+        },
+        {
+          "id": "shape",
+          "name": "shape",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x",
+                "key": "result",
+                "value": "hit == null or len(keys(hit)) == 0 ? null : hit.v"
+              }
+            ]
+          }
+        },
+        {
+          "id": "emit",
+          "name": "emit",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "f",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "c",
+                "key": "commands",
+                "value": "result == null ? [] : [{decision: 'd', result: result}]"
+              },
+              {
+                "id": "t",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "table"
+        },
+        {
+          "id": "e2",
+          "sourceId": "table",
+          "targetId": "shape"
+        },
+        {
+          "id": "e3",
+          "sourceId": "shape",
+          "targetId": "emit"
+        },
+        {
+          "id": "e4",
+          "sourceId": "emit",
+          "targetId": "out"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "null n",
+      "slice": {
+        "n": null
+      },
+      "event": {},
+      "error": "input_schema"
+    }
+  ]
+}

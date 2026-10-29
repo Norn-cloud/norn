@@ -1,0 +1,53 @@
+{
+  "name": "erpnext.net_sales",
+  "label": "erpnext.net_sales",
+  "type": "simple",
+  "type_params": {
+    "expr": "net_amount",
+    "metric_aggregation_params": {
+      "semantic_model": "erpnext.SalesInvoiceItem",
+      "agg": "sum",
+      "agg_time_dimension": "norn_path_20_parent_usales_uinvoice_12_posting_udate_value"
+    }
+  },
+  "x-norn": {
+    "irVersion": "0.1",
+    "additivity": {
+      "kind": "additive"
+    },
+    "timeDimension": {
+      "links": [
+        "parent_sales_invoice"
+      ],
+      "property": "posting_date"
+    },
+    "defaultFilters": [
+      {
+        "path": {
+          "links": [
+            "parent_sales_invoice"
+          ],
+          "property": "docstatus"
+        },
+        "operator": "eq",
+        "value": "Submitted"
+      }
+    ],
+    "currency": {
+      "property": {
+        "links": [
+          "parent_sales_invoice"
+        ],
+        "property": "currency"
+      },
+      "conversion": {
+        "target": "SAR",
+        "rate": {
+          "property": "conversion_rate"
+        }
+      }
+    },
+    "owner": "finance",
+    "certified": true
+  }
+}

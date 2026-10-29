@@ -1,0 +1,143 @@
+{
+  "artifacts": [
+    {
+      "irVersion": "0.1",
+      "artifactId": "core.Party.entity",
+      "kind": "entity",
+      "namespace": "core",
+      "name": "Party",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "core.Party",
+          "properties": [
+            {
+              "id": "level0",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "core.Organization.entity",
+      "kind": "entity",
+      "namespace": "core",
+      "name": "Organization",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "core.Organization",
+          "extends": "core.Party",
+          "properties": [
+            {
+              "id": "level1",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "core.Company.entity",
+      "kind": "entity",
+      "namespace": "core",
+      "name": "Company",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "core.Company",
+          "extends": "core.Organization",
+          "properties": [
+            {
+              "id": "level2",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "core.Subsidiary.entity",
+      "kind": "entity",
+      "namespace": "core",
+      "name": "Subsidiary",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "core.Subsidiary",
+          "extends": "core.Company",
+          "properties": [
+            {
+              "id": "level3",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

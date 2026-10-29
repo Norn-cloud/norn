@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.Sku.entity.v2.mixed",
+      "code": "entity.validation.invalid_payload",
+      "message": "fields is an EntityIR v1 member and is not allowed in EntityIR v2; declare the object type in objectType",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/fields",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

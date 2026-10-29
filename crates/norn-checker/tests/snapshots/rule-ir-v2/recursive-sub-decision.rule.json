@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.reorder_decision.rule",
+      "code": "rule.validation.jdm_recursive_sub_decision",
+      "message": "sub-decision 'retail.reorder_decision.rule' names this rule; a decision graph cannot call itself",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/graph/nodes/2/content/key",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

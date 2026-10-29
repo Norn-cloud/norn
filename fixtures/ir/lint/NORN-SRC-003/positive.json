@@ -1,0 +1,119 @@
+{
+  "artifacts": [
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.Customer.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "Customer",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "crm.Customer",
+          "properties": [
+            {
+              "id": "customer_name",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "territory",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "customer_group",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "tax_id",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "default_currency",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "coverage": [
+    {
+      "mappingArtifactId": "erpnext.customer.mapping",
+      "mappingVersion": "0.1.0",
+      "source": {
+        "schemaId": "erpnext.schema",
+        "entity": "Customer",
+        "fields": [
+          "name",
+          "customer_name",
+          "territory",
+          "customer_group",
+          "tax_id",
+          "default_currency"
+        ]
+      },
+      "target": "crm.Customer",
+      "members": [
+        {
+          "property": "customer_name",
+          "sourceFields": [
+            "customer_name"
+          ]
+        },
+        {
+          "property": "territory",
+          "sourceFields": [
+            "territory"
+          ]
+        },
+        {
+          "property": "customer_group",
+          "sourceFields": [
+            "customer_group"
+          ]
+        },
+        {
+          "property": "tax_id",
+          "sourceFields": [
+            "tax_id"
+          ]
+        },
+        {
+          "property": "default_currency",
+          "sourceFields": [
+            "default_currency"
+          ]
+        }
+      ],
+      "ignoredSourceFields": [
+        {
+          "field": "name",
+          "reason": "source bookkeeping"
+        }
+      ]
+    }
+  ]
+}

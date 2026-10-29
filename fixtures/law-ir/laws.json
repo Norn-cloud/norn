@@ -1,0 +1,277 @@
+[
+  {
+    "artifactId": "erpnext.no_unpaid_ship.law",
+    "dependencies": [
+      {
+        "artifactId": "erpnext.SalesOrder.entity",
+        "kind": "entity",
+        "required": true,
+        "version": "0.1.0"
+      }
+    ],
+    "irVersion": "0.1",
+    "kind": "law",
+    "lifecycle": "draft",
+    "name": "No order ships unpaid.",
+    "namespace": "erpnext",
+    "payload": {
+      "id": "erpnext.no_unpaid_ship",
+      "lawVersion": "0.1",
+      "modality": {
+        "kind": "never"
+      },
+      "owner": "erpnext.controls",
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/law-ir/laws.source.ts"
+      },
+      "rationale": "No order ships unpaid.",
+      "response": {
+        "expression": "self.status == 'shipped' and self.paid == false",
+        "kind": "predicate"
+      },
+      "scope": {
+        "objectTypes": [
+          "erpnext.SalesOrder"
+        ],
+        "root": {
+          "id": "erpnext",
+          "kind": "app"
+        }
+      },
+      "severity": "error",
+      "subject": "erpnext.SalesOrder"
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/law-ir/laws.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "erpnext.approved_amount.law",
+    "dependencies": [
+      {
+        "artifactId": "erpnext.PurchaseOrder.entity",
+        "kind": "entity",
+        "required": true,
+        "version": "0.1.0"
+      }
+    ],
+    "irVersion": "0.1",
+    "kind": "law",
+    "lifecycle": "draft",
+    "name": "Approved PO amount never changes from the exact approval snapshot.",
+    "namespace": "erpnext",
+    "payload": {
+      "condition": "self.status == 'approved'",
+      "id": "erpnext.approved_amount",
+      "lawVersion": "0.1",
+      "modality": {
+        "kind": "never"
+      },
+      "owner": "erpnext.controls",
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/law-ir/laws.source.ts"
+      },
+      "rationale": "Approved PO amount never changes from the exact approval snapshot.",
+      "response": {
+        "expression": "self.amount != self.approved_amount",
+        "kind": "predicate"
+      },
+      "scope": {
+        "objectTypes": [
+          "erpnext.PurchaseOrder"
+        ],
+        "root": {
+          "id": "erpnext",
+          "kind": "app"
+        }
+      },
+      "severity": "error",
+      "subject": "erpnext.PurchaseOrder"
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/law-ir/laws.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "erpnext.request_terminal.law",
+    "dependencies": [
+      {
+        "artifactId": "erpnext.Request.entity",
+        "kind": "entity",
+        "required": true,
+        "version": "0.1.0"
+      }
+    ],
+    "irVersion": "0.1",
+    "kind": "law",
+    "lifecycle": "draft",
+    "name": "Every request eventually reaches a terminal state within 30 days.",
+    "namespace": "erpnext",
+    "payload": {
+      "id": "erpnext.request_terminal",
+      "lawVersion": "0.1",
+      "modality": {
+        "kind": "eventually"
+      },
+      "owner": "erpnext.controls",
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/law-ir/laws.source.ts"
+      },
+      "rationale": "Every request eventually reaches a terminal state within 30 days.",
+      "response": {
+        "expression": "self.status == 'accepted' or self.status == 'rejected'",
+        "kind": "predicate"
+      },
+      "scope": {
+        "commitments": [
+          "erpnext.Request"
+        ],
+        "objectTypes": [
+          "erpnext.Request"
+        ],
+        "root": {
+          "id": "erpnext",
+          "kind": "app"
+        }
+      },
+      "severity": "error",
+      "subject": "erpnext.Request",
+      "timing": {
+        "kind": "within",
+        "millis": "2592000000"
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/law-ir/laws.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "erpnext.open_until_paid.law",
+    "dependencies": [
+      {
+        "artifactId": "erpnext.SalesOrder.entity",
+        "kind": "entity",
+        "required": true,
+        "version": "0.1.0"
+      }
+    ],
+    "irVersion": "0.1",
+    "kind": "law",
+    "lifecycle": "draft",
+    "name": "An order stays open until paid (strong until).",
+    "namespace": "erpnext",
+    "payload": {
+      "id": "erpnext.open_until_paid",
+      "lawVersion": "0.1",
+      "modality": {
+        "kind": "until",
+        "predicate": "self.paid == true"
+      },
+      "owner": "erpnext.controls",
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/law-ir/laws.source.ts"
+      },
+      "rationale": "An order stays open until paid (strong until).",
+      "response": {
+        "expression": "self.status == 'open'",
+        "kind": "predicate"
+      },
+      "scope": {
+        "objectTypes": [
+          "erpnext.SalesOrder"
+        ],
+        "root": {
+          "id": "erpnext",
+          "kind": "app"
+        }
+      },
+      "severity": "error",
+      "subject": "erpnext.SalesOrder"
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/law-ir/laws.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "erpnext.invariant_identity.law",
+    "dependencies": [
+      {
+        "artifactId": "erpnext.PurchaseOrder.entity",
+        "kind": "entity",
+        "required": true,
+        "version": "0.1.0"
+      }
+    ],
+    "irVersion": "0.1",
+    "kind": "law",
+    "lifecycle": "draft",
+    "name": "Reuse the PO invariant by identity.",
+    "namespace": "erpnext",
+    "payload": {
+      "id": "erpnext.invariant_identity",
+      "lawVersion": "0.1",
+      "modality": {
+        "kind": "always"
+      },
+      "owner": "erpnext.controls",
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/law-ir/laws.source.ts"
+      },
+      "rationale": "Reuse the PO invariant by identity.",
+      "response": {
+        "invariantId": "amount_frozen",
+        "kind": "invariant",
+        "objectType": "erpnext.PurchaseOrder"
+      },
+      "scope": {
+        "objectTypes": [
+          "erpnext.PurchaseOrder"
+        ],
+        "root": {
+          "id": "erpnext",
+          "kind": "app"
+        }
+      },
+      "severity": "error",
+      "subject": "erpnext.PurchaseOrder"
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/law-ir/laws.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  }
+]

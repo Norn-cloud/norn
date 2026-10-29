@@ -1,0 +1,384 @@
+{
+  "description": "The purchase order reads a registry value type (iso.currency_code), installed in the registry context: its lifecycles resolve, so the direct status write is still rejected.",
+  "base": [],
+  "registry": [
+    "iso.currency_code"
+  ],
+  "artifacts": [
+    {
+      "fixture": "ir/entity-v2/artifact-set/commerce-purchase-order.entity.json",
+      "patch": {
+        "payload": {
+          "entityVersion": "2.0",
+          "objectType": {
+            "name": "commerce.PurchaseOrder",
+            "description": "A purchase order with two declared lifecycles (T3-LIFE-1): the approval and receipt status, and the orthogonal payment status.",
+            "properties": [
+              {
+                "id": "po_number",
+                "type": {
+                  "kind": "text"
+                }
+              },
+              {
+                "id": "status",
+                "type": {
+                  "kind": "enum",
+                  "values": [
+                    {
+                      "value": "draft"
+                    },
+                    {
+                      "value": "submitted"
+                    },
+                    {
+                      "value": "approved"
+                    },
+                    {
+                      "value": "rejected"
+                    },
+                    {
+                      "value": "received"
+                    },
+                    {
+                      "value": "cancelled"
+                    }
+                  ]
+                },
+                "default": "draft"
+              },
+              {
+                "id": "payment_status",
+                "type": {
+                  "kind": "enum",
+                  "values": [
+                    {
+                      "value": "unpaid"
+                    },
+                    {
+                      "value": "paid"
+                    },
+                    {
+                      "value": "refunded"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "currency",
+                "type": {
+                  "kind": "ref",
+                  "name": "iso.currency_code"
+                }
+              }
+            ],
+            "identity": [
+              {
+                "name": "primary",
+                "properties": [
+                  "po_number"
+                ]
+              }
+            ],
+            "lifecycles": [
+              {
+                "property": "status",
+                "description": "Approval and receipt.",
+                "initial": [
+                  "draft"
+                ],
+                "terminal": [
+                  "received",
+                  "cancelled"
+                ],
+                "transitions": [
+                  {
+                    "id": "submit",
+                    "from": [
+                      "draft"
+                    ],
+                    "to": "submitted",
+                    "guards": [
+                      "self.po_number != \"\""
+                    ]
+                  },
+                  {
+                    "id": "approve",
+                    "from": [
+                      "submitted"
+                    ],
+                    "to": "approved"
+                  },
+                  {
+                    "id": "reject",
+                    "description": "Sent back for revision.",
+                    "from": [
+                      "submitted"
+                    ],
+                    "to": "rejected"
+                  },
+                  {
+                    "id": "revise",
+                    "from": [
+                      "rejected"
+                    ],
+                    "to": "draft"
+                  },
+                  {
+                    "id": "receive",
+                    "from": [
+                      "approved"
+                    ],
+                    "to": "received"
+                  },
+                  {
+                    "id": "cancel",
+                    "from": [
+                      "draft",
+                      "submitted",
+                      "approved"
+                    ],
+                    "to": "cancelled"
+                  }
+                ]
+              },
+              {
+                "property": "payment_status",
+                "initial": [
+                  "unpaid"
+                ],
+                "terminal": [
+                  "refunded"
+                ],
+                "transitions": [
+                  {
+                    "id": "pay",
+                    "from": [
+                      "unpaid"
+                    ],
+                    "to": "paid"
+                  },
+                  {
+                    "id": "refund",
+                    "from": [
+                      "paid"
+                    ],
+                    "to": "refunded"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "fixture": "rule-ir-v2/valid/purchase-order-approval.rule.json",
+      "patch": {
+        "payload": {
+          "ruleId": "commerce.rule.purchase_order_approval",
+          "ruleVersion": "2.0",
+          "contract": "decide",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "slice": {
+                "type": "object",
+                "properties": {
+                  "order": {
+                    "type": "object",
+                    "properties": {
+                      "poNumber": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "poNumber",
+                      "status"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "order"
+                ],
+                "additionalProperties": false
+              },
+              "event": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "poNumber": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "poNumber"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "slice",
+              "event"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "facts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "set"
+                      ]
+                    },
+                    "objectType": {
+                      "type": "string",
+                      "enum": [
+                        "commerce.PurchaseOrder"
+                      ]
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "property": {
+                      "type": "string",
+                      "enum": [
+                        "status"
+                      ]
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "objectType",
+                    "key"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "commands": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "actionId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "actionId"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "timers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "timerId": {
+                      "type": "string"
+                    },
+                    "dueIn": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "timerId",
+                    "dueIn"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "facts",
+              "commands",
+              "timers"
+            ],
+            "additionalProperties": false
+          },
+          "scopeRequired": [
+            "orgId",
+            "environmentId"
+          ],
+          "graph": {
+            "contentType": "application/vnd.gorules.decision",
+            "nodes": [
+              {
+                "id": "in",
+                "name": "slice and event",
+                "type": "inputNode"
+              },
+              {
+                "id": "emit",
+                "name": "emit",
+                "type": "expressionNode",
+                "content": {
+                  "expressions": [
+                    {
+                      "id": "x_facts",
+                      "key": "facts",
+                      "value": "[{op: 'set', objectType: 'commerce.PurchaseOrder', key: slice.order.poNumber, property: 'status', value: 'approved'}]"
+                    },
+                    {
+                      "id": "x_commands",
+                      "key": "commands",
+                      "value": "[]"
+                    },
+                    {
+                      "id": "x_timers",
+                      "key": "timers",
+                      "value": "[]"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "out",
+                "name": "decision",
+                "type": "outputNode"
+              }
+            ],
+            "edges": [
+              {
+                "id": "e_in",
+                "sourceId": "in",
+                "targetId": "emit",
+                "type": "edge"
+              },
+              {
+                "id": "e_out",
+                "sourceId": "emit",
+                "targetId": "out",
+                "type": "edge"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "expect": [
+    [
+      "commerce.purchase_order_approval.rule",
+      "artifact_set.lifecycle.direct_write",
+      "/payload/outputSchema/properties/facts/items/properties/property/enum/0"
+    ]
+  ]
+}

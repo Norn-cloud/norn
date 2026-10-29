@@ -1,0 +1,98 @@
+{
+  "description": "The checker's valid RuleIR v2 fixture: inputNode, expressionNode (passThrough), decisionNode (sub-decision with outputPath), switchNode (first), decisionTableNode (first; unary cells), and in the sub-decision a collect switch and a collect table with standard-expression cells.",
+  "ruleFile": "fixtures/rule-ir-v2/valid/reorder-decision.rule.json",
+  "subDecisions": {
+    "retail.reorder_priority.rule": {
+      "ruleFile": "fixtures/rule-ir-v2/valid/reorder-priority.rule.json"
+    }
+  },
+  "cases": [
+    {
+      "name": "short, small order: reorder now",
+      "slice": {
+        "sku": {
+          "skuId": "sku-1",
+          "onHand": 5,
+          "reorderPoint": 10,
+          "status": "active"
+        }
+      },
+      "event": {
+        "quantity": 100,
+        "unitCost": 50
+      },
+      "expect": {
+        "facts": [
+          {
+            "op": "set",
+            "objectType": "retail.Sku",
+            "key": "sku-1",
+            "property": "reorder_state",
+            "value": "reordering"
+          }
+        ],
+        "commands": [
+          {
+            "actionId": "retail.sku.reorder",
+            "skuId": "sku-1",
+            "quantity": 100
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "short, large order: review timer",
+      "slice": {
+        "sku": {
+          "skuId": "sku-1",
+          "onHand": 5,
+          "reorderPoint": 10,
+          "status": "active"
+        }
+      },
+      "event": {
+        "quantity": 400,
+        "unitCost": 50
+      },
+      "expect": {
+        "facts": [
+          {
+            "op": "set",
+            "objectType": "retail.Sku",
+            "key": "sku-1",
+            "property": "reorder_state",
+            "value": "reordering"
+          }
+        ],
+        "commands": [],
+        "timers": [
+          {
+            "timerId": "review_timeout",
+            "dueIn": "P2D"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stocked: default branch, no effects",
+      "slice": {
+        "sku": {
+          "skuId": "sku-1",
+          "onHand": 50,
+          "reorderPoint": 10,
+          "status": "active"
+        }
+      },
+      "event": {
+        "quantity": 100,
+        "unitCost": 50
+      },
+      "expect": {
+        "facts": [],
+        "commands": [],
+        "timers": []
+      }
+    }
+  ]
+}

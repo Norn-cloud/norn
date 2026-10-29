@@ -1,0 +1,14 @@
+{
+  "description": "The declared write set names an object type no entity artifact of the set or the base defines.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-reorder.action.json"
+  ],
+  "expect": [
+    [
+      "retail.reorder.action",
+      "artifact_set.action.unknown_write_kind",
+      "/payload/writes/0/entityKind"
+    ]
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "format": "norn.mapping/1",
+  "source": {
+    "schemaId": "erpnext.source_schema",
+    "version": "0.1.0",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "interfaces": [
+    "core.Party.interface",
+    "core.Order.interface",
+    "core.Invoice.interface"
+  ],
+  "maps": [
+    {
+      "id": "customer",
+      "source": {
+        "dataset": "Customer"
+      },
+      "target": {
+        "entity": "party.Customer.entity",
+        "interface": "core.Party.interface"
+      },
+      "subject": "input.name",
+      "sourceRecord": "input.name",
+      "properties": [
+        {
+          "property": "customer_code",
+          "value": "input.name"
+        },
+        {
+          "property": "display_name",
+          "value": "trim(input.customer_name)"
+        },
+        {
+          "property": "customer_type",
+          "value": "input.customer_type == 'Individual' ? 'individual' : 'company'"
+        },
+        {
+          "property": "loyalty_tier",
+          "value": "input.custom_loyalty_tier"
+        }
+      ]
+    },
+    {
+      "id": "sales_order",
+      "source": {
+        "dataset": "Sales Order"
+      },
+      "target": {
+        "entity": "commerce.SalesOrder.entity",
+        "interface": "core.Order.interface"
+      },
+      "subject": "input.name",
+      "sourceRecord": "input.name",
+      "properties": [
+        {
+          "property": "order_number",
+          "value": "input.name"
+        },
+        {
+          "property": "order_date",
+          "value": "input.transaction_date"
+        },
+        {
+          "property": "total_amount",
+          "value": "input.grand_total ?? 0"
+        }
+      ],
+      "links": [
+        {
+          "link": "counterparty",
+          "targetMap": "customer",
+          "key": "input.customer"
+        }
+      ],
+      "lifecycles": [
+        {
+          "property": "status",
+          "transition": "input.docstatus == 1 ? 'submit' : null"
+        }
+      ],
+      "ignoredFields": [
+        {
+          "field": "items",
+          "reason": "order lines are mapped by the sales_order_line map (T8-MAP-1)"
+        }
+      ]
+    }
+  ]
+}

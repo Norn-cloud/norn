@@ -1,0 +1,23 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-CONCURRENCY",
+      "start": "8:26",
+      "end": "8:42",
+      "construct": "Effect.forkChild"
+    },
+    {
+      "code": "NORN-FLOW-CONCURRENCY",
+      "start": "9:27",
+      "end": "9:38",
+      "construct": "Effect.race"
+    },
+    {
+      "code": "NORN-FLOW-CONCURRENCY",
+      "start": "13:89",
+      "end": "13:103",
+      "construct": "Effect.timeout"
+    }
+  ]
+}

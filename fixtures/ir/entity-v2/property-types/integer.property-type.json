@@ -1,0 +1,6 @@
+{
+  "name": "inventory.reorder_quantity",
+  "description": "Units to reorder when stock falls below the reorder point.",
+  "type": { "kind": "integer" },
+  "constraints": { "min": "1", "max": "100000" }
+}

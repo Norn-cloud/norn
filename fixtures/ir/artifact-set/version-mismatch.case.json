@@ -1,0 +1,27 @@
+{
+  "description": "A dependency pinned at a version the set does not contain.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-sku.entity.json",
+    {
+      "fixture": "ir/retail-low-stock.derived.json",
+      "patch": {
+        "dependencies": [
+          {
+            "artifactId": "retail.Sku.entity",
+            "kind": "entity",
+            "version": "0.2.0",
+            "required": true
+          }
+        ]
+      }
+    }
+  ],
+  "expect": [
+    [
+      "retail.low_stock.view",
+      "artifact_set.resolution.version_mismatch",
+      "/dependencies/0/version"
+    ]
+  ]
+}

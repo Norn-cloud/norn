@@ -1,0 +1,38 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.Sku.entity.v2.mixed",
+  "kind": "entity",
+  "namespace": "retail",
+  "name": "SKU",
+  "version": "0.2.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/invalid/v1-member-in-v2.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "retail.Sku",
+      "properties": [
+        {
+          "id": "sku_code",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    },
+    "fields": {
+      "skuId": {
+        "type": "text",
+        "required": true
+      }
+    }
+  }
+}

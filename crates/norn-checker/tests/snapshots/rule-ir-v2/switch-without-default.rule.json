@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.reorder_decision.rule",
+      "code": "rule.validation.jdm_switch_default",
+      "message": "switch 'route' has no default branch (a statement with an empty condition); without one an event can take no branch and the decision is not total",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/graph/nodes/3/content/statements",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

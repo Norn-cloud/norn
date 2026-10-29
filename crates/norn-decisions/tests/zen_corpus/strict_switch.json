@@ -1,0 +1,299 @@
+{
+  "description": "strict-errors: a failing switch condition aborts with a typed error instead of falling through to the default branch.",
+  "rule": {
+    "ruleId": "demo.rule.strict_switch",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "amount": {
+              "type": "number"
+            },
+            "limit": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "amount",
+            "limit"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "demo.Order"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "total"
+                ]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "property",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "actionId"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              },
+              "dueIn": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId",
+              "dueIn"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "route",
+          "name": "route",
+          "type": "switchNode",
+          "content": {
+            "hitPolicy": "first",
+            "statements": [
+              {
+                "id": "big",
+                "condition": "slice.limit > 0 ? slice.amount > slice.limit : slice.amount"
+              },
+              {
+                "id": "other",
+                "condition": "",
+                "isDefault": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "big",
+          "name": "big",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "[{actionId: 'big'}]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "other",
+          "name": "other",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "[{actionId: 'other'}]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "route",
+          "type": "edge"
+        },
+        {
+          "id": "e2",
+          "sourceId": "route",
+          "targetId": "big",
+          "type": "edge",
+          "sourceHandle": "big"
+        },
+        {
+          "id": "e3",
+          "sourceId": "route",
+          "targetId": "other",
+          "type": "edge",
+          "sourceHandle": "other"
+        },
+        {
+          "id": "e4",
+          "sourceId": "big",
+          "targetId": "out",
+          "type": "edge"
+        },
+        {
+          "id": "e5",
+          "sourceId": "other",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "big branch",
+      "slice": {
+        "amount": 50,
+        "limit": 10
+      },
+      "event": {
+        "kind": "k"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "actionId": "big"
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "default branch",
+      "slice": {
+        "amount": 5,
+        "limit": 10
+      },
+      "event": {
+        "kind": "k"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "actionId": "other"
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "failing condition: typed error, no default fallthrough",
+      "slice": {
+        "amount": 5,
+        "limit": 0
+      },
+      "event": {
+        "kind": "k"
+      },
+      "error": "strict:switch_condition"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# Minimal, stable-toolchain rustfmt config for the norn Rust workspace.
+# Deliberately default-behavior: the config exists to pin the style edition
+# so local runs and CI (`cargo fmt --all --check`) agree.
+style_edition = "2024"
+newline_style = "Unix"

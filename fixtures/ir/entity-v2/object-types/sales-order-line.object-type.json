@@ -1,0 +1,21 @@
+{
+  "name": "commerce.SalesOrderLine",
+  "description": "One line of a sales order. Composite key: the order number, then the line number.",
+  "properties": [
+    { "id": "order_number", "type": { "kind": "text" }, "constraints": { "minLength": 1, "maxLength": 40 } },
+    { "id": "line_number", "type": { "kind": "integer" }, "constraints": { "min": "1", "max": "9999" } },
+    { "id": "quantity", "type": { "kind": "decimal", "scale": 3 }, "constraints": { "min": "0.001" }, "default": "1.000" },
+    { "id": "unit_price", "type": { "kind": "decimal", "scale": 2 }, "constraints": { "min": "0" } },
+    { "id": "currency", "type": { "kind": "ref", "name": "commerce.price_currency" } },
+    { "id": "status", "type": { "kind": "ref", "name": "commerce.order_status" }, "default": "draft" },
+    { "id": "requested_on", "type": { "kind": "date" }, "constraints": { "nullable": true } },
+    { "id": "promised_at", "type": { "kind": "timestamp", "timezone": "offset" }, "constraints": { "nullable": true } },
+    { "id": "cutoff_at", "type": { "kind": "timestamp", "timezone": "utc" }, "default": "2026-01-01T00:00:00Z" },
+    {
+      "id": "line_total",
+      "type": { "kind": "decimal", "scale": 2 },
+      "computed": "round(self.quantity * self.unit_price, 2)"
+    }
+  ],
+  "identity": [{ "name": "primary", "properties": ["order_number", "line_number"] }]
+}

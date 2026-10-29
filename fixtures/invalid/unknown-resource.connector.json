@@ -1,0 +1,79 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.connector.inventory_import",
+  "kind": "connector",
+  "namespace": "retail",
+  "name": "Retail Inventory Import",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk"
+  },
+  "payload": {
+    "connectorVersion": "0.1",
+    "auth": {
+      "kind": "api_key",
+      "authId": "retail_inventory_provider",
+      "placement": "header",
+      "name": "x-api-key",
+      "secretRef": "providers.retailInventory.apiKey"
+    },
+    "resources": [
+      {
+        "kind": "paginated",
+        "resourceId": "inventory",
+        "endpoint": "/inventory",
+        "method": "GET",
+        "pageParam": "page",
+        "itemsPath": "$.items"
+      },
+      {
+        "kind": "csv_import",
+        "resourceId": "inventory_csv",
+        "delimiter": ",",
+        "columns": [
+          "sku",
+          "location",
+          "quantity"
+        ]
+      }
+    ],
+    "mappings": [
+      {
+        "kind": "external_id",
+        "resourceId": "missing_resource",
+        "sourcePath": "$.sku",
+        "targetObjectKind": "retail.Sku",
+        "externalSource": "retail_inventory_csv"
+      },
+      {
+        "kind": "field",
+        "resourceId": "inventory_csv",
+        "sourcePath": "$.quantity",
+        "targetObjectKind": "retail.StockPosition",
+        "targetField": "quantity",
+        "required": true
+      }
+    ],
+    "cursor": {
+      "cursorId": "inventory_csv_offset",
+      "resourceId": "inventory_csv",
+      "storageKey": "retail.inventory.csv.offset",
+      "initialValue": {
+        "offset": 0
+      }
+    },
+    "deadLetterPolicy": {
+      "maxFailures": 3,
+      "route": "ledger"
+    },
+    "customStepHookIds": [
+      "retail.connector.inventory_import.fetch_page"
+    ]
+  }
+}

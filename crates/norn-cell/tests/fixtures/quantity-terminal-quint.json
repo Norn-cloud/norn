@@ -1,0 +1,549 @@
+{
+  "sourceCommit": "b59a6463d8dda98f9df8e6ef0bff87aacbdbb218",
+  "cases": [
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-1.json",
+      "stateIndex": 59,
+      "reserve": {
+        "back": 0,
+        "dest": 2,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 2,
+        "partition": 3,
+        "slot": 0,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 1,
+        "partition": 3,
+        "slot": 0,
+        "sourceVersion": 3
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-1.json",
+      "stateIndex": 68,
+      "reserve": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 1,
+        "partition": 1,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 1,
+        "dest": 1,
+        "destVersion": 1,
+        "kind": "post_slice",
+        "now": 4,
+        "out": 2,
+        "partition": 1,
+        "slot": 1,
+        "sourceVersion": 3
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 1,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-3.json",
+      "stateIndex": 74,
+      "reserve": {
+        "back": 1,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 2,
+        "out": 2,
+        "partition": 1,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 2,
+        "dest": 0,
+        "destVersion": 0,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 2,
+        "partition": 1,
+        "slot": 1,
+        "sourceVersion": 3
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 1,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-5.json",
+      "stateIndex": 28,
+      "reserve": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 1,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 1,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 1,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 4
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-5.json",
+      "stateIndex": 36,
+      "reserve": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 1,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 1,
+        "kind": "post_slice",
+        "now": 4,
+        "out": 1,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 4
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-5.json",
+      "stateIndex": 59,
+      "reserve": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 1,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 1,
+        "dest": 1,
+        "destVersion": 1,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 2,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 4
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-5.json",
+      "stateIndex": 68,
+      "reserve": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 1,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 1,
+        "dest": 1,
+        "destVersion": 1,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 2,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 4
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-6.json",
+      "stateIndex": 40,
+      "reserve": {
+        "back": 2,
+        "dest": 0,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 1,
+        "out": 2,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 1,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-8.json",
+      "stateIndex": 58,
+      "reserve": {
+        "back": 0,
+        "dest": 2,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 2,
+        "partition": 3,
+        "slot": 0,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 1,
+        "partition": 3,
+        "slot": 0,
+        "sourceVersion": 3
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-8.json",
+      "stateIndex": 67,
+      "reserve": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 1,
+        "partition": 1,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 1,
+        "dest": 1,
+        "destVersion": 1,
+        "kind": "post_slice",
+        "now": 4,
+        "out": 2,
+        "partition": 1,
+        "slot": 1,
+        "sourceVersion": 3
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 1,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-8.json",
+      "stateIndex": 80,
+      "reserve": {
+        "back": 0,
+        "dest": 2,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 2,
+        "partition": 3,
+        "slot": 0,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 1,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 1,
+        "partition": 3,
+        "slot": 0,
+        "sourceVersion": 4
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-10.json",
+      "stateIndex": 73,
+      "reserve": {
+        "back": 1,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 2,
+        "out": 2,
+        "partition": 1,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 2,
+        "dest": 0,
+        "destVersion": 0,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 2,
+        "partition": 1,
+        "slot": 1,
+        "sourceVersion": 3
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 1,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-13.json",
+      "stateIndex": 39,
+      "reserve": {
+        "back": 2,
+        "dest": 0,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 1,
+        "out": 2,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 1,
+        "partition": 3,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-15.json",
+      "stateIndex": 57,
+      "reserve": {
+        "back": 0,
+        "dest": 2,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 2,
+        "partition": 3,
+        "slot": 0,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 1,
+        "partition": 3,
+        "slot": 0,
+        "sourceVersion": 3
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-15.json",
+      "stateIndex": 66,
+      "reserve": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 1,
+        "partition": 1,
+        "slot": 1,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 1,
+        "dest": 1,
+        "destVersion": 1,
+        "kind": "post_slice",
+        "now": 4,
+        "out": 2,
+        "partition": 1,
+        "slot": 1,
+        "sourceVersion": 3
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 1,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    },
+    {
+      "trace": "verification/kernel-v2/traces/quantity-ledger-step-15.json",
+      "stateIndex": 79,
+      "reserve": {
+        "back": 0,
+        "dest": 2,
+        "destVersion": 0,
+        "kind": "reserve",
+        "now": 0,
+        "out": 2,
+        "partition": 3,
+        "slot": 0,
+        "sourceVersion": 1
+      },
+      "request": {
+        "back": 0,
+        "dest": 1,
+        "destVersion": 1,
+        "kind": "void_slice",
+        "now": 4,
+        "out": 1,
+        "partition": 3,
+        "slot": 0,
+        "sourceVersion": 4
+      },
+      "beforeReservation": {
+        "back": 0,
+        "dest": 0,
+        "out": 0,
+        "partition": 3,
+        "status": "expired"
+      },
+      "outcome": "terminal"
+    }
+  ]
+}

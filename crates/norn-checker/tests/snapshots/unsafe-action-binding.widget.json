@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.widget.replenishment_proposal",
+      "code": "widget.validation.unsafe_action_binding",
+      "message": "action binding must target a Norn action or process command, not a raw mutation",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/actionBindings/0",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

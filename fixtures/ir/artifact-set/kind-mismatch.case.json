@@ -1,0 +1,27 @@
+{
+  "description": "A dependency that declares a kind other than its target's.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-sku.entity.json",
+    {
+      "fixture": "ir/retail-low-stock.derived.json",
+      "patch": {
+        "dependencies": [
+          {
+            "artifactId": "retail.Sku.entity",
+            "kind": "relation",
+            "version": "0.1.0",
+            "required": true
+          }
+        ]
+      }
+    }
+  ],
+  "expect": [
+    [
+      "retail.low_stock.view",
+      "artifact_set.resolution.kind_mismatch",
+      "/dependencies/0/kind"
+    ]
+  ]
+}

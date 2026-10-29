@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.reorder_decision.rule",
+      "code": "rule.validation.jdm_unknown_column",
+      "message": "row 'large' has a cell for 'c_vip', which is not a column of the table",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/graph/nodes/4/content/rules/0/c_vip",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

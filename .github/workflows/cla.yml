@@ -1,0 +1,29 @@
+name: CLA Assistant
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, reopened, synchronize, closed]
+permissions: {}
+jobs:
+  cla:
+    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request != null
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - name: Record contributor agreement
+        if: github.event_name == 'pull_request_target' || github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the Norn CLA v1 and agree to its applicable individual and corporate terms.'
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          path-to-signatures: signatures/cla-v1.json
+          path-to-document: https://github.com/Norn-cloud/norn/blob/main/CONTRIBUTING.md#contributor-licence-agreement--version-1
+          branch: cla-signatures
+          custom-pr-sign-comment: I have read the Norn CLA v1 and agree to its applicable individual and corporate terms.
+          lock-pullrequest-aftermerge: false

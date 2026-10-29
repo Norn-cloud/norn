@@ -1,0 +1,29 @@
+{
+  "description": "A tenant layer whose extension depends on the installed registry SKU type; the base is read-only and only resolves.",
+  "base": [
+    "ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+    "ir/entity-v2/artifact-set/party.interface.entity.json",
+    "ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+    "ir/entity-v2/artifact-set/retail-sku.entity.json"
+  ],
+  "tenant": {
+    "tenantId": "tenant_acme",
+    "namespace": "acme"
+  },
+  "artifacts": [
+    {
+      "fixture": "ir/entity-v2/artifact-set/acme-sku.extension.entity.json",
+      "patch": {
+        "dependencies": [
+          {
+            "artifactId": "retail.Sku.entity.v2",
+            "kind": "entity",
+            "version": "0.1.0",
+            "required": true
+          }
+        ]
+      }
+    }
+  ],
+  "expect": []
+}

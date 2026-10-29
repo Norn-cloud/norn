@@ -1,0 +1,11 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [],
+  "uses": [
+    "8:16 @norn/authoring#Norn.flow",
+    "10:3 effect/Effect#gen",
+    "11:28 effect/Effect#retry",
+    "11:41 @norn/authoring#Norn.perform",
+    "11:101 effect/Schedule#recurs"
+  ]
+}

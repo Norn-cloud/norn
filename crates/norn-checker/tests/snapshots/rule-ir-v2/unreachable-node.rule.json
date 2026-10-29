@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.reorder_decision.rule",
+      "code": "rule.validation.jdm_unreachable_node",
+      "message": "node 'orphan' is not reachable from the input node; every node of a decision graph lies on a path from input to output",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/graph/nodes/7/id",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

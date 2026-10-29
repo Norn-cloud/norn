@@ -1,0 +1,17 @@
+{
+  "name": "norn-testkit",
+  "ring": "TestSupport",
+  "allowed_norn": [
+    "norn-kernel"
+  ],
+  "dev_only_norn": [
+    "norn-cell",
+    "norn-decisions",
+    "norn-expr",
+    "norn-ir"
+  ],
+  "third_party": [
+    "proptest",
+    "proptest-state-machine"
+  ]
+}

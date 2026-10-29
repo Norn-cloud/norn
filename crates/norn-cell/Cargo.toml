@@ -1,0 +1,39 @@
+[package]
+name = "norn-cell"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "shared cell store with native SQLite adapters (ring 1; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["native"]
+native = ["dep:rusqlite", "dep:object_store", "dep:tokio", "dep:tempfile"]
+
+[dependencies]
+norn-checker = { path = "../norn-checker" }
+norn-ir = { path = "../norn-ir" }
+norn-kernel = { path = "../norn-kernel" }
+norn-projections = { path = "../norn-projections" }
+# The default host adapter. Bundled SQLite, no default features (no statement
+# cache, no wasm32 backend).
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks"], optional = true }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.20"
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+object_store = { version = "0.14.2", default-features = false, features = ["fs"], optional = true }
+tokio = { version = "1.53.1", features = ["sync"], optional = true }
+
+tempfile = { version = "3.27.0", optional = true }
+
+[dev-dependencies]
+# Test support only (T6-PSM-1 / T4-CELL-1): the host-agnostic CellHost laws.
+norn-testkit = { path = "../norn-testkit" }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

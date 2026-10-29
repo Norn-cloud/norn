@@ -1,0 +1,37 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "fashion.Style.entity",
+  "kind": "entity",
+  "namespace": "fashion",
+  "name": "Style",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": { "orgId": "org_demo", "environmentId": "dev" },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "crates/norn-checker/tests/fixtures/mapping/model/fashion.style.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "fashion.Style",
+      "implements": ["core.Item"],
+      "properties": [
+        { "id": "item_code", "type": { "kind": "text" } },
+        { "id": "display_name", "type": { "kind": "text" } },
+        {
+          "id": "size",
+          "type": { "kind": "text" },
+          "constraints": { "nullable": true }
+        },
+        {
+          "id": "color",
+          "type": { "kind": "text" },
+          "constraints": { "nullable": true }
+        }
+      ],
+      "identity": [{ "name": "primary", "properties": ["item_code"] }]
+    }
+  }
+}

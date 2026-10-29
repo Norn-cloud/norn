@@ -1,0 +1,366 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.reorder_decision.rule",
+  "kind": "rule",
+  "namespace": "retail",
+  "name": "Reorder decision",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [
+    {
+      "artifactId": "retail.reorder.action",
+      "kind": "action",
+      "version": "0.1.0",
+      "required": true
+    },
+    {
+      "artifactId": "retail.reorder_priority.rule",
+      "kind": "rule",
+      "version": "0.1.0",
+      "required": true
+    }
+  ],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/rule-ir-v2/invalid/decide-output-not-contract.rule.json"
+  },
+  "payload": {
+    "ruleId": "retail.rule.reorder_decision",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "sku": {
+              "type": "object",
+              "properties": {
+                "skuId": {
+                  "type": "string"
+                },
+                "onHand": {
+                  "type": "integer"
+                },
+                "reorderPoint": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "skuId",
+                "onHand",
+                "reorderPoint",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "sku"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "quantity": {
+              "type": "integer"
+            },
+            "unitCost": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "quantity",
+            "unitCost"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "retail.Sku"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "reorder_state"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "property",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string"
+              },
+              "skuId": {
+                "type": "string"
+              },
+              "quantity": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "actionId",
+              "skuId",
+              "quantity"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              },
+              "dueIn": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId",
+              "dueIn"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "route": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers",
+        "route"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "slice and event",
+          "type": "inputNode"
+        },
+        {
+          "id": "totals",
+          "name": "totals",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_total",
+                "key": "total",
+                "value": "event.quantity * event.unitCost"
+              },
+              {
+                "id": "x_short",
+                "key": "short",
+                "value": "slice.sku.onHand < slice.sku.reorderPoint"
+              }
+            ],
+            "passThrough": true
+          }
+        },
+        {
+          "id": "priority",
+          "name": "priority",
+          "type": "decisionNode",
+          "content": {
+            "key": "retail.reorder_priority.rule",
+            "outputPath": "priority",
+            "passThrough": true
+          }
+        },
+        {
+          "id": "route",
+          "name": "route",
+          "type": "switchNode",
+          "content": {
+            "hitPolicy": "first",
+            "statements": [
+              {
+                "id": "short",
+                "condition": "short"
+              },
+              {
+                "id": "stocked",
+                "condition": "",
+                "isDefault": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "approval",
+          "name": "approval",
+          "type": "decisionTableNode",
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [
+              {
+                "id": "c_total",
+                "name": "Total",
+                "field": "total"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "o_review",
+                "name": "Review",
+                "field": "reviewRequired"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "large",
+                "c_total": "> 10000",
+                "o_review": "true"
+              },
+              {
+                "_id": "standard",
+                "_description": "everything else",
+                "c_total": "",
+                "o_review": "false"
+              }
+            ],
+            "passThrough": true
+          }
+        },
+        {
+          "id": "emit",
+          "name": "emit",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "short ? [{op: 'set', objectType: 'retail.Sku', key: slice.sku.skuId, property: 'reorder_state', value: 'reordering'}] : []"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "short and reviewRequired == false ? [{actionId: 'retail.sku.reorder', skuId: slice.sku.skuId, quantity: event.quantity}] : []"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "short and reviewRequired ? [{timerId: 'review_timeout', dueIn: 'P2D'}] : []"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "decision",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e_in",
+          "sourceId": "in",
+          "targetId": "totals",
+          "type": "edge"
+        },
+        {
+          "id": "e_priority",
+          "sourceId": "totals",
+          "targetId": "priority",
+          "type": "edge"
+        },
+        {
+          "id": "e_route",
+          "sourceId": "priority",
+          "targetId": "route",
+          "type": "edge"
+        },
+        {
+          "id": "e_short",
+          "sourceId": "route",
+          "targetId": "approval",
+          "type": "edge",
+          "sourceHandle": "short"
+        },
+        {
+          "id": "e_stocked",
+          "sourceId": "route",
+          "targetId": "emit",
+          "type": "edge",
+          "sourceHandle": "stocked"
+        },
+        {
+          "id": "e_approved",
+          "sourceId": "approval",
+          "targetId": "emit",
+          "type": "edge"
+        },
+        {
+          "id": "e_out",
+          "sourceId": "emit",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  }
+}

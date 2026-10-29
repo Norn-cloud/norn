@@ -1,0 +1,38 @@
+[package]
+name = "norn-skeleton-guard"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Test-only guard enforcing the SKELETON.md crate boundaries (P0-SKEL-2)"
+
+[lib]
+path = "src/lib.rs"
+
+# Test/CI-only tooling: no Norn crate may depend on this crate (the guard
+# itself asserts that). It reads `cargo metadata` and parses sources, so it is
+# intentionally outside the ring model.
+[dependencies]
+cargo_metadata = "0.23.1"
+syn = { version = "2.0.119", default-features = false, features = ["full", "parsing", "visit"] }
+walkdir = "2.5.0"
+serde_json = "1.0.150"
+serde = { version = "1.0.228", features = ["derive"] }
+# Parses Cargo.lock for the zen lock pin (`check_zen_lock`).
+toml = "0.9.12"
+# CI gate runner (`cargo xtask ci`, #3472): argument parsing, workflow YAML
+# as plain data, run-line/condition patterns, step digests, JUnit reports.
+clap = { version = "4.6.7", features = ["derive"] }
+yaml-rust2 = { version = "0.13.0", default-features = false }
+sha2 = "0.10.9"
+hex = "0.4.3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "xtask"
+path = "src/bin/xtask.rs"
+
+[lints]
+workspace = true

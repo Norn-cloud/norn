@@ -1,0 +1,51 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "purchasing.PurchaseOrderLine.entity.v2",
+  "kind": "entity",
+  "namespace": "purchasing",
+  "name": "Purchase order line",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/entity-v2/artifact-set/invalid/conflicting-inverse.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "purchasing.PurchaseOrderLine",
+      "properties": [
+        {
+          "id": "line_number",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ],
+      "links": [
+        {
+          "id": "sku",
+          "target": "retail.Sku",
+          "cardinality": {
+            "to": "one",
+            "from": "many"
+          },
+          "inverse": "preferred_supplier"
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "line_number"
+          ]
+        }
+      ]
+    }
+  }
+}

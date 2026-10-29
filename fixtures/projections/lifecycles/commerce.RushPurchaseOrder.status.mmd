@@ -1,0 +1,16 @@
+---
+title: commerce.RushPurchaseOrder status lifecycle
+---
+stateDiagram-v2
+    state "draft" as s0
+    state "submitted" as s1
+    state "approved" as s2
+    state "received" as s3
+    state "cancelled" as s4
+    [*] --> s0
+    s0 --> s1 : submit
+    s1 --> s2 : approve
+    s2 --> s3 : receive
+    s0 --> s4 : cancel
+    s3 --> [*]
+    s4 --> [*]

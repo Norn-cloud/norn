@@ -1,0 +1,362 @@
+{
+  "schemaVersion": "norn.verification.kernel-v2.results/1",
+  "status": "green; quantity BMC unresolved, exact finite scenario enumeration passed",
+  "currentIntegration": {
+    "baseline": "e0d82a3129daba502bd3c905a000b09b5fb86d61",
+    "main": "baff794c75dabd2eb908854d072d90ce67da1c37",
+    "status": "green",
+    "conformance": {
+      "testsPassed": 5,
+      "testsFailed": 0,
+      "testsIgnored": 0,
+      "originalSeedIdentities": 64,
+      "originalTransitions": 5120,
+      "supplementalTraces": 1,
+      "supplementalTransitions": 6,
+      "stateMismatches": 0,
+      "refusalMismatches": 0,
+      "sensitivityMutantsDetected": 4,
+      "projectionContexts": [
+        "normal",
+        "coherent_cache_forgery_after_append_with_intact_ledger",
+        "chain_corrupt"
+      ],
+      "harnessSha256": "08f30f999d8755b3ef4ca5108272df0083b65f07e882c53b676c6f923d24c109",
+      "traceIndexSha256": "1559ac6e8f7565c80398d6a20757a4820519cde26aa328bf269a54a7a9fb81ac",
+      "logSha256": "757ccab531bfba11596190b9cbb577b5fc017015d3066138d9640bb5e66858ef",
+      "command": "cargo test --locked --offline -p norn-testkit --test kernel_quint -- --nocapture"
+    },
+    "modelChecks": {
+      "quint": "0.32.0",
+      "apalache": "0.56.1",
+      "proofs": [
+        {
+          "model": "commit-admission",
+          "step": "step",
+          "bound": 8,
+          "scope": "full declared nondeterministic model",
+          "status": "ok",
+          "errors": [],
+          "modelSha256": "780878e07e405f09a2d2dca4a08cea14ef6007101927b35bf51e4bab79452fd6",
+          "resultSha256": "13a9bbfc9877284012e3c7360b129f10c20bc6461270cfb6c7722e8938ae7f08"
+        },
+        {
+          "model": "projection-trust",
+          "step": "step",
+          "bound": 8,
+          "scope": "full corrected nondeterministic model",
+          "status": "ok",
+          "errors": [],
+          "modelSha256": "7a14c4a86c4d84ca5668812a6bcab4551a368157ffba452f63d568e6cddfa258",
+          "resultSha256": "6b1e6821c6fbef89f73c570091a33e2862bc2398c0f2f0af8bbf712c72ad1aef"
+        }
+      ],
+      "quantityBmcVerdict": "no-verdict",
+      "quantityAttempts": [
+        {
+          "maxSteps": 6,
+          "timeoutSeconds": 240,
+          "verdict": "no-verdict"
+        },
+        {
+          "maxSteps": 3,
+          "timeoutSeconds": 240,
+          "verdict": "no-verdict"
+        },
+        {
+          "maxSteps": 1,
+          "timeoutSeconds": 90,
+          "verdict": "no-verdict"
+        },
+        {
+          "maxSteps": 15,
+          "step": "scenario_step",
+          "timeoutSeconds": 300,
+          "verdict": "no-verdict",
+          "diagnostic": "Quint status failure, errors []; wrapper exit 124 after waiting 300.3s for server outcome on second attempt. First attempt no-result. No counterexample or successful result."
+        },
+        {
+          "maxSteps": 4,
+          "step": "conservation_step",
+          "timeoutSeconds": 300,
+          "verdict": "no-verdict",
+          "diagnostic": "Quint status failure, errors []; wrapper exit124 after second attempt waited300.2s. Server reached BoundedChecker, State0: Checking9 state invariants; no checker outcome. Exact finite enumeration is the promoted alternative.",
+          "modelSha256": "e5a4b48d4b767d52df39b8eebcb02858b86ebe2fd147692781a4b8e10321d624",
+          "resultSha256": "28d63b613cf7cf4ea7e38e56ba54036f41cf8a195d4a17413974dd9a1491a339"
+        }
+      ],
+      "quantityFiniteEnumeration": {
+        "tests": 6,
+        "trajectories": 6,
+        "semanticTransitions": 46,
+        "invariantPrefixChecks": 52,
+        "resolutionPaths": 4,
+        "resolutionSteps": 4,
+        "expiryPaths": 2,
+        "expirySteps": 15,
+        "assertionStutters": 6,
+        "domains": "Resolution: gross slot0/partition0/time0/current fences, reserve2 then partialpost1 then terminal post/void1 then refused retry post/void1. Expiry: original two-reservation/four-partition scenario (scenario_path); choices lazy/scheduled expiry. No nondeterminism in any selected test run. Assertion-only final stutters are excluded from semantic transition/prefix counts.",
+        "command": "quint test verification/kernel-v2/models/quantity-ledger.qnt --backend rust --match conservation.*Test --max-samples 1 --seed 1 --out target/verification-results/kernel-v2-quantity-scenarios.json",
+        "status": "passed",
+        "testsPassed": 6,
+        "testsFailed": 0,
+        "testsIgnored": 0,
+        "modelSha256": "304a7b347f9860ee404b8c9be3ef5ac061a9e1ab501baad36f5801b46b0f5444",
+        "resultSha256": "f3f2c56300dc7f668de63bde8b12a8a514ad58a02efee583c362f07559d6ae3e"
+      }
+    },
+    "evidence": {
+      "controller": "/root/work/quint-3359-r2",
+      "toolOwnedArchive": "/root/work/quint-3359-r2/tool-evidence.tgz",
+      "generation": "/root/work/quint-3359-r2/generation.json",
+      "conformance": "/root/work/quint-3359-r2/conformance.json",
+      "admission": "/root/work/quint-3359-r2/admission.json",
+      "projection": "/root/work/quint-3359-r2/projection.json",
+      "conservation15NoVerdict": "/root/work/quint-3359-r2/quantity.json",
+      "conservation4NoVerdict": "/root/work/quint-3359-r2/conservation4.json",
+      "finiteScenarios": "/root/work/quint-3359-r2/finite-scenarios.json",
+      "sandbox": "bx_dmh2ucz2"
+    },
+    "fullStandardLane": {
+      "profile": "norn",
+      "lane": "kquint",
+      "sha": "2acde28298ff24d7df27805357253c101623f6f5",
+      "archive_sha256": "8ed782efb2cec7c17bb244374b802e442fe94fab72c52005a13ad43934c15e24",
+      "sandbox": "bx_j4s9mc5p",
+      "cache_key": "010a7c747584",
+      "start_state": "template-stale",
+      "verdict": "green",
+      "exit": 0,
+      "elapsed_s": 1544,
+      "disk_pct_before": "17",
+      "disk_pct_after": "50",
+      "gates": [
+        {
+          "name": "fetch",
+          "exit": "0",
+          "secs": "1"
+        },
+        {
+          "name": "fmt",
+          "exit": "0",
+          "secs": "3"
+        },
+        {
+          "name": "clippy",
+          "exit": "0",
+          "secs": "66"
+        },
+        {
+          "name": "test",
+          "exit": "0",
+          "secs": "1029"
+        },
+        {
+          "name": "doctest",
+          "exit": "0",
+          "secs": "8"
+        },
+        {
+          "name": "sdk",
+          "exit": "0",
+          "secs": "2"
+        },
+        {
+          "name": "checker-wasm",
+          "exit": "0",
+          "secs": "82"
+        },
+        {
+          "name": "renderer",
+          "exit": "0",
+          "secs": "3"
+        },
+        {
+          "name": "renderer-browser",
+          "exit": "0",
+          "secs": "120"
+        },
+        {
+          "name": "admin",
+          "exit": "0",
+          "secs": "19"
+        },
+        {
+          "name": "cell-shim",
+          "exit": "0",
+          "secs": "84"
+        },
+        {
+          "name": "norn-ts",
+          "exit": "0",
+          "secs": "36"
+        },
+        {
+          "name": "python",
+          "exit": "0",
+          "secs": "4"
+        }
+      ],
+      "rustTestsPassed": 3187,
+      "rustTestsSkipped": 6,
+      "v2TestsIgnored": 0,
+      "standardGatesPassed": 12,
+      "additionalFetchGatePassed": 1,
+      "evidencePath": "/root/work/boat-lanes/state/runs/kquint-2acde28298ff-20261015T091928Z/result.json",
+      "logsArchive": "/root/work/quint-3359-r2/full-gates.tgz"
+    },
+    "verifiedCodeSource": "2acde28298ff24d7df27805357253c101623f6f5"
+  },
+  "historicalEvidence": "modelChecks, integrationConformance, and mainGates below describe pre-fix runs; retained for provenance and not current certification",
+  "modelChecks": {
+    "quint": "0.32.0",
+    "apalache": "0.56.1",
+    "java": "Temurin 21.0.12.1+1",
+    "proofs": [
+      {
+        "model": "commit-admission",
+        "bound": 8,
+        "status": "ok",
+        "errors": [],
+        "modelSha256": "780878e07e405f09a2d2dca4a08cea14ef6007101927b35bf51e4bab79452fd6",
+        "resultSha256": "13a9bbfc9877284012e3c7360b129f10c20bc6461270cfb6c7722e8938ae7f08"
+      },
+      {
+        "model": "projection-trust",
+        "bound": 8,
+        "status": "ok",
+        "errors": [],
+        "modelSha256": "56c7391c39163a14abc08abfd86111a163c05a73e7db53658891db51cd8349e7",
+        "resultSha256": "60f88c50a1462bdbc91f8f37d5333d89f74727a0c59f32be3e3f8565f7302ee4"
+      }
+    ],
+    "quantityAttempts": [
+      {
+        "depth": 6,
+        "timeoutSeconds": 240,
+        "verdict": "no-verdict"
+      },
+      {
+        "depth": 3,
+        "timeoutSeconds": 240,
+        "verdict": "no-verdict"
+      },
+      {
+        "depth": 1,
+        "timeoutSeconds": 90,
+        "verdict": "no-verdict"
+      }
+    ]
+  },
+  "integrationConformance": {
+    "verificationSource": "fd6c7e32fc509fd74ebdf743196368ddb8ea41f8",
+    "quantitySource": "c4596432004c6a6209b36f70f486ed3199482fc7",
+    "quantityArchiveSha256": "a004450a50f772b6e928a05cf050082fb6da0cea400dd2ed3a40d48dfd8c376a",
+    "verificationArchiveSha256": "84e84fdd77e760c2026f83373f6d4adb4d44db0f4443c3ae2b2788c27f9719bd",
+    "overlay": [
+      "Cargo.lock",
+      "crates/norn-testkit",
+      "crates/norn-skeleton-guard/src/lib.rs",
+      "knowledge/architecture/build-plan-2026-09-09/SKELETON.md",
+      "verification/kernel-v2"
+    ],
+    "purpose": "temporary Boat integration tree; no quantity runtime code merged into verification branch",
+    "harnessSource": "a8701ec434d9a9f11b1d922d871ee2a2305dbb6d",
+    "harnessSha256": "9bce37fdd1c8dc98d3573b12c6633e3ce84611345d03f60b59ff95022fca4177",
+    "targetDirectory": "/home/user/kquint-v2-target",
+    "results": {
+      "testsPassed": 3,
+      "testsFailed": 2,
+      "testsIgnored": 0,
+      "corpusTraces": 64,
+      "corpusTransitions": 5120,
+      "stateMismatches": 0,
+      "refusalMismatches": 16,
+      "postSliceTerminalVsInvalid": 4,
+      "voidSliceTerminalVsInvalid": 12,
+      "sensitivityMutantsDetected": 4
+    },
+    "command": "cargo test --locked -p norn-testkit --test kernel_quint -- --include-ignored --nocapture",
+    "logSha256": "dbb0bfb0bf68fcee49ade50501bb9a2c4ec2d112e95fce9af134ff37101870ee",
+    "discardedRun": "shared CARGO_TARGET_DIR reused v1 artifacts; discarded"
+  },
+  "mainGates": {
+    "profile": "norn",
+    "lane": "kquint",
+    "sha": "d39a67ee3e585d0278b8387205734537a7f7427d",
+    "archive_sha256": "022a99ecf4323c3380ec716b5d47f3950fa05a95a7f4e5f207fc4818a6e59b2d",
+    "sandbox": "bx_dmh2ucz2",
+    "cache_key": "fe66a0695a0a",
+    "start_state": "warm",
+    "verdict": "green",
+    "exit": 0,
+    "elapsed_s": 1014,
+    "disk_pct_before": "51",
+    "disk_pct_after": "56",
+    "gates": [
+      {
+        "name": "fmt",
+        "exit": "0",
+        "secs": "3"
+      },
+      {
+        "name": "clippy",
+        "exit": "0",
+        "secs": "27"
+      },
+      {
+        "name": "test",
+        "exit": "0",
+        "secs": "629"
+      },
+      {
+        "name": "doctest",
+        "exit": "0",
+        "secs": "9"
+      },
+      {
+        "name": "sdk",
+        "exit": "0",
+        "secs": "1"
+      },
+      {
+        "name": "checker-wasm",
+        "exit": "0",
+        "secs": "81"
+      },
+      {
+        "name": "renderer",
+        "exit": "0",
+        "secs": "4"
+      },
+      {
+        "name": "renderer-browser",
+        "exit": "0",
+        "secs": "101"
+      },
+      {
+        "name": "admin",
+        "exit": "0",
+        "secs": "22"
+      },
+      {
+        "name": "cell-shim",
+        "exit": "0",
+        "secs": "79"
+      },
+      {
+        "name": "norn-ts",
+        "exit": "0",
+        "secs": "37"
+      },
+      {
+        "name": "python",
+        "exit": "0",
+        "secs": "4"
+      }
+    ],
+    "rustTestsPassed": 2967,
+    "rustTestsSkipped": 9,
+    "evidencePath": "/root/work/boat-lanes/state/runs/kquint-d39a67ee3e58-20261014T153557Z/result.json"
+  }
+}

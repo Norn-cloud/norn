@@ -1,0 +1,23 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-RESULT",
+      "start": "11:62",
+      "end": "11:70",
+      "construct": "() => {}"
+    },
+    {
+      "code": "NORN-FLOW-RESULT",
+      "start": "12:64",
+      "end": "16:6",
+      "construct": "(i) => { if (i.overdue) { return i.id } }"
+    },
+    {
+      "code": "NORN-FLOW-RESULT",
+      "start": "18:7",
+      "end": "18:13",
+      "construct": "return"
+    }
+  ]
+}

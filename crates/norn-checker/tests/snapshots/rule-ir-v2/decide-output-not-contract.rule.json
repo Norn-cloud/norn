@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.reorder_decision.rule",
+      "code": "rule.validation.invalid_decision_contract",
+      "message": "a decide graph's payload.outputSchema declares exactly [\"facts\", \"commands\", \"timers\"]; 'route' is not part of the decision contract",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/outputSchema/properties/route",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

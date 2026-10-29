@@ -1,0 +1,12 @@
+namespace demo {
+  entity Note = {
+    scope: Norn::Scope,
+    acted_by?: Set<Norn::Actor>
+  };
+}
+namespace Norn {
+  entity Actor in [Role] = {
+    represents?: { type: String, key: String },
+    scope: Scope
+  };
+}

@@ -1,0 +1,139 @@
+{
+  "artifacts": [
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.Customer.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "Customer",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "crm.Customer",
+          "properties": [
+            {
+              "id": "display_name",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "email",
+              "type": {
+                "kind": "text",
+                "format": "email"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.Client.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "Client",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "crm.Client",
+          "properties": [
+            {
+              "id": "display_name",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "email",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.VipCustomer.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "VipCustomer",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "crm.VipCustomer",
+          "extends": "crm.Customer"
+        }
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.LapsedCustomer.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "LapsedCustomer",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "crm.LapsedCustomer",
+          "extends": "crm.Customer"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+[package]
+name = "norn-expr"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "ZEN Expression type environment + static checker (ring 0; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Pure calendar/RFC 3339 parsing and the pinned IANA timezone database used by
+# EntityIR naming-series date rendering. No clock or locale is consulted.
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+chrono-tz = { version = "=0.10.4", default-features = false, features = ["std"] }
+# EntityIR v2 types the type environment is derived from, and the Norn1
+# canonical form (re-exported) it is content-addressed with.
+norn-ir = { path = "../norn-ir" }
+# The vendored zen crate set (vendor/zen, #3404) has no features: the Norn
+# profile (regex-lite, strict errors, ordered maps, pure temporal values,
+# metering, bounded strings) is its only behaviour.
+zen-expression = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"

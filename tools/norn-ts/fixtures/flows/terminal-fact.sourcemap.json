@@ -1,0 +1,42 @@
+{
+  "flow": "billing.terminal_fact",
+  "flowAt": {
+    "file": "fixtures/flows/terminal-fact.builder.ts",
+    "line": 8
+  },
+  "format": "norn-flow-sourcemap/1",
+  "note": "non-executable: maps generated ids to the definition sites that produced them",
+  "rows": {
+    "awaiting_perform_load/result/1": {
+      "file": "fixtures/flows/terminal-fact.builder.ts",
+      "line": 16
+    },
+    "awaiting_perform_load/result/2": {
+      "file": "fixtures/flows/terminal-fact.builder.ts",
+      "line": 13
+    },
+    "started/start/1": {
+      "file": "fixtures/flows/terminal-fact.builder.ts",
+      "line": 11
+    }
+  },
+  "sourcePath": "tools/norn-ts/fixtures/flows/terminal-fact.flow.ts",
+  "states": {
+    "awaiting_perform_load": {
+      "file": "fixtures/flows/terminal-fact.builder.ts",
+      "line": 11
+    },
+    "completed": {
+      "file": "fixtures/flows/terminal-fact.builder.ts",
+      "line": 16
+    },
+    "started": null
+  },
+  "steps": {
+    "load": {
+      "file": "fixtures/flows/terminal-fact.builder.ts",
+      "line": 11
+    }
+  },
+  "version": "1.0.0"
+}

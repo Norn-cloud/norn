@@ -1,0 +1,20 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [],
+  "uses": [
+    "7:23 @norn/authoring#Norn.interfaceType",
+    "11:15 effect/Schema#Struct",
+    "11:38 @norn/authoring#Norn.decimal",
+    "11:65 @norn/authoring#Norn.ref",
+    "14:22 @norn/authoring#Norn.type",
+    "19:15 effect/Schema#Struct",
+    "20:15 effect/Schema#String",
+    "21:12 @norn/authoring#Norn.decimal",
+    "22:15 @norn/authoring#Norn.ref",
+    "23:16 effect/Schema#NullOr",
+    "23:30 @norn/authoring#Norn.timestamp",
+    "24:13 effect/Schema#NullOr",
+    "24:27 @norn/authoring#Norn.date",
+    "25:13 effect/Schema#Literals"
+  ]
+}

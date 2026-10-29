@@ -1,0 +1,114 @@
+{
+  "fixture_version": "norn.verification.quantity-ledger.v1",
+  "semantics": {
+    "amount": "signed exact integer in the declared unit scale",
+    "balance_key": "unit_id plus balance_layer",
+    "balanced": "sum(amount) equals zero independently for every balance_key",
+    "conversion": "cross-unit conversion requires separately balanced legs for each unit"
+  },
+  "cases": [
+    {
+      "id": "balanced-two-leg-usd",
+      "expect": "accept",
+      "legs": [
+        { "account": "cash", "unit_id": "USD-cent", "layer": "posted", "amount": -10000 },
+        { "account": "revenue", "unit_id": "USD-cent", "layer": "posted", "amount": 10000 }
+      ]
+    },
+    {
+      "id": "unbalanced-one-unit",
+      "expect": "reject_unbalanced",
+      "legs": [
+        { "account": "cash", "unit_id": "USD-cent", "layer": "posted", "amount": -10000 },
+        { "account": "revenue", "unit_id": "USD-cent", "layer": "posted", "amount": 9999 }
+      ]
+    },
+    {
+      "id": "equal-numbers-cross-unit-not-balanced",
+      "expect": "reject_unbalanced",
+      "legs": [
+        { "account": "inventory", "unit_id": "kg-mg", "layer": "posted", "amount": -1000000 },
+        { "account": "payable", "unit_id": "USD-cent", "layer": "posted", "amount": 1000000 }
+      ]
+    },
+    {
+      "id": "balanced-conversion-evidence",
+      "expect": "accept",
+      "legs": [
+        { "account": "usd_source", "unit_id": "USD-cent", "layer": "posted", "amount": -10000 },
+        { "account": "usd_conversion", "unit_id": "USD-cent", "layer": "posted", "amount": 10000 },
+        { "account": "eur_conversion", "unit_id": "EUR-cent", "layer": "posted", "amount": -9200 },
+        { "account": "eur_target", "unit_id": "EUR-cent", "layer": "posted", "amount": 9200 }
+      ]
+    },
+    {
+      "id": "layers-balance-independently",
+      "expect": "reject_unbalanced",
+      "legs": [
+        { "account": "source", "unit_id": "item-each", "layer": "pending", "amount": -10 },
+        { "account": "target", "unit_id": "item-each", "layer": "posted", "amount": 10 }
+      ]
+    },
+    {
+      "id": "zero-leg-does-not-repair-residual",
+      "expect": "reject_unbalanced",
+      "legs": [
+        { "account": "source", "unit_id": "hour-ms", "layer": "posted", "amount": -3600000 },
+        { "account": "target", "unit_id": "hour-ms", "layer": "posted", "amount": 3599999 },
+        { "account": "rounding", "unit_id": "hour-ms", "layer": "posted", "amount": 0 }
+      ]
+    }
+  ],
+  "sequence_cases": [
+    {
+      "id": "reserve-post-once",
+      "commands": [
+        { "type": "reserve", "transition_id": "t-1", "amount": 10 },
+        { "type": "post", "transition_id": "t-2", "amount": 10 },
+        { "type": "post", "transition_id": "t-3", "amount": 10 }
+      ],
+      "results": ["accepted", "accepted", "reject_terminal"]
+    },
+    {
+      "id": "idempotent-reserve-retry",
+      "commands": [
+        { "type": "reserve", "transition_id": "t-4", "amount": 5 },
+        { "type": "reserve", "transition_id": "t-4", "amount": 5 }
+      ],
+      "results": ["accepted", "same_result_no_effect"]
+    },
+    {
+      "id": "identity-payload-mismatch",
+      "commands": [
+        { "type": "reserve", "transition_id": "t-5", "amount": 5 },
+        { "type": "reserve", "transition_id": "t-5", "amount": 6 }
+      ],
+      "results": ["accepted", "reject_idempotency_mismatch"]
+    },
+    {
+      "id": "partial-post-remainder-explicit",
+      "commands": [
+        { "type": "reserve", "transition_id": "t-6", "amount": 10 },
+        { "type": "post", "transition_id": "t-7", "amount": 6 }
+      ],
+      "results": ["accepted", "accepted_with_remainder_4"]
+    },
+    {
+      "id": "post-after-expiry",
+      "commands": [
+        { "type": "reserve", "transition_id": "t-8", "amount": 7 },
+        { "type": "expire", "transition_id": "t-9", "amount": 0 },
+        { "type": "post", "transition_id": "t-10", "amount": 7 }
+      ],
+      "results": ["accepted", "accepted", "reject_terminal"]
+    },
+    {
+      "id": "checked-overflow-rejects",
+      "pre_state": { "posted": 9223372036854775807 },
+      "commands": [
+        { "type": "direct_post", "transition_id": "t-11", "amount": 1 }
+      ],
+      "results": ["reject_overflow_no_effect"]
+    }
+  ]
+}

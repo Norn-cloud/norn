@@ -1,0 +1,11 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "10:7",
+      "end": "10:26",
+      "construct": "Effect.filterOrFail"
+    }
+  ]
+}

@@ -1,0 +1,173 @@
+{
+  "artifacts": [
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.property-types.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "property-types",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "propertyTypes": [
+          {
+            "name": "crm.memo_text",
+            "type": {
+              "kind": "text"
+            },
+            "constraints": {
+              "nullable": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.Party.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "Party",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "crm.Party",
+          "properties": [
+            {
+              "id": "tier",
+              "type": {
+                "kind": "text"
+              },
+              "default": "standard"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.Customer.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "Customer",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "crm.Customer",
+          "extends": "crm.Party",
+          "properties": [
+            {
+              "id": "display_name",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "memo",
+              "type": {
+                "kind": "ref",
+                "name": "crm.memo_text"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "acme.crm.Customer.extension",
+      "kind": "entity",
+      "namespace": "acme",
+      "name": "crm",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectTypeExtension": {
+          "namespace": "acme",
+          "target": "crm.Customer",
+          "properties": [
+            {
+              "id": "acme__shelf_label",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "coverage": [
+    {
+      "mappingArtifactId": "erpnext.customer.mapping",
+      "mappingVersion": "0.1.0",
+      "source": {
+        "schemaId": "erpnext.schema",
+        "entity": "Customer",
+        "fields": [
+          "customer_name"
+        ]
+      },
+      "target": "crm.Customer",
+      "members": [
+        {
+          "property": "display_name",
+          "sourceFields": [
+            "customer_name"
+          ]
+        }
+      ],
+      "ignoredSourceFields": []
+    }
+  ]
+}

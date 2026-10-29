@@ -1,0 +1,2476 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WidgetPayload",
+  "type": "object",
+  "properties": {
+    "actionBindings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WidgetActionBinding"
+      }
+    },
+    "dataDependencies": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WidgetDataDependency"
+      }
+    },
+    "extensions": {
+      "description": "Reserved extension slots keyed by `<name>/<semver>`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WidgetPermission"
+      }
+    },
+    "projectionHints": {
+      "$ref": "#/$defs/WidgetProjectionHints"
+    },
+    "proposal": {
+      "$ref": "#/$defs/ProposalMetadata"
+    },
+    "ux": {
+      "$ref": "#/$defs/WidgetUx"
+    },
+    "viewStates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WidgetViewState"
+      }
+    },
+    "widgetId": {
+      "type": "string"
+    },
+    "widgetVersion": {
+      "$ref": "#/$defs/IrVersion01"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "widgetVersion",
+    "widgetId",
+    "dataDependencies",
+    "viewStates",
+    "actionBindings",
+    "permissions"
+  ],
+  "$defs": {
+    "ArtifactRef": {
+      "description": "A pinned reference to an artifact.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Artifact identity.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Exact artifact version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version"
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "LocaleText": {
+      "description": "Locale-keyed user-facing text.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "PropertyRef": {
+      "description": "A property on a resolved data binding.",
+      "type": "object",
+      "properties": {
+        "bindingId": {
+          "description": "Data binding whose object type owns the property.",
+          "type": "string"
+        },
+        "propertyId": {
+          "description": "Property id on the binding's object type.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "bindingId",
+        "propertyId"
+      ]
+    },
+    "ProposalActor": {
+      "description": "Who proposed a definition.",
+      "type": "string",
+      "enum": [
+        "agent",
+        "user"
+      ]
+    },
+    "ProposalMetadata": {
+      "description": "Preview-proposal metadata carried by agent- or user-proposed connector and\nwidget definitions.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ProposalMode"
+        },
+        "proposedBy": {
+          "$ref": "#/$defs/ProposalActor"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "sourceArtifactId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "mode",
+        "proposedBy"
+      ]
+    },
+    "ProposalMode": {
+      "description": "How a proposal may be applied. Only previews exist today.",
+      "type": "string",
+      "enum": [
+        "preview"
+      ]
+    },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    },
+    "WidgetActionBinding": {
+      "description": "A widget control bound to a Norn action (never a raw mutation).",
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string"
+        },
+        "actionVersion": {
+          "description": "Exact action version; the dependency check defaults it to `0.1.0`.",
+          "type": "string"
+        },
+        "bindingId": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "requiredPermissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "bindingId",
+        "actionId",
+        "label",
+        "requiredPermissions"
+      ]
+    },
+    "WidgetActionConfirmation": {
+      "description": "Action severity and confirmation strength.",
+      "type": "object",
+      "properties": {
+        "message": {
+          "description": "Optional localized explanation of the action's consequences.",
+          "$ref": "#/$defs/LocaleText"
+        },
+        "phrase": {
+          "description": "Required localized phrase for typed confirmation; absent otherwise.",
+          "$ref": "#/$defs/LocaleText"
+        },
+        "severity": {
+          "description": "Impact if the action is executed.",
+          "$ref": "#/$defs/WidgetActionSeverity"
+        },
+        "strength": {
+          "description": "User confirmation required before execution.",
+          "$ref": "#/$defs/WidgetConfirmationStrength"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "severity",
+        "strength"
+      ]
+    },
+    "WidgetActionLocation": {
+      "description": "Supported action locations.",
+      "oneOf": [
+        {
+          "description": "Page toolbar.",
+          "type": "string",
+          "const": "toolbar"
+        },
+        {
+          "description": "A row in a list.",
+          "type": "string",
+          "const": "row"
+        },
+        {
+          "description": "A selected set of list rows.",
+          "type": "string",
+          "const": "selection"
+        },
+        {
+          "description": "Object detail surface.",
+          "type": "string",
+          "const": "detail"
+        },
+        {
+          "description": "Form footer.",
+          "type": "string",
+          "const": "form_footer"
+        }
+      ]
+    },
+    "WidgetActionPlacement": {
+      "description": "A placement of a bound action in a page.",
+      "type": "object",
+      "properties": {
+        "bindingId": {
+          "description": "Action binding to place.",
+          "type": "string"
+        },
+        "confirmation": {
+          "description": "Required severity and confirmation strength for this placement.",
+          "$ref": "#/$defs/WidgetActionConfirmation"
+        },
+        "enabledWhen": {
+          "description": "Boolean condition required to enable the placement.",
+          "$ref": "#/$defs/ZenCondition"
+        },
+        "formId": {
+          "description": "Opening this form defers invocation until its explicit submit.",
+          "type": "string"
+        },
+        "group": {
+          "description": "Optional group label for related actions.",
+          "type": "string"
+        },
+        "handlers": {
+          "description": "Effects handled specifically by this invocation.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetEffectHandler"
+          }
+        },
+        "label": {
+          "description": "Localized text shown on the action control.",
+          "$ref": "#/$defs/LocaleText"
+        },
+        "location": {
+          "description": "Page location that hosts the action.",
+          "$ref": "#/$defs/WidgetActionLocation"
+        },
+        "order": {
+          "description": "Order within the location.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "placementId": {
+          "description": "Stable placement id.",
+          "type": "string"
+        },
+        "retry": {
+          "description": "Whether this placement exposes a retry affordance.",
+          "type": "boolean"
+        },
+        "selectionBindingId": {
+          "description": "List binding that provides a selected row or selection set.",
+          "type": "string"
+        },
+        "selectionInputMapping": {
+          "description": "Selected values mapped to the action input members.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ZenExpression"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "placementId",
+        "bindingId",
+        "label",
+        "location",
+        "order",
+        "selectionInputMapping",
+        "confirmation"
+      ]
+    },
+    "WidgetActionSeverity": {
+      "description": "Impact category of an action.",
+      "oneOf": [
+        {
+          "description": "Safe, routine action.",
+          "type": "string",
+          "const": "safe"
+        },
+        {
+          "description": "Action should be confirmed.",
+          "type": "string",
+          "const": "confirm"
+        },
+        {
+          "description": "Destructive action.",
+          "type": "string",
+          "const": "destructive"
+        },
+        {
+          "description": "Irreversible action.",
+          "type": "string",
+          "const": "irreversible"
+        }
+      ]
+    },
+    "WidgetApp": {
+      "description": "The application shell for a set of pages.",
+      "type": "object",
+      "properties": {
+        "appId": {
+          "description": "Stable app id.",
+          "type": "string"
+        },
+        "entryPageId": {
+          "description": "The page opened when the app has no more specific route.",
+          "type": "string"
+        },
+        "navigationItemIds": {
+          "description": "Navigation items in display order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pageRefs": {
+          "description": "Pages this app may route to.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetPageRef"
+          }
+        },
+        "routes": {
+          "description": "Typed path-to-page routes.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetRoute"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "appId",
+        "entryPageId",
+        "pageRefs",
+        "routes",
+        "navigationItemIds"
+      ]
+    },
+    "WidgetComponent": {
+      "description": "Supported page components.",
+      "oneOf": [
+        {
+          "description": "A named section or tab with explicit field inclusion and order.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "section"
+            },
+            "section": {
+              "$ref": "#/$defs/WidgetSection"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "section"
+          ]
+        },
+        {
+          "description": "A bounded object list.",
+          "type": "object",
+          "properties": {
+            "dataBindingId": {
+              "type": "string"
+            },
+            "fields": {
+              "description": "Fields explicitly included in each row.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PropertyRef"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "list"
+            },
+            "selection": {
+              "description": "Selection cardinality exposed to actions and record-value bindings.",
+              "$ref": "#/$defs/WidgetSelectionMode"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "dataBindingId",
+            "fields",
+            "selection"
+          ]
+        },
+        {
+          "description": "One object detail view.",
+          "type": "object",
+          "properties": {
+            "dataBindingId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "detail"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "dataBindingId"
+          ]
+        },
+        {
+          "description": "A dialog scope for in-flight actions and their outcomes.",
+          "type": "object",
+          "properties": {
+            "bindingId": {
+              "description": "Action binding whose pending invocation makes this dialog blocking.",
+              "type": "string"
+            },
+            "blocking": {
+              "description": "Whether dismissal is disabled while the bound command is pending.",
+              "type": "boolean"
+            },
+            "dismissalMethods": {
+              "description": "Declared ways to leave a terminal dialog state.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/WidgetDismissalMethod"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "dialog"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "blocking"
+          ]
+        },
+        {
+          "description": "A declared form.",
+          "type": "object",
+          "properties": {
+            "formId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "form"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "formId"
+          ]
+        },
+        {
+          "description": "An editable, bounded ordered child collection owned by a form.",
+          "type": "object",
+          "properties": {
+            "collectionId": {
+              "description": "Owned link id declared by the form action's pinned entity.",
+              "type": "string"
+            },
+            "dataBindingId": {
+              "description": "Authoritative traversal snapshot for edits; omitted for a create form.",
+              "type": "string"
+            },
+            "fieldIds": {
+              "description": "Field presentations rendered for every row.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "formId": {
+              "description": "Form whose submit action owns the parent and row mutations.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "child_grid"
+            },
+            "label": {
+              "description": "Localized label used as the grid's accessible region and heading.",
+              "$ref": "#/$defs/LocaleText"
+            },
+            "maxRows": {
+              "description": "Maximum row count, checked against the owned collection declaration.",
+              "$ref": "#/$defs/WholeNumber"
+            },
+            "orderingKey": {
+              "description": "Owned collection ordering property copied for renderer ordering; checker proves it matches EntityIR.",
+              "type": "string"
+            },
+            "rowOpsInputName": {
+              "description": "Action input member populated by this grid's ordered row operations.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "formId",
+            "label",
+            "collectionId",
+            "orderingKey",
+            "rowOpsInputName",
+            "maxRows",
+            "fieldIds"
+          ]
+        },
+        {
+          "description": "One explicitly included presentation, including action-only form inputs.",
+          "type": "object",
+          "properties": {
+            "fieldId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "field"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "fieldId"
+          ]
+        },
+        {
+          "description": "An action placement.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "action"
+            },
+            "placementId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "placementId"
+          ]
+        },
+        {
+          "description": "A navigation item.",
+          "type": "object",
+          "properties": {
+            "itemId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "navigation"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "itemId"
+          ]
+        },
+        {
+          "description": "An exact page of a pinned widget artifact composed as a baseline.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "composition"
+            },
+            "pageId": {
+              "type": "string"
+            },
+            "widget": {
+              "$ref": "#/$defs/ArtifactRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "widget",
+            "pageId"
+          ]
+        }
+      ]
+    },
+    "WidgetConfirmationStrength": {
+      "description": "Confirmation interaction.",
+      "oneOf": [
+        {
+          "description": "No confirmation.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "A click or equivalent explicit confirmation.",
+          "type": "string",
+          "const": "click"
+        },
+        {
+          "description": "Typed confirmation phrase.",
+          "type": "string",
+          "const": "typed"
+        }
+      ]
+    },
+    "WidgetConflictBehavior": {
+      "description": "Optimistic edit conflict behavior.",
+      "oneOf": [
+        {
+          "description": "Reject the submission and retain the draft for review.",
+          "type": "string",
+          "const": "reject_and_retain_draft"
+        }
+      ]
+    },
+    "WidgetContextParam": {
+      "description": "One declared parameter in a page's context record.",
+      "type": "object",
+      "properties": {
+        "paramId": {
+          "description": "Stable parameter id.",
+          "type": "string"
+        },
+        "required": {
+          "description": "Whether the host must supply the parameter.",
+          "type": "boolean"
+        },
+        "runtimeKeyOf": {
+          "description": "Marks this required text parameter as the runtime object key for one\nexact entity artifact.",
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "type": {
+          "description": "Scalar type used to derive the page context record for ZEN checks.",
+          "$ref": "#/$defs/WidgetValueType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "paramId",
+        "type",
+        "required"
+      ]
+    },
+    "WidgetDataBinding": {
+      "description": "One exact object binding and its bounded query.",
+      "type": "object",
+      "properties": {
+        "bindingId": {
+          "description": "Stable binding id.",
+          "type": "string"
+        },
+        "object": {
+          "description": "Exact entity artifact whose object type is read.",
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "query": {
+          "description": "Read mode and all query bounds.",
+          "$ref": "#/$defs/WidgetDataQuery"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "bindingId",
+        "object",
+        "query"
+      ]
+    },
+    "WidgetDataDependency": {
+      "description": "One object read a widget depends on.",
+      "type": "object",
+      "properties": {
+        "dependencyId": {
+          "type": "string"
+        },
+        "objectKind": {
+          "type": "string"
+        },
+        "query": {
+          "$ref": "#/$defs/WidgetQuery"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "dependencyId",
+        "objectKind",
+        "query"
+      ]
+    },
+    "WidgetDataQuery": {
+      "description": "Closed read query forms admitted by Widget UX.",
+      "oneOf": [
+        {
+          "description": "Read a bounded page of objects.",
+          "type": "object",
+          "properties": {
+            "filters": {
+              "description": "Filters over declared properties.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/WidgetFilter"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "object_list"
+            },
+            "page": {
+              "description": "Required page size and hard maximum.",
+              "$ref": "#/$defs/WidgetPageBounds"
+            },
+            "sort": {
+              "description": "Sort keys, in priority order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/WidgetSort"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "filters",
+            "sort",
+            "page"
+          ]
+        },
+        {
+          "description": "Read one object selected by all members of one declared identity key.",
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/WidgetKeyValue"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "object_detail"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key"
+          ]
+        },
+        {
+          "description": "Traverse one declared EntityIR v2 link from an earlier binding.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "link_traversal"
+            },
+            "linkId": {
+              "description": "Link id on the source object's EntityIR v2 definition.",
+              "type": "string"
+            },
+            "maxDepth": {
+              "description": "Maximum number of links to follow.",
+              "$ref": "#/$defs/WholeNumber"
+            },
+            "maxRows": {
+              "description": "Hard cap on returned objects.",
+              "$ref": "#/$defs/WholeNumber"
+            },
+            "page": {
+              "description": "Required page size and hard maximum.",
+              "$ref": "#/$defs/WidgetPageBounds"
+            },
+            "sourceBindingId": {
+              "description": "Source binding whose object owns the link.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "sourceBindingId",
+            "linkId",
+            "maxDepth",
+            "maxRows",
+            "page"
+          ]
+        },
+        {
+          "description": "Read one object by its runtime key, supplied by a required text page\nparameter marked with the binding's exact `runtimeKeyOf` entity.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_runtime_detail"
+            },
+            "pageId": {
+              "description": "Page owning the runtime-key parameter.",
+              "type": "string"
+            },
+            "parameterId": {
+              "description": "Required, entity-marked runtime-key parameter.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pageId",
+            "parameterId"
+          ]
+        }
+      ]
+    },
+    "WidgetDismissalMethod": {
+      "description": "Closed dismissal methods supported by a dialog component.",
+      "oneOf": [
+        {
+          "description": "A visible close control.",
+          "type": "string",
+          "const": "visible_close"
+        },
+        {
+          "description": "Tapping the backdrop.",
+          "type": "string",
+          "const": "scrim"
+        },
+        {
+          "description": "Swiping the dialog away.",
+          "type": "string",
+          "const": "swipe"
+        },
+        {
+          "description": "Pressing Escape.",
+          "type": "string",
+          "const": "escape"
+        }
+      ]
+    },
+    "WidgetEffectHandler": {
+      "description": "One closed UI-law handler provided by a component or action invocation.",
+      "oneOf": [
+        {
+          "description": "A confirmation guard for an irreversible effect.",
+          "type": "object",
+          "properties": {
+            "confirmation": {
+              "$ref": "#/$defs/WidgetActionConfirmation"
+            },
+            "kind": {
+              "type": "string",
+              "const": "confirm_guard"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "confirmation"
+          ]
+        },
+        {
+          "description": "A view that presents pending and terminal outcomes for an invocation.",
+          "type": "object",
+          "properties": {
+            "currencyRefs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "outcome_surface"
+            },
+            "states": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/WidgetOutcomeState"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "states"
+          ]
+        },
+        {
+          "description": "A view that handles declared error codes.",
+          "type": "object",
+          "properties": {
+            "codes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "error_banner"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "codes"
+          ]
+        },
+        {
+          "description": "A view that handles declared result codes.",
+          "type": "object",
+          "properties": {
+            "codes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "result_surface"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "codes"
+          ]
+        }
+      ]
+    },
+    "WidgetExpressionInputs": {
+      "description": "Explicit typed sources available under the ZEN `input` record.",
+      "type": "object",
+      "properties": {
+        "contextPageId": {
+          "description": "A page whose declared context parameters supply `input.context`.",
+          "type": "string"
+        },
+        "draftFormId": {
+          "description": "A form whose explicit action input members supply `input.draft`.",
+          "type": "string"
+        },
+        "recordBindingId": {
+          "description": "A data binding that supplies `input.record`.",
+          "type": "string"
+        },
+        "rowGridId": {
+          "description": "ChildGrid node whose current stable row supplies `input.row` in that\ngrid's child-row field conditions only.",
+          "type": "string"
+        },
+        "selectionBindingId": {
+          "description": "A list binding that supplies selected records as `input.selection`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WidgetFieldControl": {
+      "description": "Closed set of field controls.",
+      "oneOf": [
+        {
+          "description": "Single-line text entry.",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "Multi-line text entry.",
+          "type": "string",
+          "const": "text_area"
+        },
+        {
+          "description": "Numeric entry.",
+          "type": "string",
+          "const": "number"
+        },
+        {
+          "description": "Calendar date entry.",
+          "type": "string",
+          "const": "date"
+        },
+        {
+          "description": "Zoned date and time entry.",
+          "type": "string",
+          "const": "date_time"
+        },
+        {
+          "description": "Boolean checkbox.",
+          "type": "string",
+          "const": "checkbox"
+        },
+        {
+          "description": "Closed option selector.",
+          "type": "string",
+          "const": "select"
+        },
+        {
+          "description": "Reference selector backed by an option query.",
+          "type": "string",
+          "const": "link"
+        },
+        {
+          "description": "Read-only value display.",
+          "type": "string",
+          "const": "display"
+        }
+      ]
+    },
+    "WidgetFieldFormat": {
+      "description": "Closed set of display-format hints.",
+      "oneOf": [
+        {
+          "description": "Plain text.",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "Integer.",
+          "type": "string",
+          "const": "integer"
+        },
+        {
+          "description": "Decimal.",
+          "type": "string",
+          "const": "decimal"
+        },
+        {
+          "description": "Currency.",
+          "type": "string",
+          "const": "currency"
+        },
+        {
+          "description": "Percentage.",
+          "type": "string",
+          "const": "percent"
+        },
+        {
+          "description": "Calendar date.",
+          "type": "string",
+          "const": "date"
+        },
+        {
+          "description": "Date and time.",
+          "type": "string",
+          "const": "date_time"
+        },
+        {
+          "description": "Boolean.",
+          "type": "string",
+          "const": "boolean"
+        },
+        {
+          "description": "Accepted metric buckets, displayed without calculating business metrics.\nOnly valid on display presentations bound to a json-ext property.",
+          "type": "string",
+          "const": "metric_buckets"
+        }
+      ]
+    },
+    "WidgetFieldPresentation": {
+      "description": "A localized presentation of one property or explicitly included form input.",
+      "type": "object",
+      "properties": {
+        "control": {
+          "description": "Control selected for the property's value type.",
+          "$ref": "#/$defs/WidgetFieldControl"
+        },
+        "fieldId": {
+          "description": "Stable field presentation id.",
+          "type": "string"
+        },
+        "format": {
+          "description": "Optional display format hint.",
+          "$ref": "#/$defs/WidgetFieldFormat"
+        },
+        "help": {
+          "description": "Optional localized help text.",
+          "$ref": "#/$defs/LocaleText"
+        },
+        "label": {
+          "description": "Localized visible label.",
+          "$ref": "#/$defs/LocaleText"
+        },
+        "optionQueryBindingId": {
+          "description": "Data binding that supplies options for a select or link control.",
+          "type": "string"
+        },
+        "readOnlyWhen": {
+          "description": "Whether this field is read-only.",
+          "$ref": "#/$defs/ZenCondition"
+        },
+        "requiredWhen": {
+          "description": "Whether this field is required.",
+          "$ref": "#/$defs/ZenCondition"
+        },
+        "target": {
+          "description": "Explicit object property or included form input presented by this field.",
+          "$ref": "#/$defs/WidgetFieldTarget"
+        },
+        "visibleWhen": {
+          "description": "Whether this field is visible.",
+          "$ref": "#/$defs/ZenCondition"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fieldId",
+        "target",
+        "label",
+        "control"
+      ]
+    },
+    "WidgetFieldTarget": {
+      "description": "The authoritative source of a field's value and type.",
+      "oneOf": [
+        {
+          "description": "A resolved property on an exact data binding.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "property"
+            },
+            "property": {
+              "$ref": "#/$defs/PropertyRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property"
+          ]
+        },
+        {
+          "description": "One included ActionIR input of a form, with an optional typed prefill.",
+          "type": "object",
+          "properties": {
+            "formId": {
+              "description": "Form whose submit action owns this input.",
+              "type": "string"
+            },
+            "initial": {
+              "description": "Property whose current record value initializes the local draft.",
+              "$ref": "#/$defs/PropertyRef"
+            },
+            "inputName": {
+              "description": "Input member explicitly included by `WidgetForm.inputNames`.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "form_input"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "formId",
+            "inputName"
+          ]
+        },
+        {
+          "description": "One property nested in the parent-values object owned by a parent+rows form.",
+          "type": "object",
+          "properties": {
+            "formId": {
+              "description": "Form whose submit action owns the parent values.",
+              "type": "string"
+            },
+            "inputName": {
+              "description": "Included ActionIR object input populated by this property.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "parent_property"
+            },
+            "propertyId": {
+              "description": "Property on the action's pinned parent entity.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "formId",
+            "inputName",
+            "propertyId"
+          ]
+        },
+        {
+          "description": "One editable property on each child row in an ordered grid.",
+          "type": "object",
+          "properties": {
+            "collectionId": {
+              "description": "Owned link id declared by the form action's pinned entity.",
+              "type": "string"
+            },
+            "formId": {
+              "description": "Form whose submit action owns the child collection.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "child_row_property"
+            },
+            "propertyId": {
+              "description": "Property on the child entity reached by the grid's traversal.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "formId",
+            "collectionId",
+            "propertyId"
+          ]
+        }
+      ]
+    },
+    "WidgetFilter": {
+      "description": "One property filter.",
+      "type": "object",
+      "properties": {
+        "operator": {
+          "description": "Closed comparison operation.",
+          "$ref": "#/$defs/WidgetFilterOperator"
+        },
+        "property": {
+          "description": "Property checked by the filter.",
+          "$ref": "#/$defs/PropertyRef"
+        },
+        "value": {
+          "description": "Literal or declared page context value checked against the property type.",
+          "$ref": "#/$defs/WidgetFilterValue"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "operator",
+        "value"
+      ]
+    },
+    "WidgetFilterOperator": {
+      "description": "Supported property filter operators.",
+      "oneOf": [
+        {
+          "description": "Equal.",
+          "type": "string",
+          "const": "eq"
+        },
+        {
+          "description": "Not equal.",
+          "type": "string",
+          "const": "neq"
+        },
+        {
+          "description": "Less than.",
+          "type": "string",
+          "const": "lt"
+        },
+        {
+          "description": "Less than or equal.",
+          "type": "string",
+          "const": "lte"
+        },
+        {
+          "description": "Greater than.",
+          "type": "string",
+          "const": "gt"
+        },
+        {
+          "description": "Greater than or equal.",
+          "type": "string",
+          "const": "gte"
+        },
+        {
+          "description": "A member of the supplied set.",
+          "type": "string",
+          "const": "in"
+        }
+      ]
+    },
+    "WidgetFilterValue": {
+      "description": "A filter value.",
+      "oneOf": [
+        {
+          "description": "A JSON literal, checked against the referenced property type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "literal"
+            },
+            "value": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "description": "A typed parameter declared by a page.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "context_parameter"
+            },
+            "pageId": {
+              "description": "Page declaring the parameter.",
+              "type": "string"
+            },
+            "parameterId": {
+              "description": "Parameter declared by that page.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pageId",
+            "parameterId"
+          ]
+        },
+        {
+          "description": "Value on the binding's current detail record, row, or single selection.\nThe reserved property id `$key` denotes the authoritative runtime object key.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "record"
+            },
+            "property": {
+              "$ref": "#/$defs/PropertyRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property"
+          ]
+        }
+      ]
+    },
+    "WidgetForm": {
+      "description": "A form that submits through a declared Norn action binding.",
+      "type": "object",
+      "properties": {
+        "dataBindingId": {
+          "description": "Read context for typed prefill; required object detail for edit mode.",
+          "type": "string"
+        },
+        "formId": {
+          "description": "Stable form id.",
+          "type": "string"
+        },
+        "inputNames": {
+          "description": "ActionIR input members explicitly included by this form. This includes\naction-only values, such as a reason or note, that are not entity fields.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mode": {
+          "description": "Whether the form creates an object, edits one, or supplies action input.",
+          "$ref": "#/$defs/WidgetFormMode"
+        },
+        "submit": {
+          "description": "Presentation and confirmation for the form's own effectful submit.",
+          "$ref": "#/$defs/WidgetFormSubmit"
+        },
+        "submitBindingId": {
+          "description": "Action binding used to submit this form.",
+          "type": "string"
+        },
+        "versionConflictBinding": {
+          "description": "Version field and conflict behavior for optimistic edit submission.",
+          "$ref": "#/$defs/WidgetVersionConflictBinding"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "formId",
+        "mode",
+        "inputNames",
+        "submitBindingId",
+        "submit"
+      ]
+    },
+    "WidgetFormMode": {
+      "description": "Form modes.",
+      "oneOf": [
+        {
+          "description": "Create input submitted through an ActionIR action.",
+          "type": "string",
+          "const": "create"
+        },
+        {
+          "description": "Edit input for a bound record, submitted through an ActionIR action.",
+          "type": "string",
+          "const": "edit"
+        },
+        {
+          "description": "Input to an action unrelated to direct object create or edit.",
+          "type": "string",
+          "const": "action_input"
+        }
+      ]
+    },
+    "WidgetFormSubmit": {
+      "description": "The single submit control owned by a form.",
+      "type": "object",
+      "properties": {
+        "confirmation": {
+          "description": "Confirmation applied when submitting, after input validation.",
+          "$ref": "#/$defs/WidgetActionConfirmation"
+        },
+        "handlers": {
+          "description": "Effects handled specifically by the submit invocation.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetEffectHandler"
+          }
+        },
+        "label": {
+          "description": "Localized submit label.",
+          "$ref": "#/$defs/LocaleText"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "confirmation"
+      ]
+    },
+    "WidgetKeyValue": {
+      "description": "One member of the exact EntityIR identity key selecting an object detail.",
+      "type": "object",
+      "properties": {
+        "propertyId": {
+          "description": "Property id in the bound entity's declared identity key.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Literal or typed page context value for this key member.",
+          "$ref": "#/$defs/WidgetFilterValue"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "propertyId",
+        "value"
+      ]
+    },
+    "WidgetLayout": {
+      "description": "Projection layouts.",
+      "type": "string",
+      "enum": [
+        "table",
+        "detail",
+        "kanban",
+        "form",
+        "dashboard"
+      ]
+    },
+    "WidgetNativeProjection": {
+      "description": "Host-native projections available to Widget UX.",
+      "oneOf": [
+        {
+          "description": "Inspect an object and its declared properties.",
+          "type": "string",
+          "const": "object_inspector"
+        },
+        {
+          "description": "Read the object's execution history.",
+          "type": "string",
+          "const": "history"
+        },
+        {
+          "description": "Explain the object's decision provenance.",
+          "type": "string",
+          "const": "why"
+        },
+        {
+          "description": "Inspect the capabilities required for the object.",
+          "type": "string",
+          "const": "permissions"
+        }
+      ]
+    },
+    "WidgetNavigationDestination": {
+      "description": "Supported navigation destinations.",
+      "oneOf": [
+        {
+          "description": "A page declared in this UX contract.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "page"
+            },
+            "pageId": {
+              "type": "string"
+            },
+            "parameters": {
+              "description": "Values supplied to the destination page's declared context.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/WidgetFilterValue"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pageId",
+            "parameters"
+          ]
+        },
+        {
+          "description": "A typed object destination with its exact entity and read binding.",
+          "type": "object",
+          "properties": {
+            "dataBindingId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "object"
+            },
+            "object": {
+              "$ref": "#/$defs/ArtifactRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "object",
+            "dataBindingId"
+          ]
+        },
+        {
+          "description": "A finite host-native projection over the exact bound object.",
+          "type": "object",
+          "properties": {
+            "dataBindingId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "native_projection"
+            },
+            "projection": {
+              "$ref": "#/$defs/WidgetNativeProjection"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "projection",
+            "dataBindingId"
+          ]
+        }
+      ]
+    },
+    "WidgetNavigationItem": {
+      "description": "A typed navigation item with an authorization requirement.",
+      "type": "object",
+      "properties": {
+        "destination": {
+          "description": "Closed destination kind.",
+          "$ref": "#/$defs/WidgetNavigationDestination"
+        },
+        "itemId": {
+          "description": "Stable navigation item id.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Localized item label.",
+          "$ref": "#/$defs/LocaleText"
+        },
+        "requiredCapability": {
+          "description": "Capability required to show or follow the item; never a grant.",
+          "type": "string"
+        },
+        "visibleWhen": {
+          "description": "Boolean condition required to show the item.",
+          "$ref": "#/$defs/ZenCondition"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "itemId",
+        "label",
+        "destination",
+        "requiredCapability"
+      ]
+    },
+    "WidgetNode": {
+      "description": "One node in the page component tree.",
+      "type": "object",
+      "properties": {
+        "children": {
+          "description": "Child components in presentation order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetNode"
+          }
+        },
+        "component": {
+          "description": "Closed component kind and its typed reference.",
+          "$ref": "#/$defs/WidgetComponent"
+        },
+        "handlers": {
+          "description": "Effects handled by this component for actions in its subtree.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetEffectHandler"
+          }
+        },
+        "nodeId": {
+          "description": "Stable id unique within the UX contract.",
+          "type": "string"
+        },
+        "semanticId": {
+          "description": "Optional id used by bounded customization overrides.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "nodeId",
+        "component",
+        "children"
+      ]
+    },
+    "WidgetOutcomeState": {
+      "description": "Outcome states an action surface may render.",
+      "oneOf": [
+        {
+          "description": "The action is still pending.",
+          "type": "string",
+          "const": "pending"
+        },
+        {
+          "description": "The action completed successfully.",
+          "type": "string",
+          "const": "success"
+        },
+        {
+          "description": "The action failed with a known failure.",
+          "type": "string",
+          "const": "failure"
+        },
+        {
+          "description": "The external outcome cannot currently be established.",
+          "type": "string",
+          "const": "unknown_outcome"
+        }
+      ]
+    },
+    "WidgetOverride": {
+      "description": "One bounded override of a composed baseline component.",
+      "type": "object",
+      "properties": {
+        "targetSemanticId": {
+          "description": "Existing component semantic id; orphan targets are checker errors.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Closed customization operation.",
+          "$ref": "#/$defs/WidgetOverrideValue"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "targetSemanticId",
+        "value"
+      ]
+    },
+    "WidgetOverrideValue": {
+      "description": "Bounded override vocabulary.",
+      "oneOf": [
+        {
+          "description": "Replace localized label text.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "label"
+            },
+            "value": {
+              "$ref": "#/$defs/LocaleText"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "description": "Change sibling order.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "order"
+            },
+            "value": {
+              "$ref": "#/$defs/WholeNumber"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "description": "Change grouping label.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "grouping"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "description": "Add or replace a visibility condition.",
+          "type": "object",
+          "properties": {
+            "condition": {
+              "$ref": "#/$defs/ZenCondition"
+            },
+            "kind": {
+              "type": "string",
+              "const": "visibility"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "condition"
+          ]
+        },
+        {
+          "description": "Select a supported control.",
+          "type": "object",
+          "properties": {
+            "control": {
+              "$ref": "#/$defs/WidgetFieldControl"
+            },
+            "kind": {
+              "type": "string",
+              "const": "control"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "control"
+          ]
+        },
+        {
+          "description": "Select an action placement by id.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "action_placement"
+            },
+            "placementId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "placementId"
+          ]
+        }
+      ]
+    },
+    "WidgetPage": {
+      "description": "One named page with typed context and a stable-id component tree.",
+      "type": "object",
+      "properties": {
+        "contextParams": {
+          "description": "Typed values supplied by routes or the host when opening this page.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetContextParam"
+          }
+        },
+        "name": {
+          "description": "Human-readable page name.",
+          "type": "string"
+        },
+        "pageId": {
+          "description": "Stable page id. “Page” is an interaction surface, not computed data.",
+          "type": "string"
+        },
+        "root": {
+          "description": "Root of the page component tree.",
+          "$ref": "#/$defs/WidgetNode"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pageId",
+        "name",
+        "contextParams",
+        "root"
+      ]
+    },
+    "WidgetPageBounds": {
+      "description": "A requested page size and the hard maximum the host must enforce.",
+      "type": "object",
+      "properties": {
+        "maxSize": {
+          "description": "Maximum page size, positive and enforced by the host.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "size": {
+          "description": "Requested page size, positive and no larger than `maxSize`.",
+          "$ref": "#/$defs/WholeNumber"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "size",
+        "maxSize"
+      ]
+    },
+    "WidgetPageRef": {
+      "description": "A reference to a page in this UX contract.",
+      "type": "object",
+      "properties": {
+        "pageId": {
+          "description": "Page id declared in `WidgetUx.pages`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pageId"
+      ]
+    },
+    "WidgetPermission": {
+      "description": "One permission needed to see a widget, with its reason.",
+      "type": "object",
+      "properties": {
+        "permission": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "permission",
+        "reason"
+      ]
+    },
+    "WidgetProjectionHints": {
+      "description": "Renderer and layout hints for widget projections.",
+      "type": "object",
+      "properties": {
+        "layout": {
+          "$ref": "#/$defs/WidgetLayout"
+        },
+        "renderer": {
+          "$ref": "#/$defs/WidgetRenderer"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "WidgetQuery": {
+      "description": "The read shape of a widget data dependency.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_list"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_detail"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "relation_traversal"
+            },
+            "relationKind": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "relationKind"
+          ]
+        }
+      ]
+    },
+    "WidgetRenderer": {
+      "description": "Projection renderers.",
+      "type": "string",
+      "enum": [
+        "react",
+        "openui",
+        "shadcn",
+        "native"
+      ]
+    },
+    "WidgetRoute": {
+      "description": "One route to a page.",
+      "type": "object",
+      "properties": {
+        "pageId": {
+          "description": "Page selected by this route.",
+          "type": "string"
+        },
+        "parameters": {
+          "description": "Route parameters mapped to declared page context parameters.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetRouteParameter"
+          }
+        },
+        "path": {
+          "description": "Route pattern interpreted by the host router.",
+          "type": "string"
+        },
+        "routeId": {
+          "description": "Stable route id.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "routeId",
+        "path",
+        "pageId",
+        "parameters"
+      ]
+    },
+    "WidgetRouteParameter": {
+      "description": "A route parameter mapped to one typed page context parameter.",
+      "type": "object",
+      "properties": {
+        "contextParameterId": {
+          "description": "Declared parameter on the destination page.",
+          "type": "string"
+        },
+        "routeParameter": {
+          "description": "Name captured from the route pattern.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "routeParameter",
+        "contextParameterId"
+      ]
+    },
+    "WidgetSection": {
+      "description": "A section or tab with explicitly included fields.",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "description": "Explicit property inclusion in presentation order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropertyRef"
+          }
+        },
+        "kind": {
+          "description": "Section or tab container.",
+          "$ref": "#/$defs/WidgetSectionKind"
+        },
+        "label": {
+          "description": "Localized heading.",
+          "$ref": "#/$defs/LocaleText"
+        },
+        "order": {
+          "description": "Order among sibling sections.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "sectionId": {
+          "description": "Stable section id.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sectionId",
+        "kind",
+        "label",
+        "fields",
+        "order"
+      ]
+    },
+    "WidgetSectionKind": {
+      "description": "Section container kind.",
+      "oneOf": [
+        {
+          "description": "A normal section.",
+          "type": "string",
+          "const": "section"
+        },
+        {
+          "description": "A tab.",
+          "type": "string",
+          "const": "tab"
+        }
+      ]
+    },
+    "WidgetSelectionMode": {
+      "description": "Selection cardinality exposed by a list component.",
+      "oneOf": [
+        {
+          "description": "The list exposes no selected records.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "At most one row may be selected; that row is the current record.",
+          "type": "string",
+          "const": "single"
+        },
+        {
+          "description": "A bounded set of rows may be selected.",
+          "type": "string",
+          "const": "multiple"
+        }
+      ]
+    },
+    "WidgetShellHandlers": {
+      "description": "Versioned handlers supplied by the rendered application shell.",
+      "type": "object",
+      "properties": {
+        "handlers": {
+          "description": "Shell handlers; only error and result handlers are valid here.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetEffectHandler"
+          }
+        },
+        "handlersVersion": {
+          "description": "Version of the closed shell handler set.",
+          "$ref": "#/$defs/IrVersion01"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "handlersVersion"
+      ]
+    },
+    "WidgetSort": {
+      "description": "One property sort key.",
+      "type": "object",
+      "properties": {
+        "direction": {
+          "description": "Sort direction.",
+          "$ref": "#/$defs/WidgetSortDirection"
+        },
+        "property": {
+          "description": "Property used for sorting.",
+          "$ref": "#/$defs/PropertyRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "direction"
+      ]
+    },
+    "WidgetSortDirection": {
+      "description": "Sort direction.",
+      "oneOf": [
+        {
+          "description": "Ascending.",
+          "type": "string",
+          "const": "asc"
+        },
+        {
+          "description": "Descending.",
+          "type": "string",
+          "const": "desc"
+        }
+      ]
+    },
+    "WidgetUx": {
+      "description": "The typed UX contract nested in a legacy `widget` payload.",
+      "type": "object",
+      "properties": {
+        "actionBindings": {
+          "description": "Typed Norn action calls available to placements and forms.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetUxActionBinding"
+          }
+        },
+        "actionPlacements": {
+          "description": "Where a declared action binding appears in a page.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetActionPlacement"
+          }
+        },
+        "app": {
+          "description": "Optional application shell that composes pages and navigation.",
+          "$ref": "#/$defs/WidgetApp"
+        },
+        "dataBindings": {
+          "description": "Exact object reads used by pages, fields, and actions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetDataBinding"
+          }
+        },
+        "fields": {
+          "description": "Field presentation keyed by stable field ids and property references.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetFieldPresentation"
+          }
+        },
+        "forms": {
+          "description": "Forms submit through an action binding, never a raw CRUD handle.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetForm"
+          }
+        },
+        "navigationItems": {
+          "description": "Typed navigation destinations and capability requirements.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetNavigationItem"
+          }
+        },
+        "overrides": {
+          "description": "Bounded changes to semantic ids of composed baseline components.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetOverride"
+          }
+        },
+        "pages": {
+          "description": "Named pages owned by this widget UX contract.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetPage"
+          }
+        },
+        "shellHandlers": {
+          "description": "Closed error/result handlers supplied by the application shell.",
+          "$ref": "#/$defs/WidgetShellHandlers"
+        },
+        "uxVersion": {
+          "description": "Version of this nested UX contract, independent of the legacy widget\nenvelope members.",
+          "$ref": "#/$defs/IrVersion01"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "uxVersion",
+        "pages",
+        "dataBindings",
+        "actionBindings",
+        "fields",
+        "forms",
+        "actionPlacements",
+        "navigationItems",
+        "overrides"
+      ]
+    },
+    "WidgetUxActionBinding": {
+      "description": "A typed action binding in Widget UX.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Exact ActionIR artifact to invoke.",
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "bindingId": {
+          "description": "Stable binding id.",
+          "type": "string"
+        },
+        "inputMapping": {
+          "description": "Action input member to ZEN expression mapping.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ZenExpression"
+          }
+        },
+        "inputs": {
+          "description": "Explicit sources available to each input expression as `input.record`,\n`input.draft`, `input.selection`, and `input.context`. Child-row field\nconditions may additionally name their enclosing grid to supply `input.row`.",
+          "$ref": "#/$defs/WidgetExpressionInputs"
+        },
+        "requiredCapability": {
+          "description": "Capability required by the UI before presenting or enabling the action.\nThis is a requirement and never grants the capability.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "bindingId",
+        "action",
+        "inputMapping",
+        "inputs",
+        "requiredCapability"
+      ]
+    },
+    "WidgetValueType": {
+      "description": "Scalar value types allowed in page context parameters.",
+      "oneOf": [
+        {
+          "description": "Text.",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "Signed integer.",
+          "type": "string",
+          "const": "integer"
+        },
+        {
+          "description": "Exact decimal or general numeric value.",
+          "type": "string",
+          "const": "number"
+        },
+        {
+          "description": "Boolean.",
+          "type": "string",
+          "const": "boolean"
+        },
+        {
+          "description": "Calendar date.",
+          "type": "string",
+          "const": "date"
+        },
+        {
+          "description": "Timestamp with an explicit zone.",
+          "type": "string",
+          "const": "timestamp"
+        },
+        {
+          "description": "Elapsed duration.",
+          "type": "string",
+          "const": "duration"
+        },
+        {
+          "description": "Opaque JSON value; it cannot be inspected by ZEN.",
+          "type": "string",
+          "const": "json"
+        }
+      ]
+    },
+    "WidgetVersionConflictBinding": {
+      "description": "Version property used to detect stale edits.",
+      "type": "object",
+      "properties": {
+        "inputName": {
+          "description": "Action input member that receives the expected version.",
+          "type": "string"
+        },
+        "onConflict": {
+          "description": "How the host reports a version conflict.",
+          "$ref": "#/$defs/WidgetConflictBehavior"
+        },
+        "property": {
+          "description": "Version or revision property on the edited object.",
+          "$ref": "#/$defs/PropertyRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "inputName",
+        "onConflict"
+      ]
+    },
+    "WidgetViewState": {
+      "description": "One render state of a widget.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/WidgetViewStateKind"
+        },
+        "stateId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "stateId",
+        "kind"
+      ]
+    },
+    "WidgetViewStateKind": {
+      "description": "Render-state kinds.",
+      "type": "string",
+      "enum": [
+        "empty",
+        "loading",
+        "ready",
+        "error",
+        "preview"
+      ]
+    },
+    "ZenCondition": {
+      "description": "A Boolean ZEN condition over explicitly named Widget UX inputs.",
+      "type": "object",
+      "properties": {
+        "expression": {
+          "description": "ZEN source, type-checked to Boolean by `norn-checker`.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "inputs": {
+          "description": "Declared records available to the condition.",
+          "$ref": "#/$defs/WidgetExpressionInputs"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "expression",
+        "inputs"
+      ]
+    },
+    "ZenExpression": {
+      "description": "Source text of one ZEN Expression (the IR's single expression language,\nruling 2026-09-25 §3): a decision-table cell, switch condition, expression\nassignment, or action precondition.\n\nStored verbatim; parsing and type checking belong to `norn-expr` and\n`norn-checker`.",
+      "type": "string"
+    }
+  }
+}

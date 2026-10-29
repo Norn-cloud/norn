@@ -1,0 +1,69 @@
+{
+  "registryVersion": "0.1",
+  "checkerProfile": "bounded_static_plus_semantic_differential_v0",
+  "authority": "semantic_validation_only",
+  "bundles": [
+    {
+      "packId": "norn.ontology-pack.company-commerce",
+      "packVersion": "0.1",
+      "directory": "verification/ontology/packs/company-commerce-v0",
+      "lifecycle": "proposed",
+      "admission": "admitted_for_semantic_validation",
+      "artifacts": {
+        "canonical": {
+          "path": "pack.json",
+          "sha256": "6be7cc762b7d16ba695b933070e8d191c2da4ffdbcda89d23f531706d189694f"
+        },
+        "owl": {
+          "path": "ontology.owl.ttl",
+          "sha256": "0c8141598ee00b54b539258bc44d06cc1e9d26b825c74d5810e7bab152e636ff"
+        },
+        "shacl": {
+          "path": "shapes.shacl.ttl",
+          "sha256": "22a5a3b87e813d2c9b4d8eab1a0b87d37e03a8ada7266776c2f09f9a57492d99"
+        },
+        "projectionContract": {
+          "path": "projection-contract.json",
+          "sha256": "3a38f9e2cb0ddc87bb9e0b78bde0ba554cbaef317deecd040ec45b5b24df6b50"
+        },
+        "proofObligations": {
+          "path": "proof-obligations.json",
+          "sha256": "b9efce63e07a4e2c52a0061057cdfd05e62ebdd1cff3fcdd43089ece0420ebc2"
+        }
+      }
+    },
+    {
+      "packId": "norn.ontology-pack.quantity-units",
+      "packVersion": "0.1",
+      "directory": "verification/ontology/packs/quantity-units-v0",
+      "artifacts": {
+        "canonical": {
+          "path": "pack.json",
+          "sha256": "fc885fcaabbed29071054e5dff28db243f84250d37ce5a4bb53bf88f27923de6"
+        },
+        "owl": {
+          "path": "ontology.owl.ttl",
+          "sha256": "5f78154ad4a87981b7f4d7ce8f5e64254a0b18b1b1b07951350cc9befa3c1567"
+        },
+        "shacl": {
+          "path": "shapes.shacl.ttl",
+          "sha256": "89b977321ab9d00656fa4abe4a3bdc532cc917f3d41941670eda454829b8bd01"
+        },
+        "projectionContract": {
+          "path": "projection-contract.json",
+          "sha256": "edaf42bdd4c8e27c6f46e50e071f53a4def10ed82ddac5beb0361a1a108c3acf"
+        },
+        "proofObligations": {
+          "path": "proof-obligations.json",
+          "sha256": "4d50be62a8aa6c1e62dd648e11eb54325de5622f5a4c610226c43ffbfde8a53a"
+        }
+      }
+    }
+  ],
+  "sharedFixtures": [
+    {
+      "path": "verification/ontology/fixtures/registry-conformance-v0.json",
+      "sha256": "bd4a1bddeb62478f628fe36f1a4a38f26a28713a6804efb53bd4146038260bf4"
+    }
+  ]
+}

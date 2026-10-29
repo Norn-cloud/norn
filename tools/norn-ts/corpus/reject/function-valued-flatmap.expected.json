@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-CAPTURE",
+      "start": "8:14",
+      "end": "8:97",
+      "construct": "(invoice: Invoice) => Norn.perform(\"charge\", chargeCard, { invoiceId: invoice..."
+    },
+    {
+      "code": "NORN-FLOW-CAPTURE",
+      "start": "13:106",
+      "end": "13:110",
+      "construct": "next"
+    }
+  ]
+}

@@ -1,0 +1,504 @@
+{
+  "vendor": {
+    "path": "vendor/zen",
+    "method": "git subtree add --squash",
+    "import_tree": "5773896711066d7ef5c5bdffb846cb9e30e27cf8",
+    "license": {
+      "spdx": "MIT",
+      "file": "LICENSE",
+      "copyright": "Copyright 2023 GoRules.io"
+    },
+    "crates": {
+      "zen-engine": "core/engine",
+      "zen-expression": "core/expression",
+      "zen-macros": "core/macros",
+      "zen-tmpl": "core/template",
+      "zen-types": "core/types"
+    }
+  },
+  "fork": {
+    "repository": "https://github.com/Norn-cloud/zen",
+    "tag": "norn-v2.0.1-12",
+    "commit": "44530255a36df637edc86f6d29495c342805e21b"
+  },
+  "upstream": {
+    "repository": "gorules/zen",
+    "base_tag": "zen-engine-v2.0.1",
+    "base_commit": "6c0fbabba1266afffc2ac3cb24f20f2be7790e38"
+  },
+  "profile": {
+    "zen-engine": [],
+    "zen-expression": [],
+    "zen-macros": [],
+    "zen-tmpl": [],
+    "zen-types": []
+  },
+  "tree_gate": {
+    "consumers": [
+      "norn-expr",
+      "norn-decisions",
+      "norn-kernel"
+    ],
+    "forbidden": [
+      "tokio",
+      "rquickjs",
+      "reqwest",
+      "hyper",
+      "ureq",
+      "isahc",
+      "surf"
+    ],
+    "forbidden_wasm32": [
+      "getrandom"
+    ]
+  },
+  "local_profile": {
+    "comparison_commit": "25dc1e7478c92fe4094f68024b7a028aa3a46fa4",
+    "comparison_basis": "git subtree import/update of Norn-cloud/zen norn-v2.0.1-12; repository commit resolved in patch history",
+    "rights": "Retained upstream MIT licence and copyright notice apply to this downstream software profile. Norn profile modifications are identified here; this record grants no rights to vendor schemas or tenant data.",
+    "changes": "Strip unused JS, HTTP, legacy date and feature branches; fold the pure deterministic Norn profile into the retained crates; adapt workspace metadata, bounded tests and rustfmt/Clippy conformance. The earlier fork patch rationale remains in NORN.md.",
+    "patched_files": [
+      {
+        "path": "vendor/zen/README.md",
+        "sha256": "b593f8e309614e2ee2bb1504333799b36402b7d8008e124a95dffc05af3b46d9",
+        "imported_sha256": "2f07dec718d78855a895bc5b41d2dc932c9af0f6415a50517e367c4d63b86d5c"
+      },
+      {
+        "path": "vendor/zen/core/engine/Cargo.toml",
+        "sha256": "cc3cb2479d5b42ae1694231a782d2f3f44aff0dad275999bdc9b41fd024674b6",
+        "imported_sha256": "6be0b20b65eb99686af0f349f644b6fa28071c7ce8f337f72e76a5ca557c21b0"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/config.rs",
+        "sha256": "7e97e4d658d4e80f64de1f473555546b54ada1ab1426a32828b2b1892d29986c",
+        "imported_sha256": "77d03d27ab107bcb1b776b9abaa83a206b1e01bcad0e29ec2c834b950325ca1a"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/decision.rs",
+        "sha256": "d3c5ec814ea1c503ec6f5688e3a00984ded3fd73e7083fb08a19dbd83ba0c558",
+        "imported_sha256": "d1cf60263f73850b9741c3b2a15ae51bbed422887bdef25b439b5bf5b750457e"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/decision_graph/graph.rs",
+        "sha256": "2a6376e9d5b2e042ec74b83315da08ab485428f5b5ef2d4044cc47de18e91a63",
+        "imported_sha256": "910f7e1295a2016325980a7adeeb30e41cebbbe27836c2a76a1e83bb1c8b9dc8"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/decision_graph/mod.rs",
+        "sha256": "0259c9cfc3b8acba774ac410473f49409466987e2fe0bac88cabdc16a3bb4b3c",
+        "imported_sha256": "5ccc9ba78bee1d97764f25df47c95dead056983ce846cc99d141ef7fca39df0b"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/decision_graph/tracer.rs",
+        "sha256": "f40347bfc64b41c8b66b1893cb1fe13c467b616e0c949fd2221ef9287c88ef52",
+        "imported_sha256": "d6a90699c60de3cbef6994f614eab11433e64a0f19e270730f9646af45b6a1f1"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/decision_graph/walker.rs",
+        "sha256": "681502da0aa6902522ceffc5416f3deea24eab6a838d60b7fc1eeaa5ebbf8bca",
+        "imported_sha256": "0abd265272d82a0b4b5ca681c23bd8ee1cd79360be8a138c4810afdd49a9f979"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/engine.rs",
+        "sha256": "1c2a7c2b39abe7faf6623a18fcc9c52748cb187922b73401e08050e594a1b0c2",
+        "imported_sha256": "5bcb9de62d26bf2418d6b5aa2160e1910c15756f7451ed2c98b43d0fb2f9f68f"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/error.rs",
+        "sha256": "d6476c493ea4cded8c550b06fc2772d5fd2b03610120d28ec6983c9db8005521",
+        "imported_sha256": "bb143d93ade6bd0b9397772abc50c0d6fa17027991715d41b4c56c285d120165"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/lib.rs",
+        "sha256": "854628a8e1aa65b01a9a12e1a43b088c4f39c43a2ed9540b648cbc537f32e5a9",
+        "imported_sha256": "ac8a446853df7eda10e154edfa0286aec8f36abf2c130978d524b147b28cf1b3"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/loader/memory.rs",
+        "sha256": "90fbe0c7e779fd63d797e8017f3c9aeb4b4854f22a2081c5881c71b2c4c9e6f0",
+        "imported_sha256": "b56688bba74842d208c19bf54eb62e0522edabe5e570a014288db53deb69c48e"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/loader/mod.rs",
+        "sha256": "69fc2755b6279677cd0632c9efca67fdf324839883105ade315fb3a64ab8dee6",
+        "imported_sha256": "c74020265efb6bc5792aa16c8b5a6746b5cc9efbcf91bd99e73273d5735e5ad6"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/loader/noop.rs",
+        "sha256": "55bc8fa935d65bf11a37bbb10f4933d175032dc5d21edd351757f7d13bc82168",
+        "imported_sha256": "c6c044d20fa3f5c3d0e6068c970944f52ef75e118bf0957d0c80330c3d676a60"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/model/decision_content.rs",
+        "sha256": "401e61cc2331764a9fac2315588d1e136be9dd0af6a348d008f6104f9730042e",
+        "imported_sha256": "14e1c3853aa5f64a9130e00ef70c8a38383bc7bed851346f8e423cc319332fbe"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/model/mod.rs",
+        "sha256": "879baaf2f2b08b112a6e902b47cb0c8251d272fe5419de2aeb3ac446f1a65fd1",
+        "imported_sha256": "2724c55a631833d4a96ff54942bb1596baa286fcac60001a4f523e5e4fc285d2"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/nodes/context.rs",
+        "sha256": "4f66ec3ec9467509e66c47594dbafee2b9f7a88b78a5783a2d156db73edccd06",
+        "imported_sha256": "43d4915766b3731e3ec835473bfd233190812392ae9b242a817a0d38dd4b0d3d"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/nodes/decision/mod.rs",
+        "sha256": "a46e6bd6a5db005ce17efef4b62c93bad6c28dc7df884a943028f67330f34470",
+        "imported_sha256": "fd8923400a0ebb34197c18548480f914becc4afdb5293adb7d4a9394134da34b"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/nodes/decision_table/mod.rs",
+        "sha256": "2f9b2f8f1af22f95a7dcabcc36076a17da54be98f8405d11ce5810f86e0aeb01",
+        "imported_sha256": "32761bfe9f7a256965972c56c05517db1884eeaf8f5f0395b568c4531fa067d8"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/nodes/expression/mod.rs",
+        "sha256": "5570d6f10c38eb8425546412159d4f5377851907460f7d2d3d9d9010f7a8e62c",
+        "imported_sha256": "a201b2eb8ea161c8369a9b6a5c8a887db58be656777983b8ea4948d1f82735cb"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/nodes/extensions.rs",
+        "sha256": "935548e35504102856c9792aceac8004591c06e0892b138f49460ed7714dde17",
+        "imported_sha256": "6b31bc65294d31e059a1e11ed83fe17125299ef2144086b08a6c6f561620e2a2"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/nodes/mod.rs",
+        "sha256": "57e0441647938fd2907f38005ffea1992fc8cbd45744206d5b33e1e2583dc5ce",
+        "imported_sha256": "875f08ba602dac1e9fca9713d72b6a392d819752ac01f09f0b2f93a18e5b7d7b"
+      },
+      {
+        "path": "vendor/zen/core/engine/src/nodes/transform_attributes.rs",
+        "sha256": "b4b12de75694eab8324f99d29a46116e94beb54c2d1c2d0f6e3b0142340d8fb6",
+        "imported_sha256": "158d12225277969e3c9f705cfdb6f98f7b07e29016af7634b61e6179bf3d1c4d"
+      },
+      {
+        "path": "vendor/zen/core/engine/tests/decision.rs",
+        "sha256": "32b47998386af7f66edcc71550960cf1c1db09d502e0e0cf11dd4cc7cb36dffe",
+        "imported_sha256": "a1a376a95554af62ac5eba25849cbfc7f93a99ca4122a61b7750484efe0f55c3"
+      },
+      {
+        "path": "vendor/zen/core/engine/tests/engine.rs",
+        "sha256": "0638a21f2997a9bcaeb50a9a253a756951b93a6d4a7c03c431c0547be49ab99a",
+        "imported_sha256": "e296b0f5d478cee7d41d974a53285a16e881b0bbbb03b4a71aecfe8bf10be3b7"
+      },
+      {
+        "path": "vendor/zen/core/engine/tests/metering.rs",
+        "sha256": "826b6b289879594ace0a24a73caa823ac825723c5d682a5c11b735eeb4f5491b",
+        "imported_sha256": "b1cf546ef54225db1799fb4f96541ff1a9b623253a44f0bfbdc6f6fb88c12b19"
+      },
+      {
+        "path": "vendor/zen/core/engine/tests/model.rs",
+        "sha256": "15403aeeb22f338dd5fb0d85a07e81acc1f78bee118547261b1066f51c1ea1e9",
+        "imported_sha256": "cb54173699cc79d9b68696c53ab868250d93322d33bf0590f6e66e109aea387f"
+      },
+      {
+        "path": "vendor/zen/core/engine/tests/strict_errors.rs",
+        "sha256": "8f91cbc7635f569bcc6a13a3b55a98766d9ec17b4c2710e9937a81b7da072bff",
+        "imported_sha256": "f6ebdc42a3e2f900fa920d211240215c5284caae204a3512cbda2bd53f08ce1e"
+      },
+      {
+        "path": "vendor/zen/core/engine/tests/support/mod.rs",
+        "sha256": "93339b0e3ea36d41e2b8777507a066e1c99d7f7919f5c7d78a12b1e30686ce0a",
+        "imported_sha256": "4cabb731cf3b9153e94ef34d77fbccbe7a576862fc0ea549e7a8774e40811423"
+      },
+      {
+        "path": "vendor/zen/core/expression/Cargo.toml",
+        "sha256": "f55aa4faef2d9d17ebc39ed72d7769471039431978168e3720188b4d43b4e84a",
+        "imported_sha256": "ec42f11664de518af7a364a1b8f93c36446db6bfb8c33b7707ede79a609845b0"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/compiler/compiler.rs",
+        "sha256": "e8a04f982f559368735cec260a2275d2a3440624b01df587edf843cf0ee50391",
+        "imported_sha256": "77135f925933e297702ff6b1270a88df8c8686279153bc9acb78800f55c6a48c"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/expression.rs",
+        "sha256": "afba19c5d585cdfbc8cfd79b253964c19a356d05fbb3697f73f3842444473b50",
+        "imported_sha256": "656360d39d7628b4ac9e8ad58be11708c1510dcfb5b3c0a4460fd68cde0c60dd"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/functions/arguments.rs",
+        "sha256": "b10ffc090db4d9a58672643c1f8af036fea62ae1dd97de13bb3a25d9686d8ff4",
+        "imported_sha256": "503bc52105c362bc814a603eaf3caf1f345ddc31deb5593fff75755db6a5fc76"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/functions/date_method.rs",
+        "sha256": "6f771c3955e7a689113d2860f4de6e14fd5b10ab8012233dacd377524c4cfecf",
+        "imported_sha256": "d04f7e40c9710db844139b0e5a4d97145f7ee4930739aa136f165333933892ab"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/functions/defs.rs",
+        "sha256": "f7ae5f2dba48cacc4b0de22325da8df6e72c39af1b72b5add8e47d11aaa48ad8",
+        "imported_sha256": "2625a9070d9cec66beaaf41f19d1a7b701c6e4a753ce5824e3501d0fba3ed029"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/functions/deprecated.rs",
+        "sha256": "1b4840ef45321b8b389b457d43345cd4824ffa0269a89330fa2a3ed1392d9085",
+        "imported_sha256": "845be80c4447d142b63cd499492f1e02ce23c24e1d4db8b6a4aba914fb72ef89"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/functions/internal.rs",
+        "sha256": "ff5564d7c17bc2f3171d62778c8da3d4bbba9a0312ae58968fa7acb326fb90b0",
+        "imported_sha256": "add1286179041d90710f67a3f82eb4136104a110bab1ee3c76c4a115c6c75772"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/functions/method.rs",
+        "sha256": "ccadf047a5a911df03fa7cbab68fd38b51a1c014d8d7c7f315c6ba669a473f15",
+        "imported_sha256": "ee89ec5c4fbf1abb3e302f69a9dc8475eedd4ac867af8d62dcb72c56c766c3d1"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/functions/mod.rs",
+        "sha256": "e56dd08607afc05ddf257ad6585889273897130be9ccda4c6684d0da7d242f7b",
+        "imported_sha256": "a0d8b34b2d332298a54474a7268fd26ceb74a535911854668d7c51e8ccf6aa88"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/functions/registry.rs",
+        "sha256": "bada70e8d784cb49d38b64ddd43ef569bffa8a72db69dc69c92bdda78d6d3365",
+        "imported_sha256": "a2acb7c7c5188e0d1237cd3784bdfc145e542dc0555d38f178f1ec9cbbbbdfad"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/intellisense/completion.rs",
+        "sha256": "7c0b7465b466f37a0cf6125acf4cef925475aef2dd7d6606f111c07b9e5edc0d",
+        "imported_sha256": "9e61a37849344ca4954a216dedf005469f1a708d125a0ebf80b5ba3a6dcc93f4"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/intellisense/dependency.rs",
+        "sha256": "b38f890046e1448ca261ebf46a085d7b22a5f410062c60f8233247995526950c",
+        "imported_sha256": "a4caca603088eb7b6ad7e91f87e175a89c28e606aadbcfadf3c0b3f3ae3a0cae"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/intellisense/diagnostic.rs",
+        "sha256": "9d913204989b52319ffdb2f0038bbe0c0174596ae7e6972f5bd2e2463fca5f83",
+        "imported_sha256": "10e83ef1db3eeb38ac9aba49bc253d785d69d0a57bacdc6aee4e6f9aa4544402"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/intellisense/mod.rs",
+        "sha256": "d7c501426c16774011005aa6d200db85d552d2302655bb54ebf7ace22a7387b8",
+        "imported_sha256": "a1f2a01aee9b5018ee1be568c2ab546bbe609737cb1ac461f076851fc591c8da"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/intellisense/type_provider.rs",
+        "sha256": "3cbe5f40b64b83a798f003d11cea85bc78e917b2649a29c8062ab9879b60fcbc",
+        "imported_sha256": "32de86847d812845cb2af369198c5ee7ee521e4b17c7abc38007a76fb1a45d5d"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/isolate.rs",
+        "sha256": "1abaab32041e5ea8d9d14c0271641172a4f17f97cd8a4779e940fde51d0779be",
+        "imported_sha256": "672e5d9834771036bb87d397474766cf93470df24b2353dc22d69b61d52b5f89"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/lexer/lexer.rs",
+        "sha256": "f339fa709320a1d7f30b1e56964022ae7c2bb683071b0475ed54a941c5b5a471",
+        "imported_sha256": "34a2e661d77fb58063b7ebc0c5d3a34d604a9b49483ed5871e56839be01e5bc9"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/lib.rs",
+        "sha256": "e11fd7ae7d95c39112be29c212b9562443ce298033d8db92e431ea2f343a8264",
+        "imported_sha256": "842d77bae3cae3bcdd5ba33bf4b2c224310b312e28d708b24571b7d4f49d61f6"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/parser/ast.rs",
+        "sha256": "1c588162cac7215ad7a54e68f5a2703f2e8d762fcca728cd4cbdc6d1718e4ca9",
+        "imported_sha256": "89873c5ff30b1ce58c54695468c18a3ccb44e321b67afff8de10b84416fef880"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/parser/constants.rs",
+        "sha256": "9845af0989296aa14d3b7d13ef3e618b359ddbb7a2ea141e64d3c5425010ca97",
+        "imported_sha256": "eded6c3d3ebfa4cd23cafdbd8e0e19cef2feff017610b3238c6f088abf6c9d74"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/parser/parser.rs",
+        "sha256": "e696f081a601a449fdd50cb5b8875647db1e935eb392bff11320ec6f4ce85718",
+        "imported_sha256": "fe8ce5e536d38dadbb86ee4e9336c4c0592889006b1e9b4cc2cf86c3bcff0589"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/parser/result.rs",
+        "sha256": "0b3716c648bbc5dc5223661576132c8a75d1d67a92bd66b5524d1eb999636ab4",
+        "imported_sha256": "dd2c7fa4bfadf3c009cb48b99c871fd448ea6251d32eeaf7b46de45dc0ed1a2c"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/parser/unary.rs",
+        "sha256": "e4de7c79d8267b2d47657d1ca89e92816eadddef7c03b541cb5b9eafb6b942d4",
+        "imported_sha256": "98e00c3764ffa5443b9849c90d054f743de293bf4e78525615bdd2c2db161170"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/vm/date/mod.rs",
+        "sha256": "91ff6fcd8bed71b764e2bab0d1ed175e89aecbd47166f1a9d5f04c63be535566",
+        "imported_sha256": "1f10906d5eb7924f132b7fe109d56e2688a3c7ffdd1e21870e013cfd681ac887"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/vm/error.rs",
+        "sha256": "5fb94c4a3d7168418c1ea025cdc7e1cdfe8ff6992ae1f6376d8ef8c18f73bed2",
+        "imported_sha256": "deb384c5200c03e904293768965cc5219c59e38af2e8ee76c7a5cdef89cf4fe1"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/vm/helpers.rs",
+        "sha256": "14b4ec580137199230b329e09d4ab6a76b9db0825128dfc654d50d45fc1e41a2",
+        "imported_sha256": "9227c518bf22cae0710228c3bad5ef878c33377ee01e5f8116585259487f3637"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/vm/interval.rs",
+        "sha256": "6de296f8c5d69cce4b21f3f604c4922d2cc479b6c36f0a8ff33c6e2f5eb52799",
+        "imported_sha256": "ac5de4e2c36add818c56ba13cb19c52cde7ba2c6571e5acf92febc0480c08278"
+      },
+      {
+        "path": "vendor/zen/core/expression/src/vm/vm.rs",
+        "sha256": "24e9b8e559b715d5e4c5d4899420a4e8c3e306ab4762eeac536fd97e2198ffb1",
+        "imported_sha256": "0696122665eb175c6ca0de454acd3ea844369329c3de3bf1a438563d924cdbc7"
+      },
+      {
+        "path": "vendor/zen/core/expression/tests/bounded_strings.rs",
+        "sha256": "3094f8af86131ab0bfaeb3b8152dfd8ec4edec1fabc11a0b6b0b8ff9c847c1e2",
+        "imported_sha256": "0c9e71fb861b20064ace8415a0d933253fe4b8f9b90eb3118101cb0b2bac9f41"
+      },
+      {
+        "path": "vendor/zen/core/expression/tests/data/analysis/functions.toml",
+        "sha256": "91d0e0bf7426d5ed7ac47da0277d808fb1f96841f7be8f96689ef8ee1d619515",
+        "imported_sha256": "7f3eb6d4441ea506afaacc611fc5a6a769b1114cf7f9f0da7fd068acffafd2df"
+      },
+      {
+        "path": "vendor/zen/core/expression/tests/deterministic_maps.rs",
+        "sha256": "b0136eb03f8d59c76f5fc04ed9b001f63e1d694d314c37b0639b9d4962bcf728",
+        "imported_sha256": "dcbefe59b63601ced279b9280a064673405f3b594b23eccd6a65766a5ca8ced0"
+      },
+      {
+        "path": "vendor/zen/core/expression/tests/isolate.rs",
+        "sha256": "3b815c7b72443d3a926f0831d9c0bdc51738a25ab50f72b280d9698d92728888",
+        "imported_sha256": "7c029dd08778591f330d53f0f1c5e72dca3ce4b63c278a8c7fdb26612ce5b06d"
+      },
+      {
+        "path": "vendor/zen/core/expression/tests/metering.rs",
+        "sha256": "fd1475a4804dc1f7a96dfe531e7a193a2eeed15bb3de6177f85b1071d6abd202",
+        "imported_sha256": "747bdf34f7b354fde604dd3544e4b250973c6f882aa85750b33c69cdc45be7e3"
+      },
+      {
+        "path": "vendor/zen/core/expression/tests/temporal.rs",
+        "sha256": "354cbf46f613904ab3cbad4b04ac6cdd7998d0633fd3bfe8df1a500736296967",
+        "imported_sha256": "eae5871c620925beb14187089a3416ca892f240275a23128765aafec861d3e80"
+      },
+      {
+        "path": "vendor/zen/core/expression/tests/unary.rs",
+        "sha256": "64ab5b393cfc9f40da4f42dd9cabd469287bc1f7e4c48275db3acf62de6621b1",
+        "imported_sha256": "16c0853f7d8b5488bda1de29cf8024a28900139dbcf23d26534b01354fb900c5"
+      },
+      {
+        "path": "vendor/zen/core/macros/Cargo.toml",
+        "sha256": "286cc5ae4d677c8a56756ae7a87214592ad31ea2a3c24968dd7e97788ab971c1",
+        "imported_sha256": "4c01c23cadf0205b7820a1bc4312cd616fc70c50e178687115f28726e84d2f05"
+      },
+      {
+        "path": "vendor/zen/core/template/Cargo.toml",
+        "sha256": "9f9fa7dc1f910b3249f3e59faba565cb4f74f6540dc8fadef89e4b90a3c587d9",
+        "imported_sha256": "ab1c6e74ca6f1f3a34929f0c07d89c1947bc709d31f16a7428b32433684012e9"
+      },
+      {
+        "path": "vendor/zen/core/types/Cargo.toml",
+        "sha256": "14a3021f1a459b34582f840169b66f9ac63a975791a2bc3ef008631ee3108401",
+        "imported_sha256": "7f3688fb7b51d0da396d3cb10f1561ba84a07cd4a7a7c7d0506e974206fdf9f4"
+      },
+      {
+        "path": "vendor/zen/core/types/src/constant.rs",
+        "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+        "imported_sha256": "6ae7ef6fa29b6b0d66944ef4ead562f00efd7b47b2b5653a21409de9382aa375"
+      },
+      {
+        "path": "vendor/zen/core/types/src/decision/mod.rs",
+        "sha256": "3cf2531d54201d294614871ccf7afca7ced1f1202a5354feb5aa2f8752b5efe9",
+        "imported_sha256": "742edbe7624a83ccc4700b91746b457978b7739dad2f7f38217b339cc981fe9e"
+      },
+      {
+        "path": "vendor/zen/core/types/src/lib.rs",
+        "sha256": "0acaae296b8bfac5771f84f49b5bfff70abaa0c11eeaff74d27636185041f314",
+        "imported_sha256": "a07b243f3cfe6356176d6daa6c269a66da7556d92f35a08b28031f0c9586683e"
+      },
+      {
+        "path": "vendor/zen/core/types/src/rcvalue/conv.rs",
+        "sha256": "f9560fe42ecca29c50f2aa5369b1ed16336faa209236a60fe58f343c3f67cbbd",
+        "imported_sha256": "164d7ae160941b01a6f465f19374182a3d6c4622710c6a54cdbcf9d8bb260d1a"
+      },
+      {
+        "path": "vendor/zen/core/types/src/rcvalue/de.rs",
+        "sha256": "d627405f854fa3e574da0008146356901d37f2cd51414694e2db9baf2436a31a",
+        "imported_sha256": "0c1c086ca223610f65a205216c5d25d85efc9feac4dde96b1c0abac6807dcb15"
+      },
+      {
+        "path": "vendor/zen/core/types/src/rcvalue/mod.rs",
+        "sha256": "e6e51b3a6815853fc5b8cbf162f0024decd547e11dd6961f929bf312db2eae74",
+        "imported_sha256": "a21923dbbd2527d782380810d51c0418247b82591e308904830b57758b9e472d"
+      },
+      {
+        "path": "vendor/zen/core/types/src/rcvalue/ser.rs",
+        "sha256": "7108317fc9020e830429343a71b197eeb6729020fd31bdf5174cba7c3e5ebd6f",
+        "imported_sha256": "86cc317ac81f62bdf60effaac9b115c0a6e572a30421b5b0b5d2f13660d1e7a2"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable/conv.rs",
+        "sha256": "b61f1b7b417501002266ffddda94358117c744607309dd793cfe2ce0ff5d5739",
+        "imported_sha256": "b7cb5a5cfe19779c7efe6d1e8aa3a4cc3f0344f20a8b9aa6ff5c0919f4d6f0d3"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable/de.rs",
+        "sha256": "001c0c150b538a94f7cab5dd96da55b3b1ad384ae1a1045b202292da127a29a7",
+        "imported_sha256": "f0ff41bee109a3803485a59d2ce244791b1eb8bed7e2d20820da26457a79f23c"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable/impls.rs",
+        "sha256": "ef591197893783f2029d3c03f37b719433f11de4bf4c05294624685a214b53ca",
+        "imported_sha256": "3d4170274931878edc35eca3bac57867100959ea30839ad9a79d0285b5f03836"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable/map.rs",
+        "sha256": "d8069c664d2106f30faa7cab55d22c65cdc36920582bc5eab503b0a6119e38a2",
+        "imported_sha256": "815fc4afc45e395e4574b9fff35752070a70cd3d9a96038dac3bb36856c2312f"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable/mod.rs",
+        "sha256": "9295d54aeffde8d7ee77912a8338db2ec21ab04da31d375b1435b8a3a2e1f6ed",
+        "imported_sha256": "664b597bb76914ccbf0c1843f3a5a162b2c59749eef097b6b337a502f7df1580"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable/ref_deser.rs",
+        "sha256": "40113f4cd08d8124d7ca9520b4ff5add29ea92d2c49fe0a39401f994722cadc2",
+        "imported_sha256": "176a7dad38005a70a2ddc8c6b083bdebe098b6b9328c7d9f282938464639ec7d"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable/ref_ser.rs",
+        "sha256": "00a0f0c3b442b40e7b9084a602507cf4e7d9d88326b92a199e5171ed3d121919",
+        "imported_sha256": "3a9b2abf6fb0dda27f73c4b8c7df5e9abc9566be688051f035938c181dcf7d40"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable/ser.rs",
+        "sha256": "9b06a450e03a052b1c02aa3e39ff6e2c72af46ef4e72d86c6c7317ff1ec3af86",
+        "imported_sha256": "e7e32ad55742a8deb3d541b2a40ec23db2c2a34e889a0bd12be87899e2dcd66d"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable_type/conv.rs",
+        "sha256": "c4a620d69c75a7fb6cb840185270d5d5c35664c29eeef4686160a24ede0c70e8",
+        "imported_sha256": "8e30f72836c7a08b2a4201511b607e362e98e501776aef1e3807b41203dff892"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable_type/mod.rs",
+        "sha256": "e03c054dc9c1189b5c0c7cd9ac6f88fd8d299b7912f4f736c4560445cc5af775",
+        "imported_sha256": "03bb77fc79ad0304bc7bb6e92d5475f1616c1557b1d2cc30300a665d4e25720f"
+      },
+      {
+        "path": "vendor/zen/core/types/src/variable_type/util.rs",
+        "sha256": "b2fc2ec9e6767dac2436b81872bba66bafe717aa488ff702912de1a88d59e069",
+        "imported_sha256": "4b5804785655bd72ddbf4d9a9193df086b805e26dbbcc4d9e13c9d7b883f084a"
+      },
+      {
+        "path": "vendor/zen/core/types/tests/variable_type.rs",
+        "sha256": "0b25e4ecb821cdd45c6515f9dbfe4756259efcc00f9a7d6648c0f403190762bf",
+        "imported_sha256": "77c46dadf72088c4a5ebadd7e9868f8c57bbbbe8427fca17e71f552f9fd00ebe"
+      }
+    ],
+    "added_files": [
+      {
+        "path": "vendor/zen/core/expression/tests/regex_lite.rs",
+        "sha256": "ec1190848543c28d87cfd08e736eeab233184a12a188fefec4c58a767b996b08"
+      }
+    ]
+  }
+}

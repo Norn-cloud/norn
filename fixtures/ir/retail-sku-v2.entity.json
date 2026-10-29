@@ -1,0 +1,135 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.Sku.entity.v2",
+  "kind": "entity",
+  "namespace": "retail",
+  "name": "SKU",
+  "version": "0.2.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/retail-sku-v2.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "retail.Sku",
+      "description": "A stock-keeping unit. Single key on the SKU code, normalized before comparison.",
+      "properties": [
+        {
+          "id": "sku_code",
+          "type": {
+            "kind": "ref",
+            "name": "commerce.sku_code"
+          }
+        },
+        {
+          "id": "title",
+          "type": {
+            "kind": "text"
+          },
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        {
+          "id": "lifecycle",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "active"
+              },
+              {
+                "value": "retired"
+              }
+            ]
+          },
+          "default": "active"
+        },
+        {
+          "id": "is_discontinued",
+          "type": {
+            "kind": "ref",
+            "name": "commerce.is_discontinued"
+          },
+          "default": false
+        },
+        {
+          "id": "net_weight",
+          "type": {
+            "kind": "ref",
+            "name": "inventory.net_weight"
+          },
+          "default": "0.000"
+        },
+        {
+          "id": "reorder_quantity",
+          "type": {
+            "kind": "ref",
+            "name": "inventory.reorder_quantity"
+          },
+          "default": "10"
+        },
+        {
+          "id": "reorder_weight",
+          "description": "Weight of one reorder; derived, so read-only.",
+          "type": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "system": "ucum",
+              "code": "kg"
+            }
+          },
+          "computed": "self.net_weight * self.reorder_quantity"
+        },
+        {
+          "id": "channel_metadata",
+          "type": {
+            "kind": "ref",
+            "name": "commerce.channel_metadata"
+          },
+          "default": {}
+        }
+      ],
+      "links": [
+        {
+          "id": "preferred_supplier",
+          "description": "The supplier this SKU is reordered from by default. Lowers the v1 relation fixture retail-sku-supplier.relation.json.",
+          "target": "purchasing.Supplier",
+          "cardinality": {
+            "to": "one",
+            "from": "many"
+          },
+          "inverse": "preferred_skus"
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "sku_code"
+          ],
+          "rule": {
+            "normalize": [
+              {
+                "property": "sku_code",
+                "steps": [
+                  "trim",
+                  "uppercase"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

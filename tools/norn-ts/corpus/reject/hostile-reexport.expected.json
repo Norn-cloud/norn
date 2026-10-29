@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-IMPORT",
+      "start": "2:24",
+      "end": "2:54",
+      "construct": "\"../support/hostile-effect.ts\""
+    },
+    {
+      "code": "NORN-FLOW-SYMBOL",
+      "start": "7:3",
+      "end": "7:13",
+      "construct": "Effect.gen"
+    }
+  ]
+}

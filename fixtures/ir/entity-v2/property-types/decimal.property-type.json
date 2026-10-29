@@ -1,0 +1,6 @@
+{
+  "name": "inventory.net_weight",
+  "description": "Net weight in kilograms, to the gram.",
+  "type": { "kind": "decimal", "scale": 3, "unit": { "system": "ucum", "code": "kg" } },
+  "constraints": { "min": "0.000", "max": "25000" }
+}

@@ -1,0 +1,37 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.setting.reorder_threshold",
+  "kind": "setting",
+  "namespace": "retail",
+  "name": "Default Reorder Threshold",
+  "version": "0.2.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/retail-reorder-threshold.setting.json"
+  },
+  "payload": {
+    "settingVersion": "0.1",
+    "settingKey": "retail.sku.default_reorder_threshold",
+    "valueType": "number",
+    "value": 25,
+    "effectiveFrom": "2026-10-01T00:00:00Z",
+    "effectiveTo": "2027-01-01T00:00:00Z",
+    "supersedes": {
+      "artifactId": "retail.setting.reorder_threshold",
+      "version": "0.1.0"
+    },
+    "review": {
+      "state": "approved",
+      "reviewedBy": "procurement_manager",
+      "reviewedAt": "2026-09-28T09:00:00Z",
+      "reason": "Seasonal demand increase."
+    },
+    "scopeRequired": ["orgId", "environmentId"]
+  }
+}

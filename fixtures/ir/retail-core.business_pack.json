@@ -1,0 +1,30 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.pack.core",
+  "kind": "business_pack",
+  "namespace": "retail",
+  "name": "Retail Core Pack",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/retail-core.business_pack.json"
+  },
+  "payload": {
+    "packId": "retail.pack.core",
+    "packVersion": "0.1.0",
+    "packKind": "composition",
+    "provides": ["retail.replenishment"],
+    "artifacts": [
+      { "artifactId": "retail.Sku.entity", "kind": "entity", "version": "0.1.0" },
+      { "artifactId": "retail.reorder.action", "kind": "action", "version": "0.1.0" },
+      { "artifactId": "retail.procurement.policy", "kind": "policy", "version": "0.1.0" },
+      { "artifactId": "retail.setting.reorder_threshold", "kind": "setting", "version": "0.2.0" }
+    ]
+  }
+}

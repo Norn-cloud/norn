@@ -1,0 +1,63 @@
+{
+  "abi": "norn.function-abi/1",
+  "functionId": "norn.classify.whatsapp-intent",
+  "version": 1,
+  "inputSchema": {
+    "id": "norn.classify.message-input",
+    "version": 1,
+    "digest": "sha256:c7cb48666daf8b04a5594ce0c85700c2cceaaa9cb720d7b81c4389d10dd8d651"
+  },
+  "outputSchema": {
+    "id": "norn.classify.intent-output",
+    "version": 1,
+    "digest": "sha256:c91fe7b8ee706500ffdcec60b0ffd2aa6eebf6910a9e95e3741752b1fb4b2ff4"
+  },
+  "errorSchema": {
+    "id": "norn.function.error",
+    "version": 1,
+    "digest": "sha256:1d2d4c55f1df82a8448839fb5cfaccce3807925637883515ae040a702f841597"
+  },
+  "implementation": {
+    "format": "wasm_module",
+    "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "entryPoint": "call",
+    "locator": null
+  },
+  "dependencyClosure": {
+    "digest": "sha256:32d165a17cd1f174d33067114a59dee6ca6487d14f0b9ab5ca6b36f2e9639a55",
+    "entries": []
+  },
+  "runtime": {
+    "id": "wasmtime",
+    "version": "48.0.3",
+    "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "platform": {
+    "os": "none",
+    "arch": "wasm32"
+  },
+  "capabilities": [],
+  "determinism": {
+    "qualified_wasm": {
+      "importClosure": [],
+      "freshInstance": true,
+      "threads": false,
+      "simd": false,
+      "floatPolicy": "canonical_nan",
+      "fuel": 200000000,
+      "maxStackBytes": 1048576,
+      "maxModuleBytes": 4194304
+    }
+  },
+  "bounds": {
+    "maxCpuMillis": 2000,
+    "maxWallMillis": 2000,
+    "maxMemoryBytes": 33554432,
+    "maxInputBytes": 65536,
+    "maxDecodedBytes": 65536,
+    "maxOutputBytes": 4096
+  },
+  "cache": "action_cache",
+  "retention": "ledger",
+  "steps": []
+}

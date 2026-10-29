@@ -1,0 +1,260 @@
+{
+  "world": "main",
+  "commits": [
+    {
+      "world": "main",
+      "seq": 3,
+      "recordedAt": "2026-09-30T08:15:00Z",
+      "consumed": {
+        "kind": "timer",
+        "timerId": "credit-check-1001",
+        "incarnation": 2
+      },
+      "decision": {
+        "artifactId": "credit.hold_policy",
+        "version": "2"
+      },
+      "reads": [
+        {
+          "objectType": "crm.Customer",
+          "key": "C-77",
+          "version": 1
+        },
+        {
+          "objectType": "commerce.SalesOrder",
+          "key": "1001",
+          "version": 1
+        }
+      ],
+      "written": [
+        {
+          "objectType": "commerce.SalesOrder",
+          "key": "1001",
+          "version": 2
+        }
+      ],
+      "events": [
+        {
+          "op": "transitioned",
+          "key": {
+            "objectType": "commerce.SalesOrder",
+            "key": "1001"
+          },
+          "lifecycle": "status",
+          "transition": "hold",
+          "from": "draft",
+          "to": "on_hold"
+        }
+      ]
+    },
+    {
+      "world": "main",
+      "seq": 1,
+      "recordedAt": "2026-09-30T08:00:02Z",
+      "consumed": {
+        "kind": "observation",
+        "id": "obs-erp-cust-77"
+      },
+      "written": [
+        {
+          "objectType": "crm.Customer",
+          "key": "C-77",
+          "version": 1
+        }
+      ],
+      "events": [
+        {
+          "op": "created",
+          "key": {
+            "objectType": "crm.Customer",
+            "key": "C-77"
+          },
+          "values": {
+            "customer_id": "C-77",
+            "credit_limit": "10000.00",
+            "outstanding": "9200.00"
+          }
+        }
+      ]
+    },
+    {
+      "world": "main",
+      "seq": 2,
+      "recordedAt": "2026-09-30T08:05:02Z",
+      "consumed": {
+        "kind": "observation",
+        "id": "obs-erp-so-1001"
+      },
+      "written": [
+        {
+          "objectType": "commerce.SalesOrder",
+          "key": "1001",
+          "version": 1
+        }
+      ],
+      "events": [
+        {
+          "op": "created",
+          "key": {
+            "objectType": "commerce.SalesOrder",
+            "key": "1001"
+          },
+          "values": {
+            "so_number": "1001",
+            "grand_total": "1250.00",
+            "status": "draft"
+          }
+        }
+      ]
+    }
+  ],
+  "observations": [
+    {
+      "id": "obs-erp-so-1001",
+      "provenance": {
+        "source": {
+          "system": "ERPNext",
+          "record": "Sales Order/SO-1001"
+        },
+        "mappingVersion": "erpnext.sales_order@3",
+        "transform": "sales_order.header",
+        "observedAt": "2026-09-30T08:05:00Z",
+        "recordedAt": "2026-09-30T08:05:01Z"
+      }
+    },
+    {
+      "id": "obs-erp-cust-77",
+      "provenance": {
+        "source": {
+          "system": "ERPNext",
+          "record": "Customer/CUST-77"
+        },
+        "mappingVersion": "erpnext.customer@2",
+        "transform": "customer.credit",
+        "observedAt": "2026-09-30T08:00:00Z",
+        "recordedAt": "2026-09-30T08:00:01Z"
+      }
+    }
+  ],
+  "objects": [
+    {
+      "objectType": "technical.Owner",
+      "key": "finance-ops"
+    },
+    {
+      "objectType": "technical.Source",
+      "key": "ERPNext",
+      "links": [
+        {
+          "link": "owner",
+          "targetType": "technical.Owner",
+          "targetKey": "finance-ops"
+        }
+      ]
+    },
+    {
+      "objectType": "technical.Dataset",
+      "key": "erpnext.prod",
+      "links": [
+        {
+          "link": "source",
+          "targetType": "technical.Source",
+          "targetKey": "ERPNext"
+        }
+      ]
+    },
+    {
+      "objectType": "technical.Table",
+      "key": "erpnext.prod.tabSales Order",
+      "links": [
+        {
+          "link": "dataset",
+          "targetType": "technical.Dataset",
+          "targetKey": "erpnext.prod"
+        }
+      ]
+    },
+    {
+      "objectType": "technical.Table",
+      "key": "erpnext.prod.tabCustomer",
+      "links": [
+        {
+          "link": "dataset",
+          "targetType": "technical.Dataset",
+          "targetKey": "erpnext.prod"
+        }
+      ]
+    },
+    {
+      "objectType": "technical.Column",
+      "key": "erpnext.prod.tabSales Order.grand_total",
+      "links": [
+        {
+          "link": "table",
+          "targetType": "technical.Table",
+          "targetKey": "erpnext.prod.tabSales Order"
+        }
+      ]
+    },
+    {
+      "objectType": "technical.Column",
+      "key": "erpnext.prod.tabSales Order.customer",
+      "links": [
+        {
+          "link": "table",
+          "targetType": "technical.Table",
+          "targetKey": "erpnext.prod.tabSales Order"
+        }
+      ]
+    },
+    {
+      "objectType": "technical.Column",
+      "key": "erpnext.prod.tabCustomer.credit_limit",
+      "links": [
+        {
+          "link": "table",
+          "targetType": "technical.Table",
+          "targetKey": "erpnext.prod.tabCustomer"
+        }
+      ]
+    },
+    {
+      "objectType": "technical.Mapping",
+      "key": "erpnext.sales_order@3",
+      "links": [
+        {
+          "link": "derived_from",
+          "targetType": "technical.Column",
+          "targetKey": "erpnext.prod.tabSales Order.grand_total"
+        },
+        {
+          "link": "derived_from",
+          "targetType": "technical.Column",
+          "targetKey": "erpnext.prod.tabSales Order.customer"
+        }
+      ]
+    },
+    {
+      "objectType": "technical.Mapping",
+      "key": "erpnext.customer@2",
+      "links": [
+        {
+          "link": "derived_from",
+          "targetType": "technical.Column",
+          "targetKey": "erpnext.prod.tabCustomer.credit_limit"
+        }
+      ]
+    },
+    {
+      "objectType": "technical.Pipeline",
+      "key": "erpnext.nightly",
+      "links": [
+        {
+          "link": "runs",
+          "targetType": "technical.Mapping",
+          "targetKey": "erpnext.sales_order@3"
+        }
+      ]
+    }
+  ]
+}

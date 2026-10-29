@@ -1,0 +1,14 @@
+{
+  "name": "norn-decisions",
+  "ring": "Zero",
+  "allowed_norn": [
+    "norn-ir",
+    "norn-expr"
+  ],
+  "dev_only_norn": [],
+  "third_party": [
+    "zen-engine",
+    "serde",
+    "thiserror"
+  ]
+}

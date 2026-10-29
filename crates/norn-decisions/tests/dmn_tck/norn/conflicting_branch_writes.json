@@ -1,0 +1,254 @@
+{
+  "description": "Norn case: two live branches of a collect switch write the same member. zen merges them deterministically (pinned here: the first branch's write is kept), identically on every run; a decision should not rely on it, and the checker's write-set rules are the place to forbid it.",
+  "rule": {
+    "ruleId": "norn.dmn.conflicting_branch_writes",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "n"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "decision",
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [],
+    "graph": {
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "route",
+          "name": "route",
+          "type": "switchNode",
+          "content": {
+            "hitPolicy": "collect",
+            "statements": [
+              {
+                "id": "left",
+                "condition": "slice.n > 0"
+              },
+              {
+                "id": "right",
+                "condition": ""
+              }
+            ]
+          }
+        },
+        {
+          "id": "left",
+          "name": "left",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "l",
+                "key": "result",
+                "value": "'left'"
+              }
+            ]
+          }
+        },
+        {
+          "id": "right",
+          "name": "right",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "r",
+                "key": "result",
+                "value": "'right'"
+              }
+            ]
+          }
+        },
+        {
+          "id": "emit",
+          "name": "emit",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "f",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "c",
+                "key": "commands",
+                "value": "result == null ? [] : [{decision: 'd', result: result}]"
+              },
+              {
+                "id": "t",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "route"
+        },
+        {
+          "id": "e2",
+          "sourceId": "route",
+          "targetId": "left",
+          "sourceHandle": "left"
+        },
+        {
+          "id": "e3",
+          "sourceId": "route",
+          "targetId": "right",
+          "sourceHandle": "right"
+        },
+        {
+          "id": "e4",
+          "sourceId": "left",
+          "targetId": "emit"
+        },
+        {
+          "id": "e5",
+          "sourceId": "right",
+          "targetId": "emit"
+        },
+        {
+          "id": "e6",
+          "sourceId": "emit",
+          "targetId": "out"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "both branches live",
+      "slice": {
+        "n": 5
+      },
+      "event": {},
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "decision": "d",
+            "result": "left"
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "only the default branch",
+      "slice": {
+        "n": -5
+      },
+      "event": {},
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "decision": "d",
+            "result": "right"
+          }
+        ],
+        "timers": []
+      }
+    }
+  ]
+}

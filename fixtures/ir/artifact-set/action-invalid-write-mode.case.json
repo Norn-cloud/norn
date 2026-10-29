@@ -1,0 +1,15 @@
+{
+  "description": "A draft-only action must name a non-immutable initial state of an effective lifecycle.",
+  "base": [],
+  "artifacts": [
+    "ir/artifact-set/action-invalid-write-mode.action.json",
+    "ir/entity-v2/artifact-set/commerce-sales-order.entity.json"
+  ],
+  "expect": [
+    [
+      "commerce.sales_order.submit_invoice.action",
+      "artifact_set.action.invalid_write_mode",
+      "/payload/effectProgram/writeMode"
+    ]
+  ]
+}

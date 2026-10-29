@@ -1,0 +1,46 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "commerce.property_types.entity.v2",
+  "kind": "entity",
+  "namespace": "commerce",
+  "name": "Commerce property types",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "propertyTypes": [
+      {
+        "name": "commerce.sku_code",
+        "description": "Stock-keeping unit code, upper-case letters, digits and dashes.",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "minLength": 3,
+          "maxLength": 32,
+          "pattern": "^[A-Z0-9][A-Z0-9-]*$"
+        }
+      },
+      {
+        "name": "party.display_name",
+        "description": "A party's display name.",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    ]
+  }
+}

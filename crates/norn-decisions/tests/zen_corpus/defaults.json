@@ -1,0 +1,195 @@
+{
+  "description": "RuleIR v2 defaults fill declared output members the graph leaves unset.",
+  "rule": {
+    "ruleId": "demo.rule.defaults",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "n"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "demo.Order"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "total"
+                ]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "property",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "actionId"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              },
+              "dueIn": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId",
+              "dueIn"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "x",
+          "name": "x",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "[{actionId: 'go'}]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "x",
+          "type": "edge"
+        },
+        {
+          "id": "e2",
+          "sourceId": "x",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    },
+    "defaults": {
+      "facts": [],
+      "timers": []
+    }
+  },
+  "cases": [
+    {
+      "name": "defaults applied",
+      "slice": {
+        "n": 1
+      },
+      "event": {
+        "kind": "k"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "actionId": "go"
+          }
+        ],
+        "timers": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "namespace": "acme",
+  "target": "crm.Customer",
+  "description": "Tenant acme's fields on the installed crm.Customer. Inherited by every subtype, including crm.KeyAccount.",
+  "properties": [
+    { "id": "acme__loyalty_points", "type": { "kind": "integer" }, "constraints": { "min": "0" }, "default": "0" },
+    {
+      "id": "acme__region",
+      "type": { "kind": "enum", "values": [{ "value": "north" }, { "value": "south" }] },
+      "constraints": { "nullable": true }
+    }
+  ]
+}

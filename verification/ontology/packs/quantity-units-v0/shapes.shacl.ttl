@@ -1,0 +1,67 @@
+@prefix norn: <https://norn.dev/ontology/quantity-units/0.1/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# SHACL 1.0 differential-oracle projection. The Rust Norn IR checker is the
+# promotion authority; conformance here never grants a capability, commits a
+# transition, or authorizes a quantity conversion.
+
+norn:QuantityKindShape a sh:NodeShape ; sh:targetClass norn:QuantityKind ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:code ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:label ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:CountQuantityKindShape a sh:NodeShape ; sh:targetClass norn:CountQuantityKind ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:code ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:label ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:MassQuantityKindShape a sh:NodeShape ; sh:targetClass norn:MassQuantityKind ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:code ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:label ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:DurationQuantityKindShape a sh:NodeShape ; sh:targetClass norn:DurationQuantityKind ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:code ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:label ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:RatioQuantityKindShape a sh:NodeShape ; sh:targetClass norn:RatioQuantityKind ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:code ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:label ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:UnitShape a sh:NodeShape ; sh:targetClass norn:Unit ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:symbol ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:quantityKind ; sh:class norn:QuantityKind ; sh:minCount 1 ; sh:maxCount 1 ] .
+norn:CountUnitShape a sh:NodeShape ; sh:targetClass norn:CountUnit ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:symbol ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:quantityKind ; sh:class norn:QuantityKind ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:KilogramShape a sh:NodeShape ; sh:targetClass norn:Kilogram ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:symbol ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:quantityKind ; sh:class norn:QuantityKind ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:GramShape a sh:NodeShape ; sh:targetClass norn:Gram ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:symbol ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:quantityKind ; sh:class norn:QuantityKind ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:HourShape a sh:NodeShape ; sh:targetClass norn:Hour ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:symbol ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:quantityKind ; sh:class norn:QuantityKind ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:FractionShape a sh:NodeShape ; sh:targetClass norn:Fraction ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:symbol ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:quantityKind ; sh:class norn:QuantityKind ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:PercentShape a sh:NodeShape ; sh:targetClass norn:Percent ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:symbol ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:quantityKind ; sh:class norn:QuantityKind ; sh:minCount 1 ; sh:maxCount 1 ] .

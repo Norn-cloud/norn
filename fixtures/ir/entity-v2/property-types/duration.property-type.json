@@ -1,0 +1,5 @@
+{
+  "name": "inventory.lead_time",
+  "description": "Supplier lead time.",
+  "type": { "kind": "duration" }
+}

@@ -1,0 +1,111 @@
+{
+  "fixtureVersion": "0.1",
+  "membershipCases": [
+    {
+      "name": "mass is a quantity kind",
+      "termId": "norn.measure.quantity-kind.mass",
+      "targetTermId": "norn.measure.quantity-kind",
+      "expected": true
+    },
+    {
+      "name": "kilogram is a unit",
+      "termId": "norn.measure.unit.kilogram",
+      "targetTermId": "norn.measure.unit",
+      "expected": true
+    },
+    {
+      "name": "kilogram is not a quantity kind",
+      "termId": "norn.measure.unit.kilogram",
+      "targetTermId": "norn.measure.quantity-kind",
+      "expected": false
+    },
+    {
+      "name": "product variant is a product",
+      "termId": "norn.commerce.product-variant",
+      "targetTermId": "norn.commerce.product",
+      "expected": true
+    },
+    {
+      "name": "product is not a product variant",
+      "termId": "norn.commerce.product",
+      "targetTermId": "norn.commerce.product-variant",
+      "expected": false
+    }
+  ],
+  "instanceCases": [
+    {
+      "name": "cross-pack product unit reference",
+      "expected": true,
+      "instance": {
+        "instanceId": "product.cross-pack-valid",
+        "termId": "norn.commerce.product",
+        "values": {
+          "name": ["Steel plate"],
+          "measurementUnit": ["norn.measure.unit.kilogram"]
+        },
+        "provenance": {
+          "sourceKind": "norn_projection",
+          "sourceRef": "fixture.registry-conformance-v0",
+          "observedAt": "2026-08-23T00:00:00Z",
+          "evidenceRefs": ["urn:norn:evidence:registry-cross-pack-valid"]
+        }
+      }
+    },
+    {
+      "name": "cross-pack product rejects quantity kind as unit",
+      "expected": false,
+      "expectedPath": "instance.values.measurementUnit[0]",
+      "instance": {
+        "instanceId": "product.cross-pack-invalid",
+        "termId": "norn.commerce.product",
+        "values": {
+          "name": ["Steel plate"],
+          "measurementUnit": ["norn.measure.quantity-kind.mass"]
+        },
+        "provenance": {
+          "sourceKind": "norn_projection",
+          "sourceRef": "fixture.registry-conformance-v0",
+          "observedAt": "2026-08-23T00:00:00Z",
+          "evidenceRefs": ["urn:norn:evidence:registry-cross-pack-invalid"]
+        }
+      }
+    },
+    {
+      "name": "unit accepts quantity-kind subclass",
+      "expected": true,
+      "instance": {
+        "instanceId": "unit.kilogram-valid",
+        "termId": "norn.measure.unit.kilogram",
+        "values": {
+          "symbol": ["kg"],
+          "quantityKind": ["norn.measure.quantity-kind.mass"]
+        },
+        "provenance": {
+          "sourceKind": "norn_projection",
+          "sourceRef": "fixture.registry-conformance-v0",
+          "observedAt": "2026-08-23T00:00:00Z",
+          "evidenceRefs": ["urn:norn:evidence:registry-unit-valid"]
+        }
+      }
+    },
+    {
+      "name": "unit rejects another unit as quantity kind",
+      "expected": false,
+      "expectedPath": "instance.values.quantityKind[0]",
+      "instance": {
+        "instanceId": "unit.kilogram-invalid",
+        "termId": "norn.measure.unit.kilogram",
+        "values": {
+          "symbol": ["kg"],
+          "quantityKind": ["norn.measure.unit.gram"]
+        },
+        "provenance": {
+          "sourceKind": "norn_projection",
+          "sourceRef": "fixture.registry-conformance-v0",
+          "observedAt": "2026-08-23T00:00:00Z",
+          "evidenceRefs": ["urn:norn:evidence:registry-unit-invalid"]
+        }
+      }
+    }
+  ]
+}

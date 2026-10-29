@@ -1,0 +1,30 @@
+{
+  "name": "retail.Sku",
+  "description": "A stock-keeping unit. Single key on the SKU code, normalized before comparison.",
+  "properties": [
+    { "id": "sku_code", "type": { "kind": "ref", "name": "commerce.sku_code" } },
+    { "id": "title", "type": { "kind": "text" }, "constraints": { "minLength": 1, "maxLength": 200 } },
+    {
+      "id": "lifecycle",
+      "type": { "kind": "enum", "values": [{ "value": "active" }, { "value": "retired" }] },
+      "default": "active"
+    },
+    { "id": "is_discontinued", "type": { "kind": "ref", "name": "commerce.is_discontinued" }, "default": false },
+    { "id": "net_weight", "type": { "kind": "ref", "name": "inventory.net_weight" }, "default": "0.000" },
+    { "id": "reorder_quantity", "type": { "kind": "ref", "name": "inventory.reorder_quantity" }, "default": "10" },
+    {
+      "id": "reorder_weight",
+      "description": "Weight of one reorder; derived, so read-only.",
+      "type": { "kind": "decimal", "scale": 3, "unit": { "system": "ucum", "code": "kg" } },
+      "computed": "self.net_weight * self.reorder_quantity"
+    },
+    { "id": "channel_metadata", "type": { "kind": "ref", "name": "commerce.channel_metadata" }, "default": {} }
+  ],
+  "identity": [
+    {
+      "name": "primary",
+      "properties": ["sku_code"],
+      "rule": { "normalize": [{ "property": "sku_code", "steps": ["trim", "uppercase"] }] }
+    }
+  ]
+}

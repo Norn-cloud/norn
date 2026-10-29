@@ -1,0 +1,116 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "google_directory.connector",
+  "kind": "connector",
+  "namespace": "google-directory",
+  "name": "directory",
+  "version": "0.1.0",
+  "lifecycle": "active",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/google-directory/artifacts/google_directory.connector.json"
+  },
+  "payload": {
+    "connectorVersion": "0.1",
+    "auth": {
+      "kind": "oauth2",
+      "authId": "google-directory",
+      "authorizationUrl": "https://accounts.google.com/o/oauth2/auth",
+      "tokenUrl": "https://oauth2.googleapis.com/token",
+      "scopes": [
+        "https://www.googleapis.com/auth/admin.directory.user.readonly",
+        "https://www.googleapis.com/auth/admin.directory.group.readonly",
+        "https://www.googleapis.com/auth/admin.directory.group.member.readonly",
+        "https://www.googleapis.com/auth/admin.directory.orgunit.readonly"
+      ]
+    },
+    "resources": [
+      {
+        "kind": "cursor",
+        "resourceId": "orgunits",
+        "endpoint": "/customer/{customer}/orgunits",
+        "cursorParam": "pageToken",
+        "nextCursorPath": "/nextPageToken",
+        "itemsPath": "/organizationUnits",
+        "queryParams": {
+          "type": "allIncludingParent",
+          "fields": "organizationUnits(orgUnitId,name,orgUnitPath,parentOrgUnitId,etag)"
+        },
+        "missingItemsIsEmpty": true
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "users",
+        "endpoint": "/users",
+        "cursorParam": "pageToken",
+        "nextCursorPath": "/nextPageToken",
+        "itemsPath": "/users",
+        "queryParams": {
+          "customer": "{customer}",
+          "maxResults": "100",
+          "fields": "users(id,customerId,primaryEmail,name(fullName),suspended,archived,deletionTime,orgUnitPath,relations,etag),nextPageToken",
+          "projection": "basic"
+        },
+        "missingItemsIsEmpty": true
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "groups",
+        "endpoint": "/groups",
+        "cursorParam": "pageToken",
+        "nextCursorPath": "/nextPageToken",
+        "itemsPath": "/groups",
+        "queryParams": {
+          "customer": "{customer}",
+          "maxResults": "100",
+          "fields": "groups(id,email,name,etag),nextPageToken"
+        },
+        "missingItemsIsEmpty": true
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "group_members",
+        "endpoint": "/groups/{groupId}/members",
+        "cursorParam": "pageToken",
+        "nextCursorPath": "/nextPageToken",
+        "itemsPath": "/members",
+        "queryParams": {
+          "maxResults": "100",
+          "fields": "members(id,email,role,type,status,etag),nextPageToken",
+          "includeDerivedMembership": "false"
+        },
+        "missingItemsIsEmpty": true
+      }
+    ],
+    "mappings": [],
+    "extensions": {
+      "norn.poll/1": {
+        "feeds": [
+          {
+            "resourceId": "orgunits",
+            "recordKeyPath": "/orgUnitId"
+          },
+          {
+            "resourceId": "users",
+            "recordKeyPath": "/id"
+          },
+          {
+            "resourceId": "groups",
+            "recordKeyPath": "/id"
+          },
+          {
+            "resourceId": "group_members",
+            "fanout": {
+              "parentResourceId": "groups",
+              "pathBinding": "groupId",
+              "keyPath": "/id"
+            },
+            "recordKeyPath": "/id"
+          }
+        ]
+      }
+    }
+  }
+}

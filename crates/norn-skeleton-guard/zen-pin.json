@@ -1,0 +1,43 @@
+{
+  "$comment": "Vendor provenance of the zen crate set (#3404, D32). vendor/zen was imported byte-identical from the fork tag below with `git subtree add --squash` (updated with `git subtree merge --squash`); import_tree is that tag's git tree. Norn-owned changes since the import are commits in this repository; the first removes the upstream composite action .github/actions/setup-rust/action.yml, which the CI escape-hatch policy rejects and nothing here runs. The crates map is the only admitted zen source: path dependencies at vendor/<path>. The top-level tag must equal fork.tag: .github/workflows/zen-upstream-watch.yml reads it, and that step is frozen in .github/ci/escape-hatch-baseline.json. The vendored crates have no features (#3404): every profile entry is empty, so any feature is outside the Norn profile. Read by norn-skeleton-guard and scripts/zen-dependency-tree.sh.",
+  "tag": "norn-v2.0.1-12",
+  "vendor": {
+    "path": "vendor/zen",
+    "method": "git subtree add --squash",
+    "import_tree": "5773896711066d7ef5c5bdffb846cb9e30e27cf8",
+    "license": {
+      "spdx": "MIT",
+      "file": "LICENSE",
+      "copyright": "Copyright 2023 GoRules.io"
+    },
+    "crates": {
+      "zen-engine": "core/engine",
+      "zen-expression": "core/expression",
+      "zen-macros": "core/macros",
+      "zen-tmpl": "core/template",
+      "zen-types": "core/types"
+    }
+  },
+  "fork": {
+    "repository": "https://github.com/Norn-cloud/zen",
+    "tag": "norn-v2.0.1-12",
+    "commit": "44530255a36df637edc86f6d29495c342805e21b"
+  },
+  "upstream": {
+    "repository": "gorules/zen",
+    "base_tag": "zen-engine-v2.0.1",
+    "base_commit": "6c0fbabba1266afffc2ac3cb24f20f2be7790e38"
+  },
+  "profile": {
+    "zen-engine": [],
+    "zen-expression": [],
+    "zen-macros": [],
+    "zen-tmpl": [],
+    "zen-types": []
+  },
+  "tree_gate": {
+    "consumers": ["norn-expr", "norn-decisions", "norn-kernel"],
+    "forbidden": ["tokio", "rquickjs", "reqwest", "hyper", "ureq", "isahc", "surf"],
+    "forbidden_wasm32": ["getrandom"]
+  }
+}

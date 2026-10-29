@@ -1,0 +1,231 @@
+{
+  "description": "Output that violates the declared output schema (wrong type, undeclared member, value outside a declared enum) is refused with zero effects.",
+  "rule": {
+    "ruleId": "demo.rule.bad_output",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "demo.Order"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "total"
+                ]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "property",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "actionId"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              },
+              "dueIn": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId",
+              "dueIn"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "x",
+          "name": "x",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "slice.mode == 'enum' ? [{op: 'delete', objectType: 'demo.Order', key: 'o1', property: 'total', value: 1}] : []"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "slice.mode == 'type' ? [{actionId: 1}] : slice.mode == 'extra' ? [{actionId: 'a', extra: true}] : [{actionId: 'ok'}]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "x",
+          "type": "edge"
+        },
+        {
+          "id": "e2",
+          "sourceId": "x",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "conforming",
+      "slice": {
+        "mode": "ok"
+      },
+      "event": {
+        "kind": "k"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "actionId": "ok"
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "wrong type",
+      "slice": {
+        "mode": "type"
+      },
+      "event": {
+        "kind": "k"
+      },
+      "error": "output_schema"
+    },
+    {
+      "name": "undeclared member",
+      "slice": {
+        "mode": "extra"
+      },
+      "event": {
+        "kind": "k"
+      },
+      "error": "output_schema"
+    },
+    {
+      "name": "fact op outside the declared write set",
+      "slice": {
+        "mode": "enum"
+      },
+      "event": {
+        "kind": "k"
+      },
+      "error": "output_schema"
+    }
+  ]
+}

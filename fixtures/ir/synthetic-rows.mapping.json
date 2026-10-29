@@ -1,0 +1,67 @@
+{
+  "artifactId": "toy.rows",
+  "dependencies": [
+    {
+      "artifactId": "toy.schema",
+      "kind": "source_schema",
+      "required": true,
+      "version": "1.0.0"
+    },
+    {
+      "artifactId": "toy.Identified.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    },
+    {
+      "artifactId": "toy.Row.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "draft",
+  "name": "Synthetic row mapping",
+  "namespace": "toy",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "toy.Identified.interface"
+    ],
+    "maps": [
+      {
+        "id": "row",
+        "source": {
+          "dataset": "Rows"
+        },
+        "sourceRecord": "input.id",
+        "subject": "input.id",
+        "target": {
+          "entity": "toy.Row.entity",
+          "interface": "toy.Identified.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "toy.schema",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "version": "1.0.0"
+    }
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "tools/norn-ts/fixtures/core/mapping.source.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_demo"
+  },
+  "version": "1.0.0"
+}

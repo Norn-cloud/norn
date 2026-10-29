@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DerivedPayload",
+  "type": "object",
+  "properties": {
+    "calc": {
+      "$ref": "#/$defs/CalcExpr"
+    },
+    "extensions": {
+      "description": "Reserved extension slots keyed by `<name>/<semver>`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ViewInputRef"
+      }
+    },
+    "maintenance": {
+      "$ref": "#/$defs/ViewMaintenance"
+    },
+    "outputSchema": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "scopeRequired": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "temporalScope": {
+      "$ref": "#/$defs/TemporalScope"
+    },
+    "viewId": {
+      "type": "string"
+    },
+    "viewVersion": {
+      "$ref": "#/$defs/IrVersion01"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "viewVersion",
+    "viewId",
+    "inputs",
+    "calc",
+    "outputSchema",
+    "maintenance"
+  ],
+  "$defs": {
+    "CalcExpr": {
+      "description": "Serializable calc expression leaf for a Derived view.\n\nIn ViewIR v0 only the `field_projection` form is admitted. `effectful_ts`\nis decodable so the checker can reject it (IO belongs in an Effect\nartifact); `raw_promise` is never admitted.",
+      "oneOf": [
+        {
+          "description": "Simple field projection: select a non-empty subset of named fields from the primary input.",
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "field_projection"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "fields"
+          ]
+        },
+        {
+          "description": "Effectful TS leaf reference. Rejected inside a Derived view.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "effectful_ts"
+            },
+            "sourceRef": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "sourceRef"
+          ]
+        }
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "TemporalScope": {
+      "description": "Optional time-dimension declaration for a Derived view.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/TemporalScopeMode"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "mode"
+      ]
+    },
+    "TemporalScopeMode": {
+      "description": "`mode: \"current\"` — resolve against latest committed facts (default).\n`mode: \"as_of_param\"` — resolve against the fact log up to a caller-supplied timestamp.\n  Views with this mode MUST list an input named \"`as_of`\" in their read-set.",
+      "type": "string",
+      "enum": [
+        "current",
+        "as_of_param"
+      ]
+    },
+    "ViewInputKind": {
+      "description": "Artifact kinds a derived view may read.",
+      "type": "string",
+      "enum": [
+        "entity",
+        "relation",
+        "derived"
+      ]
+    },
+    "ViewInputRef": {
+      "description": "Identifies a Source-bearing entity or relation, or another Derived view, that a\nDerived view reads. References are exact-versioned to make the read-set computable.",
+      "type": "object",
+      "properties": {
+        "alias": {
+          "description": "Alias used in the calc expression (e.g. \"invoice\", \"`tax_rate`\"); unique per view.",
+          "type": "string"
+        },
+        "artifactId": {
+          "description": "Artifact id of the source entity, relation, or derived view being read.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Kind of the referenced artifact.",
+          "$ref": "#/$defs/ViewInputKind"
+        },
+        "version": {
+          "description": "Exact version of the referenced artifact.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "artifactId",
+        "kind",
+        "version",
+        "alias"
+      ]
+    },
+    "ViewMaintenance": {
+      "description": "Maintenance strategy. Only `recompute_on_read` is supported in v0.\n`incremental` is reserved for a future IVM phase and MUST be rejected at extraction.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "recompute_on_read"
+          ]
+        },
+        {
+          "description": "Reserved — not implemented. The checker rejects artifacts carrying this value.",
+          "type": "string",
+          "const": "incremental"
+        }
+      ]
+    }
+  }
+}

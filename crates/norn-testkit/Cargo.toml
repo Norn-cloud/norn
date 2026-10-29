@@ -1,0 +1,32 @@
+[package]
+name = "norn-testkit"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Test-support harness: proptest-state-machine template for Deciders (dev-dependency only; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+# Test support only. Workspace crates may take this crate as a
+# `[dev-dependencies]` entry and never as a normal or build dependency; the
+# skeleton guard asserts it. It therefore never reaches a ring-0 build, the
+# wasm32 target, or any shipped binary.
+[dependencies]
+norn-kernel = { path = "../norn-kernel" }
+proptest = "1.11.0"
+proptest-state-machine = "0.8.0"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+norn-cell = { path = "../norn-cell" }
+tempfile = "3.27.0"
+# The decide -> commit seam test (tests/decide_commit.rs): a norn-decisions
+# evaluation committed through norn-kernel against MemoryCell. Dev-only.
+norn-decisions = { path = "../norn-decisions" }
+norn-expr = { path = "../norn-expr" }
+norn-ir = { path = "../norn-ir" }
+serde_json = "1.0.150"

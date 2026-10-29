@@ -1,0 +1,53 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.sku.reorder_point.customization",
+  "kind": "customization",
+  "namespace": "retail",
+  "name": "SKU Reorder Point",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [
+    {
+      "artifactId": "retail.Sku.entity",
+      "kind": "entity",
+      "version": "0.1.0",
+      "required": true
+    }
+  ],
+  "provenance": {
+    "source": "agent",
+    "sourcePath": "fixtures/ir/retail-sku-reorder-point.customization.json"
+  },
+  "payload": {
+    "customizationVersion": "0.1",
+    "customizationId": "retail.sku.reorder_point",
+    "intent": {
+      "summary": "Track a per-SKU reorder point for replenishment proposals.",
+      "requestedBy": "agent"
+    },
+    "targetArtifact": {
+      "artifactId": "retail.Sku.entity",
+      "kind": "entity",
+      "version": "0.1.0"
+    },
+    "overlay": {
+      "kind": "field",
+      "operations": [
+        {
+          "op": "add_field",
+          "field": "reorderPoint",
+          "definition": { "type": "integer", "required": false }
+        }
+      ]
+    },
+    "approval": {
+      "state": "proposed",
+      "required": true
+    },
+    "scopeRequired": ["orgId", "environmentId"]
+  }
+}

@@ -1,0 +1,439 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FunctionInvocation",
+  "description": "The invocation command (§2, record 2).",
+  "type": "object",
+  "properties": {
+    "authority": {
+      "description": "The authority.",
+      "$ref": "#/$defs/Authority"
+    },
+    "blobs": {
+      "description": "Immutable input blobs by content digest.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/BlobRef"
+      }
+    },
+    "commandId": {
+      "description": "The command id.",
+      "type": "string"
+    },
+    "deadlineMillis": {
+      "description": "The deadline, in logical milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "dependency": {
+      "description": "The relevant-state dependency token.",
+      "$ref": "#/$defs/RelevantStateToken"
+    },
+    "destination": {
+      "description": "The destination and expected owner version, if the result is written.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Destination"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fencing": {
+      "description": "Cancellation/fencing identity.",
+      "$ref": "#/$defs/Fencing"
+    },
+    "freshness": {
+      "description": "The declared freshness policy.",
+      "$ref": "#/$defs/FreshnessMode"
+    },
+    "inputs": {
+      "description": "Canonical scalar inputs (null, boolean, exact number, string).",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "manifest": {
+      "description": "The manifest digest.",
+      "$ref": "#/$defs/Digest"
+    },
+    "provenanceCommit": {
+      "description": "The ledger position of the commit that dispatched the command.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "retry": {
+      "description": "Retry and cost ceilings.",
+      "$ref": "#/$defs/RetryCeiling"
+    },
+    "run": {
+      "description": "The `Run` and generation.",
+      "$ref": "#/$defs/RunRef"
+    },
+    "tenant": {
+      "description": "The tenant.",
+      "type": "string"
+    },
+    "world": {
+      "description": "The world (only `main` performs).",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "tenant",
+    "world",
+    "authority",
+    "commandId",
+    "run",
+    "manifest",
+    "inputs",
+    "blobs",
+    "provenanceCommit",
+    "dependency",
+    "freshness",
+    "deadlineMillis",
+    "retry",
+    "fencing"
+  ],
+  "$defs": {
+    "Authority": {
+      "description": "The authority a command runs under.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The principal id.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "The kind.",
+          "$ref": "#/$defs/AuthorityKind"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id"
+      ]
+    },
+    "AuthorityKind": {
+      "description": "Whose authority the command runs under.",
+      "oneOf": [
+        {
+          "description": "A human or agent actor.",
+          "type": "string",
+          "const": "actor"
+        },
+        {
+          "description": "A service principal.",
+          "type": "string",
+          "const": "service"
+        }
+      ]
+    },
+    "BlobRef": {
+      "description": "One immutable input blob, by content.",
+      "type": "object",
+      "properties": {
+        "digest": {
+          "description": "The content digest (never a URL or object key).",
+          "$ref": "#/$defs/Digest"
+        },
+        "sizeBytes": {
+          "description": "The size in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "version": {
+          "description": "The object version, informational.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "sizeBytes"
+      ]
+    },
+    "CollectionPin": {
+      "description": "A conservative relevant-collection epoch: any insert, delete, or update in\nthe collection invalidates it.",
+      "type": "object",
+      "properties": {
+        "epoch": {
+          "description": "The epoch read at dispatch.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "objectType": {
+          "description": "The object type.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "epoch"
+      ]
+    },
+    "Destination": {
+      "description": "Where an accepted result is written, and the owner version expected.",
+      "type": "object",
+      "properties": {
+        "expectedOwnerVersion": {
+          "description": "The owner version expected at acceptance.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "key": {
+          "description": "The identity key.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "The object type.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "key",
+        "expectedOwnerVersion"
+      ]
+    },
+    "Digest": {
+      "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "FactPin": {
+      "description": "One object pinned at an exact version (`0` pins absence: never written).",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "The identity key.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "The object type.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The version read at dispatch.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "key",
+        "version"
+      ]
+    },
+    "Fencing": {
+      "description": "The cancellation/fencing identity.",
+      "type": "object",
+      "properties": {
+        "cancellationGeneration": {
+          "description": "The cancellation generation at dispatch.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "token": {
+          "description": "The fencing token a late attempt is refused by.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "token",
+        "cancellationGeneration"
+      ]
+    },
+    "FreshnessMode": {
+      "description": "The command's declared freshness policy (§4); the kernel's\n`FreshnessPolicy` carries the pinned values.",
+      "oneOf": [
+        {
+          "description": "Exact relevant dependencies (state-sensitive decisions).",
+          "type": "string",
+          "const": "relevant_state"
+        },
+        {
+          "description": "Immutable-input identity plus destination CAS (transforms).",
+          "type": "string",
+          "const": "destination_cas"
+        },
+        {
+          "description": "Append-only observation (stays historically useful).",
+          "type": "string",
+          "const": "append_only"
+        }
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "MemberPin": {
+      "description": "One member of a predicate's result set, with the version read.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "The identity key.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The version read at dispatch.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "version"
+      ]
+    },
+    "PredicatePin": {
+      "description": "A versioned predicate token: the exact ordered membership of a declared\npredicate over one object type at dispatch. It covers membership, order,\nand absence (an empty member list pins \"no match\"), so an inserted or\ndeleted matching object invalidates it; row versions alone miss phantoms.",
+      "type": "object",
+      "properties": {
+        "members": {
+          "description": "The members in the predicate's declared order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberPin"
+          }
+        },
+        "objectType": {
+          "description": "The object type the predicate ranges over.",
+          "type": "string"
+        },
+        "predicate": {
+          "description": "The declared predicate's id (a slice declaration or query name).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "predicate",
+        "members"
+      ]
+    },
+    "RelevantStateToken": {
+      "description": "The relevant-state dependency token a command pins at dispatch (§4).\n\nIts [`RelevantStateToken::digest`] is the kernel's opaque\n`DependencyToken`; the structured token travels with the command so the\ncell can re-evaluate it at completion.",
+      "type": "object",
+      "properties": {
+        "collections": {
+          "description": "Collections pinned at an epoch.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CollectionPin"
+          }
+        },
+        "facts": {
+          "description": "Objects pinned at exact versions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactPin"
+          }
+        },
+        "predicates": {
+          "description": "Predicates pinned at exact membership.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PredicatePin"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "facts",
+        "predicates",
+        "collections"
+      ]
+    },
+    "RetryCeiling": {
+      "description": "Retry and cost ceilings.",
+      "type": "object",
+      "properties": {
+        "maxAttempts": {
+          "description": "The attempt ceiling (at least 1).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "maxCostUnits": {
+          "description": "The cost ceiling, in the pool's cost units.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "maxAttempts",
+        "maxCostUnits"
+      ]
+    },
+    "RunRef": {
+      "description": "The `Run` and request generation the command belongs to.",
+      "type": "object",
+      "properties": {
+        "generation": {
+          "description": "The request generation; a re-issue or cancellation bumps it.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "id": {
+          "description": "The `Run` id.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "generation"
+      ]
+    }
+  }
+}

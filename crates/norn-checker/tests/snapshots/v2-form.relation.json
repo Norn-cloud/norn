@@ -1,0 +1,30 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.Sku.preferred_supplier.relation.v2",
+      "code": "relation.validation.invalid_payload",
+      "message": "unknown field 'entityVersion' is not allowed",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/entityVersion",
+        "source": null
+      },
+      "tier": "T2"
+    },
+    {
+      "artifactId": "retail.Sku.preferred_supplier.relation.v2",
+      "code": "relation.validation.v2_relation_is_link",
+      "message": "RelationIR has no v2 form: declare an EntityIR v2 relation as a link in the source entity's payload.objectType.links",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/entityVersion",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

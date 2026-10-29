@@ -1,0 +1,266 @@
+{
+  "description": "DMN TCK 0111-first-hitpolicy-singleoutputcol: FIRST -> JDM first (row).",
+  "rule": {
+    "ruleId": "dmn_tck.0111-first-hitpolicy-singleoutputcol",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "age": {
+              "type": "number"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "decision",
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [],
+    "graph": {
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "table",
+          "name": "Advertisement",
+          "type": "decisionTableNode",
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [
+              {
+                "id": "i0",
+                "name": "age",
+                "field": "slice.age"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "o0",
+                "name": "v",
+                "field": "v"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "r1",
+                "i0": ">18",
+                "o0": "\"Cars\""
+              },
+              {
+                "_id": "r2",
+                "i0": ">12",
+                "o0": "\"Videogames\""
+              },
+              {
+                "_id": "r3",
+                "i0": ">0",
+                "o0": "\"Toys\""
+              }
+            ],
+            "outputPath": "hit",
+            "passThrough": true
+          }
+        },
+        {
+          "id": "shape",
+          "name": "shape",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_result",
+                "key": "result",
+                "value": "hit == null or len(keys(hit)) == 0 ? null : hit.v"
+              }
+            ]
+          }
+        },
+        {
+          "id": "emit",
+          "name": "emit",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "result == null ? [] : [{decision: \"Advertisement\", result: result}]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "table"
+        },
+        {
+          "id": "e2",
+          "sourceId": "table",
+          "targetId": "shape"
+        },
+        {
+          "id": "e3",
+          "sourceId": "shape",
+          "targetId": "emit"
+        },
+        {
+          "id": "e4",
+          "sourceId": "emit",
+          "targetId": "out"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "0111-first-hitpolicy-singleoutputcol-test-01#001",
+      "slice": {
+        "age": 19
+      },
+      "event": {},
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "decision": "Advertisement",
+            "result": "Cars"
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "0111-first-hitpolicy-singleoutputcol-test-01#002",
+      "slice": {
+        "age": 13
+      },
+      "event": {},
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "decision": "Advertisement",
+            "result": "Videogames"
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "0111-first-hitpolicy-singleoutputcol-test-01#003",
+      "slice": {
+        "age": 5
+      },
+      "event": {},
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "decision": "Advertisement",
+            "result": "Toys"
+          }
+        ],
+        "timers": []
+      }
+    }
+  ]
+}

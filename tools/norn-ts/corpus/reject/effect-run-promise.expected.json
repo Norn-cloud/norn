@@ -1,0 +1,11 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-CALL",
+      "start": "14:23",
+      "end": "14:40",
+      "construct": "Effect.runPromise"
+    }
+  ]
+}

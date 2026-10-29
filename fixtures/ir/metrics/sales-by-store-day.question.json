@@ -1,0 +1,42 @@
+{
+  "irVersion": "0.1",
+  "name": "erpnext.sales_by_store_day",
+  "aggregate": [
+    {
+      "metric": "erpnext.net_sales"
+    }
+  ],
+  "groupBy": [
+    {
+      "path": {
+        "links": [
+          "parent_sales_invoice",
+          "store"
+        ],
+        "property": "name"
+      }
+    },
+    {
+      "path": {
+        "links": [
+          "parent_sales_invoice"
+        ],
+        "property": "posting_date"
+      },
+      "grain": "day"
+    }
+  ],
+  "window": {
+    "start": "2026-10-01T00:00:00Z",
+    "end": "2026-11-01T00:00:00Z"
+  },
+  "compare": {
+    "kind": "previous_period"
+  },
+  "freshness": {
+    "kind": "live",
+    "maxAgeMs": 1000
+  },
+  "calendar": "iso_utc",
+  "objectSet": "erpnext.SalesInvoiceItem"
+}

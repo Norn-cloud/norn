@@ -1,0 +1,145 @@
+{
+  "propertyTypes": [
+    {
+      "name": "commerce.sku_code",
+      "type": { "kind": "text" },
+      "constraints": { "pattern": "^[A-Z0-9-]+$" }
+    },
+    {
+      "name": "commerce.weight_kg",
+      "type": { "kind": "decimal", "scale": 3, "unit": { "system": "ucum", "code": "kg" } }
+    },
+    {
+      "name": "commerce.note",
+      "type": { "kind": "text" },
+      "constraints": { "nullable": true }
+    },
+    {
+      "name": "commerce.short_note",
+      "type": { "kind": "ref", "name": "commerce.note" },
+      "constraints": { "maxLength": 80 }
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "commerce.Item",
+      "properties": [
+        { "id": "sku_code", "type": { "kind": "ref", "name": "commerce.sku_code" } },
+        { "id": "name", "type": { "kind": "text" } }
+      ]
+    }
+  ],
+  "objectTypes": [
+    {
+      "name": "retail.Sku",
+      "implements": ["commerce.Item"],
+      "properties": [
+        { "id": "sku_code", "type": { "kind": "ref", "name": "commerce.sku_code" } },
+        { "id": "name", "type": { "kind": "text" } },
+        { "id": "price", "type": { "kind": "decimal", "scale": 2 } },
+        {
+          "id": "weight",
+          "type": { "kind": "ref", "name": "commerce.weight_kg" },
+          "constraints": { "nullable": true }
+        },
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [{ "value": "draft" }, { "value": "active" }, { "value": "discontinued" }]
+          }
+        },
+        { "id": "launched_at", "type": { "kind": "timestamp", "timezone": "utc" } },
+        { "id": "launch_date", "type": { "kind": "date" }, "constraints": { "nullable": true } },
+        { "id": "shelf_life", "type": { "kind": "duration" } },
+        { "id": "is_taxable", "type": { "kind": "boolean" } },
+        { "id": "stock", "type": { "kind": "integer" } },
+        { "id": "attributes", "type": { "kind": "json-ext" } },
+        {
+          "id": "display_name",
+          "type": { "kind": "text" },
+          "computed": "self.name + ' (' + self.sku_code + ')'"
+        }
+      ],
+      "identity": [{ "name": "primary", "properties": ["sku_code"] }]
+    },
+    {
+      "name": "retail.BundleSku",
+      "extends": "retail.Sku",
+      "properties": [{ "id": "component_count", "type": { "kind": "integer" } }],
+      "links": [
+        {
+          "id": "components",
+          "target": "retail.Sku",
+          "cardinality": { "to": "many", "from": "many" }
+        }
+      ]
+    },
+    {
+      "name": "crm.Customer",
+      "properties": [
+        { "id": "email", "type": { "kind": "text", "format": "email" } },
+        {
+          "id": "tier",
+          "type": {
+            "kind": "enum",
+            "values": [{ "value": "gold" }, { "value": "silver" }, { "value": "standard" }]
+          }
+        },
+        { "id": "note", "type": { "kind": "ref", "name": "commerce.short_note" } }
+      ]
+    },
+    {
+      "name": "commerce.SalesOrder",
+      "properties": [
+        { "id": "number", "type": { "kind": "text" } },
+        { "id": "total", "type": { "kind": "decimal", "scale": 2 } },
+        { "id": "placed_at", "type": { "kind": "timestamp", "timezone": "offset" } }
+      ],
+      "links": [
+        {
+          "id": "customer",
+          "target": "crm.Customer",
+          "cardinality": { "to": "one", "from": "many", "required": true },
+          "inverse": "orders"
+        },
+        {
+          "id": "lines",
+          "target": "commerce.OrderLine",
+          "cardinality": { "to": "many", "from": "one" },
+          "inverse": "order"
+        }
+      ]
+    },
+    {
+      "name": "commerce.OrderLine",
+      "properties": [
+        { "id": "quantity", "type": { "kind": "integer" } },
+        { "id": "amount", "type": { "kind": "decimal", "scale": 2 } }
+      ],
+      "links": [
+        {
+          "id": "item",
+          "target": "commerce.Item",
+          "cardinality": { "to": "one", "from": "many", "required": true },
+          "inverse": "order_lines"
+        }
+      ]
+    }
+  ],
+  "extensions": [
+    {
+      "namespace": "acme",
+      "target": "crm.Customer",
+      "properties": [{ "id": "acme__loyalty_points", "type": { "kind": "integer" } }],
+      "links": [
+        {
+          "id": "acme__referrer",
+          "target": "crm.Customer",
+          "cardinality": { "to": "one", "from": "many" },
+          "inverse": "acme__referrals"
+        }
+      ]
+    }
+  ]
+}

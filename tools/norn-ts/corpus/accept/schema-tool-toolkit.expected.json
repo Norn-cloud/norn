@@ -1,0 +1,31 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [],
+  "uses": [
+    "7:38 effect/Data#TaggedError",
+    "9:26 effect/Schema#String",
+    "9:40 effect/Pipeable#Pipeable.pipe",
+    "9:45 effect/Schema#brand",
+    "10:30 effect/Schema#Literals",
+    "11:21 effect/Schema#Struct",
+    "12:8 effect/Schema#String",
+    "13:13 effect/Schema#Int",
+    "14:9 effect/Schema#optionalKey",
+    "14:28 effect/Schema#String",
+    "17:30 effect/Schema#Class",
+    "20:10 effect/Schema#ArraySchema",
+    "21:11 effect/Schema#NullOr",
+    "21:25 effect/Schema#String",
+    "22:9 effect/Schema#Finite",
+    "23:13 effect/Schema#Boolean",
+    "26:29 effect/Schema#TaggedUnion",
+    "28:37 effect/Schema#String",
+    "31:21 effect/Schema#Union",
+    "31:35 effect/Schema#Literal",
+    "31:61 effect/Schema#Literal",
+    "31:86 effect/Schema#Null",
+    "33:27 effect/unstable/ai/Tool#make",
+    "34:15 effect/Schema#Struct",
+    "38:24 effect/unstable/ai/Toolkit#make"
+  ]
+}

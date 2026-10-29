@@ -1,0 +1,684 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PolicyPayload",
+  "description": "The payload of a `policy` (Access) artifact: the `AccessIR` form\n(`accessVersion` present), the versioned obligations form (any of\n`policyVersion`, `obligations`, `scopeRequired` present), or the\npre-versioned approval form.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ObligationPolicyRoot"
+    },
+    {
+      "$ref": "#/$defs/ApprovalPolicyRoot"
+    },
+    {
+      "description": "Restricted `AccessIR` (#2879), selected by `accessVersion`; compiled to\nCedar by `norn-authz` at admission.",
+      "$ref": "#/$defs/AccessIr"
+    }
+  ],
+  "$defs": {
+    "AccessCondition": {
+      "description": "One typed conjunct of [`AccessRule::all_of`]. Externally tagged and closed:\nan unknown node (for example `{\"expression\": \"...\"}`) fails to decode.",
+      "oneOf": [
+        {
+          "description": "The principal holds at least one of the roles.",
+          "type": "object",
+          "properties": {
+            "role": {
+              "$ref": "#/$defs/RoleCondition"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "description": "Directional relation: the other endpoint is reached from `from` by the\nlink role `role` (a link id or inverse role on the starting type).",
+          "type": "object",
+          "properties": {
+            "rel": {
+              "$ref": "#/$defs/RelCondition"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "rel"
+          ]
+        },
+        {
+          "description": "A typed context value, computed outside Cedar, compared to a literal.",
+          "type": "object",
+          "properties": {
+            "context": {
+              "$ref": "#/$defs/ContextCondition"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "context"
+          ]
+        },
+        {
+          "description": "A projected scalar property of the resource, compared to a literal or\nto a trusted principal attribute. This condition requires schema\nprojection metadata so admission can reject unsupported property types\n(including decimals and links) before lowering.",
+          "type": "object",
+          "properties": {
+            "resource": {
+              "$ref": "#/$defs/ResourceCondition"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "resource"
+          ]
+        },
+        {
+          "description": "The synthetic marking resource is one of the listed markings. This is\nreserved for the `norn.reveal` and `norn.declassify` actions on\n`norn.Marking`; admission rejects it on every other resource or action.",
+          "type": "object",
+          "properties": {
+            "marking": {
+              "$ref": "#/$defs/MarkingCondition"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "marking"
+          ]
+        },
+        {
+          "description": "Matching trusted entitlement kind.",
+          "type": "object",
+          "properties": {
+            "entitlement": {
+              "$ref": "#/$defs/EntitlementMatchKind"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "entitlement"
+          ]
+        }
+      ]
+    },
+    "AccessIr": {
+      "description": "Restricted `AccessIR` v1 (T5-AZ-2, #2577; ruling 2026-08-27 §2/§7, retained by\n2026-09-25): the typed access predicate that `norn-authz` compiles to Cedar.\n\nThe grammar is closed. A rule is a conjunction (`allOf`) of typed\nconditions under a **mandatory structural `scope` conjunct**; there is no\nexpression node, so an arbitrary ZEN Expression (or Cedar text) cannot be\ncarried here. Expressions may only compute typed context values outside\nCedar; a rule compares such a value through [`AccessCondition::Context`].\n\nThe [`PolicyRoot::Access`] form of a `policy` artifact (#2879).",
+      "type": "object",
+      "properties": {
+        "accessVersion": {
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "genericRules": {
+          "description": "Closed rules expanded over the admitted entitlement target/action\ncatalog. These are templates, never one rule per entitlement row.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GenericAccessRule"
+          }
+        },
+        "policyId": {
+          "description": "Identity of the policy artifact; prefixes every compiled Cedar policy id.",
+          "type": "string"
+        },
+        "rules": {
+          "description": "Permit rules. Authorization is default-deny: no rule, no permit.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccessRule"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "accessVersion",
+        "policyId",
+        "rules"
+      ]
+    },
+    "AccessLiteral": {
+      "description": "A typed literal: boolean, 64-bit integer, or string. No expression form.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "AccessRule": {
+      "description": "One permit rule: `principal` may perform any of `actions` on a `resource`\nof `resourceType` when the scope conjunct and every `allOf` condition hold.",
+      "type": "object",
+      "properties": {
+        "actions": {
+          "description": "`ActionIR` ids this rule permits; at least one.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allOf": {
+          "description": "Further conjuncts; empty means the scope conjunct alone.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccessCondition"
+          }
+        },
+        "resourceType": {
+          "description": "The `EntityIR` v2 object type of the resource.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "ruleId": {
+          "description": "Unique within the policy.",
+          "type": "string"
+        },
+        "scope": {
+          "description": "The mandatory structural scope conjunct. Required on the wire: a rule\nwithout it fails to decode.",
+          "$ref": "#/$defs/AccessScope"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ruleId",
+        "actions",
+        "resourceType",
+        "scope"
+      ]
+    },
+    "AccessScope": {
+      "description": "The structural scope conjunct. The principal's scope, the resource's scope,\nand the request scope must be exactly equal (an absent dimension matches\nonly an absent dimension, never as a wildcard), and every listed dimension\nmust be present in the request scope. `org` must be listed.",
+      "type": "object",
+      "properties": {
+        "dimensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeDimension"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dimensions"
+      ]
+    },
+    "ApprovalPolicyRoot": {
+      "description": "Pre-versioned approval policy: who must approve what, and when.",
+      "type": "object",
+      "properties": {
+        "appliesTo": {
+          "type": "string"
+        },
+        "approvalRoles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "policyId": {
+          "type": "string"
+        },
+        "reviewRequiredWhen": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "policyId",
+        "appliesTo",
+        "reviewRequiredWhen",
+        "approvalRoles"
+      ]
+    },
+    "CompareOp": {
+      "description": "Comparison operator of a [`ContextCondition`].",
+      "type": "string",
+      "enum": [
+        "eq",
+        "ne",
+        "lt",
+        "le",
+        "gt",
+        "ge"
+      ]
+    },
+    "ContextCondition": {
+      "description": "`context.<name> <op> <value>` over a typed context value.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "$ref": "#/$defs/CompareOp"
+        },
+        "value": {
+          "$ref": "#/$defs/AccessLiteral"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "op",
+        "value"
+      ]
+    },
+    "EntitlementMatchKind": {
+      "description": "The relationship condition selected by a fixed entitlement policy rule.\nLink ids and target references belong to entitlement data, not this rule.",
+      "oneOf": [
+        {
+          "description": "No extra resource relationship is required.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "none"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The resource's configured owner link must identify the principal.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ownerOnly"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The resource's configured link must match the exact linked object.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "linkedRecord"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "GenericAccessRule": {
+      "description": "A fixed, typed rule template compiled once for each admitted target type and\neligible action. It cannot name arbitrary Cedar source or imported rows.",
+      "type": "object",
+      "properties": {
+        "actions": {
+          "description": "The closed action catalog selector.",
+          "$ref": "#/$defs/GenericActionSelector"
+        },
+        "allOf": {
+          "description": "Further typed conjuncts; entitlement templates require at least one.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccessCondition"
+          }
+        },
+        "ruleId": {
+          "description": "Unique within the policy.",
+          "type": "string"
+        },
+        "scope": {
+          "description": "The mandatory structural scope conjunct.",
+          "$ref": "#/$defs/AccessScope"
+        },
+        "target": {
+          "description": "The closed target catalog selector.",
+          "$ref": "#/$defs/GenericTargetSelector"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ruleId",
+        "target",
+        "actions",
+        "scope",
+        "allOf"
+      ]
+    },
+    "GenericActionSelector": {
+      "description": "Closed catalog selectors for generic AccessIR templates.",
+      "oneOf": [
+        {
+          "description": "Every action in the explicit entitlement-eligible action catalog.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "allAdmittedActions"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "GenericTargetSelector": {
+      "description": "Closed catalog selectors for generic AccessIR templates.",
+      "oneOf": [
+        {
+          "description": "Every object type in the explicit admitted business catalog.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "allAdmittedObjectTypes"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "LinkId": {
+      "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "MarkingCondition": {
+      "description": "`resource.id` is a member of at least one of `anyOf` for a synthetic\n`norn.Marking` resource.",
+      "type": "object",
+      "properties": {
+        "anyOf": {
+          "description": "Marking ids this rule may reveal or declassify.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingId"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "anyOf"
+      ]
+    },
+    "MarkingId": {
+      "description": "Stable identity of a data marking.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "ObjectTypeName": {
+      "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "ObligationPolicyRoot": {
+      "description": "Versioned policy: scope-bearing obligations with evidence and review roles.",
+      "type": "object",
+      "properties": {
+        "appliesTo": {
+          "description": "What the policy applies to. An approval-form member; in the obligations\nform it is optional and, when present, a non-empty string (checker rule).",
+          "type": "string"
+        },
+        "approvalRoles": {
+          "description": "Roles that may approve. An approval-form member; in the obligations form\nit is optional and, when present, a non-empty list of non-empty strings\n(checker rule).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "obligations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PolicyObligation"
+          }
+        },
+        "policyId": {
+          "type": "string"
+        },
+        "policyVersion": {
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "reviewRequiredWhen": {
+          "description": "When review is required. An approval-form member; in the obligations\nform it is optional and, when present, a non-empty string (checker rule).",
+          "type": "string"
+        },
+        "scopeRequired": {
+          "description": "Scope dimensions the caller must supply (fail closed).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "policyVersion",
+        "policyId",
+        "scopeRequired",
+        "obligations"
+      ]
+    },
+    "PolicyObligation": {
+      "description": "One obligation of an [`ObligationPolicyRoot`].",
+      "type": "object",
+      "properties": {
+        "appliesTo": {
+          "type": "string"
+        },
+        "evidenceRequired": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "obligationId": {
+          "type": "string"
+        },
+        "reviewRoles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "obligationId",
+        "appliesTo",
+        "evidenceRequired",
+        "reviewRoles"
+      ]
+    },
+    "PrincipalAttributeOperand": {
+      "description": "The name of a trusted principal attribute, represented on the wire as\n`{ \"principalAttribute\": \"...\" }`.",
+      "type": "object",
+      "properties": {
+        "principalAttribute": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "principalAttribute"
+      ]
+    },
+    "RelCondition": {
+      "description": "Directional `rel(from, role)`.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/RelEndpoint"
+        },
+        "role": {
+          "$ref": "#/$defs/LinkId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "role"
+      ]
+    },
+    "RelEndpoint": {
+      "description": "Which endpoint a [`RelCondition`] starts from.",
+      "oneOf": [
+        {
+          "description": "`principal in resource.<role>`.",
+          "type": "string",
+          "const": "resource"
+        },
+        {
+          "description": "`resource in principal.<role>`.",
+          "type": "string",
+          "const": "principal"
+        }
+      ]
+    },
+    "ResourceCompareOp": {
+      "description": "Comparison operator of a [`ResourceCondition`].",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "eq",
+            "ne",
+            "lt",
+            "le",
+            "gt",
+            "ge"
+          ]
+        },
+        {
+          "description": "The resource scalar is a member of the named principal attribute set.",
+          "type": "string",
+          "const": "in"
+        }
+      ]
+    },
+    "ResourceCondition": {
+      "description": "`resource.<name> <op> <operand>` over a projected resource scalar.\nLiteral operands preserve the existing AccessIR wire form. The closed\nprincipal attribute operand is resolved against the Cedar schema inferred\nfrom all resource conditions in the policy set.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "$ref": "#/$defs/ResourceCompareOp"
+        },
+        "value": {
+          "$ref": "#/$defs/ResourceOperand"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "op",
+        "value"
+      ]
+    },
+    "ResourceOperand": {
+      "description": "A resource comparison's literal or trusted principal attribute reference.",
+      "anyOf": [
+        {
+          "description": "The existing boolean, exact signed 64-bit integer, or string literal.",
+          "$ref": "#/$defs/AccessLiteral"
+        },
+        {
+          "description": "A principal attribute name supplied by the trusted resolver.",
+          "$ref": "#/$defs/PrincipalAttributeOperand"
+        }
+      ]
+    },
+    "RoleCondition": {
+      "description": "`principal` is a member of at least one of `anyOf`.",
+      "type": "object",
+      "properties": {
+        "anyOf": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "anyOf"
+      ]
+    },
+    "ScopeDimension": {
+      "description": "A structural scope dimension (the kernel's five-dimension scope key).",
+      "type": "string",
+      "enum": [
+        "org",
+        "tenant",
+        "workspace",
+        "environment",
+        "businessUnit"
+      ]
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "artifactId": "toy.contacts.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "draft",
+  "name": "Synthetic contact input",
+  "namespace": "toy",
+  "payload": {
+    "adapter": {
+      "name": "toy.fixture",
+      "version": "1.0.0"
+    },
+    "datasets": [
+      {
+        "id": "Rows",
+        "kind": "table",
+        "nativeName": "Rows"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "Rows",
+        "name": "customer",
+        "nativeType": "text",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-10-01T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "uri": "evidence://independent/contact-fixture"
+    },
+    "source": {
+      "instance": "independent-fixture",
+      "system": "Toy"
+    }
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "tools/norn-ts/fixtures/core/contact.source.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_demo"
+  },
+  "version": "1.0.0"
+}

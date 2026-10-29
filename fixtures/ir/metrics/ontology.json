@@ -1,0 +1,411 @@
+[
+  {
+    "irVersion": "0.1",
+    "artifactId": "erpnext.SalesInvoiceItem.entity.v2",
+    "kind": "entity",
+    "namespace": "erpnext",
+    "name": "erpnext.SalesInvoiceItem",
+    "version": "0.1.0",
+    "lifecycle": "draft",
+    "scope": {},
+    "dependencies": [],
+    "provenance": {
+      "source": "import",
+      "sourcePath": "ERPNext.SalesInvoiceItem"
+    },
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "name": "erpnext.SalesInvoiceItem",
+        "properties": [
+          {
+            "description": "Document name, the ERPNext primary key (autoname: hash). Source: ERPNext.Sales Invoice Item/name",
+            "id": "name",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "constraints": {
+              "min": "1"
+            },
+            "description": "Frappe child-row ordering index, 1-based. Source: ERPNext.Sales Invoice Item/idx",
+            "id": "idx",
+            "type": {
+              "kind": "integer"
+            }
+          },
+          {
+            "constraints": {
+              "nullable": true
+            },
+            "description": "Quantity. Source: ERPNext.Sales Invoice Item/qty",
+            "id": "qty",
+            "type": {
+              "kind": "decimal",
+              "scale": 3.0
+            }
+          },
+          {
+            "description": "Rate. Currency amount; its currency is given by `currency`. Source: ERPNext.Sales Invoice Item/rate",
+            "id": "rate",
+            "type": {
+              "kind": "decimal",
+              "scale": 2.0,
+              "currencySource": {
+                "links": [
+                  "parent_sales_invoice"
+                ],
+                "property": "currency"
+              }
+            }
+          },
+          {
+            "constraints": {
+              "nullable": true
+            },
+            "description": "Sales Order Item. Source: ERPNext.Sales Invoice Item/so_detail",
+            "id": "so_detail",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "id": "net_amount",
+            "type": {
+              "kind": "decimal",
+              "scale": 2,
+              "currencySource": {
+                "links": [
+                  "parent_sales_invoice"
+                ],
+                "property": "currency"
+              }
+            }
+          },
+          {
+            "id": "conversion_rate",
+            "type": {
+              "kind": "decimal",
+              "scale": 8
+            }
+          },
+          {
+            "id": "weight",
+            "type": {
+              "kind": "decimal",
+              "scale": 3,
+              "unit": {
+                "system": "ucum",
+                "code": "kg"
+              }
+            }
+          },
+          {
+            "id": "volume",
+            "type": {
+              "kind": "decimal",
+              "scale": 3,
+              "unit": {
+                "system": "ucum",
+                "code": "L"
+              }
+            }
+          }
+        ],
+        "links": [
+          {
+            "id": "parent_sales_invoice",
+            "target": "erpnext.SalesInvoice",
+            "cardinality": {
+              "to": "one",
+              "from": "many",
+              "required": true
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "irVersion": "0.1",
+    "artifactId": "erpnext.SalesInvoice.entity.v2",
+    "kind": "entity",
+    "namespace": "erpnext",
+    "name": "erpnext.SalesInvoice",
+    "version": "0.1.0",
+    "lifecycle": "draft",
+    "scope": {},
+    "dependencies": [],
+    "provenance": {
+      "source": "import",
+      "sourcePath": "ERPNext.SalesInvoice"
+    },
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "name": "erpnext.SalesInvoice",
+        "properties": [
+          {
+            "description": "Document name, the ERPNext primary key (autoname: naming_series:). Source: ERPNext.Sales Invoice/name",
+            "id": "name",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "default": "Draft",
+            "description": "Document status of a submittable DocType. Source: ERPNext.Sales Invoice/docstatus",
+            "id": "docstatus",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "description": "docstatus 0",
+                  "value": "Draft"
+                },
+                {
+                  "description": "docstatus 1",
+                  "value": "Submitted"
+                },
+                {
+                  "description": "docstatus 2",
+                  "value": "Cancelled"
+                }
+              ]
+            }
+          },
+          {
+            "description": "Date. Source: ERPNext.Sales Invoice/posting_date",
+            "id": "posting_date",
+            "type": {
+              "kind": "date"
+            }
+          },
+          {
+            "description": "Currency. Source: ERPNext.Sales Invoice/currency",
+            "id": "currency",
+            "type": {
+              "kind": "ref",
+              "name": "iso4217.currency_code"
+            }
+          },
+          {
+            "default": false,
+            "description": "Is Return (Credit Note). Source: ERPNext.Sales Invoice/is_return",
+            "id": "is_return",
+            "type": {
+              "kind": "boolean"
+            }
+          },
+          {
+            "constraints": {
+              "nullable": true
+            },
+            "description": "Grand Total. Currency amount; its currency is given by `currency`. Source: ERPNext.Sales Invoice/grand_total",
+            "id": "grand_total",
+            "type": {
+              "kind": "decimal",
+              "scale": 2.0
+            }
+          },
+          {
+            "id": "customer_key",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "id": "base_currency",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "SAR"
+                }
+              ]
+            }
+          },
+          {
+            "id": "usd_currency",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "USD"
+                }
+              ]
+            }
+          },
+          {
+            "id": "fx_currency",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "SAR"
+                },
+                {
+                  "value": "USD"
+                }
+              ]
+            }
+          }
+        ],
+        "links": [
+          {
+            "cardinality": {
+              "from": "many",
+              "required": true,
+              "to": "one"
+            },
+            "description": "Customer. Source: ERPNext.Sales Invoice/customer",
+            "id": "customer",
+            "target": "erpnext.Customer"
+          },
+          {
+            "cardinality": {
+              "from": "one",
+              "required": true,
+              "to": "many"
+            },
+            "description": "Items. Source: ERPNext.Sales Invoice/items",
+            "id": "items",
+            "target": "erpnext.SalesInvoiceItem"
+          },
+          {
+            "id": "store",
+            "target": "erpnext.Store",
+            "cardinality": {
+              "to": "one",
+              "from": "many"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "irVersion": "0.1",
+    "artifactId": "erpnext.Customer.entity.v2",
+    "kind": "entity",
+    "namespace": "erpnext",
+    "name": "erpnext.Customer",
+    "version": "0.1.0",
+    "lifecycle": "draft",
+    "scope": {},
+    "dependencies": [],
+    "provenance": {
+      "source": "import",
+      "sourcePath": "ERPNext.Customer"
+    },
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "name": "erpnext.Customer",
+        "properties": [
+          {
+            "description": "Document name, the ERPNext primary key (autoname: naming_series:). Source: ERPNext.Customer/name",
+            "id": "name",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "description": "Customer Name. Source: ERPNext.Customer/customer_name",
+            "id": "customer_name",
+            "type": {
+              "kind": "text"
+            }
+          }
+        ],
+        "links": [
+          {
+            "id": "region",
+            "target": "erpnext.Region",
+            "cardinality": {
+              "to": "one",
+              "from": "many"
+            }
+          },
+          {
+            "id": "stores",
+            "target": "erpnext.Store",
+            "cardinality": {
+              "to": "many",
+              "from": "many"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "irVersion": "0.1",
+    "artifactId": "erpnext.Store.entity.v2",
+    "kind": "entity",
+    "namespace": "erpnext",
+    "name": "erpnext.Store",
+    "version": "0.1.0",
+    "lifecycle": "draft",
+    "scope": {},
+    "dependencies": [],
+    "provenance": {
+      "source": "import",
+      "sourcePath": "ERPNext.Store"
+    },
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "name": "erpnext.Store",
+        "properties": [
+          {
+            "id": "name",
+            "type": {
+              "kind": "text"
+            }
+          }
+        ],
+        "links": [
+          {
+            "id": "region",
+            "target": "erpnext.Region",
+            "cardinality": {
+              "to": "one",
+              "from": "many"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "irVersion": "0.1",
+    "artifactId": "erpnext.Region.entity.v2",
+    "kind": "entity",
+    "namespace": "erpnext",
+    "name": "erpnext.Region",
+    "version": "0.1.0",
+    "lifecycle": "draft",
+    "scope": {},
+    "dependencies": [],
+    "provenance": {
+      "source": "import",
+      "sourcePath": "ERPNext.Region"
+    },
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "name": "erpnext.Region",
+        "properties": [
+          {
+            "id": "name",
+            "type": {
+              "kind": "text"
+            }
+          }
+        ]
+      }
+    }
+  }
+]

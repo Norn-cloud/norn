@@ -1,0 +1,5 @@
+{
+  "name": "commerce.ordered_at",
+  "description": "When the order was placed, as a UTC instant.",
+  "type": { "kind": "timestamp", "timezone": "utc" }
+}

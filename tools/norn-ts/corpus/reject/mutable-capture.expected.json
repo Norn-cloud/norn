@@ -1,0 +1,35 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-CAPTURE",
+      "start": "5:1",
+      "end": "5:17",
+      "construct": "let attempts = 0"
+    },
+    {
+      "code": "NORN-FLOW-CAPTURE",
+      "start": "6:1",
+      "end": "6:22",
+      "construct": "var label = \"collect\""
+    },
+    {
+      "code": "NORN-FLOW-CAPTURE",
+      "start": "12:5",
+      "end": "12:28",
+      "construct": "attempts = attempts + 1"
+    },
+    {
+      "code": "NORN-FLOW-CAPTURE",
+      "start": "13:30",
+      "end": "13:35",
+      "construct": "label"
+    },
+    {
+      "code": "NORN-FLOW-CAPTURE",
+      "start": "13:37",
+      "end": "13:45",
+      "construct": "attempts"
+    }
+  ]
+}

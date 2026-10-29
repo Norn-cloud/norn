@@ -1,0 +1,427 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FunctionReceipt",
+  "description": "The result receipt (§2, record 3).",
+  "type": "object",
+  "properties": {
+    "attempt": {
+      "description": "The attempt number (1-based).",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "cache": {
+      "description": "Cache-hit origin.",
+      "$ref": "#/$defs/CacheOrigin"
+    },
+    "commandId": {
+      "description": "The command id.",
+      "type": "string"
+    },
+    "dependencyToken": {
+      "description": "The dependency token digest of its dispatch.",
+      "$ref": "#/$defs/Digest"
+    },
+    "dispatch": {
+      "description": "The invocation digest it is bound to.",
+      "$ref": "#/$defs/Digest"
+    },
+    "executionProfile": {
+      "description": "The execution-profile digest it executed under.",
+      "$ref": "#/$defs/Digest"
+    },
+    "inputIdentity": {
+      "description": "The immutable-input identity it consumed.",
+      "$ref": "#/$defs/Digest"
+    },
+    "manifest": {
+      "description": "The manifest digest it executed.",
+      "$ref": "#/$defs/Digest"
+    },
+    "outcome": {
+      "description": "The typed outcome.",
+      "$ref": "#/$defs/FunctionOutcome"
+    },
+    "provenance": {
+      "description": "Execution provenance.",
+      "$ref": "#/$defs/ExecutionProvenance"
+    },
+    "resources": {
+      "description": "Resource use.",
+      "$ref": "#/$defs/ResourceUse"
+    },
+    "run": {
+      "description": "The `Run` and generation it was dispatched under.",
+      "$ref": "#/$defs/RunRef"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "commandId",
+    "run",
+    "attempt",
+    "dispatch",
+    "manifest",
+    "executionProfile",
+    "inputIdentity",
+    "dependencyToken",
+    "outcome",
+    "provenance",
+    "resources",
+    "cache"
+  ],
+  "$defs": {
+    "CacheOrigin": {
+      "description": "Whether the result came from the action cache.",
+      "oneOf": [
+        {
+          "description": "Computed by this attempt.",
+          "type": "object",
+          "properties": {
+            "miss": {
+              "type": "object",
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "miss"
+          ]
+        },
+        {
+          "description": "Served from the tenant's action cache.",
+          "type": "object",
+          "properties": {
+            "hit": {
+              "type": "object",
+              "properties": {
+                "action_key": {
+                  "description": "The action key that hit.",
+                  "$ref": "#/$defs/Digest"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "action_key"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "hit"
+          ]
+        }
+      ]
+    },
+    "Digest": {
+      "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "ExecutionProvenance": {
+      "description": "Where and how the attempt ran.",
+      "type": "object",
+      "properties": {
+        "executor": {
+          "description": "The executor identity (pool, node) the receipt is authenticated as.",
+          "type": "string"
+        },
+        "placement": {
+          "description": "The placement.",
+          "type": "string"
+        },
+        "runtime": {
+          "description": "The runtime digest the attempt actually ran.",
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "executor",
+        "placement",
+        "runtime"
+      ]
+    },
+    "ExhaustedResource": {
+      "description": "Which bound stopped the attempt.",
+      "oneOf": [
+        {
+          "description": "Fuel or CPU.",
+          "type": "string",
+          "const": "cpu"
+        },
+        {
+          "description": "Memory.",
+          "type": "string",
+          "const": "memory"
+        },
+        {
+          "description": "Output size.",
+          "type": "string",
+          "const": "output"
+        },
+        {
+          "description": "Wall time.",
+          "type": "string",
+          "const": "wall"
+        }
+      ]
+    },
+    "FailureOutcome": {
+      "description": "A typed failure, by the error schema.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "The error code.",
+          "type": "string"
+        },
+        "detail": {
+          "description": "Bounded detail, typed by the error schema.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "detail"
+      ]
+    },
+    "FunctionOutcome": {
+      "description": "The typed outcome of one attempt.",
+      "oneOf": [
+        {
+          "description": "The Function returned a value.",
+          "type": "object",
+          "properties": {
+            "success": {
+              "$ref": "#/$defs/SuccessOutcome"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "success"
+          ]
+        },
+        {
+          "description": "The Function returned a typed error.",
+          "type": "object",
+          "properties": {
+            "failure": {
+              "$ref": "#/$defs/FailureOutcome"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "failure"
+          ]
+        },
+        {
+          "description": "A resource bound stopped it. Never a cache entry.",
+          "type": "object",
+          "properties": {
+            "resource_exhausted": {
+              "type": "object",
+              "properties": {
+                "resource": {
+                  "description": "The bound.",
+                  "$ref": "#/$defs/ExhaustedResource"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "resource"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "resource_exhausted"
+          ]
+        },
+        {
+          "description": "The deadline passed. Never a cache entry.",
+          "type": "object",
+          "properties": {
+            "deadline_exceeded": {
+              "type": "object",
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "deadline_exceeded"
+          ]
+        },
+        {
+          "description": "The command was cancelled.",
+          "type": "object",
+          "properties": {
+            "cancelled": {
+              "type": "object",
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "cancelled"
+          ]
+        }
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "OutputRef": {
+      "description": "One output object, by content.",
+      "type": "object",
+      "properties": {
+        "digest": {
+          "description": "Its content digest.",
+          "$ref": "#/$defs/Digest"
+        },
+        "name": {
+          "description": "The output's name.",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "Its size in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "digest",
+        "sizeBytes"
+      ]
+    },
+    "ResourceUse": {
+      "description": "Measured resource use. Metrics, never part of the result identity.",
+      "type": "object",
+      "properties": {
+        "cpuMillis": {
+          "description": "CPU time, in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fuel": {
+          "description": "Fuel consumed, for a WASM attempt.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "outputBytes": {
+          "description": "Output bytes written.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "peakMemoryBytes": {
+          "description": "Peak memory, in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "wallMillis": {
+          "description": "Wall time, in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cpuMillis",
+        "wallMillis",
+        "peakMemoryBytes",
+        "outputBytes"
+      ]
+    },
+    "RunRef": {
+      "description": "The `Run` and request generation the command belongs to.",
+      "type": "object",
+      "properties": {
+        "generation": {
+          "description": "The request generation; a re-issue or cancellation bumps it.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "id": {
+          "description": "The `Run` id.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "generation"
+      ]
+    },
+    "SuccessOutcome": {
+      "description": "A successful result.",
+      "type": "object",
+      "properties": {
+        "outputManifest": {
+          "description": "The output-manifest digest ([`output_manifest_digest`] of `outputs`\nand `summary`).",
+          "$ref": "#/$defs/Digest"
+        },
+        "outputs": {
+          "description": "The output objects.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OutputRef"
+          }
+        },
+        "summary": {
+          "description": "The bounded summary the cell consumes (at most\n[`MAX_RECEIPT_SUMMARY_BYTES`] canonical bytes), typed by the output\nschema.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "outputManifest",
+        "outputs",
+        "summary"
+      ]
+    }
+  }
+}

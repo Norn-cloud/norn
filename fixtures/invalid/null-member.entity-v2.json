@@ -1,0 +1,33 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.Sku.entity.v2.null_description",
+  "kind": "entity",
+  "namespace": "retail",
+  "name": "SKU",
+  "version": "0.2.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/invalid/null-member.entity-v2.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "retail.Sku",
+      "properties": [
+        {
+          "id": "sku_code",
+          "description": null,
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  }
+}

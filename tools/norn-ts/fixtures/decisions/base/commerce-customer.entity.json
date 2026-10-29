@@ -1,0 +1,53 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "commerce.Customer.entity",
+  "kind": "entity",
+  "namespace": "commerce",
+  "name": "Customer",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/dev/sales-order/commerce-customer.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "commerce.Customer",
+      "description": "A customer with a credit limit and its current open exposure (integer minor units).",
+      "properties": [
+        {
+          "id": "customer_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "credit_limit",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "exposure",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "customer_id"
+          ]
+        }
+      ]
+    }
+  }
+}

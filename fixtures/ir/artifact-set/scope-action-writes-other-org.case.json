@@ -1,0 +1,109 @@
+{
+  "description": "An action writes an object type defined in another org: the write target is outside the action's scope.",
+  "base": [],
+  "artifacts": [
+    {
+      "fixture": "ir/retail-reorder.action.json",
+      "patch": {
+        "payload": {
+          "actionId": "retail.sku.reorder",
+          "title": "Reorder SKU",
+          "description": "Create a purchase request that replenishes one SKU to its target stock level.",
+          "scopeRequired": [
+            "orgId",
+            "environmentId"
+          ],
+          "idempotent": true,
+          "ledgered": true,
+          "ledgerCategory": "procurement.purchase_request",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string"
+              },
+              "skuId": {
+                "type": "string"
+              },
+              "quantity": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "requestId",
+              "skuId",
+              "quantity"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "preconditions": [
+            "quantity > 0",
+            "len(skuId) > 0"
+          ],
+          "writes": [
+            {
+              "entityKind": "retail.PurchaseRequest",
+              "change": "created"
+            },
+            {
+              "entityKind": "retail.PurchaseRequest",
+              "change": "modified"
+            }
+          ],
+          "compensation": {
+            "actionId": "retail.sku.cancel_reorder"
+          },
+          "access": {
+            "artifactId": "retail.procurement.policy",
+            "version": "0.1.0"
+          },
+          "effectProgram": {
+            "kind": "upsert_input_object",
+            "objectIdField": "requestId",
+            "objectKind": "retail.PurchaseRequest",
+            "entityArtifactId": "retail.PurchaseRequest.entity",
+            "entityArtifactVersion": "0.1.0"
+          }
+        }
+      }
+    },
+    {
+      "fixture": "ir/retail-purchase-request.entity.json",
+      "patch": {
+        "scope": {
+          "orgId": "org_other",
+          "environmentId": "dev"
+        }
+      }
+    }
+  ],
+  "expect": [
+    [
+      "retail.reorder.action",
+      "artifact_set.scope.incompatible_reference",
+      "/payload/effectProgram/entityArtifactId"
+    ],
+    [
+      "retail.reorder.action",
+      "artifact_set.scope.incompatible_reference",
+      "/payload/writes/0/entityKind"
+    ],
+    [
+      "retail.reorder.action",
+      "artifact_set.scope.incompatible_reference",
+      "/payload/writes/1/entityKind"
+    ]
+  ]
+}

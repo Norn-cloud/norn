@@ -1,0 +1,136 @@
+{
+  "artifacts": [
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.Customer.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "Customer",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "crm.Customer",
+          "properties": [
+            {
+              "id": "display_name",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "notes",
+              "type": {
+                "kind": "text"
+              },
+              "constraints": {
+                "nullable": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.Contact.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "Contact",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "crm.Contact",
+          "properties": [
+            {
+              "id": "email",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ],
+          "links": [
+            {
+              "id": "customer",
+              "target": "crm.Customer",
+              "cardinality": {
+                "to": "one",
+                "from": "many",
+                "required": true
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "coverage": [
+    {
+      "mappingArtifactId": "erpnext.customer.mapping",
+      "mappingVersion": "0.1.0",
+      "source": {
+        "schemaId": "erpnext.schema",
+        "entity": "Customer",
+        "fields": [
+          "remarks"
+        ]
+      },
+      "target": "crm.Customer",
+      "members": [
+        {
+          "property": "notes",
+          "sourceFields": [
+            "remarks"
+          ]
+        }
+      ],
+      "ignoredSourceFields": []
+    },
+    {
+      "mappingArtifactId": "erpnext.contact.mapping",
+      "mappingVersion": "0.1.0",
+      "source": {
+        "schemaId": "erpnext.schema",
+        "entity": "Customer",
+        "fields": [
+          "email_id"
+        ]
+      },
+      "target": "crm.Contact",
+      "members": [
+        {
+          "property": "email",
+          "sourceFields": [
+            "email_id"
+          ]
+        }
+      ],
+      "ignoredSourceFields": []
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "commerce.order_status",
+  "type": {
+    "kind": "enum",
+    "values": [
+      { "value": "draft" },
+      { "value": "placed", "description": "Submitted by the customer." },
+      { "value": "fulfilled" },
+      { "value": "cancelled" }
+    ]
+  }
+}

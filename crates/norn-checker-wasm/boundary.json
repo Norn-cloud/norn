@@ -1,0 +1,12 @@
+{
+  "name": "norn-checker-wasm",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-checker",
+    "norn-projections",
+    "norn-expr",
+    "norn-ir"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}

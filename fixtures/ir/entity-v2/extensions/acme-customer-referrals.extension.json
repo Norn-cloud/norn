@@ -1,0 +1,14 @@
+{
+  "namespace": "acme",
+  "target": "crm.Customer",
+  "description": "Tenant acme's referral relation on the installed crm.Customer: a namespaced link and a namespaced inverse role, so neither can collide with a base member.",
+  "links": [
+    {
+      "id": "acme__referred_by",
+      "target": "crm.Customer",
+      "cardinality": { "to": "one", "from": "many" },
+      "inverse": "acme__referrals",
+      "properties": [{ "id": "referred_on", "type": { "kind": "date" } }]
+    }
+  ]
+}

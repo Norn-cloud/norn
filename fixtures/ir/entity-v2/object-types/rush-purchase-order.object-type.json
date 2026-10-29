@@ -1,0 +1,33 @@
+{
+  "name": "commerce.RushPurchaseOrder",
+  "description": "A subtype that narrows the inherited status lifecycle (T3-LIFE-1): no rejection, and cancellation only while draft. It inherits the payment lifecycle unchanged.",
+  "extends": "commerce.PurchaseOrder",
+  "properties": [
+    {
+      "id": "status",
+      "type": {
+        "kind": "enum",
+        "values": [
+          { "value": "draft" },
+          { "value": "submitted" },
+          { "value": "approved" },
+          { "value": "received" },
+          { "value": "cancelled" }
+        ]
+      }
+    }
+  ],
+  "lifecycles": [
+    {
+      "property": "status",
+      "initial": ["draft"],
+      "terminal": ["received", "cancelled"],
+      "transitions": [
+        { "id": "submit", "from": ["draft"], "to": "submitted", "guards": ["self.po_number != \"\""] },
+        { "id": "approve", "from": ["submitted"], "to": "approved" },
+        { "id": "receive", "from": ["approved"], "to": "received" },
+        { "id": "cancel", "from": ["draft"], "to": "cancelled" }
+      ]
+    }
+  ]
+}

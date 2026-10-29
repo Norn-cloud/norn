@@ -1,0 +1,3 @@
+# Vendored upstream code (vendor/zen, #3404) keeps rustfmt's defaults for each
+# crate's own edition instead of the workspace's `style_edition = "2024"`, so
+# imported and cherry-picked upstream files stay byte-comparable.

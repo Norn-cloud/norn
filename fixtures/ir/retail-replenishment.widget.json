@@ -1,0 +1,70 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.widget.replenishment_proposal",
+  "kind": "widget",
+  "namespace": "retail",
+  "name": "Replenishment Proposal",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [
+    {
+      "artifactId": "retail.replenishment.approve",
+      "kind": "action",
+      "version": "0.1.0",
+      "required": true
+    },
+    {
+      "artifactId": "retail.replenishment.reject",
+      "kind": "action",
+      "version": "0.1.0",
+      "required": true
+    }
+  ],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/retail-replenishment.widget.json"
+  },
+  "payload": {
+    "widgetVersion": "0.1",
+    "widgetId": "retail.widget.replenishment_proposal",
+    "dataDependencies": [
+      {
+        "dependencyId": "proposal",
+        "objectKind": "retail.ReplenishmentProposal",
+        "query": { "kind": "object_detail" }
+      }
+    ],
+    "viewStates": [
+      { "stateId": "preview", "kind": "preview", "title": "Proposal" },
+      { "stateId": "ready", "kind": "ready", "title": "Proposal" }
+    ],
+    "actionBindings": [
+      {
+        "bindingId": "approve",
+        "actionId": "retail.replenishment.approve",
+        "label": "Approve",
+        "inputMapping": { "proposalId": "$.proposal.id" },
+        "requiredPermissions": ["retail.replenishment.approve"]
+      },
+      {
+        "bindingId": "reject",
+        "actionId": "retail.replenishment.reject",
+        "label": "Reject",
+        "inputMapping": { "proposalId": "$.proposal.id" },
+        "requiredPermissions": ["retail.replenishment.reject"]
+      }
+    ],
+    "permissions": [
+      {
+        "permission": "retail.replenishment.view",
+        "reason": "Shows replenishment proposals before approval"
+      }
+    ],
+    "projectionHints": { "renderer": "openui", "layout": "detail" },
+    "proposal": { "mode": "preview", "proposedBy": "agent" }
+  }
+}

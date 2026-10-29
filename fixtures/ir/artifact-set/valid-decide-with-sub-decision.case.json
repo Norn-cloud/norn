@@ -1,0 +1,23 @@
+{
+  "description": "A RuleIR v2 decide graph whose sub-decision resolves to a RuleIR v2 graph in the set, whose commands invoke an action, and whose fact changes set a property of retail.Sku (T3-DEC-1, T3-LIFE-2).",
+  "base": [],
+  "artifacts": [
+    "ir/retail-reorder.action.json",
+    "ir/retail-purchase-request.entity.json",
+    {
+      "fixture": "ir/retail-sku.entity.json",
+      "patch": {
+        "payload": {
+          "objectKind": "retail.Sku",
+          "fields": {
+            "skuId": { "type": "text", "required": true },
+            "reorder_state": { "type": "text", "required": false }
+          }
+        }
+      }
+    },
+    "rule-ir-v2/valid/reorder-priority.rule.json",
+    "rule-ir-v2/valid/reorder-decision.rule.json"
+  ],
+  "expect": []
+}

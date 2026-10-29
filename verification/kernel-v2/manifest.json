@@ -1,0 +1,197 @@
+{
+  "schemaVersion": "norn.verification.kernel-v2/1",
+  "quint": "0.32.0",
+  "apalache": "0.56.1",
+  "baseline": "baff794c75dabd2eb908854d072d90ce67da1c37",
+  "quantityPrerequisite": {
+    "pr": 3356,
+    "status": "landed with refusal consistency fix #3363 and markings/store /7 #3261",
+    "head": "c4596432004c6a6209b36f70f486ed3199482fc7",
+    "historicalStatus": "unmerged at original intake",
+    "integrationBaseline": "e0d82a3129daba502bd3c905a000b09b5fb86d61"
+  },
+  "models": [
+    {
+      "path": "models/commit-admission.qnt",
+      "test": "commit_admission_quint_traces",
+      "maxSteps": 8,
+      "invariants": [
+        "atomicity",
+        "receiptsOnce",
+        "refusalTransparent",
+        "casSafe"
+      ],
+      "bounds": {
+        "owners": 2,
+        "receiptKeys": 4,
+        "inputs": [
+          1,
+          2
+        ],
+        "failureSeams": 6
+      },
+      "obligationId": "KERNEL-V2-COMMIT"
+    },
+    {
+      "path": "models/quantity-ledger.qnt",
+      "test": "quantity_v2_quint_traces",
+      "maxSteps": 4,
+      "invariants": [
+        "conserved",
+        "funded",
+        "holdsAreRemainders",
+        "partialConservation",
+        "refusalTransparent",
+        "monotonicClock",
+        "expiredNeverPosts",
+        "keyVersions"
+      ],
+      "bounds": {
+        "accounts": 4,
+        "units": 2,
+        "layers": 2,
+        "reservations": 2,
+        "amounts": [
+          1,
+          2
+        ],
+        "deadline": 3,
+        "time": [
+          0,
+          4
+        ],
+        "reservationVector": "three legs in one partition: source outgoing, same-source incoming, destination incoming"
+      },
+      "obligationId": "KERNEL-V2-QUANTITY",
+      "checkMode": "exhaustive-scenarios",
+      "boundedVerdict": "exhaustive-finite-scenarios-passed",
+      "boundedAttempts": [
+        {
+          "maxSteps": 6,
+          "timeoutSeconds": 240,
+          "verdict": "no-verdict"
+        },
+        {
+          "maxSteps": 3,
+          "timeoutSeconds": 240,
+          "verdict": "no-verdict"
+        },
+        {
+          "maxSteps": 1,
+          "timeoutSeconds": 90,
+          "verdict": "no-verdict"
+        },
+        {
+          "maxSteps": 15,
+          "step": "scenario_step",
+          "timeoutSeconds": 300,
+          "verdict": "no-verdict",
+          "diagnostic": "Quint status failure, errors []; wrapper exit 124 after waiting 300.3s for server outcome on second attempt. First attempt no-result. No counterexample or successful result."
+        },
+        {
+          "maxSteps": 4,
+          "step": "conservation_step",
+          "timeoutSeconds": 300,
+          "verdict": "no-verdict",
+          "diagnostic": "Quint status failure, errors []; wrapper exit124 after second attempt waited300.2s. Server reached BoundedChecker, State0: Checking9 state invariants; no checker outcome. Exact finite enumeration is the promoted alternative.",
+          "modelSha256": "e5a4b48d4b767d52df39b8eebcb02858b86ebe2fd147692781a4b8e10321d624",
+          "resultSha256": "28d63b613cf7cf4ea7e38e56ba54036f41cf8a195d4a17413974dd9a1491a339"
+        }
+      ],
+      "checkCommand": "quint test verification/kernel-v2/models/quantity-ledger.qnt --backend rust --match conservation.*Test --max-samples 1 --seed 1",
+      "generalStepVerdict": "sampled only; prior bounded attempts had no verdict",
+      "sampleCommand": "quint run verification/kernel-v2/models/quantity-ledger.qnt --backend rust --n-threads 1 --max-samples 1 --max-steps 80 --seed 1 --step scenario_step --invariant invariant",
+      "boundedScope": "Exact deterministic enumeration, not Apalache BMC: all four terminal post/void \u00d7 retry post/void paths of conservation_step through 4 semantic transitions, plus both expiry alternatives of scenario_path through 15. Original submit and full invariant reused; init/every prefix and exact outcomes checked. Finite domains/schedules only; unrestricted step remains sampled.",
+      "boundedModelVerdict": "no-verdict",
+      "enumeration": {
+        "tests": 6,
+        "trajectories": 6,
+        "semanticTransitions": 46,
+        "invariantPrefixChecks": 52,
+        "resolutionPaths": 4,
+        "resolutionSteps": 4,
+        "expiryPaths": 2,
+        "expirySteps": 15,
+        "assertionStutters": 6,
+        "domains": "Resolution: gross slot0/partition0/time0/current fences, reserve2 then partialpost1 then terminal post/void1 then refused retry post/void1. Expiry: original two-reservation/four-partition scenario (scenario_path); choices lazy/scheduled expiry. No nondeterminism in any selected test run. Assertion-only final stutters are excluded from semantic transition/prefix counts."
+      }
+    },
+    {
+      "path": "models/projection-trust.qnt",
+      "test": "projection_trust_quint_traces",
+      "maxSteps": 8,
+      "invariants": [
+        "verifiedFold",
+        "mismatchRefuses"
+      ],
+      "bounds": {
+        "immutableTransitions": 4,
+        "amounts": [
+          1,
+          2
+        ],
+        "tamper": "balance and history together, or chain"
+      },
+      "obligationId": "KERNEL-V2-PROJECTION"
+    }
+  ],
+  "traceProfile": {
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16
+    ],
+    "maxSteps": 80,
+    "format": "ITF",
+    "generator": "quint run --max-samples 1 --max-steps 80 --seed SEED --out-itf FILE --invariant invariant MODEL",
+    "scenario": "quantity-ledger: scenario_step supplements step, using the same transition relation",
+    "expectedTraces": 64,
+    "expectedTransitions": 5120,
+    "supplemental": [
+      {
+        "model": "models/projection-trust.qnt",
+        "step": "scenario_step",
+        "seed": 1,
+        "maxSteps": 6,
+        "purpose": "normal reopen, append, coherent mutable-cache forgery with intact immutable chain, refused reopen, chain corruption, refused reopen"
+      }
+    ],
+    "expectedSupplementalTraces": 1,
+    "expectedSupplementalTransitions": 6
+  },
+  "temporal": {
+    "safety": "always(invariant), all three models; bounded safety checked through invariants",
+    "expiryProgress": "stated, not proved: requires advancing time and eventual fresh scheduled Expire; no scheduler fairness theorem"
+  },
+  "conformanceCommand": "cargo test --locked --offline -p norn-testkit --test kernel_quint -- --nocapture",
+  "residuals": [
+    "Finite models and sampled traces are not unbounded Rust refinement.",
+    "No OS/fs durability, host scheduler fairness, external delivery, authorization noninterference, or i128 overflow theorem.",
+    "Quantity reservation vectors have three legs in one unit/layer partition; multi-partition vectors, reversal, account-limit admission, and growing-net-hold remainders are outside this bounded model. Existing quantity v2 regressions cover additional cases.",
+    "Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled."
+  ],
+  "obligations": [
+    {
+      "id": "KERNEL-V2-COMMIT"
+    },
+    {
+      "id": "KERNEL-V2-QUANTITY"
+    },
+    {
+      "id": "KERNEL-V2-PROJECTION"
+    }
+  ]
+}

@@ -1,0 +1,221 @@
+[
+  {
+    "irVersion": "0.1",
+    "artifactId": "erpnext.SalesOrder.entity",
+    "kind": "entity",
+    "namespace": "erpnext",
+    "name": "entity",
+    "version": "0.1.0",
+    "lifecycle": "draft",
+    "scope": {
+      "orgId": "org_demo",
+      "environmentId": "dev"
+    },
+    "dependencies": [],
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/law-ir/laws.source.ts"
+    },
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "name": "erpnext.SalesOrder",
+        "properties": [
+          {
+            "id": "status",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "open"
+                },
+                {
+                  "value": "shipped"
+                }
+              ]
+            }
+          },
+          {
+            "id": "paid",
+            "type": {
+              "kind": "boolean"
+            }
+          }
+        ],
+        "lifecycles": [
+          {
+            "property": "status",
+            "initial": [
+              "open"
+            ],
+            "terminal": [
+              "shipped"
+            ],
+            "transitions": [
+              {
+                "id": "shipped",
+                "from": [
+                  "open"
+                ],
+                "to": "shipped"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "irVersion": "0.1",
+    "artifactId": "erpnext.PurchaseOrder.entity",
+    "kind": "entity",
+    "namespace": "erpnext",
+    "name": "entity",
+    "version": "0.1.0",
+    "lifecycle": "draft",
+    "scope": {
+      "orgId": "org_demo",
+      "environmentId": "dev"
+    },
+    "dependencies": [],
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/law-ir/laws.source.ts"
+    },
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "name": "erpnext.PurchaseOrder",
+        "properties": [
+          {
+            "id": "status",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "draft"
+                },
+                {
+                  "value": "approved"
+                }
+              ]
+            }
+          },
+          {
+            "id": "amount",
+            "type": {
+              "kind": "integer"
+            }
+          },
+          {
+            "id": "approved_amount",
+            "type": {
+              "kind": "integer"
+            }
+          }
+        ],
+        "lifecycles": [
+          {
+            "property": "status",
+            "initial": [
+              "draft"
+            ],
+            "terminal": [
+              "approved"
+            ],
+            "transitions": [
+              {
+                "id": "approved",
+                "from": [
+                  "draft"
+                ],
+                "to": "approved"
+              }
+            ],
+            "immutable": [
+              "approved"
+            ]
+          }
+        ],
+        "invariants": [
+          {
+            "id": "amount_frozen",
+            "expression": "self.status != 'approved' or self.amount == self.approved_amount",
+            "message": "Approved PO amount must match its frozen approved snapshot."
+          }
+        ]
+      }
+    }
+  },
+  {
+    "irVersion": "0.1",
+    "artifactId": "erpnext.Request.entity",
+    "kind": "entity",
+    "namespace": "erpnext",
+    "name": "entity",
+    "version": "0.1.0",
+    "lifecycle": "draft",
+    "scope": {
+      "orgId": "org_demo",
+      "environmentId": "dev"
+    },
+    "dependencies": [],
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/law-ir/laws.source.ts"
+    },
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "name": "erpnext.Request",
+        "properties": [
+          {
+            "id": "status",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "requested"
+                },
+                {
+                  "value": "accepted"
+                },
+                {
+                  "value": "rejected"
+                }
+              ]
+            }
+          }
+        ],
+        "lifecycles": [
+          {
+            "property": "status",
+            "initial": [
+              "requested"
+            ],
+            "terminal": [
+              "accepted",
+              "rejected"
+            ],
+            "transitions": [
+              {
+                "id": "accepted",
+                "from": [
+                  "requested"
+                ],
+                "to": "accepted"
+              },
+              {
+                "id": "rejected",
+                "from": [
+                  "requested"
+                ],
+                "to": "rejected"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+]

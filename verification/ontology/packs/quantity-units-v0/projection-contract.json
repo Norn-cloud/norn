@@ -1,0 +1,108 @@
+{
+  "contractVersion": "0.1",
+  "packId": "norn.ontology-pack.quantity-units",
+  "packVersion": "0.1",
+  "canonicalArtifact": "pack.json",
+  "canonicalArtifactSha256": "fc885fcaabbed29071054e5dff28db243f84250d37ce5a4bb53bf88f27923de6",
+  "canonicalAuthority": "norn_ir_closed_world_checker",
+  "projectionMethod": "reviewed_static_v0",
+  "reproductionChecker": "verification/ontology/scripts/validate.py",
+  "semanticDifferential": {
+    "checker": "scripts/check-ontology-semantics.sh",
+    "fixture": "verification/ontology/fixtures/registry-conformance-v0.json",
+    "toolLock": "verification/ontology/tools/requirements.lock",
+    "owlProfile": "OWL 2 RL via owlrl 7.6.2",
+    "shaclProfile": "SHACL 1.0 via pyshacl 0.40.1 with data inference disabled"
+  },
+  "owlProjection": {
+    "path": "ontology.owl.ttl",
+    "sha256": "5f78154ad4a87981b7f4d7ce8f5e64254a0b18b1b1b07951350cc9befa3c1567",
+    "profile": "OWL 2 RL",
+    "role": "offline_semantic_inference_only",
+    "remoteImportsAllowed": false
+  },
+  "shaclProjection": {
+    "path": "shapes.shacl.ttl",
+    "sha256": "89b977321ab9d00656fa4abe4a3bdc532cc917f3d41941670eda454829b8bd01",
+    "version": "SHACL 1.0 Recommendation",
+    "role": "offline_differential_oracle_only",
+    "promotionAuthority": false
+  },
+  "quantityBoundary": {
+    "canonicalUnitIdentity": "norn_owned_terms",
+    "conversionRulesDefined": false,
+    "conversionExecutionAllowed": false,
+    "ucumContentVendored": false,
+    "ucumMappingsDefined": false
+  },
+  "identityMappings": [
+    {
+      "termId": "norn.measure.quantity-kind",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/QuantityKind",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/QuantityKindShape"
+    },
+    {
+      "termId": "norn.measure.quantity-kind.count",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/CountQuantityKind",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/CountQuantityKindShape"
+    },
+    {
+      "termId": "norn.measure.quantity-kind.mass",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/MassQuantityKind",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/MassQuantityKindShape"
+    },
+    {
+      "termId": "norn.measure.quantity-kind.duration",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/DurationQuantityKind",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/DurationQuantityKindShape"
+    },
+    {
+      "termId": "norn.measure.quantity-kind.ratio",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/RatioQuantityKind",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/RatioQuantityKindShape"
+    },
+    {
+      "termId": "norn.measure.unit",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/Unit",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/UnitShape"
+    },
+    {
+      "termId": "norn.measure.unit.count",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/CountUnit",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/CountUnitShape"
+    },
+    {
+      "termId": "norn.measure.unit.kilogram",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/Kilogram",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/KilogramShape"
+    },
+    {
+      "termId": "norn.measure.unit.gram",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/Gram",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/GramShape"
+    },
+    {
+      "termId": "norn.measure.unit.hour",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/Hour",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/HourShape"
+    },
+    {
+      "termId": "norn.measure.unit.fraction",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/Fraction",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/FractionShape"
+    },
+    {
+      "termId": "norn.measure.unit.percent",
+      "owlIri": "https://norn.dev/ontology/quantity-units/0.1/Percent",
+      "shapeIri": "https://norn.dev/ontology/quantity-units/0.1/PercentShape"
+    }
+  ],
+  "forbiddenUses": [
+    "capability_grant",
+    "authorization_decision",
+    "transition_guard",
+    "authoritative_state_mutation",
+    "unit_conversion_execution",
+    "quantity_conservation_decision"
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "description": "A composition pack that lists itself as a member is a one-artifact dependency cycle.",
+  "base": [],
+  "artifacts": [
+    {
+      "fixture": "ir/retail-core.business_pack.json",
+      "patch": {
+        "payload": {
+          "packId": "retail.pack.core",
+          "packVersion": "0.1.0",
+          "packKind": "composition",
+          "provides": [
+            "retail.replenishment"
+          ],
+          "artifacts": [
+            {
+              "artifactId": "retail.Sku.entity",
+              "kind": "entity",
+              "version": "0.1.0"
+            },
+            {
+              "artifactId": "retail.reorder.action",
+              "kind": "action",
+              "version": "0.1.0"
+            },
+            {
+              "artifactId": "retail.procurement.policy",
+              "kind": "policy",
+              "version": "0.1.0"
+            },
+            {
+              "artifactId": "retail.setting.reorder_threshold",
+              "kind": "setting",
+              "version": "0.2.0"
+            },
+            {
+              "artifactId": "retail.pack.core",
+              "kind": "business_pack",
+              "version": "0.1.0"
+            }
+          ]
+        }
+      }
+    },
+    "ir/retail-sku.entity.json",
+    "ir/retail-reorder.action.json",
+    "ir/retail-procurement.policy.json",
+    "ir/retail-reorder-threshold.setting.json"
+  ],
+  "expect": [
+    [
+      "retail.pack.core",
+      "artifact_set.resolution.dependency_cycle",
+      "/payload/artifacts/4"
+    ]
+  ]
+}

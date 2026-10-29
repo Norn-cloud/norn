@@ -1,0 +1,33 @@
+[package]
+name = "norn-kernel"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "sans-IO decider + CellHost trait/effects (ring 0; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+norn-authz = { path = "../norn-authz" }
+# #3083: shared commit admission invokes the existing pure exact posting validator.
+norn-checker = { path = "../norn-checker" }
+norn-expr = { path = "../norn-expr" }
+norn-ir = { path = "../norn-ir" }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.20"
+
+[dev-dependencies]
+# Test support only (T6-PSM-1): the proptest-state-machine Decider harness.
+# The dev-dependency cycle (norn-testkit depends on this crate) is fine for
+# integration tests and never reaches a normal or wasm32 build.
+norn-testkit = { path = "../norn-testkit" }
+# T7-EFX-3 (#2786): the reconciliation test evaluates the vertical flow's
+# decide rule, so only an accepted result is shown to advance a Run. Test
+# support only; SKELETON already admits norn-kernel <- norn-decisions.
+norn-decisions = { path = "../norn-decisions" }
+serde_json = "1.0.150"
+
+[lints]
+workspace = true

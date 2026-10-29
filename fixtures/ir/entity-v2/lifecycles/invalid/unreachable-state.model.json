@@ -1,0 +1,47 @@
+{
+  "objectTypes": [
+    {
+      "name": "test.Thing",
+      "properties": [
+        {
+          "id": "stage",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "closed"
+              },
+              {
+                "value": "limbo"
+              }
+            ]
+          }
+        }
+      ],
+      "lifecycles": [
+        {
+          "property": "stage",
+          "initial": [
+            "open"
+          ],
+          "terminal": [
+            "closed",
+            "limbo"
+          ],
+          "transitions": [
+            {
+              "id": "close",
+              "from": [
+                "open"
+              ],
+              "to": "closed"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

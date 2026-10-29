@@ -1,0 +1,16 @@
+{
+  "name": "crm.BillingProfile",
+  "description": "How a customer is invoiced. 1:1 with crm.Customer: each profile belongs to exactly one customer, and each customer has at most one profile (the inverse role `billing_profile`).",
+  "properties": [
+    { "id": "invoice_email", "type": { "kind": "text", "format": "email" } },
+    { "id": "payment_terms_days", "type": { "kind": "integer" }, "constraints": { "min": "0", "max": "120" }, "default": "30" }
+  ],
+  "links": [
+    {
+      "id": "account",
+      "target": "crm.Customer",
+      "cardinality": { "to": "one", "from": "one", "required": true },
+      "inverse": "billing_profile"
+    }
+  ]
+}

@@ -1,0 +1,276 @@
+{
+  "description": "strict-errors: a deny row whose cell fails (non-boolean) aborts with a typed error and zero effects instead of falling through to the allow row.",
+  "rule": {
+    "ruleId": "demo.rule.strict_table",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "amount": {
+              "type": "number"
+            },
+            "limit": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "amount",
+            "limit"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "demo.Order"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "total"
+                ]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "property",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "actionId"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              },
+              "dueIn": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId",
+              "dueIn"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "gate",
+          "name": "gate",
+          "type": "decisionTableNode",
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [
+              {
+                "id": "c_over",
+                "name": "Over limit"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "o_decision",
+                "name": "Decision",
+                "field": "decision"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "deny",
+                "c_over": "slice.limit > 0 ? slice.amount > slice.limit : slice.amount",
+                "o_decision": "'deny'"
+              },
+              {
+                "_id": "allow",
+                "c_over": "",
+                "o_decision": "'allow'"
+              }
+            ],
+            "passThrough": true
+          }
+        },
+        {
+          "id": "emit",
+          "name": "emit",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "[{actionId: decision}]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "gate",
+          "type": "edge"
+        },
+        {
+          "id": "e2",
+          "sourceId": "gate",
+          "targetId": "emit",
+          "type": "edge"
+        },
+        {
+          "id": "e3",
+          "sourceId": "emit",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "over the limit: deny",
+      "slice": {
+        "amount": 50,
+        "limit": 10
+      },
+      "event": {
+        "kind": "k"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "actionId": "deny"
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "under the limit: allow",
+      "slice": {
+        "amount": 5,
+        "limit": 10
+      },
+      "event": {
+        "kind": "k"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "actionId": "allow"
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "failing deny cell: typed error, no fallback to allow",
+      "slice": {
+        "amount": 5,
+        "limit": 0
+      },
+      "event": {
+        "kind": "k"
+      },
+      "error": "strict:decision_table_input"
+    }
+  ]
+}

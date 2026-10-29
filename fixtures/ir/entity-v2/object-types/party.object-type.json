@@ -1,0 +1,21 @@
+{
+  "name": "crm.Party",
+  "description": "A person or organization. Two keys; source-system identities (ERPNext.Customer/CUST-0042) are provenance per source, not keys.",
+  "properties": [
+    { "id": "party_number", "type": { "kind": "text" }, "constraints": { "pattern": "^P-[0-9]{6}$" } },
+    { "id": "email", "type": { "kind": "text", "format": "email" } },
+    { "id": "display_name", "type": { "kind": "text" } },
+    { "id": "segment", "type": { "kind": "text" }, "constraints": { "maxLength": 40 }, "default": "unassigned" }
+  ],
+  "identity": [
+    { "name": "primary", "properties": ["party_number"] },
+    {
+      "name": "by_email",
+      "properties": ["email"],
+      "rule": {
+        "normalize": [{ "property": "email", "steps": ["trim", "nfkc", "lowercase"] }],
+        "matchPolicy": "crm.party_email_exact"
+      }
+    }
+  ]
+}

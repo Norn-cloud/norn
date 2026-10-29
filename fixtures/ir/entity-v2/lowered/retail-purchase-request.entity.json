@@ -1,0 +1,26 @@
+{
+  "entityVersion": "2.0",
+  "objectType": {
+    "name": "retail.PurchaseRequest",
+    "properties": [
+      {
+        "id": "quantity",
+        "type": {
+          "kind": "integer"
+        }
+      },
+      {
+        "id": "requestId",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "skuId",
+        "type": {
+          "kind": "text"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.Sku.entity.v2.null_description",
+      "code": "entity.validation.invalid_payload",
+      "message": "payload.objectType.properties[0] is invalid: invalid type: null, expected a string",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/objectType/properties/0",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

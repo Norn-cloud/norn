@@ -1,0 +1,73 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.chain_4.rule",
+  "kind": "rule",
+  "namespace": "retail",
+  "name": "Chain 4",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/rule-ir-v2/sets/chain-4.rule.json"
+  },
+  "payload": {
+    "ruleId": "retail.rule.chain_4",
+    "ruleVersion": "2.0",
+    "contract": "sub_decision",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "graph": {
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e_out",
+          "sourceId": "in",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  }
+}

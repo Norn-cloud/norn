@@ -1,0 +1,16 @@
+{
+  "name": "norn-kernel",
+  "ring": "Zero",
+  "allowed_norn": [
+    "norn-ir",
+    "norn-expr",
+    "norn-checker",
+    "norn-authz",
+    "norn-decisions"
+  ],
+  "dev_only_norn": [],
+  "third_party": [
+    "serde",
+    "thiserror"
+  ]
+}

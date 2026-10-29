@@ -1,0 +1,11 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "10:18",
+      "end": "10:69",
+      "construct": "`invoice ${invoice.id} owes ${invoice.amountMinor}`"
+    }
+  ]
+}

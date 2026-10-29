@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "norn.verification.trusted-assumptions.v1",
+  "assumptions": [
+    {
+      "id": "TRUST-LEAN-KERNEL-AND-TOOLCHAIN",
+      "owner": "Norn verification maintainers",
+      "boundary": "Pinned or cache-restored Lean compiler binary, kernel, standard library, and host execution used by CI",
+      "justification": "Lean checks proof terms, but the downloaded/cache-restored compiler binary, kernel implementation, standard library, and build host remain in the trusted computing base; a version string is identity evidence, not a reproducible-build proof.",
+      "blastRadius": "A compromised or unsound toolchain could accept every Lean reference theorem.",
+      "falsificationTest": "Pin and attest the Lean version and distribution checksum, rebuild on an independent host, compare behavior or binary identity where reproducible, and require known-invalid proof fixtures to fail."
+    },
+    {
+      "id": "TRUST-FSTAR-SMT-AND-HAX",
+      "owner": "Norn verification maintainers",
+      "boundary": "Pinned clean hax source tree, its built or cache-restored binaries, the F* typechecker, Z3 solver, and reviewed compatibility models",
+      "justification": "The attestation records clean source commit/tree identities and live tool versions, but does not prove that cache-restored or locally built binaries correspond to those sources. Extracted correspondence lanes still rely on translation correctness and F*/SMT soundness outside the proved Rust predicate.",
+      "blastRadius": "A substituted binary, translation defect, or solver soundness defect could invalidate every implementation-extraction correspondence claim.",
+      "falsificationTest": "Rebuild extraction tools from the pinned clean trees with caches disabled, compare behavior and binary digests where reproducible, inspect one-function generated modules, run negative mutation fixtures, cross-check with independent solvers where supported, and reject source-tree or live tool-version drift."
+    },
+    {
+      "id": "TRUST-QUINT-APALACHE-AND-JVM",
+      "owner": "Norn verification maintainers",
+      "boundary": "Checksum-pinned Quint executable, exact downloaded Apalache JAR, checksum-pinned Temurin JVM binary, Quint-to-Apalache translation, bounded-state encoding, and host execution",
+      "justification": "The attestation now recomputes the live Quint, Apalache, and Java versions and the exact executable/JAR digests used by the bounded model lanes. Those identities do not prove the soundness of Quint translation, Apalache's algorithms, the JVM, solver/native dependencies bundled in the JAR, or the adequacy of a declared finite bound; bounded_model_checked remains a bounded model claim rather than implementation refinement.",
+      "blastRadius": "A substituted or unsound model-checking stack could falsely report every promoted Quint invariant as satisfied within its declared bound.",
+      "falsificationTest": "Run known-failing Quint fixtures through the exact pinned stack, independently reproduce selected models with a second checker or direct TLA+/SMT encoding, corrupt each cached binary/JAR and require attestation failure, and review every model's explicit max-step/domain bound."
+    },
+    {
+      "id": "TRUST-CI-RUNNER-AND-PINNED-ACTIONS",
+      "owner": "Norn verification maintainers",
+      "boundary": "The promoted public-core workflow, GitHub-hosted runner image, GitHub Actions service, commit-pinned third-party action implementations in that workflow, network downloads accepted by checksum/version controls, and cache service",
+      "justification": "The public-core workflow action references and Rust toolchain are pinned, and the result binds HEAD, its tree, tracked changes, and untracked non-ignored file bytes plus live verification-tool identities. The declared workspace policy intentionally excludes Git-ignored files and does not exhaustively bind ambient environment variables; command-local env assignments remain part of executed argv identity. None of this proves the runner, action runtime, cache service, GitHub control plane, or transitive behavior of an action commit; CI infrastructure remains an external trust boundary.",
+      "blastRadius": "A compromised runner, action, cache, or CI control plane could fabricate logs, substitute tools before measurement, or upload an attestation that did not arise from the declared commands.",
+      "falsificationTest": "Re-run the clean commit on an independent runner with caches disabled, compare content-addressed evidence and tool identities, rotate cache keys, inspect action commits during upgrades, and verify the signed repository commit and uploaded artifact through an independent provenance channel."
+    },
+    {
+      "id": "TRUST-EXTERNAL-IO-AND-PERSISTENCE",
+      "owner": "Norn runtime maintainers",
+      "boundary": "Turso/SQLite durability, filesystem, operating system, hardware, and cryptographic hash implementation",
+      "justification": "Current formal artifacts model transition semantics and selected predicates; they do not prove the storage engine, OS, hardware, or SHA implementation.",
+      "blastRadius": "Corruption or unsound durability beneath the checked kernel can break replay and canonical-state claims.",
+      "falsificationTest": "Run crash/reopen and corruption campaigns, independently verify backups and receipt hashes, and retain SQLite compatibility recovery tests."
+    }
+  ]
+}

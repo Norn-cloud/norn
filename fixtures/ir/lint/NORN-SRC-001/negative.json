@@ -1,0 +1,38 @@
+{
+  "artifacts": [
+    {
+      "irVersion": "0.1",
+      "artifactId": "crm.Customer.entity",
+      "kind": "entity",
+      "namespace": "crm",
+      "name": "Customer",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "import",
+        "sourcePath": "erpnext://Customer",
+        "actorId": "connector_erpnext",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "crm.Customer",
+          "properties": [
+            {
+              "id": "display_name",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

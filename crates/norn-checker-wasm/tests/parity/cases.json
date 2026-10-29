@@ -1,0 +1,560 @@
+{
+  "_comment": "Native-vs-wasm parity cases (T1-CHK-4, #2527). tests/parity.rs runs each natively; parity.mjs runs each against the built npm package and compares the output bytes. `artifacts`/`base` are repo-relative envelope files joined into JSON arrays; `inlineLayoutOn` adds legacy editor fields for layout regressions; `artifactsText` is raw argument text; `context` members are appended to the context object.",
+  "cases": [
+    {
+      "name": "retail-registry-clean",
+      "call": "checkArtifactSet",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ]
+    },
+    {
+      "name": "retail-with-unknown-supertype",
+      "call": "checkArtifactSet",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/invalid/unknown-supertype.entity.json"
+      ]
+    },
+    {
+      "name": "retail-with-stale-flow-source-map",
+      "call": "checkArtifactSet",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "context": {
+        "flowSourceMap": {
+          "format": "norn-flow-source-map/1",
+          "flows": [
+            {
+              "flowId": "retail.create-sku",
+              "flowVersion": "0.1.0",
+              "sourcePath": "src/flows/retail.ts",
+              "artifactRefs": [
+                {
+                  "artifactId": "retail.Sku.entity.v2",
+                  "version": "0.1.0",
+                  "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+                }
+              ],
+              "steps": [
+                {
+                  "id": "create-sku",
+                  "kind": "perform",
+                  "artifactIds": [
+                    "retail.Sku.entity.v2"
+                  ],
+                  "stateIds": [],
+                  "decisionRowIds": []
+                }
+              ],
+              "edges": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "tenant-extension-on-base",
+      "call": "checkArtifactSet",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/acme-sku.extension.entity.json"
+      ],
+      "base": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "context": {
+        "tenant": {
+          "tenantId": "tenant_acme",
+          "namespace": "acme"
+        }
+      }
+    },
+    {
+      "name": "purchase-order-set",
+      "call": "checkArtifactSet",
+      "artifacts": [
+        "crates/norn-checker-wasm/tests/fixtures/purchase-order.entity.json"
+      ]
+    },
+    {
+      "name": "inline-layout-rule-candidate",
+      "call": "checkArtifactSet",
+      "artifacts": [
+        "fixtures/rule-ir-v2/valid/reorder-priority.rule.json"
+      ],
+      "inlineLayoutOn": "artifacts"
+    },
+    {
+      "name": "inline-layout-rule-base",
+      "call": "checkArtifactSet",
+      "artifacts": [],
+      "base": [
+        "fixtures/rule-ir-v2/valid/reorder-priority.rule.json"
+      ],
+      "inlineLayoutOn": "base"
+    },
+    {
+      "name": "inline-layout-referenced-sub-decision-candidate",
+      "call": "checkArtifactSet",
+      "artifacts": [
+        "fixtures/rule-ir-v2/sets/chain-3.rule.json",
+        "fixtures/rule-ir-v2/sets/chain-4.rule.json"
+      ],
+      "inlineLayoutOn": "artifacts"
+    },
+    {
+      "name": "inline-layout-referenced-sub-decision-base",
+      "call": "checkArtifactSet",
+      "artifacts": [
+        "fixtures/rule-ir-v2/sets/chain-3.rule.json"
+      ],
+      "base": [
+        "fixtures/rule-ir-v2/sets/chain-4.rule.json"
+      ],
+      "inlineLayoutOn": "base"
+    },
+    {
+      "name": "inline-layout-rule-expression-environment",
+      "call": "checkExpression",
+      "expr": "true",
+      "artifacts": [
+        "fixtures/rule-ir-v2/valid/reorder-priority.rule.json"
+      ],
+      "expectedType": "bool",
+      "inlineLayoutOn": "artifacts"
+    },
+    {
+      "name": "retired-kind-envelope",
+      "call": "checkArtifactSet",
+      "artifactsText": "[{\"artifactId\":\"legacy.process\",\"kind\":\"process\"}]"
+    },
+    {
+      "name": "artifacts-not-json",
+      "call": "checkArtifactSet",
+      "artifactsText": "{not json"
+    },
+    {
+      "name": "context-unknown-member",
+      "call": "checkArtifactSet",
+      "artifactsText": "[]",
+      "context": {
+        "tenantId": "tenant_acme"
+      }
+    },
+    {
+      "name": "purchase-order-lifecycles",
+      "call": "lifecycleDiagrams",
+      "artifacts": [
+        "crates/norn-checker-wasm/tests/fixtures/purchase-order.entity.json"
+      ]
+    },
+    {
+      "name": "expression-ok",
+      "call": "checkExpression",
+      "expr": "self.title != '' and self.sku_code != ''",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "expectedType": "bool",
+      "selfType": "retail.Sku"
+    },
+    {
+      "name": "expression-temporal-season-window",
+      "call": "checkExpression",
+      "expr": "date('2024-03-01') >= date('2024-02-29')",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "expectedType": "bool",
+      "selfType": "retail.Sku"
+    },
+    {
+      "name": "expression-temporal-equivalent-offsets",
+      "call": "checkExpression",
+      "expr": "timestamp('2024-02-29T02:00:00+02:00') <= timestamp('2024-02-29T00:00:00Z')",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "expectedType": "bool",
+      "selfType": "retail.Sku"
+    },
+    {
+      "name": "expression-temporal-arithmetic",
+      "call": "checkExpression",
+      "expr": "add_days(date('2024-02-28'), 2) == date('2024-03-01')",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "expectedType": "bool",
+      "selfType": "retail.Sku"
+    },
+    {
+      "name": "expression-temporal-mixed-kinds",
+      "call": "checkExpression",
+      "expr": "date('2024-02-29') < timestamp('2024-02-29T00:00:00Z')",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "expectedType": "bool",
+      "selfType": "retail.Sku"
+    },
+    {
+      "name": "expression-temporal-invalid-calendar",
+      "call": "checkExpression",
+      "expr": "date('1900-02-29') == date('1900-03-01')",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "expectedType": "bool",
+      "selfType": "retail.Sku"
+    },
+    {
+      "name": "expression-unknown-member",
+      "call": "checkExpression",
+      "expr": "self.reorder_point > 5",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "expectedType": "bool",
+      "selfType": "retail.Sku"
+    },
+    {
+      "name": "expression-result-mismatch",
+      "call": "checkExpression",
+      "expr": "self.title",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "expectedType": "number",
+      "selfType": "retail.Sku"
+    },
+    {
+      "name": "expression-syntax",
+      "call": "checkExpression",
+      "expr": "self.title ==",
+      "artifacts": [
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
+      ],
+      "expectedType": "bool",
+      "selfType": "retail.Sku"
+    },
+    {
+      "name": "expression-no-self",
+      "call": "checkExpression",
+      "expr": "actor != null",
+      "artifacts": [],
+      "expectedType": "bool"
+    },
+    {
+      "name": "expression-bad-expected-type",
+      "call": "checkExpression",
+      "expr": "true",
+      "artifacts": [],
+      "expectedType": "float"
+    },
+    {
+      "name": "evaluation-widget-visible-when-record",
+      "call": "evaluateExpression",
+      "expr": "input.record.status == \"draft\"",
+      "inputJson": "{\"record\":{\"status\":\"draft\"}}"
+    },
+    {
+      "name": "evaluation-child-grid-row-condition",
+      "call": "evaluateExpression",
+      "expr": "input.row.item_code == \"SKU-1\" and input.row.quantity > 9007199254740992",
+      "inputJson": "{\"row\":{\"item_code\":\"SKU-1\",\"quantity\":9007199254740993}}"
+    },
+    {
+      "name": "evaluation-invalid-row-slot",
+      "call": "evaluateExpression",
+      "expr": "true",
+      "inputJson": "{\"row\":null}"
+    },
+    {
+      "name": "evaluation-widget-visible-when-context",
+      "call": "evaluateExpression",
+      "expr": "input.context.customerNumber != \"\"",
+      "inputJson": "{\"context\":{\"customerNumber\":\"C-42\"}}"
+    },
+    {
+      "name": "evaluation-widget-enabled-when-record",
+      "call": "evaluateExpression",
+      "expr": "input.record.status == \"draft\"",
+      "inputJson": "{\"record\":{\"status\":\"draft\"}}"
+    },
+    {
+      "name": "evaluation-all-widget-input-slots",
+      "call": "evaluateExpression",
+      "expr": "len(input.selection) == 1 and input.context.active",
+      "inputJson": "{\"record\":{\"status\":\"draft\"},\"draft\":{\"reason\":\"approve\"},\"selection\":[{\"qty\":1}],\"context\":{\"active\":true}}"
+    },
+    {
+      "name": "evaluation-exact-decimals",
+      "call": "evaluateExpression",
+      "expr": "input.record.amount + input.draft.adjustment",
+      "inputJson": "{\"record\":{\"amount\":9007199254740993},\"draft\":{\"adjustment\":0.3}}"
+    },
+    {
+      "name": "evaluation-exact-action-mapping",
+      "call": "evaluateExpression",
+      "expr": "{ total: input.record.amount + input.draft.adjustment, quantities: map(input.selection, #.qty), customer: input.context.customerNumber }",
+      "inputJson": "{\"record\":{\"amount\":9007199254740993},\"draft\":{\"adjustment\":0.3},\"selection\":[{\"qty\":1.5}],\"context\":{\"customerNumber\":\"C-42\"}}"
+    },
+    {
+      "name": "evaluation-omitted-slot",
+      "call": "evaluateExpression",
+      "expr": "input.record == null",
+      "inputJson": "{}"
+    },
+    {
+      "name": "evaluation-inexact-literal",
+      "call": "evaluateExpression",
+      "expr": "1e0 == 1",
+      "inputJson": "{}"
+    },
+    {
+      "name": "evaluation-compile-error",
+      "call": "evaluateExpression",
+      "expr": "input.record.status ==",
+      "inputJson": "{}"
+    },
+    {
+      "name": "evaluation-runtime-error",
+      "call": "evaluateExpression",
+      "expr": "date(input.record.when) == date(\"2024-01-01\")",
+      "inputJson": "{\"record\":{\"when\":\"not-a-date\"}}"
+    },
+    {
+      "name": "evaluation-invalid-input-slot",
+      "call": "evaluateExpression",
+      "expr": "true",
+      "inputJson": "{\"record\":null}"
+    },
+    {
+      "name": "evaluation-invalid-json",
+      "call": "evaluateExpression",
+      "expr": "true",
+      "inputJson": "{not json"
+    },
+    {
+      "name": "evaluation-input-over-limit",
+      "call": "evaluateExpression",
+      "expr": "true",
+      "inputJsonBytes": 262145
+    },
+    {
+      "name": "evaluation-invalid-selection-item",
+      "call": "evaluateExpression",
+      "expr": "true",
+      "inputJson": "{\"selection\":[1]}"
+    },
+    {
+      "name": "evaluation-selection-over-limit",
+      "call": "evaluateExpression",
+      "expr": "true",
+      "inputSelectionCount": 1001
+    },
+    {
+      "name": "evaluation-invalid-profile",
+      "call": "evaluateExpression",
+      "expr": "true",
+      "inputJson": "{}",
+      "profile": "norn-zen/4"
+    },
+    {
+      "name": "evaluation-budget-exhausted",
+      "call": "evaluateExpression",
+      "expr": "sum(flatMap(input.selection, map(input.selection, #.qty)))",
+      "inputSelectionCount": 1000
+    },
+    {
+      "name": "version",
+      "call": "version"
+    },
+    {
+      "name": "runtime-value-golden",
+      "call": "canonicalRuntimeValue",
+      "value": "{\"order\": \"SO-1\", \"total\": 79.9700, \"lines\": [{\"qty\": 3, \"unit_price\": 19.990}, {\"qty\": 1, \"unit_price\": 20.00}], \"max\": 79228162514264337593543950335, \"tiny\": 0.0000000000000000000000000001, \"big\": 9007199254740993, \"zero\": -0.0}"
+    },
+    {
+      "name": "runtime-value-beyond-f64",
+      "call": "canonicalRuntimeValue",
+      "value": "{\"amount\":9007199254740993,\"price\":0.3000000000000000000000000001,\"total\":12.50,\"zero\":-0.0}"
+    },
+    {
+      "name": "runtime-value-out-of-range",
+      "call": "canonicalRuntimeValue",
+      "value": "[79228162514264337593543950336]"
+    },
+    {
+      "name": "runtime-value-exponents",
+      "call": "canonicalRuntimeValue",
+      "value": "[1.5e2,1E-3,-2.50e+1,0e10]"
+    },
+    {
+      "name": "runtime-value-integer-bounds",
+      "call": "canonicalRuntimeValue",
+      "value": "[9223372036854775807,-9223372036854775808,18446744073709551615,79228162514264337593543950335,-79228162514264337593543950335]"
+    },
+    {
+      "name": "function-wasm",
+      "call": "functionContract",
+      "manifest": "fixtures/function/manifest.wasm.json",
+      "invocation": "fixtures/function/invocation.wasm.json",
+      "receipt": "fixtures/function/receipt.wasm.json"
+    },
+    {
+      "name": "function-container",
+      "call": "functionContract",
+      "manifest": "fixtures/function/manifest.container.json",
+      "invocation": "fixtures/function/invocation.container.json",
+      "receipt": "fixtures/function/receipt.container.json"
+    },
+    {
+      "name": "function-effectful",
+      "call": "functionContract",
+      "manifest": "fixtures/function/manifest.effectful.json",
+      "invocation": "fixtures/function/invocation.effectful.json",
+      "receipt": "fixtures/function/receipt.effectful.json"
+    },
+    {
+      "name": "function-bare-uri-code",
+      "call": "functionContract",
+      "manifest": "fixtures/function/invalid/manifest.bare-uri-code.json"
+    },
+    {
+      "name": "function-secret-input",
+      "call": "functionContract",
+      "manifest": "fixtures/function/manifest.wasm.json",
+      "invocation": "fixtures/function/invalid/invocation.secret-input.json"
+    },
+    {
+      "name": "function-receipt-wrong-dispatch",
+      "call": "functionContract",
+      "manifest": "fixtures/function/manifest.wasm.json",
+      "invocation": "fixtures/function/invocation.effectful.json",
+      "receipt": "fixtures/function/receipt.wasm.json"
+    },
+    {
+      "name": "function-receipt-without-invocation",
+      "call": "functionContract",
+      "manifest": "fixtures/function/manifest.wasm.json",
+      "receipt": "fixtures/function/receipt.wasm.json"
+    },
+    {
+      "name": "function-credential-locator",
+      "call": "functionContract",
+      "manifest": "fixtures/function/invalid/manifest.credential-locator.json"
+    },
+    {
+      "name": "evaluation-parity-record-key",
+      "call": "evaluateExpression",
+      "expr": "input.recordKey == \"runtime-7\" and input.record.id != input.recordKey",
+      "inputJson": "{\"record\":{\"id\":\"business-7\"},\"recordKey\":\"runtime-7\"}",
+      "expectedValue": "true",
+      "widgetInputs": {
+        "recordBindingId": "orders"
+      }
+    },
+    {
+      "name": "evaluation-parity-selection",
+      "call": "evaluateExpression",
+      "expr": "len(input.selection) == 2 and sum(map(input.selection, #.qty)) == 0.3",
+      "inputJson": "{\"selection\":[{\"qty\":0.1},{\"qty\":0.2}]}",
+      "expectedValue": "true",
+      "widgetInputs": {
+        "selectionBindingId": "orders"
+      }
+    },
+    {
+      "name": "evaluation-parity-empty-selection",
+      "call": "evaluateExpression",
+      "expr": "len(input.selection) == 0",
+      "inputJson": "{\"selection\":[]}",
+      "expectedValue": "true",
+      "widgetInputs": {
+        "selectionBindingId": "orders"
+      }
+    },
+    {
+      "name": "evaluation-parity-display-decimal",
+      "call": "evaluateExpression",
+      "expr": "input.record.amount + input.draft.adjustment",
+      "inputJson": "{\"record\":{\"amount\":9007199254740993},\"recordKey\":\"runtime-7\",\"draft\":{\"adjustment\":0.3}}",
+      "expectedValue": "9007199254740993.3",
+      "widgetInputs": {
+        "recordBindingId": "orders",
+        "draftFormId": "edit"
+      }
+    },
+    {
+      "name": "evaluation-parity-display-nested",
+      "call": "evaluateExpression",
+      "expr": "{ key: input.recordKey, total: input.record.amount + sum(map(input.selection, #.qty)) }",
+      "inputJson": "{\"record\":{\"amount\":9007199254740993},\"recordKey\":\"runtime-7\",\"selection\":[{\"qty\":0.1},{\"qty\":0.2}]}",
+      "expectedValue": "{\"key\":\"runtime-7\",\"total\":9007199254740993.3}",
+      "widgetInputs": {
+        "recordBindingId": "orders",
+        "selectionBindingId": "orders"
+      }
+    },
+    {
+      "name": "evaluation-parity-key-without-record",
+      "call": "evaluateExpression",
+      "expr": "true",
+      "inputJson": "{\"recordKey\":\"runtime-7\"}",
+      "expectedError": "expr.input.invalid"
+    },
+    {
+      "name": "evaluation-parity-numeric-key",
+      "call": "evaluateExpression",
+      "expr": "true",
+      "inputJson": "{\"record\":{},\"recordKey\":7}",
+      "expectedError": "expr.input.invalid"
+    },
+    {
+      "name": "evaluation-parity-empty-key",
+      "call": "evaluateExpression",
+      "expr": "true",
+      "inputJson": "{\"record\":{},\"recordKey\":\"\"}",
+      "expectedError": "expr.input.invalid"
+    }
+  ]
+}

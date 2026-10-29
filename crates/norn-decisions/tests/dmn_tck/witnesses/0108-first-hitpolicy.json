@@ -1,0 +1,31 @@
+{
+  "model": "0108-first-hitpolicy",
+  "issue": 2929,
+  "reason": "declared no-hit defaults are discarded",
+  "source": "TestCases/compliance-level-2/0108-first-hitpolicy/0108-first-hitpolicy.dmn",
+  "semantics": "DMN 1.5 section 10.3.2.10 step 2: no match returns the default context, otherwise null",
+  "slice": {
+    "Age": 19,
+    "RiskCategory": "High",
+    "isAffordable": true
+  },
+  "event": {},
+  "expect": {
+    "facts": [],
+    "commands": [
+      {
+        "decision": "Approval",
+        "result": {
+          "Status": "Declined",
+          "Rate": "Standard"
+        }
+      }
+    ],
+    "timers": []
+  },
+  "knownActual": {
+    "facts": [],
+    "commands": [],
+    "timers": []
+  }
+}

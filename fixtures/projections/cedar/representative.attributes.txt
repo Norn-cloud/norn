@@ -1,0 +1,16 @@
+alpha.Child.code = String
+alpha.Child.count = Long
+alpha.Child.enabled = Bool
+alpha.Child.parent = Link { many: false }
+alpha.Child.thing = Link { many: true }
+alpha.Child.total = Decimal
+alpha.Root.code = String
+alpha.Root.count = Long
+alpha.Root.enabled = Bool
+alpha.Root.parent = Link { many: false }
+alpha.Root.thing = Link { many: true }
+alpha.Root.total = Decimal
+alpha.SpecialTarget.children = Link { many: true }
+alpha.SpecialTarget.things = Link { many: false }
+alpha.Target.children = Link { many: true }
+alpha.Target.things = Link { many: false }

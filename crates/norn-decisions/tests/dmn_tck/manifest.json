@@ -1,0 +1,180 @@
+{
+  "tck": "https://github.com/dmn-tck/tck",
+  "commit": "0456e1a2fa5b9c2382cc7380cc6b95f0031e4793",
+  "note": "Evidence for non-null, declared-domain FEEL-free decision-table inputs only; not DMN/FEEL conformance. Four reachable no-hit gaps are excluded from equivalence claims, while all 51 original cases remain blocking. Regenerate with translate.py against this commit.",
+  "included": [
+    {
+      "model": "0004-simpletable-U",
+      "cases": [
+        "0004-simpletable-U-test-01#001",
+        "0004-simpletable-U-test-01#002",
+        "0004-simpletable-U-test-01#003"
+      ]
+    },
+    {
+      "model": "0005-simpletable-A",
+      "cases": [
+        "0005-simpletable-A-test-01#001",
+        "0005-simpletable-A-test-01#002",
+        "0005-simpletable-A-test-01#003"
+      ]
+    },
+    {
+      "model": "0006-simpletable-P1",
+      "cases": [
+        "0006-simpletable-P1-test-01#001",
+        "0006-simpletable-P1-test-01#002",
+        "0006-simpletable-P1-test-01#003"
+      ]
+    },
+    {
+      "model": "0007-simpletable-P2",
+      "cases": [
+        "0007-simpletable-P2-test-01#001",
+        "0007-simpletable-P2-test-01#002",
+        "0007-simpletable-P2-test-01#003"
+      ]
+    },
+    {
+      "model": "0010-multi-output-U",
+      "cases": [
+        "0010-multi-output-U-test-01#001",
+        "0010-multi-output-U-test-01#002",
+        "0010-multi-output-U-test-01#003"
+      ]
+    },
+    {
+      "model": "0111-first-hitpolicy-singleoutputcol",
+      "cases": [
+        "0111-first-hitpolicy-singleoutputcol-test-01#001",
+        "0111-first-hitpolicy-singleoutputcol-test-01#002",
+        "0111-first-hitpolicy-singleoutputcol-test-01#003"
+      ]
+    },
+    {
+      "model": "0112-ruleOrder-hitpolicy-singleinoutcol",
+      "cases": [
+        "0112-ruleOrder-hitpolicy-singleinoutcol-test-01#001",
+        "0112-ruleOrder-hitpolicy-singleinoutcol-test-01#002",
+        "0112-ruleOrder-hitpolicy-singleinoutcol-test-01#003"
+      ]
+    },
+    {
+      "model": "0113-outputOrder-hitpolicy-singleinoutcol",
+      "cases": [
+        "0113-outputOrder-hitpolicy-singleinoutcol-test-01#001",
+        "0113-outputOrder-hitpolicy-singleinoutcol-test-01#002",
+        "0113-outputOrder-hitpolicy-singleinoutcol-test-01#003"
+      ]
+    },
+    {
+      "model": "0114-min-collect-hitpolicy",
+      "cases": [
+        "0114-min-collect-hitpolicy-test-01#001",
+        "0114-min-collect-hitpolicy-test-01#002",
+        "0114-min-collect-hitpolicy-test-01#003"
+      ]
+    },
+    {
+      "model": "0115-sum-collect-hitpolicy",
+      "cases": [
+        "0115-sum-collect-hitpolicy-test-01#001",
+        "0115-sum-collect-hitpolicy-test-01#002",
+        "0115-sum-collect-hitpolicy-test-01#003"
+      ]
+    },
+    {
+      "model": "0116-count-collect-hitpolicy",
+      "cases": [
+        "0116-count-collect-hitpolicy-test-01#001",
+        "0116-count-collect-hitpolicy-test-01#002",
+        "0116-count-collect-hitpolicy-test-01#003"
+      ]
+    },
+    {
+      "model": "0117-multi-any-hitpolicy",
+      "cases": [
+        "0117-multi-any-hitpolicy-test-01#001",
+        "0117-multi-any-hitpolicy-test-01#002",
+        "0117-multi-any-hitpolicy-test-01#003"
+      ]
+    },
+    {
+      "model": "0118-multi-priority-hitpolicy",
+      "cases": [
+        "0118-multi-priority-hitpolicy-test-01#001",
+        "0118-multi-priority-hitpolicy-test-01#002",
+        "0118-multi-priority-hitpolicy-test-01#003"
+      ]
+    }
+  ],
+  "excluded": {
+    "compliance-level-2": {
+      "0001-input-data-string": "decision logic is not a decision table (FEEL literal expression or invocation)",
+      "0002-input-data-number": "decision logic is not a decision table (FEEL literal expression or invocation)",
+      "0003-input-data-string-allowed-values": "decision logic is not a decision table (FEEL literal expression or invocation)",
+      "0008-LX-arithmetic": "decision logic is not a decision table (FEEL literal expression or invocation)",
+      "0009-invocation-arithmetic": "business knowledge model invocation",
+      "0100-feel-constants": "2 decisions; the subset covers one decision table per model",
+      "0101-feel-constants": "6 decisions; the subset covers one decision table per model",
+      "0102-feel-constants": "4 decisions; the subset covers one decision table per model",
+      "0105-feel-math": "33 decisions; the subset covers one decision table per model",
+      "0106-feel-ternary-logic": "2 decisions; the subset covers one decision table per model",
+      "0107-feel-ternary-logic-not": "decision logic is not a decision table (FEEL literal expression or invocation)",
+      "0108-first-hitpolicy": "#2929: declared no-hit defaults are discarded (guarded by a no-hit witness)",
+      "0109-ruleOrder-hitpolicy": "#2929: declared no-hit defaults are discarded (guarded by a no-hit witness)",
+      "0110-outputOrder-hitpolicy": "#2930: empty nonaggregate hits produce [] instead of null (guarded by a no-hit witness)",
+      "0119-multi-collect-hitpolicy": "#2930: empty nonaggregate hits produce [] instead of null (guarded by a no-hit witness)"
+    },
+    "compliance-level-3": {
+      "count": 120,
+      "reason": "full FEEL (functions, contexts, date/time, BKMs, invocations): outside the FEEL-free decision-table subset"
+    }
+  },
+  "known_gaps": [
+    {
+      "model": "0108-first-hitpolicy",
+      "cases": [
+        "0108-first-hitpolicy-test-01#001",
+        "0108-first-hitpolicy-test-01#002",
+        "0108-first-hitpolicy-test-01#003"
+      ],
+      "issue": 2929,
+      "reason": "declared no-hit defaults are discarded",
+      "witness": "0108-first-hitpolicy.json"
+    },
+    {
+      "model": "0109-ruleOrder-hitpolicy",
+      "cases": [
+        "0109-ruleOrder-hitpolicy-test-01#001",
+        "0109-ruleOrder-hitpolicy-test-01#002",
+        "0109-ruleOrder-hitpolicy-test-01#003"
+      ],
+      "issue": 2929,
+      "reason": "declared no-hit defaults are discarded",
+      "witness": "0109-ruleOrder-hitpolicy.json"
+    },
+    {
+      "model": "0110-outputOrder-hitpolicy",
+      "cases": [
+        "0110-outputOrder-hitpolicy-test-01#001",
+        "0110-outputOrder-hitpolicy-test-01#002",
+        "0110-outputOrder-hitpolicy-test-01#003"
+      ],
+      "issue": 2930,
+      "reason": "empty nonaggregate hits produce [] instead of null",
+      "witness": "0110-outputOrder-hitpolicy.json"
+    },
+    {
+      "model": "0119-multi-collect-hitpolicy",
+      "cases": [
+        "0119-multi-collect-hitpolicy-test-01#001",
+        "0119-multi-collect-hitpolicy-test-01#002",
+        "0119-multi-collect-hitpolicy-test-01#003"
+      ],
+      "issue": 2930,
+      "reason": "empty nonaggregate hits produce [] instead of null",
+      "witness": "0119-multi-collect-hitpolicy.json"
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "objectTypes": [
+    {
+      "name": "acme.LooseOrder",
+      "extends": "commerce.PurchaseOrder",
+      "lifecycles": [
+        {
+          "property": "status",
+          "initial": [
+            "draft"
+          ],
+          "terminal": [
+            "received",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "id": "submit",
+              "from": [
+                "draft"
+              ],
+              "to": "submitted",
+              "guards": [
+                "true"
+              ]
+            },
+            {
+              "id": "approve",
+              "from": [
+                "submitted"
+              ],
+              "to": "approved"
+            },
+            {
+              "id": "reject",
+              "from": [
+                "submitted"
+              ],
+              "to": "rejected"
+            },
+            {
+              "id": "revise",
+              "from": [
+                "rejected"
+              ],
+              "to": "draft"
+            },
+            {
+              "id": "receive",
+              "from": [
+                "approved"
+              ],
+              "to": "received"
+            },
+            {
+              "id": "cancel",
+              "from": [
+                "draft",
+                "submitted",
+                "approved"
+              ],
+              "to": "cancelled"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

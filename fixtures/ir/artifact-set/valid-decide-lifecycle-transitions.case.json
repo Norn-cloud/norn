@@ -1,0 +1,9 @@
+{
+  "description": "A decide graph creates purchase orders in their initial state and changes their status only through declared transitions (T3-LIFE-2).",
+  "base": [],
+  "artifacts": [
+    "ir/entity-v2/artifact-set/commerce-purchase-order.entity.json",
+    "rule-ir-v2/valid/purchase-order-approval.rule.json"
+  ],
+  "expect": []
+}

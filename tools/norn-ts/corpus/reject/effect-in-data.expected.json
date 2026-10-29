@@ -1,0 +1,23 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "11:50",
+      "end": "11:107",
+      "construct": "Norn.perform(\"inner\", chargeCard, { invoiceId: \"inv-1\" })"
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "12:37",
+      "end": "12:96",
+      "construct": "Norn.perform(\"wrapped\", chargeCard, { invoiceId: \"inv-2\" })"
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "13:26",
+      "end": "13:121",
+      "construct": "Norn.perform(\"nested\", chargeCard, { invoiceId: \"inv-3\" }).pipe(Effect.map((x..."
+    }
+  ]
+}

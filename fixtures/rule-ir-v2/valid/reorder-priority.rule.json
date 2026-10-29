@@ -1,0 +1,203 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.reorder_priority.rule",
+  "kind": "rule",
+  "namespace": "retail",
+  "name": "Reorder priority",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/rule-ir-v2/valid/reorder-priority.rule.json"
+  },
+  "payload": {
+    "ruleId": "retail.rule.reorder_priority",
+    "ruleVersion": "2.0",
+    "contract": "sub_decision",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "integer"
+        },
+        "short": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "total",
+        "short"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "band": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flags"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "graph": {
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "flag",
+          "name": "flag",
+          "type": "switchNode",
+          "content": {
+            "hitPolicy": "collect",
+            "statements": [
+              {
+                "id": "urgent",
+                "condition": "short"
+              },
+              {
+                "id": "always",
+                "condition": ""
+              }
+            ]
+          }
+        },
+        {
+          "id": "urgent",
+          "name": "urgent",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_urgent",
+                "key": "urgentFlag",
+                "value": "'urgent'"
+              }
+            ],
+            "passThrough": true
+          }
+        },
+        {
+          "id": "bands",
+          "name": "bands",
+          "type": "decisionTableNode",
+          "content": {
+            "hitPolicy": "collect",
+            "inputs": [
+              {
+                "id": "c_large",
+                "name": "Large",
+                "type": "expression"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "o_band",
+                "name": "Band",
+                "field": "band"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "large",
+                "c_large": "total > 10000",
+                "o_band": "'large'"
+              },
+              {
+                "_id": "any",
+                "c_large": "",
+                "o_band": "'any'"
+              }
+            ],
+            "outputPath": "bands",
+            "passThrough": true
+          }
+        },
+        {
+          "id": "collect",
+          "name": "collect",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_flags",
+                "key": "flags",
+                "value": "short ? ['urgent'] : []"
+              },
+              {
+                "id": "x_band",
+                "key": "band",
+                "value": "total > 10000 ? 'large' : 'any'"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e_in",
+          "sourceId": "in",
+          "targetId": "flag",
+          "type": "edge"
+        },
+        {
+          "id": "e_urgent",
+          "sourceId": "flag",
+          "targetId": "urgent",
+          "type": "edge",
+          "sourceHandle": "urgent"
+        },
+        {
+          "id": "e_always",
+          "sourceId": "flag",
+          "targetId": "bands",
+          "type": "edge",
+          "sourceHandle": "always"
+        },
+        {
+          "id": "e_u",
+          "sourceId": "urgent",
+          "targetId": "collect",
+          "type": "edge"
+        },
+        {
+          "id": "e_b",
+          "sourceId": "bands",
+          "targetId": "collect",
+          "type": "edge"
+        },
+        {
+          "id": "e_out",
+          "sourceId": "collect",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "shopify_demo.connector",
+  "kind": "connector",
+  "namespace": "shopify_demo",
+  "name": "Shopify emulator",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/dev/catalog-sync/definitions/shopify_demo.connector.json"
+  },
+  "payload": {
+    "connectorVersion": "0.1",
+    "auth": {
+      "kind": "api_key",
+      "authId": "shopify_demo",
+      "placement": "header",
+      "name": "X-Shopify-Access-Token",
+      "secretRef": "secrets.shopify_demo.synthetic_token"
+    },
+    "resources": [],
+    "mappings": [],
+    "commands": [
+      {
+        "actionId": "catalog.shopify.write",
+        "operation": "create",
+        "doctypes": [
+          "CatalogWrite"
+        ],
+        "endpoint": "/admin/api/2026-04/graphql.json",
+        "method": "POST",
+        "bodyFields": [
+          "id",
+          "mapping_revision",
+          "mapping_hash",
+          "source_pins",
+          "operation",
+          "variables",
+          "desired_digest",
+          "scope_key"
+        ]
+      }
+    ],
+    "extensions": {
+      "norn.shopify.graphql/1": {
+        "apiVersion": "2026-04"
+      }
+    }
+  }
+}

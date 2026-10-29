@@ -1,0 +1,8 @@
+{
+  "version": "0.1.1",
+  "semantic_model": [{
+    "name": "sales",
+    "datasets": [{"name":"invoices","source":"analytics.sales.invoices","fields":[{"name":"weight","expression":{"dialects":[{"dialect":"ANSI_SQL","expression":"weight"}]}}]}],
+    "metrics": [{"name":"sales_weight","expression":{"dialects":[{"dialect":"ANSI_SQL","expression":"SUM(invoices.weight)"}]}}]
+  }]
+}

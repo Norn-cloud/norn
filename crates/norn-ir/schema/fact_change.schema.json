@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FactChange",
+  "description": "One fact change a decision emits. See the module docs.",
+  "oneOf": [
+    {
+      "description": "Create an object. A lifecycle property it writes must hold an initial\nstate; one it omits takes its default, which is an initial state.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "The object's identity key value.",
+          "type": "string"
+        },
+        "objectType": {
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "op": {
+          "type": "string",
+          "const": "create"
+        },
+        "values": {
+          "description": "Property values by property id.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "objectType",
+        "key",
+        "values"
+      ]
+    },
+    {
+      "description": "Set one stored property. Never a lifecycle property.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "objectType": {
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "op": {
+          "type": "string",
+          "const": "set"
+        },
+        "property": {
+          "$ref": "#/$defs/PropertyId"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "objectType",
+        "key",
+        "property",
+        "value"
+      ]
+    },
+    {
+      "description": "Delete an object.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "objectType": {
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "op": {
+          "type": "string",
+          "const": "delete"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "objectType",
+        "key"
+      ]
+    },
+    {
+      "description": "Fire a declared transition of the lifecycle of property `lifecycle`.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "lifecycle": {
+          "description": "The lifecycle property (it names the lifecycle: one per property).",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "objectType": {
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "op": {
+          "type": "string",
+          "const": "transition"
+        },
+        "transition": {
+          "description": "The transition id, declared by that lifecycle.",
+          "$ref": "#/$defs/TransitionId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "objectType",
+        "key",
+        "lifecycle",
+        "transition"
+      ]
+    }
+  ],
+  "$defs": {
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "ObjectTypeName": {
+      "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "PropertyId": {
+      "description": "Id of a property within its object type (`sku_code`), unique there.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "TransitionId": {
+      "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    }
+  }
+}

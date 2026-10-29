@@ -1,0 +1,47 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "12:59",
+      "end": "12:64",
+      "construct": "Shape"
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "12:72",
+      "end": "12:78",
+      "construct": "lookup"
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "13:59",
+      "end": "13:66",
+      "construct": "wrapped"
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "14:30",
+      "end": "14:39",
+      "construct": "otherFlow"
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "14:49",
+      "end": "14:53",
+      "construct": "sink"
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "14:62",
+      "end": "14:77",
+      "construct": "PaymentDeclined"
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "14:93",
+      "end": "14:103",
+      "construct": "Defs.Shape"
+    }
+  ]
+}

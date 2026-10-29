@@ -1,0 +1,29 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "11:9",
+      "end": "11:16",
+      "construct": "invoice"
+    },
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "14:9",
+      "end": "14:28",
+      "construct": "invoice.amountMinor"
+    },
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "17:9",
+      "end": "17:38",
+      "construct": "invoice.overdue && invoice.id"
+    },
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "20:9",
+      "end": "20:20",
+      "construct": "!invoice.id"
+    }
+  ]
+}

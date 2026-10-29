@@ -1,0 +1,19 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "files": { "includes": ["src/**/*.ts", "test/authoring-sdk.test.ts", "test/real-cell.test.ts"] },
+  "formatter": { "enabled": false },
+  "assist": { "enabled": false },
+  "linter": {
+    "rules": {
+      "recommended": true,
+      // Compiler APIs use checked AST discriminants and explicit invariant assertions.
+      "style": { "noNonNullAssertion": "off" },
+      "correctness": { "noVoidTypeReturn": "off" },
+      "suspicious": {
+        // These are intentional IR member names and a literal-admission control-character filter.
+        "noThenProperty": "off",
+        "noControlCharactersInRegex": "off"
+      }
+    }
+  }
+}

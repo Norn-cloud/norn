@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SettingPayload",
+  "description": "The payload of a `setting` artifact: one reviewed, effective-dated\nvalue whose JSON type is fixed by `valueType`.",
+  "type": "object",
+  "properties": {
+    "effectiveFrom": {
+      "type": "string"
+    },
+    "effectiveTo": {
+      "description": "Must sort after `effectiveFrom` (checker rule).",
+      "type": "string"
+    },
+    "extensions": {
+      "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "review": {
+      "$ref": "#/$defs/SettingReview"
+    },
+    "scopeRequired": {
+      "description": "Scope dimensions the caller must supply (fail closed).",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "settingKey": {
+      "type": "string"
+    },
+    "settingVersion": {
+      "$ref": "#/$defs/IrVersion01"
+    },
+    "supersedes": {
+      "description": "The setting version this one replaces.",
+      "$ref": "#/$defs/SettingSupersedes"
+    },
+    "value": {
+      "description": "The value, whose JSON type agrees with `valueType`. A `json` setting\nmay be `null`.",
+      "$ref": "#/$defs/JsonValue"
+    },
+    "valueType": {
+      "$ref": "#/$defs/SettingValueType"
+    }
+  },
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "valueType": {
+          "const": "text"
+        }
+      }
+    },
+    {
+      "properties": {
+        "value": {
+          "type": "number",
+          "format": "double"
+        },
+        "valueType": {
+          "const": "number"
+        }
+      }
+    },
+    {
+      "properties": {
+        "value": {
+          "type": "boolean"
+        },
+        "valueType": {
+          "const": "boolean"
+        }
+      }
+    },
+    {
+      "properties": {
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "valueType": {
+          "const": "json"
+        }
+      }
+    }
+  ],
+  "required": [
+    "settingVersion",
+    "settingKey",
+    "valueType",
+    "value",
+    "effectiveFrom",
+    "review",
+    "scopeRequired"
+  ],
+  "$defs": {
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "SettingReview": {
+      "description": "Review state of a setting.",
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "reviewedAt": {
+          "type": "string"
+        },
+        "reviewedBy": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/SettingReviewState"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "SettingReviewState": {
+      "description": "Review states of a setting.",
+      "type": "string",
+      "enum": [
+        "draft",
+        "proposed",
+        "approved",
+        "active",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "SettingSupersedes": {
+      "description": "The exact setting artifact version a setting supersedes.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "artifactId",
+        "version"
+      ]
+    },
+    "SettingValueType": {
+      "description": "The JSON type of a setting's `value`.",
+      "type": "string",
+      "enum": [
+        "text",
+        "number",
+        "boolean",
+        "json"
+      ]
+    }
+  }
+}

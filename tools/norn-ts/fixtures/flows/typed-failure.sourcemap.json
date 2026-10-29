@@ -1,0 +1,62 @@
+{
+  "flow": "billing.typed_failure",
+  "flowAt": {
+    "file": "fixtures/flows/typed-failure.builder.ts",
+    "line": 7
+  },
+  "format": "norn-flow-sourcemap/1",
+  "note": "non-executable: maps generated ids to the definition sites that produced them",
+  "rows": {
+    "awaiting_perform_charge/failure/1": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 15
+    },
+    "awaiting_perform_charge/failure/2": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 10
+    },
+    "awaiting_perform_charge/result/1": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 11
+    },
+    "awaiting_perform_tell/result/1": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 16
+    },
+    "started/start/1": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 10
+    }
+  },
+  "sourcePath": "tools/norn-ts/fixtures/flows/typed-failure.flow.ts",
+  "states": {
+    "awaiting_perform_charge": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 10
+    },
+    "awaiting_perform_tell": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 15
+    },
+    "completed": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 11
+    },
+    "failed_card_expired": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 10
+    },
+    "started": null
+  },
+  "steps": {
+    "charge": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 10
+    },
+    "tell": {
+      "file": "fixtures/flows/typed-failure.builder.ts",
+      "line": 15
+    }
+  },
+  "version": "1.0.0"
+}

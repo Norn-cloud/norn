@@ -1,0 +1,22 @@
+{
+  "description": "A decision that emits a command invoking an action references that action (2026-09-25 \u00a73/\u00a74).",
+  "base": [],
+  "artifacts": [
+    "ir/retail-reorder.action.json",
+    "ir/retail-purchase-request.entity.json",
+    {
+      "fixture": "ir/retail-reorder-routing.rule.json",
+      "patch": {
+        "dependencies": [
+          {
+            "artifactId": "retail.reorder.action",
+            "kind": "action",
+            "version": "0.1.0",
+            "required": true
+          }
+        ]
+      }
+    }
+  ],
+  "expect": []
+}

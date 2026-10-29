@@ -1,0 +1,39 @@
+{
+  "irVersion": "0.1",
+  "name": "erpnext.customers_by_region_week",
+  "aggregate": [
+    {
+      "metric": "erpnext.distinct_customers"
+    }
+  ],
+  "groupBy": [
+    {
+      "path": {
+        "links": [
+          "customer",
+          "region"
+        ],
+        "property": "name"
+      }
+    },
+    {
+      "path": {
+        "property": "posting_date"
+      },
+      "grain": "week"
+    }
+  ],
+  "window": {
+    "start": "2026-10-01T00:00:00Z",
+    "end": "2026-11-01T00:00:00Z"
+  },
+  "compare": {
+    "kind": "previous_period"
+  },
+  "freshness": {
+    "kind": "live",
+    "maxAgeMs": 1000
+  },
+  "calendar": "iso_utc",
+  "objectSet": "erpnext.SalesInvoice"
+}

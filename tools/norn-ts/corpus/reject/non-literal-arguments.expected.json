@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-LITERAL",
+      "start": "12:41",
+      "end": "12:49",
+      "construct": "stepName"
+    },
+    {
+      "code": "NORN-FLOW-LITERAL",
+      "start": "13:25",
+      "end": "13:29",
+      "construct": "wait"
+    }
+  ]
+}

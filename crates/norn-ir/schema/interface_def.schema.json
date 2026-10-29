@@ -1,0 +1,703 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InterfaceDef",
+  "description": "An interface: the properties and links every implementing object type\nhas, and the invariants every such object satisfies.",
+  "type": "object",
+  "properties": {
+    "description": {
+      "type": "string"
+    },
+    "invariants": {
+      "description": "Invariants every implementing object type satisfies, in addition to\nits own and inherited invariants. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Invariant"
+      }
+    },
+    "links": {
+      "description": "Required links, in presentation order; their ids are distinct from\nthe required property ids. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/InterfaceLink"
+      }
+    },
+    "markings": {
+      "description": "Classification markings inherited by every implementing property.\nOmitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MarkingId"
+      }
+    },
+    "name": {
+      "description": "Unique name, across interfaces and object types.",
+      "$ref": "#/$defs/InterfaceName"
+    },
+    "properties": {
+      "description": "Required properties, in presentation order. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/InterfaceProperty"
+      }
+    },
+    "status": {
+      "description": "The definition's resource status. Omitted means `active`.",
+      "$ref": "#/$defs/ResourceStatus"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "name"
+  ],
+  "$defs": {
+    "CalendarDate": {
+      "description": "An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "ConstraintClass": {
+      "description": "How a declared invariant is applied at a write boundary.",
+      "oneOf": [
+        {
+          "description": "A command that would violate the invariant is refused atomically.\nObservations still record the external state and emit a finding.",
+          "type": "string",
+          "const": "integrity"
+        },
+        {
+          "description": "A violation does not refuse a command or observation. Observed\nviolations produce expectation findings.",
+          "type": "string",
+          "const": "quality"
+        }
+      ]
+    },
+    "DecimalLiteral": {
+      "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "DimensionPath": {
+      "description": "A property reached by zero or more declared directional link roles.",
+      "type": "object",
+      "properties": {
+        "links": {
+          "description": "Forward or inverse roles, in traversal order; empty means the root object.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkId"
+          }
+        },
+        "property": {
+          "description": "The terminal property.",
+          "$ref": "#/$defs/PropertyId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property"
+      ]
+    },
+    "EnumValue": {
+      "description": "One declared value of an `enum` property.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "value": {
+          "description": "The stored value; stable once published.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value"
+      ]
+    },
+    "InterfaceLink": {
+      "description": "One required link of an interface: every implementing type has a link\nwith this id whose target and cardinality narrow the requirement's.\n\nA requirement names no inverse and no link properties: an interface is a\nread contract on the implementing type, and cannot add members to the\ntarget.",
+      "type": "object",
+      "properties": {
+        "cardinality": {
+          "description": "The widest cardinality an implementing link may have.",
+          "$ref": "#/$defs/LinkCardinality"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "description": "Unique id among the interface's requirements; never contains `__`.",
+          "$ref": "#/$defs/LinkId"
+        },
+        "target": {
+          "description": "The widest target an implementing link may have: an object type (or\na subtype of it) or an interface (or a type implementing it).",
+          "$ref": "#/$defs/ObjectTypeName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "target",
+        "cardinality"
+      ]
+    },
+    "InterfaceName": {
+      "description": "Qualified name of an interface: the object type name grammar\n([`OBJECT_TYPE_NAME_PATTERN`], `party.Party`). Interfaces and object types\nshare one name space.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "InterfaceProperty": {
+      "description": "One required property of an interface: an id, a type an implementing\nproperty must narrow, and constraints that apply to it.\n\nA requirement has no default and is never `computed`: an interface is a\nread contract, and an implementing type may satisfy it with a stored or a\ncomputed property.",
+      "type": "object",
+      "properties": {
+        "constraints": {
+          "description": "Constraints every implementing property is held to. Omitted when\nempty.",
+          "$ref": "#/$defs/PropertyConstraints"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "description": "Unique id within the interface; never contains `__`.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "markings": {
+          "description": "Classification markings required of every implementing property.\nImplementations may add markings but cannot remove these. Omitted when\nempty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingId"
+          }
+        },
+        "type": {
+          "description": "The widest type an implementing property may have.",
+          "$ref": "#/$defs/PropertyType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type"
+      ]
+    },
+    "Invariant": {
+      "description": "One declared invariant of an object type or interface.",
+      "type": "object",
+      "properties": {
+        "classification": {
+          "description": "Whether violations reject commands (`integrity`) or remain findings\n(`quality`). Omitted wire values mean `integrity` for compatibility.",
+          "$ref": "#/$defs/ConstraintClass"
+        },
+        "description": {
+          "type": "string"
+        },
+        "expression": {
+          "description": "A boolean ZEN Expression over the object's or interface's properties.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "description": "Unique id among the type's invariants, inherited ones included.",
+          "$ref": "#/$defs/InvariantId"
+        },
+        "message": {
+          "description": "What a commit that violates the invariant reports; non-blank.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "expression",
+        "message"
+      ]
+    },
+    "InvariantId": {
+      "description": "Id of an [`Invariant`], unique within its owner's effective invariant\ncontract. Same grammar as a property id ([`MEMBER_ID_PATTERN`]); invariants\nhave their own name space.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "LinkCardinality": {
+      "description": "The cardinality of a link, declared on both ends.\n\n`to` and `from` together give the relation's shape: `one`/`one` is 1:1,\n`one`/`many` is N:1 from the source (1:N from the target), and\n`many`/`many` is N:M. `required` is Gel's `required`: every source object\nlinks to at least one target.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "How many source objects link to one target: the multiplicity of the\ninverse role.",
+          "$ref": "#/$defs/Multiplicity"
+        },
+        "required": {
+          "description": "Whether every source object links to at least one target. Defaults to\n`false`; the canonical form omits `false`.",
+          "type": "boolean"
+        },
+        "to": {
+          "description": "How many targets one source object links to.",
+          "$ref": "#/$defs/Multiplicity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "to",
+        "from"
+      ]
+    },
+    "LinkId": {
+      "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "MarkingId": {
+      "description": "Stable identity of a data marking.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "Multiplicity": {
+      "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
+      "oneOf": [
+        {
+          "description": "At most one.",
+          "type": "string",
+          "const": "one"
+        },
+        {
+          "description": "Any number.",
+          "type": "string",
+          "const": "many"
+        }
+      ]
+    },
+    "ObjectTypeName": {
+      "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "PropertyConstraints": {
+      "description": "Constraints on the values of a property type.\n\nApplicability (checked by `norn-checker`): `min`/`max` apply to `integer`\nand `decimal`; `minLength`/`maxLength`/`pattern` apply to `text`;\n`nullable` applies to every kind. Through a `ref` they apply to the\nreferenced type's kind.",
+      "type": "object",
+      "properties": {
+        "max": {
+          "description": "Inclusive upper bound.",
+          "$ref": "#/$defs/DecimalLiteral"
+        },
+        "maxLength": {
+          "description": "Maximum length in Unicode scalar values.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "min": {
+          "description": "Inclusive lower bound.",
+          "$ref": "#/$defs/DecimalLiteral"
+        },
+        "minLength": {
+          "description": "Minimum length in Unicode scalar values.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "nullable": {
+          "description": "Whether a value may be absent (`null`). Defaults to `false`; the\ncanonical form omits `false`.",
+          "type": "boolean"
+        },
+        "pattern": {
+          "description": "A regular expression the value must contain a match for (JSON Schema\n`pattern` semantics: unanchored; write `^…$` for a full match). The\ndialect is `regex-lite`, the ZEN Expression pure profile's engine.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PropertyId": {
+      "description": "Id of a property within its object type (`sku_code`), unique there.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "PropertyType": {
+      "description": "The value kind of a property, tagged by `kind`.",
+      "oneOf": [
+        {
+          "description": "A Unicode string, optionally in a well-known [`TextFormat`].",
+          "type": "object",
+          "properties": {
+            "format": {
+              "$ref": "#/$defs/TextFormat"
+            },
+            "kind": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A signed 64-bit integer.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "integer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An exact decimal with a fixed number of fraction digits, optionally a\nquantity in a declared unit.",
+          "type": "object",
+          "properties": {
+            "currencySource": {
+              "description": "Authoritative currency path relative to the object holding this amount.\nMonetary decimals declare this instead of a quantity unit. Metrics\nmust verify this source; descriptions and names carry no semantics.",
+              "$ref": "#/$defs/DimensionPath"
+            },
+            "kind": {
+              "type": "string",
+              "const": "decimal"
+            },
+            "scale": {
+              "description": "Fraction digits every value is held at (`2` for cents). At most 28,\nthe exact range of ZEN Expression's decimal (checked by\n`norn-checker`).",
+              "$ref": "#/$defs/WholeNumber"
+            },
+            "unit": {
+              "$ref": "#/$defs/UnitRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "scale"
+          ]
+        },
+        {
+          "description": "`true` or `false`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An instant in time with an explicit timezone policy.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "timestamp"
+            },
+            "timezone": {
+              "description": "How the offset is held. Required: there is no ambient timezone.",
+              "$ref": "#/$defs/TimezonePolicy"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "timezone"
+          ]
+        },
+        {
+          "description": "An ISO 8601 calendar date (`YYYY-MM-DD`) with no time and no zone.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "date"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An exact elapsed duration (fixed-length units only; calendar periods\nsuch as months are not durations).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "duration"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "One of a closed set of string values.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "enum"
+            },
+            "values": {
+              "description": "Declared values, in presentation order; unique and non-empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/EnumValue"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "values"
+          ]
+        },
+        {
+          "description": "A closed structured value. Every member is present; nullability of\nthe containing property applies to the whole record.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "record"
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RecordMember"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "members"
+          ]
+        },
+        {
+          "description": "Opaque JSON (an extension payload), optionally described by a JSON\nSchema document the checker does not interpret.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "json-ext"
+            },
+            "schema": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The shared property type (local or registry) with this name.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ref"
+            },
+            "name": {
+              "description": "The referenced [`PropertyTypeDef`] name.",
+              "$ref": "#/$defs/PropertyTypeName"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name"
+          ]
+        }
+      ]
+    },
+    "PropertyTypeName": {
+      "description": "Dotted, lower-case name of a shared property type, for example\n`commerce.sku_code` or the registry value type `iso4217.currency_code`.\n\nGrammar (checked by `norn-checker`): one or more `.`-separated segments,\neach `[a-z][a-z0-9_]*`.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "RecordMember": {
+      "description": "One required member of a closed record. A nullable member must still be\npresent, with an explicit null when it has no value.",
+      "type": "object",
+      "properties": {
+        "constraints": {
+          "description": "Constraints on this required member, including its nullability.",
+          "$ref": "#/$defs/PropertyConstraints"
+        },
+        "id": {
+          "description": "Unique member name, using the property id grammar.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "type": {
+          "description": "Inline member kind or a reference to a shared property type.",
+          "$ref": "#/$defs/PropertyType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type"
+      ]
+    },
+    "ResourceStatus": {
+      "description": "The resource status of a definition named by `N` (an object type or an\ninterface), tagged by `state`.",
+      "oneOf": [
+        {
+          "description": "Published for trial; its shape may still change incompatibly.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "experimental"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "description": "Stable: changes follow the compatibility rules of its package.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "active"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "description": "Still valid, but new use is discouraged.",
+          "type": "object",
+          "properties": {
+            "replacedBy": {
+              "description": "The definition that replaces it, of the same kind.",
+              "$ref": "#/$defs/InterfaceName"
+            },
+            "since": {
+              "description": "The date the definition was deprecated.",
+              "$ref": "#/$defs/CalendarDate"
+            },
+            "state": {
+              "type": "string",
+              "const": "deprecated"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "since"
+          ]
+        }
+      ]
+    },
+    "TextFormat": {
+      "description": "Well-known string formats of a `text` property.",
+      "oneOf": [
+        {
+          "description": "An RFC 5322 address (`addr-spec`).",
+          "type": "string",
+          "const": "email"
+        },
+        {
+          "description": "An RFC 3986 URI.",
+          "type": "string",
+          "const": "uri"
+        },
+        {
+          "description": "An RFC 9562 UUID in its hyphenated text form.",
+          "type": "string",
+          "const": "uuid"
+        }
+      ]
+    },
+    "TimezonePolicy": {
+      "description": "A timestamp's declared source-offset policy. Both policies require an\nRFC 3339 date-time with an explicit offset; neither admits a local\ndate-time. Runtime storage canonicalizes both to UTC (#3112); raw source\nobservations retain the original offset as source evidence.",
+      "oneOf": [
+        {
+          "description": "An instant normalized to UTC (`Z`); the source offset is not kept.",
+          "type": "string",
+          "const": "utc"
+        },
+        {
+          "description": "Source data supplies an offset. The runtime stores the instant in UTC;\nthe original source representation belongs to raw observations.",
+          "type": "string",
+          "const": "offset"
+        }
+      ]
+    },
+    "UnitRef": {
+      "description": "A reference to a unit of measure in a standard unit vocabulary (ruling\n2026-09-25 §27). The code is not interpreted here; resolving it against the\nvocabulary is registry work (T8-STD-1).",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "The unit's code in `system` (UCUM `kg`, `m/s`; QUDT `unit:KiloGM`).",
+          "type": "string"
+        },
+        "system": {
+          "$ref": "#/$defs/UnitSystem"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "code"
+      ]
+    },
+    "UnitSystem": {
+      "description": "A standard unit vocabulary.",
+      "oneOf": [
+        {
+          "description": "The Unified Code for Units of Measure (case-sensitive codes).",
+          "type": "string",
+          "const": "ucum"
+        },
+        {
+          "description": "A QUDT unit (`unit:` local name).",
+          "type": "string",
+          "const": "qudt"
+        }
+      ]
+    },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    },
+    "ZenExpression": {
+      "description": "Source text of one ZEN Expression (the IR's single expression language,\nruling 2026-09-25 §3): a decision-table cell, switch condition, expression\nassignment, or action precondition.\n\nStored verbatim; parsing and type checking belong to `norn-expr` and\n`norn-checker`.",
+      "type": "string"
+    }
+  }
+}

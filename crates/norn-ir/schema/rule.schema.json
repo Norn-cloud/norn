@@ -1,0 +1,1533 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RulePayload",
+  "type": "object",
+  "properties": {
+    "appliesTo": {
+      "type": "string"
+    },
+    "contract": {
+      "$ref": "#/$defs/RuleContractV2"
+    },
+    "decision": {
+      "$ref": "#/$defs/RuleDecisionV1"
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "expression": {
+      "type": "string"
+    },
+    "extensions": {
+      "description": "Reserved extension slots keyed by `<name>/<semver>`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "graph": {
+      "$ref": "#/$defs/JdmGraph"
+    },
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "requiredServices": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "ruleId": {
+      "type": "string"
+    },
+    "ruleVersion": {
+      "type": "string"
+    },
+    "scopeRequired": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "severity": {
+      "type": "string"
+    },
+    "sideEffects": {
+      "$ref": "#/$defs/JsonFalse"
+    },
+    "slice": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SliceDeclaration"
+      }
+    },
+    "sourceCommands": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RuleSourceCommand"
+      }
+    },
+    "triggers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RuleTrigger"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "ruleId"
+  ],
+  "$defs": {
+    "ActionCommandChildMerge": {
+      "description": "A declarative owner-scoped complete desired set for one source child table.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "description": "Parent field holding the source child rows.",
+          "type": "string"
+        },
+        "ownershipField": {
+          "description": "Child row field that records Norn ownership.",
+          "type": "string"
+        },
+        "ownershipValue": {
+          "description": "ZEN Expression yielding the owner marker written to each desired row.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "rowKeyField": {
+          "description": "Child row field used to match an existing owned row.",
+          "type": "string"
+        },
+        "rows": {
+          "description": "ZEN Expression yielding the complete desired row array.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "ownershipField",
+        "ownershipValue",
+        "rowKeyField",
+        "rows"
+      ]
+    },
+    "JdmCustomNodeContent": {
+      "description": "Custom-node content (`CustomNodeContent`). Decodable only for rejection.",
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "config"
+      ]
+    },
+    "JdmDecisionTableContent": {
+      "description": "Decision-table content (`DecisionTableContent`).",
+      "type": "object",
+      "properties": {
+        "executionMode": {
+          "$ref": "#/$defs/JdmExecutionMode"
+        },
+        "hitPolicy": {
+          "$ref": "#/$defs/JdmHitPolicy"
+        },
+        "inputField": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JdmTableInput"
+          }
+        },
+        "outputPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JdmTableOutput"
+          }
+        },
+        "passThrough": {
+          "type": "boolean"
+        },
+        "rules": {
+          "description": "Ordered rows; each carries a stable `_id`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JdmTableRow"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "hitPolicy",
+        "inputs",
+        "outputs",
+        "rules"
+      ]
+    },
+    "JdmEdge": {
+      "description": "A directed edge between two nodes (`DecisionEdge`).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sourceHandle": {
+          "description": "Source handle; a switch statement id when the source is a switch node.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceId": {
+          "type": "string"
+        },
+        "targetId": {
+          "type": "string"
+        },
+        "type": {
+          "description": "Editor edge type (`\"edge\"`); ignored by evaluation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sourceId",
+        "targetId"
+      ]
+    },
+    "JdmExecutionMode": {
+      "description": "`executionMode` of a transforming node.",
+      "type": "string",
+      "enum": [
+        "single",
+        "loop"
+      ]
+    },
+    "JdmExpression": {
+      "description": "One `key = value` assignment of an expression node.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "key",
+        "value"
+      ]
+    },
+    "JdmExpressionContent": {
+      "description": "Expression-node content (`ExpressionNodeContent`).",
+      "type": "object",
+      "properties": {
+        "executionMode": {
+          "$ref": "#/$defs/JdmExecutionMode"
+        },
+        "expressions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JdmExpression"
+          }
+        },
+        "inputField": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outputPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "passThrough": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "expressions"
+      ]
+    },
+    "JdmGraph": {
+      "description": "A JDM decision graph (`GraphContent` in `zen-engine`).",
+      "type": "object",
+      "properties": {
+        "contentType": {
+          "description": "Optional `jdm-editor` content type ([`JDM_CONTENT_TYPE`]).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JdmEdge"
+          }
+        },
+        "imports": {
+          "description": "Graph imports. In `zen-engine` an import names a policy document (a\ndictionary of output-column types). Norn has no such artifact: value\ntypes come from `EntityIR` v2, so no import resolves and the Norn\nprofile rejects every one (T3-DEC-1); the evaluator never loads one.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JdmNode"
+          }
+        },
+        "settings": {
+          "description": "`jdm-editor` graph settings; editor metadata, ignored by evaluation.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "nodes",
+        "edges"
+      ]
+    },
+    "JdmHitPolicy": {
+      "description": "JDM hit policy shared by decision tables and switch nodes.\n\nDMN policies other than `first` and `collect` translate or are rejected at\nDMN ingress (T3-DEC-4); they have no JDM representation.",
+      "type": "string",
+      "enum": [
+        "first",
+        "collect"
+      ]
+    },
+    "JdmNode": {
+      "description": "One JDM node, internally tagged by its JDM `type`.\n\nEvery variant carries the common `id`, `name`, and optional editor\n`position`; use [`JdmNode::id`], [`JdmNode::name`], and\n[`JdmNode::node_type`] instead of matching when only those are needed.",
+      "oneOf": [
+        {
+          "description": "Graph input. `content.schema` is the JDM JSON-Schema string, if any.",
+          "type": "object",
+          "properties": {
+            "content": {
+              "$ref": "#/$defs/JdmSchemaContent"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/JdmPosition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "inputNode"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "name"
+          ]
+        },
+        {
+          "description": "Graph output. `content.schema` is the JDM JSON-Schema string, if any.",
+          "type": "object",
+          "properties": {
+            "content": {
+              "$ref": "#/$defs/JdmSchemaContent"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/JdmPosition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "outputNode"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "name"
+          ]
+        },
+        {
+          "description": "Named ZEN Expression assignments.",
+          "type": "object",
+          "properties": {
+            "content": {
+              "$ref": "#/$defs/JdmExpressionContent"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/JdmPosition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "expressionNode"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "name",
+            "content"
+          ]
+        },
+        {
+          "description": "Decision table with ZEN unary-test / expression cells.",
+          "type": "object",
+          "properties": {
+            "content": {
+              "$ref": "#/$defs/JdmDecisionTableContent"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/JdmPosition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "decisionTableNode"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "name",
+            "content"
+          ]
+        },
+        {
+          "description": "Conditional branching on ZEN Expression statements.",
+          "type": "object",
+          "properties": {
+            "content": {
+              "$ref": "#/$defs/JdmSwitchContent"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/JdmPosition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "switchNode"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "name",
+            "content"
+          ]
+        },
+        {
+          "description": "Sub-decision: evaluates another decision graph by key.",
+          "type": "object",
+          "properties": {
+            "content": {
+              "$ref": "#/$defs/JdmSubDecisionContent"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/JdmPosition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "decisionNode"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "name",
+            "content"
+          ]
+        },
+        {
+          "description": "JavaScript function node. Outside the Norn profile: decodable only so\nthe checker can reject it with a diagnostic; never executed.",
+          "type": "object",
+          "properties": {
+            "content": {
+              "description": "Opaque: `zen-engine` accepts a source string (v1) or `{ \"source\" }` (v2).",
+              "$ref": "#/$defs/JsonValue"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/JdmPosition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "functionNode"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "name",
+            "content"
+          ]
+        },
+        {
+          "description": "Custom (adapter-evaluated) node. Outside the Norn profile (D33 v1):\ndecodable only so the checker can reject it with a diagnostic.",
+          "type": "object",
+          "properties": {
+            "content": {
+              "$ref": "#/$defs/JdmCustomNodeContent"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/JdmPosition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "customNode"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "name",
+            "content"
+          ]
+        }
+      ]
+    },
+    "JdmPosition": {
+      "description": "Editor canvas position. Layout only; ignored by evaluation.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "JdmSchemaContent": {
+      "description": "Input/output node content (`InputNodeContent` / `OutputNodeContent`).",
+      "type": "object",
+      "properties": {
+        "schema": {
+          "description": "JSON Schema serialized as a string, as JDM stores it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "JdmSubDecisionContent": {
+      "description": "Sub-decision content (`DecisionNodeContent`).",
+      "type": "object",
+      "properties": {
+        "executionMode": {
+          "$ref": "#/$defs/JdmExecutionMode"
+        },
+        "inputField": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Key of the referenced decision graph: the `artifactId` of a `RuleIR` v2\nrule that the envelope declares as a required `rule` dependency. The\nchecker resolves it and bounds the sub-decision closure (T3-DEC-1).",
+          "type": "string"
+        },
+        "outputPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "passThrough": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key"
+      ]
+    },
+    "JdmSwitchContent": {
+      "description": "Switch-node content (`SwitchNodeContent`).",
+      "type": "object",
+      "properties": {
+        "hitPolicy": {
+          "description": "Absent means `first` (the `zen-engine` default).",
+          "$ref": "#/$defs/JdmHitPolicy"
+        },
+        "statements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JdmSwitchStatement"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "statements"
+      ]
+    },
+    "JdmSwitchStatement": {
+      "description": "One switch branch; edges leave the switch with `sourceHandle` = `id`.",
+      "type": "object",
+      "properties": {
+        "condition": {
+          "description": "Boolean ZEN Expression; empty means the default branch.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "type": "string"
+        },
+        "isDefault": {
+          "description": "Editor default-branch marker. Evaluation treats an empty `condition`\nas the default branch; this flag is editor metadata.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "condition"
+      ]
+    },
+    "JdmTableInput": {
+      "description": "A decision-table input column (`DecisionTableInputField`).",
+      "type": "object",
+      "properties": {
+        "field": {
+          "description": "Input path; absent means the column's cells are full expressions.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "description": "Editor column type (for example `\"expression\"`); ignored by evaluation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "JdmTableOutput": {
+      "description": "A decision-table output column (`DecisionTableOutputField`).",
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "field"
+      ]
+    },
+    "JdmTableRow": {
+      "description": "One decision-table row: a stable `_id`, an optional `_description`, and one\nZEN Expression cell per column id (unary tests for inputs, expressions for\noutputs). An empty cell matches anything.",
+      "type": "object",
+      "properties": {
+        "_description": {
+          "type": "string"
+        },
+        "_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/ZenExpression"
+      },
+      "required": [
+        "_id"
+      ]
+    },
+    "JsonFalse": {
+      "const": false
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "ObjectTypeName": {
+      "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "PropertyId": {
+      "description": "Id of a property within its object type (`sku_code`), unique there.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "RuleConditionV1": {
+      "description": "RuleIR v1 closed-operator condition, mirroring the conditions the\n`norn-engine` closed evaluator runs (`RuleCondition`).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "exists"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "field"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "eq"
+            },
+            "value": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "field",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "neq"
+            },
+            "value": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "field",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "lt"
+            },
+            "value": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "field",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "lte"
+            },
+            "value": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "field",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "gt"
+            },
+            "value": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "field",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "gte"
+            },
+            "value": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "field",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "in"
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "field",
+            "values"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "max": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "min": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "op": {
+              "type": "string",
+              "const": "between"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "field",
+            "min",
+            "max"
+          ]
+        }
+      ]
+    },
+    "RuleContractV2": {
+      "description": "The contract a RuleIR v2 graph implements. See the module docs.",
+      "oneOf": [
+        {
+          "description": "`decide(slice, event) -> { facts, commands, timers }`: a decision the\nkernel invokes.",
+          "type": "string",
+          "const": "decide"
+        },
+        {
+          "description": "A helper graph, evaluated only as another graph's sub-decision.",
+          "type": "string",
+          "const": "sub_decision"
+        }
+      ]
+    },
+    "RuleDecisionV1": {
+      "description": "RuleIR v1 closed decision.",
+      "oneOf": [
+        {
+          "description": "A constant output record.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "literal"
+            },
+            "value": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "description": "An ordered decision table.",
+          "type": "object",
+          "properties": {
+            "defaultOutput": {
+              "description": "Output when no row matches.",
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            },
+            "hitPolicy": {
+              "$ref": "#/$defs/RuleHitPolicyV1"
+            },
+            "inputs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuleInputV1"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "decision_table"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuleRowV1"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "hitPolicy",
+            "inputs",
+            "rows"
+          ]
+        }
+      ]
+    },
+    "RuleHitPolicyV1": {
+      "description": "RuleIR v1 hit policy.",
+      "type": "string",
+      "enum": [
+        "first",
+        "unique"
+      ]
+    },
+    "RuleInputV1": {
+      "description": "RuleIR v1 input column.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/RuleValueTypeV1"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "type"
+      ]
+    },
+    "RuleRowV1": {
+      "description": "RuleIR v1 row with a stable id.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "rowId": {
+          "type": "string"
+        },
+        "when": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuleConditionV1"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rowId",
+        "when",
+        "output"
+      ]
+    },
+    "RuleSourceCommand": {
+      "description": "A guarded update capability for one declared mapped, observed object.\n\nThe command always updates the exact object identified by `slice`, and\ntakes its optimistic-concurrency version from `modifiedProperty` in that\nobject. The checker binds the connector, mapping, map, source doctype and\nraw source `modified` field before admitting the declaration.",
+      "type": "object",
+      "properties": {
+        "childMerges": {
+          "description": "Owner-scoped child-table desired sets derived from the decide input.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionCommandChildMerge"
+          }
+        },
+        "connector": {
+          "description": "Connector artifact id that grants a generic update capability.",
+          "type": "string"
+        },
+        "doctype": {
+          "description": "Exact source document type allowed by this declaration.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "Source fields whose values are derived from the decide input.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ZenExpression"
+          }
+        },
+        "id": {
+          "description": "Stable local id used by the graph's `sourceCommandId` activation.",
+          "type": "string"
+        },
+        "map": {
+          "description": "Object map id in the mapping artifact.",
+          "type": "string"
+        },
+        "mapping": {
+          "description": "Mapping artifact id that produces the observed target.",
+          "type": "string"
+        },
+        "modifiedProperty": {
+          "description": "Mapped target property carrying the source's raw `modified` value.",
+          "type": "string"
+        },
+        "slice": {
+          "description": "Name of the single-object slice member containing the observed target.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "connector",
+        "mapping",
+        "map",
+        "doctype",
+        "slice",
+        "modifiedProperty"
+      ]
+    },
+    "RuleTrigger": {
+      "description": "A committed ledger event that triggers a `decide` rule (T3-DEC-3, #2671).",
+      "oneOf": [
+        {
+          "description": "A declared lifecycle transition fired on an object of `objectType`.",
+          "type": "object",
+          "properties": {
+            "maxCausalDepth": {
+              "description": "Maximum causal depth accepted when this rule already appears in the\nevent's rule lineage. Omitted suppresses repeats of this rule.",
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "objectType": {
+              "description": "The object type.",
+              "$ref": "#/$defs/ObjectTypeName"
+            },
+            "on": {
+              "type": "string",
+              "const": "transitioned"
+            },
+            "transition": {
+              "description": "The transition id, declared by a lifecycle of the type.",
+              "$ref": "#/$defs/TransitionId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "on",
+            "objectType",
+            "transition"
+          ]
+        },
+        {
+          "description": "An object of `objectType` was created.",
+          "type": "object",
+          "properties": {
+            "maxCausalDepth": {
+              "description": "Maximum causal depth accepted when this rule already appears in the\nevent's rule lineage. Omitted suppresses repeats of this rule.",
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "objectType": {
+              "description": "The object type.",
+              "$ref": "#/$defs/ObjectTypeName"
+            },
+            "on": {
+              "type": "string",
+              "const": "created"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "on",
+            "objectType"
+          ]
+        },
+        {
+          "description": "An object of `objectType` was deleted in its source: an observed\ndelete, tombstoned or reached as a terminal lifecycle state (#3013).",
+          "type": "object",
+          "properties": {
+            "maxCausalDepth": {
+              "description": "Maximum causal depth accepted when this rule already appears in the\nevent's rule lineage. Omitted suppresses repeats of this rule.",
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "objectType": {
+              "description": "The object type.",
+              "$ref": "#/$defs/ObjectTypeName"
+            },
+            "on": {
+              "type": "string",
+              "const": "deleted"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "on",
+            "objectType"
+          ]
+        },
+        {
+          "description": "An existing object changed one or more stored properties.",
+          "type": "object",
+          "properties": {
+            "changedProperties": {
+              "description": "Match when any named property changed; omitted matches any net\nproperty change.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PropertyId"
+              }
+            },
+            "maxCausalDepth": {
+              "description": "Maximum causal depth accepted when this rule already appears in the\nevent's rule lineage. Omitted suppresses repeats of this rule.",
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "objectType": {
+              "description": "The object type.",
+              "$ref": "#/$defs/ObjectTypeName"
+            },
+            "on": {
+              "type": "string",
+              "const": "modified"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "on",
+            "objectType"
+          ]
+        },
+        {
+          "description": "An observation from source system `source` was recorded.",
+          "type": "object",
+          "properties": {
+            "on": {
+              "type": "string",
+              "const": "observed"
+            },
+            "source": {
+              "description": "The source system (`ERPNext`).",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "on",
+            "source"
+          ]
+        }
+      ]
+    },
+    "RuleValueTypeV1": {
+      "description": "RuleIR v1 input column type.",
+      "type": "string",
+      "enum": [
+        "string",
+        "number",
+        "boolean",
+        "json"
+      ]
+    },
+    "SliceDeclaration": {
+      "description": "One entry of a `decide` rule's declared read slice: one object, or (a\n[`SliceKey::Link`] key) the bounded list of objects a link reaches\n(#3079).",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "How its key (or keys) are found.",
+          "$ref": "#/$defs/SliceKey"
+        },
+        "name": {
+          "description": "The member of the `slice` input record this entry fills.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "The type of the object (or of every listed object).",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "optional": {
+          "description": "A [`SliceKey::Property`] entry whose key property is absent or null\nis omitted instead of refusing the turn (#3079). A list entry is never\nrefused for being empty, so it needs no flag. Defaults to `false`; the\ncanonical form omits `false`.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "objectType",
+        "key"
+      ]
+    },
+    "SliceKey": {
+      "description": "Where a [`SliceDeclaration`]'s key comes from.",
+      "oneOf": [
+        {
+          "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
+          "type": "string",
+          "const": "triggerObject"
+        },
+        {
+          "description": "The immutable before snapshot of a `modified` trigger, as\n`{version, values}`. This is decision input and never authorizes writes.",
+          "type": "string",
+          "const": "triggerBefore"
+        },
+        {
+          "description": "The immutable after snapshot of a `modified` trigger, as\n`{version, values}`. This is decision input and never authorizes writes.",
+          "type": "string",
+          "const": "triggerAfter"
+        },
+        {
+          "description": "The sorted property ids changed by a `modified` trigger.",
+          "type": "string",
+          "const": "triggerChanges"
+        },
+        {
+          "description": "A text property of an earlier slice entry (a link by key).",
+          "type": "object",
+          "properties": {
+            "property": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "description": "The earlier entry's name.",
+                  "type": "string"
+                },
+                "property": {
+                  "description": "The property holding the key.",
+                  "$ref": "#/$defs/PropertyId"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "property"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "property"
+          ]
+        },
+        {
+          "description": "Every target of link `link`, declared on the type of earlier\nsingle-object entry `from`, loaded as a list ordered by target key\nand bounded by the limit profile's slice records (#3079).",
+          "type": "object",
+          "properties": {
+            "link": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "description": "The earlier (single-object) entry's name.",
+                  "type": "string"
+                },
+                "link": {
+                  "description": "The link id, declared on that entry's type or a supertype.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "link"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "link"
+          ]
+        }
+      ]
+    },
+    "TransitionId": {
+      "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "ZenExpression": {
+      "description": "Source text of one ZEN Expression (the IR's single expression language,\nruling 2026-09-25 §3): a decision-table cell, switch condition, expression\nassignment, or action precondition.\n\nStored verbatim; parsing and type checking belong to `norn-expr` and\n`norn-checker`.",
+      "type": "string"
+    }
+  }
+}

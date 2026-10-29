@@ -1,0 +1,669 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FunctionManifest",
+  "description": "The immutable Function manifest (§2, record 1).",
+  "type": "object",
+  "properties": {
+    "abi": {
+      "description": "The contract/ABI version ([`FUNCTION_ABI_V1`]).",
+      "type": "string"
+    },
+    "bounds": {
+      "description": "Resource bounds.",
+      "$ref": "#/$defs/ResourceBounds"
+    },
+    "cache": {
+      "description": "Cache policy.",
+      "$ref": "#/$defs/CachePolicy"
+    },
+    "capabilities": {
+      "description": "The capability profile; empty for the deterministic profiles.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Capability"
+      }
+    },
+    "dependencyClosure": {
+      "description": "The transitive dependency/asset closure. Required: an absent closure\nis refused at admission.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DependencyClosure"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "determinism": {
+      "description": "The determinism profile.",
+      "$ref": "#/$defs/DeterminismProfile"
+    },
+    "errorSchema": {
+      "description": "The typed error schema identity.",
+      "$ref": "#/$defs/SchemaRef"
+    },
+    "functionId": {
+      "description": "The Function's id.",
+      "type": "string"
+    },
+    "implementation": {
+      "description": "The implementation.",
+      "$ref": "#/$defs/Implementation"
+    },
+    "inputSchema": {
+      "description": "The input schema identity.",
+      "$ref": "#/$defs/SchemaRef"
+    },
+    "outputSchema": {
+      "description": "The output schema identity.",
+      "$ref": "#/$defs/SchemaRef"
+    },
+    "platform": {
+      "description": "The platform.",
+      "$ref": "#/$defs/Platform"
+    },
+    "retention": {
+      "description": "Retention class.",
+      "$ref": "#/$defs/RetentionClass"
+    },
+    "runtime": {
+      "description": "The runtime.",
+      "$ref": "#/$defs/RuntimeIdentity"
+    },
+    "steps": {
+      "description": "Pipeline step identities (§3); empty for a single step.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PipelineStep"
+      }
+    },
+    "version": {
+      "description": "Its version. Any change is a new version with a new digest.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "abi",
+    "functionId",
+    "version",
+    "inputSchema",
+    "outputSchema",
+    "errorSchema",
+    "implementation",
+    "runtime",
+    "platform",
+    "capabilities",
+    "determinism",
+    "bounds",
+    "cache",
+    "retention",
+    "steps"
+  ],
+  "$defs": {
+    "CachePolicy": {
+      "description": "Whether successful results may be reused by content.",
+      "oneOf": [
+        {
+          "description": "No content-based reuse.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "The per-tenant action cache (qualified deterministic profiles only).",
+          "type": "string",
+          "const": "action_cache"
+        }
+      ]
+    },
+    "Capability": {
+      "description": "One scoped capability an effectful producer is granted.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The capability (`net.egress`, `model.invoke`).",
+          "type": "string"
+        },
+        "scope": {
+          "description": "Its scope (a host, a model id, a provider account alias). Never a\nsecret: credentials are bound by the `perform` supervisor.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "scope"
+      ]
+    },
+    "DependencyClosure": {
+      "description": "The transitive dependency/asset closure and its digest.",
+      "type": "object",
+      "properties": {
+        "digest": {
+          "description": "The declared closure digest; admission requires it to equal\n[`DependencyClosure::computed_digest`].",
+          "$ref": "#/$defs/Digest"
+        },
+        "entries": {
+          "description": "Every entry, in declaration order (the digest is order-sensitive;\nadmission requires entries sorted by name).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DependencyEntry"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "entries"
+      ]
+    },
+    "DependencyEntry": {
+      "description": "One entry of the transitive dependency/asset closure.",
+      "type": "object",
+      "properties": {
+        "digest": {
+          "description": "Its content digest.",
+          "$ref": "#/$defs/Digest"
+        },
+        "kind": {
+          "description": "What it is.",
+          "$ref": "#/$defs/DependencyKind"
+        },
+        "name": {
+          "description": "The dependency's name.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "kind",
+        "digest"
+      ]
+    },
+    "DependencyKind": {
+      "description": "What a dependency-closure entry is.",
+      "oneOf": [
+        {
+          "description": "A linked or loaded library.",
+          "type": "string",
+          "const": "library"
+        },
+        {
+          "description": "A static asset (dictionary, lookup table).",
+          "type": "string",
+          "const": "asset"
+        },
+        {
+          "description": "Model weights.",
+          "type": "string",
+          "const": "model"
+        },
+        {
+          "description": "A font.",
+          "type": "string",
+          "const": "font"
+        },
+        {
+          "description": "A codec.",
+          "type": "string",
+          "const": "codec"
+        },
+        {
+          "description": "An OCI base image layer set.",
+          "type": "string",
+          "const": "base_image"
+        }
+      ]
+    },
+    "DeterminismProfile": {
+      "description": "The determinism profile, one of the three ruled profiles. Capability is\nthe separate [`FunctionManifest::capabilities`] axis.",
+      "oneOf": [
+        {
+          "description": "Qualified capability-free deterministic WASM.",
+          "type": "object",
+          "properties": {
+            "qualified_wasm": {
+              "$ref": "#/$defs/WasmQualification"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "qualified_wasm"
+          ]
+        },
+        {
+          "description": "A hermetic container transform.",
+          "type": "object",
+          "properties": {
+            "hermetic_container": {
+              "$ref": "#/$defs/HermeticEvidence"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "hermetic_container"
+          ]
+        },
+        {
+          "description": "An effectful or unqualified producer.",
+          "type": "object",
+          "properties": {
+            "effectful": {
+              "$ref": "#/$defs/EffectfulPolicy"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "effectful"
+          ]
+        }
+      ]
+    },
+    "Digest": {
+      "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "EffectfulPolicy": {
+      "description": "The policy of an effectful or unqualified producer (§2 profile 3).",
+      "type": "object",
+      "properties": {
+        "maxAttempts": {
+          "description": "The bounded attempt ceiling.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "providerIdempotency": {
+          "description": "Whether the provider deduplicates on the command's idempotency key.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "maxAttempts",
+        "providerIdempotency"
+      ]
+    },
+    "FloatPolicy": {
+      "description": "How a qualified WASM module's float results are made deterministic.",
+      "oneOf": [
+        {
+          "description": "NaN results canonicalized (the Wasmtime foundation's setting).",
+          "type": "string",
+          "const": "canonical_nan"
+        }
+      ]
+    },
+    "GoldenRun": {
+      "description": "One golden run of a hermetic container transform.",
+      "type": "object",
+      "properties": {
+        "outputDigest": {
+          "description": "The output digest it produced.",
+          "$ref": "#/$defs/Digest"
+        },
+        "placement": {
+          "description": "Where it ran (pool and node class).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "placement",
+        "outputDigest"
+      ]
+    },
+    "HermeticEvidence": {
+      "description": "Evidence for a hermetic container transform (§2 profile 2): *declared*\ndeterministic, with reproducibility evidence and enforced isolation. This\nis evidence, not proof.",
+      "type": "object",
+      "properties": {
+        "credentials": {
+          "description": "Guest credentials present (must be `false`).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "goldenRuns": {
+          "description": "Repeated and cross-placement golden runs.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GoldenRun"
+          }
+        },
+        "isolatedScratch": {
+          "description": "Isolated scratch storage.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "locale": {
+          "description": "The pinned locale.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "network": {
+          "description": "Guest network enabled (must be `false`).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "qualified": {
+          "description": "Whether the profile is qualified (cacheable). A container starts\nunqualified and non-cacheable.",
+          "type": "boolean"
+        },
+        "timezone": {
+          "description": "The pinned timezone.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "goldenRuns",
+        "qualified"
+      ]
+    },
+    "Implementation": {
+      "description": "The implementation: what runs, by content.",
+      "type": "object",
+      "properties": {
+        "digest": {
+          "description": "The content digest of the module bytes or the OCI image manifest.",
+          "$ref": "#/$defs/Digest"
+        },
+        "entryPoint": {
+          "description": "The entry point (a WASM export or the image's command).",
+          "type": "string"
+        },
+        "format": {
+          "description": "The packaging.",
+          "$ref": "#/$defs/ImplementationFormat"
+        },
+        "locator": {
+          "description": "Where to fetch it, informational only. If present it must pin\n`digest` (`registry/name@sha256:…`); a tag or bare URI is never an\nidentity.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "digest",
+        "entryPoint"
+      ]
+    },
+    "ImplementationFormat": {
+      "description": "How the implementation's bytes are packaged.",
+      "oneOf": [
+        {
+          "description": "A core WebAssembly module.",
+          "type": "string",
+          "const": "wasm_module"
+        },
+        {
+          "description": "An OCI image.",
+          "type": "string",
+          "const": "oci_image"
+        }
+      ]
+    },
+    "PipelineStep": {
+      "description": "One step of a packaged pipeline (§3): recorded identities only; the\npipeline runs as one Function and one pool job.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The step id.",
+          "type": "string"
+        },
+        "inputSchema": {
+          "description": "Its input schema.",
+          "$ref": "#/$defs/SchemaRef"
+        },
+        "outputSchema": {
+          "description": "Its output schema.",
+          "$ref": "#/$defs/SchemaRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "inputSchema",
+        "outputSchema"
+      ]
+    },
+    "Platform": {
+      "description": "The supported platform. Part of the execution identity unless\ncross-platform equivalence is qualified.",
+      "type": "object",
+      "properties": {
+        "arch": {
+          "description": "The architecture (`wasm32`, `amd64`, `arm64`).",
+          "type": "string"
+        },
+        "os": {
+          "description": "The operating system (`none` for a capability-free WASM module).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "arch"
+      ]
+    },
+    "ResourceBounds": {
+      "description": "Resource bounds. Every bound is required and positive; a `null` is an\nunbounded resource and is refused at admission.",
+      "type": "object",
+      "properties": {
+        "maxCpuMillis": {
+          "description": "CPU time, in milliseconds.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "maxDecodedBytes": {
+          "description": "Decoded working size (for example a decoded image), in bytes.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "maxInputBytes": {
+          "description": "Staged input bytes (canonical scalar inputs plus blobs).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "maxMemoryBytes": {
+          "description": "Memory, in bytes.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "maxOutputBytes": {
+          "description": "Output bytes (every output object together).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "maxWallMillis": {
+          "description": "Wall time, in milliseconds.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "RetentionClass": {
+      "description": "How long outputs are kept. Outputs referenced by an authoritative receipt\nare always kept under ledger retention, independently of this class and of\ncache eviction.",
+      "oneOf": [
+        {
+          "description": "Ledger retention.",
+          "type": "string",
+          "const": "ledger"
+        },
+        {
+          "description": "Unreferenced outputs may be evicted.",
+          "type": "string",
+          "const": "transient"
+        }
+      ]
+    },
+    "RuntimeIdentity": {
+      "description": "The runtime the implementation is executed by.",
+      "type": "object",
+      "properties": {
+        "digest": {
+          "description": "The digest of its build and engine configuration.",
+          "$ref": "#/$defs/Digest"
+        },
+        "id": {
+          "description": "The runtime (`wasmtime`, `docker`, `cloudflare-containers`).",
+          "type": "string"
+        },
+        "version": {
+          "description": "Its version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "digest"
+      ]
+    },
+    "SchemaRef": {
+      "description": "The identity of one schema (input, output, error, or a pipeline step's).",
+      "type": "object",
+      "properties": {
+        "digest": {
+          "description": "The content digest of the schema document\n([`Digest::of_json_document`]).",
+          "$ref": "#/$defs/Digest"
+        },
+        "id": {
+          "description": "The schema's id.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Its version.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "digest"
+      ]
+    },
+    "WasmQualification": {
+      "description": "Evidence for the qualified capability-free deterministic WASM profile\n(§2 profile 1). Every member is required evidence; a `null` is a missing\nclaim and is refused at admission.",
+      "type": "object",
+      "properties": {
+        "floatPolicy": {
+          "description": "The float/NaN policy.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FloatPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "freshInstance": {
+          "description": "A fresh or reset instance per invocation.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "fuel": {
+          "description": "The deterministic fuel budget.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "importClosure": {
+          "description": "The module's whole import/link closure (not merely \"no WASI\"); every\nentry must be in [`ADMITTED_WASM_IMPORTS`].",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "maxModuleBytes": {
+          "description": "The maximum module size, in bytes.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "maxStackBytes": {
+          "description": "The maximum guest stack, in bytes.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "simd": {
+          "description": "SIMD enabled (permitted only with a defined float policy).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "threads": {
+          "description": "Threads or shared mutable state enabled (must be `false`).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

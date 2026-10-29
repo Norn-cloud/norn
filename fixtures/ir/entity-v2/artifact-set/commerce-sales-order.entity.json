@@ -1,0 +1,100 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "commerce.SalesOrder.entity",
+  "kind": "entity",
+  "namespace": "commerce",
+  "name": "Sales order",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/entity-v2/artifact-set/commerce-sales-order.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "commerce.SalesOrder",
+      "description": "A sales order that is invoiced only after approval (T3-LIFE-3): the demo's agent refusal is submit_invoice on an order still in draft.",
+      "properties": [
+        {
+          "id": "so_number",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "invoiced"
+              },
+              {
+                "value": "cancelled"
+              }
+            ]
+          },
+          "default": "draft"
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "so_number"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "property": "status",
+          "description": "Approval, then invoicing.",
+          "initial": [
+            "draft"
+          ],
+          "terminal": [
+            "invoiced",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "id": "approve",
+              "from": [
+                "draft"
+              ],
+              "to": "approved"
+            },
+            {
+              "id": "invoice",
+              "description": "Submit the sales invoice for an approved order.",
+              "from": [
+                "approved"
+              ],
+              "to": "invoiced"
+            },
+            {
+              "id": "cancel",
+              "from": [
+                "draft",
+                "approved"
+              ],
+              "to": "cancelled"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

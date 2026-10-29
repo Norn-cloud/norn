@@ -1,0 +1,5 @@
+{
+  "name": "commerce.price_currency",
+  "description": "Currency of a price; reuses the Norn Core ISO 4217 value type.",
+  "type": { "kind": "ref", "name": "iso4217.currency_code" }
+}

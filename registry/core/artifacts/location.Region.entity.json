@@ -1,0 +1,148 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "location.Region.entity",
+  "kind": "entity",
+  "namespace": "location",
+  "name": "Region",
+  "version": "0.1.0",
+  "lifecycle": "active",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/location.Region.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "location.Region",
+      "description": "A named, optionally geolocated business region. Regions may nest without requiring a Brand, BusinessUnit, or geographic footprint.",
+      "implements": [
+        "core.GeoLocated"
+      ],
+      "properties": [
+        {
+          "id": "region_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "latitude",
+          "description": "The WGS84 latitude of the reference point.",
+          "type": {
+            "kind": "ref",
+            "name": "wgs84.latitude"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "longitude",
+          "description": "The WGS84 longitude of the reference point.",
+          "type": {
+            "kind": "ref",
+            "name": "wgs84.longitude"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "altitude_m",
+          "description": "Height of the reference point above the WGS84 ellipsoid.",
+          "type": {
+            "kind": "ref",
+            "name": "wgs84.altitude_m"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "accuracy_m",
+          "description": "Horizontal accuracy of the reference point.",
+          "type": {
+            "kind": "ref",
+            "name": "geo.accuracy_m"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "shape",
+          "description": "The footprint or route in WGS84 coordinates.",
+          "type": {
+            "kind": "ref",
+            "name": "geojson.geometry"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "h3_cell",
+          "description": "The H3 cell holding the reference point, at the resolution the writer chose.",
+          "type": {
+            "kind": "ref",
+            "name": "h3.cell_index"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        }
+      ],
+      "links": [
+        {
+          "id": "parent",
+          "target": "location.Region",
+          "cardinality": {
+            "to": "one",
+            "from": "many"
+          },
+          "acyclic": true
+        },
+        {
+          "id": "business_unit",
+          "target": "identity.BusinessUnit",
+          "cardinality": {
+            "to": "one",
+            "from": "many"
+          }
+        },
+        {
+          "id": "brand",
+          "target": "party.Brand",
+          "cardinality": {
+            "to": "one",
+            "from": "many"
+          }
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "region_code"
+          ]
+        }
+      ]
+    },
+    "extensions": {
+      "norn.semantic-zoom/0.1.0": {
+        "level": "region",
+        "missingLevels": "skip"
+      }
+    }
+  }
+}

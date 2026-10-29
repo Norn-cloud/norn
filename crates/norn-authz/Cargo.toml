@@ -1,0 +1,25 @@
+[package]
+name = "norn-authz"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "AccessIR→Cedar compile/PDP (ring 0; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+norn-ir = { path = "../norn-ir" }
+norn-projections = { path = "../norn-projections" }
+# Cedar's policy language, schema, and validator (`Validator`). Default
+# features (the `ipaddr`/`decimal`/`datetime` extensions) are off: AccessIR
+# compiles to the core language only, and fewer features keep the wasm32 tree
+# small.
+cedar-policy = { version = "4.13.0", default-features = false }
+
+[dev-dependencies]
+serde_json = "1.0.150"
+
+[lints]
+workspace = true

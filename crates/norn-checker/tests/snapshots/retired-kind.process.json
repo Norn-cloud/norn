@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.Sku.entity",
+      "code": "ir.validation.retired_kind",
+      "message": "artifact kind 'process' is retired: model Run and Task as EntityIR types and decision graphs as RuleIR",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/kind",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

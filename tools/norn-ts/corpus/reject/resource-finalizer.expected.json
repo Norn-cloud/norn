@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-RESOURCE",
+      "start": "10:7",
+      "end": "10:22",
+      "construct": "Effect.ensuring"
+    },
+    {
+      "code": "NORN-FLOW-RESOURCE",
+      "start": "12:25",
+      "end": "12:49",
+      "construct": "Effect.acquireUseRelease"
+    }
+  ]
+}

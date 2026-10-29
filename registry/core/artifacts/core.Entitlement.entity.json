@@ -1,0 +1,72 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "core.Entitlement.entity",
+  "kind": "entity",
+  "namespace": "core",
+  "name": "Entitlement",
+  "version": "0.1.0",
+  "lifecycle": "active",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.Entitlement.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "core.Entitlement",
+      "description": "A versioned, provenance-bearing permission grant or shadow candidate evaluated by Core's fixed entitlement rules.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": ["id"]
+        }
+      ],
+      "properties": [
+        {
+          "id": "entitlement_version",
+          "type": {
+            "kind": "enum",
+            "values": [{ "value": "0.1" }]
+          }
+        },
+        {
+          "id": "id",
+          "type": { "kind": "text" }
+        },
+        {
+          "id": "grantee",
+          "type": { "kind": "json-ext" }
+        },
+        {
+          "id": "target_type",
+          "type": { "kind": "text" }
+        },
+        {
+          "id": "actions",
+          "type": { "kind": "json-ext" }
+        },
+        {
+          "id": "scope_attributes",
+          "type": { "kind": "json-ext" }
+        },
+        {
+          "id": "condition",
+          "type": { "kind": "json-ext" }
+        },
+        {
+          "id": "source",
+          "type": { "kind": "json-ext" }
+        },
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [{ "value": "shadow" }, { "value": "enforced" }]
+          }
+        }
+      ]
+    }
+  }
+}

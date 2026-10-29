@@ -1,0 +1,135 @@
+{
+  "packId": "norn.ontology-pack.quantity-units",
+  "packVersion": "0.1",
+  "statusVocabulary": [
+    "implemented_executable",
+    "implemented_bounded_static_checker",
+    "implemented_bounded_external_reasoner",
+    "implemented_bounded_shacl_differential",
+    "partial_executable",
+    "open_foundational_proof",
+    "open_no_exact_mapping_claims_v0"
+  ],
+  "obligations": [
+    {
+      "obligationId": "quantity-ontology.closed-promotion",
+      "claim": "Only fields declared by the selected active quantity-kind or unit shape can be promoted as a semantic instance.",
+      "status": "implemented_executable",
+      "implementedBy": ["norn_checker::validate_ontology_instance"],
+      "evidence": ["crates/norn-checker/tests/quantity_unit_ontology_pack.rs"]
+    },
+    {
+      "obligationId": "quantity-ontology.semantic-only",
+      "claim": "No ontology term, mapping, OWL entailment, or SHACL result can authorize a transition or grant a capability.",
+      "status": "partial_executable",
+      "implementedBy": ["closed ontology pack validator", "semanticAuthority=semantic_only", "projection-contract.json"],
+      "evidence": [
+        "crates/norn-checker/tests/quantity_unit_ontology_pack.rs",
+        "verification/ontology/packs/quantity-units-v0/projection-contract.json"
+      ],
+      "residual": "The closed pack schema and projection contract deny authority fields, but no engine/API integration test yet proves that inferred ontology output cannot invoke a privileged transition."
+    },
+    {
+      "obligationId": "quantity-ontology.conservative-mapping",
+      "claim": "Every promoted external mapping is evidence-bearing and exact mappings require explicit human ratification.",
+      "status": "implemented_executable",
+      "implementedBy": ["closed ontology pack validator"],
+      "evidence": [
+        "verification/ontology/packs/quantity-units-v0/pack.json",
+        "crates/norn-checker/tests/quantity_unit_ontology_pack.rs"
+      ]
+    },
+    {
+      "obligationId": "quantity-ontology.mapping-provenance",
+      "claim": "Every QUDT mapping records bounded integer confidence and reviewer identity/time, and any supersession points directly to an active mapping for the same Norn term and pinned QUDT source.",
+      "status": "implemented_executable",
+      "implementedBy": [
+        "norn_checker::validate_ontology_pack",
+        "verification/ontology/scripts/validate.py"
+      ],
+      "evidence": [
+        "verification/ontology/packs/quantity-units-v0/pack.json",
+        "crates/norn-checker/tests/quantity_unit_ontology_pack.rs",
+        "verification/ontology/scripts/validate.py"
+      ]
+    },
+    {
+      "obligationId": "quantity-ontology.qudt-pin",
+      "claim": "All implemented unit and quantity-kind mappings resolve to the reviewed QUDT v3.4.0 commit.",
+      "status": "implemented_executable",
+      "implementedBy": ["pack source pin", "mapping source-reference validation"],
+      "evidence": [
+        "verification/ontology/packs/quantity-units-v0/pack.json",
+        "verification/stripmine-2026-08-22/sources.json"
+      ]
+    },
+    {
+      "obligationId": "quantity-ontology.ucum-reference-isolation",
+      "claim": "UCUM remains reference-only: no UCUM content, table, code mapping, or derived conversion is present in this pack.",
+      "status": "implemented_executable",
+      "implementedBy": ["reference_only source declaration", "pack-specific static policy tests"],
+      "evidence": [
+        "verification/ontology/packs/quantity-units-v0/pack.json",
+        "crates/norn-checker/tests/quantity_unit_ontology_pack.rs"
+      ]
+    },
+    {
+      "obligationId": "quantity-ontology.no-conversion-authority",
+      "claim": "The ontology pack defines identities and mappings but cannot define or execute numeric conversions or conservation decisions.",
+      "status": "implemented_executable",
+      "implementedBy": ["closed ontology schema", "projection-contract.json"],
+      "evidence": [
+        "crates/norn-checker/tests/quantity_unit_ontology_pack.rs",
+        "verification/ontology/packs/quantity-units-v0/projection-contract.json"
+      ]
+    },
+    {
+      "obligationId": "quantity-ontology.term-reference-resolution",
+      "claim": "A unit instance's quantityKind reference resolves to an active admitted quantity-kind term or subclass rather than merely a syntactically valid Norn term ID.",
+      "status": "implemented_executable",
+      "implementedBy": ["norn_checker::validate_ontology_registry", "norn_checker::ontology_term_is_a"],
+      "evidence": [
+        "verification/ontology/fixtures/registry-conformance-v0.json",
+        "crates/norn-checker/tests/ontology_registry.rs"
+      ]
+    },
+    {
+      "obligationId": "quantity-ontology.projection-static-reproducibility",
+      "claim": "Pinned OWL and SHACL files have complete identity mappings and contain the declared class, parent, shape, and quantity-kind range statements checked by the bounded static profile.",
+      "status": "implemented_bounded_static_checker",
+      "implementedBy": ["verification/ontology/scripts/validate.py", "projection-contract.json"],
+      "evidence": [
+        "verification/ontology/packs/quantity-units-v0/projection-contract.json",
+        "verification/ontology/scripts/validate.py"
+      ]
+    },
+    {
+      "obligationId": "quantity-ontology.owl-semantic-equivalence",
+      "claim": "OWL 2 RL entailment agrees with the canonical closed hierarchy for every quantity/unit membership case in the reviewed v0 shared fixture.",
+      "status": "implemented_bounded_external_reasoner",
+      "implementedBy": ["owlrl 7.6.2", "verification/ontology/scripts/validate_semantics.py"],
+      "evidence": ["verification/ontology/fixtures/registry-conformance-v0.json", "scripts/check-ontology-semantics.sh"]
+    },
+    {
+      "obligationId": "quantity-ontology.shacl-differential-equivalence",
+      "claim": "A pinned SHACL engine agrees with the closed Norn validators for every quantity/unit reference instance in the reviewed v0 shared fixture.",
+      "status": "implemented_bounded_shacl_differential",
+      "implementedBy": ["pyshacl 0.40.1", "verification/ontology/scripts/validate_semantics.py"],
+      "evidence": ["verification/ontology/fixtures/registry-conformance-v0.json", "scripts/check-ontology-semantics.sh"]
+    },
+    {
+      "obligationId": "quantity-ontology.mapping-correctness-proof",
+      "claim": "Each exact semantic correspondence is proved or independently ratified against the pinned source release.",
+      "status": "open_no_exact_mapping_claims_v0",
+      "implementedBy": [],
+      "evidence": []
+    },
+    {
+      "obligationId": "quantity-ontology.registry-checker-proof",
+      "claim": "The executable registry and membership checker is proved sound and complete for its declared closed-world hierarchy semantics.",
+      "status": "open_foundational_proof",
+      "implementedBy": [],
+      "evidence": []
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+@prefix norn: <https://norn.dev/ontology/company-commerce/0.1/> .
+@prefix nornunit: <https://norn.dev/ontology/quantity-units/0.1/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix schema: <https://schema.org/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+norn:ontology a owl:Ontology ;
+  owl:versionIRI <https://norn.dev/ontology/company-commerce/0.1/> ;
+  owl:versionInfo "0.1.0 semantic projection; OWL 2 RL; never transition authority" .
+
+norn:Party a owl:Class ; rdfs:label "Party" .
+norn:LegalEntity a owl:Class ; rdfs:subClassOf norn:Party ; rdfs:label "Legal Entity" .
+norn:Organization a owl:Class ;
+  rdfs:subClassOf norn:Party ;
+  owl:equivalentClass schema:Organization ;
+  rdfs:label "Organization" .
+norn:Person a owl:Class ;
+  rdfs:subClassOf norn:Party ;
+  owl:equivalentClass schema:Person ;
+  rdfs:label "Person" .
+norn:PostalAddress a owl:Class ;
+  owl:equivalentClass schema:PostalAddress ;
+  rdfs:label "Postal Address" .
+norn:Product a owl:Class ;
+  owl:equivalentClass schema:Product ;
+  rdfs:label "Product" .
+norn:ProductVariant a owl:Class ;
+  rdfs:subClassOf norn:Product ;
+  skos:relatedMatch <https://schema.org/ProductModel> ;
+  rdfs:label "Product Variant" .
+norn:Offer a owl:Class ;
+  owl:equivalentClass schema:Offer ;
+  rdfs:label "Offer" .
+norn:Order a owl:Class ;
+  owl:equivalentClass schema:Order ;
+  rdfs:label "Order" .
+norn:OrderItem a owl:Class ;
+  owl:equivalentClass schema:OrderItem ;
+  rdfs:label "Order Item" .
+norn:TradeItem a owl:Class ; rdfs:label "Trade Item" .
+norn:Category a owl:Class ;
+  skos:relatedMatch <https://example.invalid/norn/toy-taxonomy/1/?categoryId=aa> ;
+  rdfs:label "Category" .
+norn:ExternalIdentifier a owl:Class ;
+  owl:equivalentClass schema:PropertyValue ;
+  rdfs:label "External Identifier" .
+norn:ProvenanceRecord a owl:Class ; rdfs:label "Provenance Record" .
+
+norn:Product owl:disjointWith norn:Offer, norn:Order, norn:OrderItem, norn:Organization, norn:Person, norn:PostalAddress .
+norn:Offer owl:disjointWith norn:Order, norn:OrderItem, norn:Organization, norn:Person, norn:PostalAddress .
+norn:Order owl:disjointWith norn:OrderItem, norn:Organization, norn:Person, norn:PostalAddress .
+norn:OrderItem owl:disjointWith norn:Organization, norn:Person, norn:PostalAddress .
+norn:Organization owl:disjointWith norn:Person, norn:PostalAddress .
+norn:Person owl:disjointWith norn:PostalAddress .
+
+norn:displayName a owl:DatatypeProperty ; rdfs:range xsd:string .
+norn:legalName a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:legalName .
+norn:jurisdictionCode a owl:DatatypeProperty ; rdfs:range xsd:string .
+norn:name a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:name .
+norn:description a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:description .
+norn:sku a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:sku .
+norn:scheme a owl:DatatypeProperty ; rdfs:range xsd:string .
+norn:value a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:value .
+norn:issuer a owl:DatatypeProperty ; rdfs:range xsd:string .
+norn:packagingLevel a owl:DatatypeProperty ; rdfs:range xsd:string .
+norn:code a owl:DatatypeProperty ; rdfs:range xsd:string .
+norn:label a owl:DatatypeProperty ; rdfs:range xsd:string .
+norn:price a owl:DatatypeProperty ; rdfs:range xsd:decimal ; owl:equivalentProperty schema:price .
+norn:priceCurrency a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:priceCurrency .
+norn:availability a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:availability .
+norn:orderNumber a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:orderNumber .
+norn:orderDate a owl:DatatypeProperty ; rdfs:range xsd:dateTime ; owl:equivalentProperty schema:orderDate .
+norn:orderStatus a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:orderStatus .
+norn:orderItemNumber a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:orderItemNumber .
+norn:orderItemStatus a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:orderItemStatus .
+norn:orderQuantity a owl:DatatypeProperty ; rdfs:range xsd:decimal ; owl:equivalentProperty schema:orderQuantity .
+norn:givenName a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:givenName .
+norn:familyName a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:familyName .
+norn:email a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:email .
+norn:telephone a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:telephone .
+norn:streetAddress a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:streetAddress .
+norn:addressLocality a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:addressLocality .
+norn:addressRegion a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:addressRegion .
+norn:postalCode a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:postalCode .
+norn:addressCountry a owl:DatatypeProperty ; rdfs:range xsd:string ; owl:equivalentProperty schema:addressCountry .
+norn:sourceRef a owl:DatatypeProperty ; rdfs:range xsd:string .
+norn:observedAt a owl:DatatypeProperty ; rdfs:range xsd:dateTime .
+
+norn:measurementUnit a owl:ObjectProperty ; rdfs:range nornunit:Unit .
+norn:parentProduct a owl:ObjectProperty ; rdfs:range norn:Product .
+norn:categories a owl:ObjectProperty ; rdfs:range norn:Category .
+norn:category a owl:ObjectProperty ;
+  rdfs:range norn:Category ;
+  owl:equivalentProperty schema:category .
+norn:externalIdentifiers a owl:ObjectProperty ;
+  rdfs:range norn:ExternalIdentifier ;
+  owl:equivalentProperty schema:identifier .
+norn:additionalProperty a owl:ObjectProperty ;
+  rdfs:range norn:ExternalIdentifier ;
+  owl:equivalentProperty schema:additionalProperty .
+norn:offers a owl:ObjectProperty ; rdfs:range norn:Offer ; owl:equivalentProperty schema:offers .
+norn:itemOffered a owl:ObjectProperty ; rdfs:range norn:Product ; owl:equivalentProperty schema:itemOffered .
+norn:parentCategory a owl:ObjectProperty ; rdfs:range norn:Category .
+norn:variantRef a owl:ObjectProperty ; rdfs:range norn:ProductVariant .
+norn:seller a owl:ObjectProperty ; rdfs:range norn:Party ; owl:equivalentProperty schema:seller .
+norn:customer a owl:ObjectProperty ; rdfs:range norn:Party ; owl:equivalentProperty schema:customer .
+norn:merchant a owl:ObjectProperty ; rdfs:range norn:Party ; owl:equivalentProperty schema:merchant .
+norn:acceptedOffer a owl:ObjectProperty ; rdfs:range norn:Offer ; owl:equivalentProperty schema:acceptedOffer .
+norn:address a owl:ObjectProperty ; rdfs:range norn:PostalAddress ; owl:equivalentProperty schema:address .
+norn:billingAddress a owl:ObjectProperty ; rdfs:range norn:PostalAddress ; owl:equivalentProperty schema:billingAddress .
+norn:shippingAddress a owl:ObjectProperty ; rdfs:range norn:PostalAddress .
+norn:lineItems a owl:ObjectProperty ;
+  rdfs:range norn:OrderItem ;
+  owl:equivalentProperty schema:orderedItem .
+norn:orderedProduct a owl:ObjectProperty ;
+  rdfs:range norn:Product ;
+  owl:equivalentProperty schema:orderedItem .
+norn:evidenceRefs a owl:ObjectProperty ; rdfs:range rdfs:Resource .

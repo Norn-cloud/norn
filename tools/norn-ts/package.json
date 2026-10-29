@@ -1,0 +1,22 @@
+{
+  "name": "@norn/authoring",
+  "types": "./profile/norn-authoring.d.ts",
+  "exports": { ".": { "types": "./profile/norn-authoring.d.ts" } },
+  "private": true,
+  "description": "norn-effect/1 authoring profile: pinned effect + TypeScript Compiler API, symbol-resolution checker, conformance/rejection corpus (T7-EFX-1)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "bun src/cli.ts",
+    "norn": "bun src/cli.ts"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.117",
+    "typescript": "6.0.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2"
+  }
+}

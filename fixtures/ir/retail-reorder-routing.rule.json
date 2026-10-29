@@ -1,0 +1,129 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.reorder_routing.rule",
+  "kind": "rule",
+  "namespace": "retail",
+  "name": "Reorder routing",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/retail-reorder-routing.rule.json"
+  },
+  "payload": {
+    "ruleId": "retail.rule.reorder_routing",
+    "ruleVersion": "2.0",
+    "contract": "sub_decision",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "quantity": { "type": "integer" },
+        "unitCost": { "type": "integer" },
+        "supplierTier": { "type": "string" }
+      },
+      "required": ["quantity", "unitCost", "supplierTier"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "route": { "type": "string" },
+        "reviewRequired": { "type": "boolean" },
+        "total": { "type": "integer" }
+      },
+      "required": ["route", "reviewRequired", "total"],
+      "additionalProperties": false
+    },
+    "scopeRequired": ["orgId", "environmentId"],
+    "defaults": { "route": "manual", "reviewRequired": true },
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "request",
+          "type": "inputNode",
+          "position": { "x": 0, "y": 120 }
+        },
+        {
+          "id": "totals",
+          "name": "totals",
+          "type": "expressionNode",
+          "position": { "x": 240, "y": 120 },
+          "content": {
+            "expressions": [
+              { "id": "e1", "key": "total", "value": "quantity * unitCost" }
+            ],
+            "passThrough": true
+          }
+        },
+        {
+          "id": "tier",
+          "name": "supplier tier",
+          "type": "switchNode",
+          "position": { "x": 480, "y": 120 },
+          "content": {
+            "hitPolicy": "first",
+            "statements": [
+              { "id": "preferred", "condition": "supplierTier == 'preferred'" },
+              { "id": "other", "condition": "" }
+            ]
+          }
+        },
+        {
+          "id": "preferred_table",
+          "name": "preferred routing",
+          "type": "decisionTableNode",
+          "position": { "x": 720, "y": 40 },
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [{ "id": "c_total", "name": "Total", "field": "total" }],
+            "outputs": [
+              { "id": "o_route", "name": "Route", "field": "route" },
+              { "id": "o_review", "name": "Review", "field": "reviewRequired" }
+            ],
+            "rules": [
+              { "_id": "large", "c_total": "> 10000", "o_route": "'approval'", "o_review": "true" },
+              { "_id": "standard", "_description": "everything else", "c_total": "", "o_route": "'auto'", "o_review": "false" }
+            ],
+            "passThrough": true
+          }
+        },
+        {
+          "id": "other_table",
+          "name": "other routing",
+          "type": "decisionTableNode",
+          "position": { "x": 720, "y": 200 },
+          "content": {
+            "hitPolicy": "collect",
+            "inputs": [{ "id": "c_total", "name": "Total", "field": "total" }],
+            "outputs": [{ "id": "o_route", "name": "Route", "field": "route" }],
+            "rules": [
+              { "_id": "any", "c_total": "", "o_route": "'buyer_review'" }
+            ],
+            "outputPath": "candidates"
+          }
+        },
+        {
+          "id": "out",
+          "name": "decision",
+          "type": "outputNode",
+          "position": { "x": 960, "y": 120 }
+        }
+      ],
+      "edges": [
+        { "id": "e_in", "sourceId": "in", "targetId": "totals", "type": "edge" },
+        { "id": "e_tier", "sourceId": "totals", "targetId": "tier", "type": "edge" },
+        { "id": "e_pref", "sourceId": "tier", "targetId": "preferred_table", "sourceHandle": "preferred", "type": "edge" },
+        { "id": "e_other", "sourceId": "tier", "targetId": "other_table", "sourceHandle": "other", "type": "edge" },
+        { "id": "e_out1", "sourceId": "preferred_table", "targetId": "out", "type": "edge" },
+        { "id": "e_out2", "sourceId": "other_table", "targetId": "out", "type": "edge" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "description": "The transition effect fires ship, which the status lifecycle of a sales order does not declare.",
+  "base": [],
+  "artifacts": [
+    "ir/entity-v2/artifact-set/commerce-sales-order.entity.json",
+    {
+      "fixture": "ir/commerce-sales-order-submit-invoice.action.json",
+      "patch": {
+        "payload": {
+          "actionId": "commerce.sales_order.submit_invoice",
+          "title": "Submit invoice",
+          "description": "Invoice an approved sales order: fires the declared invoice transition of its status lifecycle.",
+          "scopeRequired": [
+            "orgId",
+            "environmentId"
+          ],
+          "idempotent": false,
+          "ledgered": true,
+          "ledgerCategory": "sales.sales_order",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "so_number": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "so_number"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "so_number": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "so_number"
+            ],
+            "additionalProperties": false
+          },
+          "preconditions": [
+            "len(so_number) > 0"
+          ],
+          "writes": [
+            {
+              "entityKind": "commerce.SalesOrder",
+              "change": "modified"
+            }
+          ],
+          "effectProgram": {
+            "kind": "fire_transition",
+            "objectIdField": "so_number",
+            "objectKind": "commerce.SalesOrder",
+            "entityArtifactId": "commerce.SalesOrder.entity",
+            "entityArtifactVersion": "0.1.0",
+            "lifecycle": "status",
+            "transition": "ship"
+          }
+        }
+      }
+    }
+  ],
+  "expect": [
+    [
+      "commerce.sales_order.submit_invoice.action",
+      "artifact_set.lifecycle.unknown_transition",
+      "/payload/effectProgram/transition"
+    ]
+  ]
+}

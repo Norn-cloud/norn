@@ -1,0 +1,19 @@
+{
+  "taxonomyVersion": "toy-1",
+  "source": "verification/ontology/fixtures/toy-taxonomy/categories.json",
+  "selection": "all taxonomy categories; attributes are restricted separately",
+  "categories": [
+    {
+      "id": "gid://norn/ToyCategory/aa",
+      "fullPath": "Apparel & Accessories",
+      "parent": null,
+      "level": 0
+    },
+    {
+      "id": "gid://norn/ToyCategory/aa-1",
+      "fullPath": "Apparel & Accessories > Jewelry",
+      "parent": "gid://norn/ToyCategory/aa",
+      "level": 1
+    }
+  ]
+}

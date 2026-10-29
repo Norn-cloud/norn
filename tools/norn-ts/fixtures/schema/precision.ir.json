@@ -1,0 +1,82 @@
+[
+  {
+    "artifactId": "metering.Meter.entity",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "entity",
+    "lifecycle": "draft",
+    "name": "Meter",
+    "namespace": "metering",
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "identity": [
+          {
+            "name": "primary",
+            "properties": [
+              "reading_id"
+            ]
+          }
+        ],
+        "name": "metering.Meter",
+        "properties": [
+          {
+            "id": "reading_id",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "default": "0.1000000000000000000000000001",
+            "id": "ratio",
+            "type": {
+              "kind": "decimal",
+              "scale": 28
+            }
+          },
+          {
+            "default": "9007199254740993",
+            "id": "counter",
+            "type": {
+              "kind": "integer"
+            }
+          },
+          {
+            "default": "12.5000",
+            "id": "price",
+            "type": {
+              "kind": "decimal",
+              "scale": 4
+            }
+          },
+          {
+            "default": "-0.5",
+            "id": "offset",
+            "type": {
+              "kind": "decimal",
+              "scale": 1
+            }
+          },
+          {
+            "constraints": {
+              "nullable": true
+            },
+            "id": "note",
+            "type": {
+              "kind": "text"
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/schema/precision.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  }
+]

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"channel":{"enum":["whatsapp","sms","email"],"type":"string"},"locale":{"maxLength":16,"type":"string"},"messageText":{"maxLength":4096,"minLength":1,"type":"string"}},"required":["channel","messageText"],"title":"norn.classify.message-input","type":"object"}

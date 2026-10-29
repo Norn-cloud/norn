@@ -1,0 +1,35 @@
+{
+  "taxonomyVersion": "toy-1",
+  "source": {
+    "categories": "verification/ontology/fixtures/toy-taxonomy/categories.json",
+    "attributes": "verification/ontology/fixtures/toy-taxonomy/attributes.json",
+    "attributeValues": "verification/ontology/fixtures/toy-taxonomy/attribute_values.json"
+  },
+  "selection": {
+    "root": "Apparel & Accessories",
+    "branches": [
+      "Apparel & Accessories",
+      "Apparel & Accessories > Jewelry"
+    ]
+  },
+  "attributes": [
+    {
+      "id": "gid://norn/ToyAttribute/1",
+      "name": "Sample finish",
+      "handle": "sample-finish",
+      "description": "",
+      "extendedAttributes": [],
+      "categoryIds": [
+        "gid://norn/ToyCategory/aa",
+        "gid://norn/ToyCategory/aa-1"
+      ],
+      "values": [
+        {
+          "id": "gid://norn/ToyValue/1",
+          "name": "Matte",
+          "handle": "matte"
+        }
+      ]
+    }
+  ]
+}

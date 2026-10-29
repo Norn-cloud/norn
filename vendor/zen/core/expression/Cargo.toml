@@ -1,0 +1,48 @@
+[package]
+authors = ["GoRules Team <bot@gorules.io>"]
+description = "Zen Expression Language"
+name = "zen-expression"
+license = "MIT"
+version = "2.0.1"
+edition = "2021"
+repository = "https://github.com/gorules/zen.git"
+homepage = "https://gorules.io"
+publish = false
+
+[dependencies]
+smallvec = { version = "1", features = ["union"] }
+anyhow = "1"
+ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
+bumpalo = { version = "3", features = ["collections"] }
+chrono = "0.4"
+chrono-tz = "0.10"
+humantime = "2"
+fastrand = "2"
+once_cell = "1"
+# Norn (#3404): the only regex backend.
+regex-lite = "0.1"
+serde = { version = "1", features = ["rc", "derive"] }
+serde_json = { version = "1", features = [] }
+strum = "0.27"
+strum_macros = "0.27"
+thiserror = "1"
+rust_decimal = { version = "1", features = ["maths-nopanic"] }
+rust_decimal_macros = "1"
+nohash-hasher = "0.2"
+strsim = "0.11"
+iana-time-zone = "0.1"
+
+zen-macros = { path = "../macros", version = "2.0.1", default-features = false }
+zen-types = { path = "../types", version = "2.0.1", default-features = false }
+
+[dev-dependencies]
+csv = "1"
+serde_json5 = "0.2"
+toml = "0.8"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+recursive = "0.1"
+
+# Norn: runs the metering and temporal determinism tests on wasm32-unknown-unknown.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = "0.3"

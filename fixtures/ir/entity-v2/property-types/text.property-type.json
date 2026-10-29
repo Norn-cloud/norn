@@ -1,0 +1,6 @@
+{
+  "name": "commerce.sku_code",
+  "description": "Stock-keeping unit code, upper-case letters, digits and dashes.",
+  "type": { "kind": "text" },
+  "constraints": { "minLength": 3, "maxLength": 32, "pattern": "^[A-Z0-9][A-Z0-9-]*$" }
+}

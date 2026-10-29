@@ -1,0 +1,11 @@
+---
+title: commerce.PurchaseOrder payment_status lifecycle
+---
+stateDiagram-v2
+    state "unpaid" as s0
+    state "paid" as s1
+    state "refunded" as s2
+    [*] --> s0
+    s0 --> s1 : pay
+    s1 --> s2 : refund
+    s2 --> [*]

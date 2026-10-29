@@ -1,0 +1,71 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "core.Order.interface",
+  "kind": "entity",
+  "namespace": "core",
+  "name": "Order",
+  "version": "0.1.0",
+  "lifecycle": "active",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.Order.interface.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "core.Order",
+      "description": "A commitment to exchange items for money with a counterparty.",
+      "properties": [
+        {
+          "id": "order_number",
+          "type": {
+            "kind": "ref",
+            "name": "core.document_number"
+          }
+        },
+        {
+          "id": "order_date",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.date"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "iso4217.currency_code"
+          }
+        },
+        {
+          "id": "total_amount",
+          "type": {
+            "kind": "ref",
+            "name": "core.money_amount"
+          }
+        }
+      ],
+      "links": [
+        {
+          "id": "counterparty",
+          "target": "core.Party",
+          "cardinality": {
+            "to": "one",
+            "from": "many",
+            "required": true
+          }
+        },
+        {
+          "id": "lines",
+          "target": "core.OrderLine",
+          "cardinality": {
+            "to": "many",
+            "from": "one"
+          }
+        }
+      ]
+    }
+  }
+}

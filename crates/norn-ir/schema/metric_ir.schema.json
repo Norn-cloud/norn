@@ -1,0 +1,984 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MetricIR",
+  "description": "A complete metric file. Removing `x-norn` members yields an OSI document.",
+  "type": "object",
+  "properties": {
+    "dialects": {
+      "description": "Optional OSI dialect enumeration.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Dialect"
+      }
+    },
+    "semantic_model": {
+      "description": "Models containing generated ontology projections and metrics.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SemanticModel"
+      }
+    },
+    "vendors": {
+      "description": "Optional OSI vendor enumeration.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Vendor"
+      }
+    },
+    "version": {
+      "description": "Pinned OSI version.",
+      "$ref": "#/$defs/OsiVersion"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "semantic_model"
+  ],
+  "$defs": {
+    "AdditivityAxis": {
+      "description": "The axis on which a metric is semi-additive.",
+      "oneOf": [
+        {
+          "description": "The declared time dimension.",
+          "type": "string",
+          "const": "time"
+        }
+      ]
+    },
+    "CurrencyConversion": {
+      "description": "Explicit source-to-target conversion, before any aggregation.",
+      "type": "object",
+      "properties": {
+        "rate": {
+          "description": "Dimensionless decimal rate (target units per source unit) at measure grain.",
+          "$ref": "#/$defs/DimensionPath"
+        },
+        "target": {
+          "description": "Target ISO 4217 code.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "rate"
+      ]
+    },
+    "CustomExtension": {
+      "description": "OSI vendor extension uses a JSON *string*, not an unvalidated nested object.",
+      "type": "object",
+      "properties": {
+        "data": {
+          "description": "JSON-encoded vendor metadata.",
+          "type": "string"
+        },
+        "vendor_name": {
+          "description": "Vendor registered by OSI.",
+          "$ref": "#/$defs/Vendor"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "vendor_name",
+        "data"
+      ]
+    },
+    "Dataset": {
+      "description": "OSI logical dataset; identity and link datasets are ontology projections.",
+      "type": "object",
+      "properties": {
+        "ai_context": {
+          "description": "AI context.",
+          "$ref": "#/$defs/JsonValue"
+        },
+        "custom_extensions": {
+          "description": "Standard vendor metadata.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CustomExtension"
+          }
+        },
+        "description": {
+          "description": "Human description.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "Projected ontology properties and kernel identity fields.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Field"
+          }
+        },
+        "name": {
+          "description": "Logical name.",
+          "type": "string"
+        },
+        "primary_key": {
+          "description": "Preferred unique row key.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source": {
+          "description": "Logical source URI, not an executable query in Norn.",
+          "type": "string"
+        },
+        "unique_keys": {
+          "description": "Additional uniqueness implied by ontology link cardinality.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "x-norn": {
+          "description": "Norn minimum cardinality and directional roles, absent from core OSI.",
+          "$ref": "#/$defs/LinkProjection"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "source"
+      ]
+    },
+    "Dialect": {
+      "description": "Dialects admitted by the pinned OSI schema.",
+      "oneOf": [
+        {
+          "description": "ANSI SQL.",
+          "type": "string",
+          "const": "ANSI_SQL"
+        },
+        {
+          "description": "Snowflake.",
+          "type": "string",
+          "const": "SNOWFLAKE"
+        },
+        {
+          "description": "MDX.",
+          "type": "string",
+          "const": "MDX"
+        },
+        {
+          "description": "Tableau.",
+          "type": "string",
+          "const": "TABLEAU"
+        },
+        {
+          "description": "Databricks.",
+          "type": "string",
+          "const": "DATABRICKS"
+        },
+        {
+          "description": "MAQL.",
+          "type": "string",
+          "const": "MAQL"
+        }
+      ]
+    },
+    "DialectExpression": {
+      "description": "One supported dialect expression.",
+      "type": "object",
+      "properties": {
+        "dialect": {
+          "description": "OSI dialect name.",
+          "$ref": "#/$defs/Dialect"
+        },
+        "expression": {
+          "description": "Expression text; never executed by this slice.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dialect",
+        "expression"
+      ]
+    },
+    "Dimension": {
+      "description": "OSI time dimension marker.",
+      "type": "object",
+      "properties": {
+        "is_time": {
+          "description": "Whether this field is temporal.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "is_time"
+      ]
+    },
+    "DimensionPath": {
+      "description": "A property reached by zero or more declared directional link roles.",
+      "type": "object",
+      "properties": {
+        "links": {
+          "description": "Forward or inverse roles, in traversal order; empty means the root object.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkId"
+          }
+        },
+        "property": {
+          "description": "The terminal property.",
+          "$ref": "#/$defs/PropertyId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property"
+      ]
+    },
+    "Expression": {
+      "description": "OSI expression, without any execution facility.",
+      "type": "object",
+      "properties": {
+        "dialects": {
+          "description": "One or more dialect projections.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DialectExpression"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dialects"
+      ]
+    },
+    "Field": {
+      "description": "OSI dataset field.",
+      "type": "object",
+      "properties": {
+        "ai_context": {
+          "description": "AI context.",
+          "$ref": "#/$defs/JsonValue"
+        },
+        "custom_extensions": {
+          "description": "Standard vendor extensions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CustomExtension"
+          }
+        },
+        "description": {
+          "description": "Human description.",
+          "type": "string"
+        },
+        "dimension": {
+          "description": "Grouping metadata.",
+          "$ref": "#/$defs/Dimension"
+        },
+        "expression": {
+          "description": "Scalar expression.",
+          "$ref": "#/$defs/Expression"
+        },
+        "label": {
+          "description": "Field label.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name scoped to the dataset.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "expression"
+      ]
+    },
+    "FilterOperator": {
+      "description": "Comparison operators for exact typed literals.",
+      "oneOf": [
+        {
+          "description": "Equality.",
+          "type": "string",
+          "const": "eq"
+        },
+        {
+          "description": "Inequality.",
+          "type": "string",
+          "const": "ne"
+        },
+        {
+          "description": "Less than.",
+          "type": "string",
+          "const": "lt"
+        },
+        {
+          "description": "Less than or equal.",
+          "type": "string",
+          "const": "le"
+        },
+        {
+          "description": "Greater than.",
+          "type": "string",
+          "const": "gt"
+        },
+        {
+          "description": "Greater than or equal.",
+          "type": "string",
+          "const": "ge"
+        }
+      ]
+    },
+    "FreshnessPolicy": {
+      "description": "Declarative freshness requirement; it chooses no runtime in this slice.",
+      "oneOf": [
+        {
+          "description": "Live series with a bounded age in milliseconds.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "live"
+            },
+            "maxAgeMs": {
+              "description": "Positive age bound.",
+              "$ref": "#/$defs/WholeNumber"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "maxAgeMs"
+          ]
+        },
+        {
+          "description": "Delayed series with a bounded age in milliseconds.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "delayed"
+            },
+            "maxAgeMs": {
+              "description": "Positive age bound.",
+              "$ref": "#/$defs/WholeNumber"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "maxAgeMs"
+          ]
+        },
+        {
+          "description": "Reproducible historical view.",
+          "type": "object",
+          "properties": {
+            "at": {
+              "description": "UTC instant.",
+              "$ref": "#/$defs/UtcTimestamp"
+            },
+            "kind": {
+              "type": "string",
+              "const": "as_of"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "at"
+          ]
+        }
+      ]
+    },
+    "IncrementalHint": {
+      "description": "Declarative incremental hint.",
+      "oneOf": [
+        {
+          "description": "Recompute from the authorized object population.",
+          "type": "string",
+          "const": "recompute"
+        },
+        {
+          "description": "Request maintenance from cell-ledger changes.",
+          "type": "string",
+          "const": "ledger_delta"
+        }
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "LinkCardinality": {
+      "description": "The cardinality of a link, declared on both ends.\n\n`to` and `from` together give the relation's shape: `one`/`one` is 1:1,\n`one`/`many` is N:1 from the source (1:N from the target), and\n`many`/`many` is N:M. `required` is Gel's `required`: every source object\nlinks to at least one target.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "How many source objects link to one target: the multiplicity of the\ninverse role.",
+          "$ref": "#/$defs/Multiplicity"
+        },
+        "required": {
+          "description": "Whether every source object links to at least one target. Defaults to\n`false`; the canonical form omits `false`.",
+          "type": "boolean"
+        },
+        "to": {
+          "description": "How many targets one source object links to.",
+          "$ref": "#/$defs/Multiplicity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "to",
+        "from"
+      ]
+    },
+    "LinkId": {
+      "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "LinkProjection": {
+      "description": "Original link contract retained on a generated bridge dataset.",
+      "type": "object",
+      "properties": {
+        "cardinality": {
+          "description": "Cardinality in the original direction, including requiredness.",
+          "$ref": "#/$defs/LinkCardinality"
+        },
+        "inverse": {
+          "description": "Inverse ontology role.",
+          "$ref": "#/$defs/LinkId"
+        },
+        "role": {
+          "description": "Forward ontology role.",
+          "$ref": "#/$defs/LinkId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cardinality",
+        "role"
+      ]
+    },
+    "Metric": {
+      "description": "OSI metric; MetricFlow calculation data resides in a DBT extension.",
+      "type": "object",
+      "properties": {
+        "ai_context": {
+          "description": "AI context.",
+          "$ref": "#/$defs/JsonValue"
+        },
+        "custom_extensions": {
+          "description": "MetricFlow definition in DBT's standard extension slot.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CustomExtension"
+          }
+        },
+        "description": {
+          "description": "Human description.",
+          "type": "string"
+        },
+        "expression": {
+          "description": "Portable expression projection of the checked calculation.",
+          "$ref": "#/$defs/Expression"
+        },
+        "name": {
+          "description": "Metric identifier.",
+          "type": "string"
+        },
+        "x-norn": {
+          "description": "Norn policies; absent on an external OSI import.",
+          "$ref": "#/$defs/MetricNorn"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "expression"
+      ]
+    },
+    "MetricAdditivity": {
+      "description": "Algebraic contract for re-aggregation.",
+      "oneOf": [
+        {
+          "description": "Sum across any dimension, including time.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Sum across non-time axes; use the declared reduction along time.",
+          "type": "object",
+          "properties": {
+            "aggregate": {
+              "description": "One of first/last/min/max; sum is rejected by the checker.",
+              "$ref": "#/$defs/Reaggregate"
+            },
+            "kind": {
+              "type": "string",
+              "const": "semi_additive"
+            },
+            "over": {
+              "description": "Restricted axis.",
+              "$ref": "#/$defs/AdditivityAxis"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "over",
+            "aggregate"
+          ]
+        },
+        {
+          "description": "Must be computed from underlying objects for each requested bucket.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "non_additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "MetricAuthorization": {
+      "description": "Authorization remains a runtime boundary; checker admission never grants access.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Named authorization action evaluated for the object population.",
+          "type": "string"
+        },
+        "minGroupSize": {
+          "description": "Minimum distinct objects allowed in disclosed buckets.",
+          "$ref": "#/$defs/WholeNumber"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "minGroupSize"
+      ]
+    },
+    "MetricCurrency": {
+      "description": "Currency binding; the amount itself remains an ontology decimal property.",
+      "type": "object",
+      "properties": {
+        "conversion": {
+          "description": "Required when summing a source whose currency is not a singleton enum.",
+          "$ref": "#/$defs/CurrencyConversion"
+        },
+        "property": {
+          "description": "ISO 4217 registry property or a closed currency-code enum.",
+          "$ref": "#/$defs/DimensionPath"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property"
+      ]
+    },
+    "MetricFilter": {
+      "description": "A predicate over a resolved property; numeric values retain exact decimals.",
+      "type": "object",
+      "properties": {
+        "operator": {
+          "description": "Operator compatible with the property's type.",
+          "$ref": "#/$defs/FilterOperator"
+        },
+        "path": {
+          "description": "Relative property path. To-many filters are existential predicates.",
+          "$ref": "#/$defs/DimensionPath"
+        },
+        "value": {
+          "description": "Exact runtime literal checked against the effective property contract.",
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "operator",
+        "value"
+      ]
+    },
+    "MetricNorn": {
+      "description": "Norn policy extension. Units are derived from typed properties, never asserted here.",
+      "type": "object",
+      "properties": {
+        "additivity": {
+          "description": "Conservative scalar roll-up policy.",
+          "$ref": "#/$defs/MetricAdditivity"
+        },
+        "authz": {
+          "description": "Explicit authorization and aggregate disclosure requirements.",
+          "$ref": "#/$defs/MetricAuthorization"
+        },
+        "certified": {
+          "description": "Certification does not grant access.",
+          "type": "boolean"
+        },
+        "currency": {
+          "description": "Optional FX conversion; authoritative currency comes from the amount type.",
+          "$ref": "#/$defs/MetricCurrency"
+        },
+        "defaultFilters": {
+          "description": "Exact predicates applied before aggregation.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MetricFilter"
+          }
+        },
+        "derived": {
+          "description": "Generated inspection metadata, never an author assertion.",
+          "$ref": "#/$defs/MetricPropertySemantics"
+        },
+        "freshness": {
+          "description": "Definition freshness requirement.",
+          "$ref": "#/$defs/FreshnessPolicy"
+        },
+        "incremental": {
+          "description": "Maintenance hint only; no incremental engine is selected.",
+          "$ref": "#/$defs/IncrementalHint"
+        },
+        "irVersion": {
+          "description": "Norn extension version.",
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "owner": {
+          "description": "Accountable owner.",
+          "type": "string"
+        },
+        "safeAggregation": {
+          "description": "Identity deduplication within each bucket.",
+          "$ref": "#/$defs/SafeAggregation"
+        },
+        "timeDimension": {
+          "description": "Time binding for composite metrics; simple metrics use agg_time_dimension.",
+          "$ref": "#/$defs/DimensionPath"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "irVersion",
+        "additivity",
+        "owner",
+        "certified"
+      ]
+    },
+    "MetricPropertySemantics": {
+      "description": "Generated type semantics for inspecting a standalone metric file.",
+      "type": "object",
+      "properties": {
+        "currencySource": {
+          "description": "Authoritative source attached to a monetary decimal type.",
+          "$ref": "#/$defs/DimensionPath"
+        },
+        "unit": {
+          "description": "Quantity unit of the underlying property; counts and ratios are dimensionless.",
+          "$ref": "#/$defs/UnitRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Multiplicity": {
+      "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
+      "oneOf": [
+        {
+          "description": "At most one.",
+          "type": "string",
+          "const": "one"
+        },
+        {
+          "description": "Any number.",
+          "type": "string",
+          "const": "many"
+        }
+      ]
+    },
+    "OsiVersion": {
+      "description": "The admitted OSI document version.",
+      "oneOf": [
+        {
+          "description": "OSI 0.1.1, including the pinned release candidate schema.",
+          "type": "string",
+          "const": "0.1.1"
+        }
+      ]
+    },
+    "PropertyId": {
+      "description": "Id of a property within its object type (`sku_code`), unique there.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "Reaggregate": {
+      "description": "Operators over already aggregated results.",
+      "oneOf": [
+        {
+          "description": "Total across admitted axes.",
+          "type": "string",
+          "const": "sum"
+        },
+        {
+          "description": "First value in time order.",
+          "type": "string",
+          "const": "first"
+        },
+        {
+          "description": "Last value in time order.",
+          "type": "string",
+          "const": "last"
+        },
+        {
+          "description": "Minimum.",
+          "type": "string",
+          "const": "min"
+        },
+        {
+          "description": "Maximum.",
+          "type": "string",
+          "const": "max"
+        }
+      ]
+    },
+    "Relationship": {
+      "description": "OSI relationship with corresponding ordered join keys.",
+      "type": "object",
+      "properties": {
+        "ai_context": {
+          "description": "AI context.",
+          "$ref": "#/$defs/JsonValue"
+        },
+        "custom_extensions": {
+          "description": "Standard vendor extensions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CustomExtension"
+          }
+        },
+        "from": {
+          "description": "Dataset on the many side.",
+          "type": "string"
+        },
+        "from_columns": {
+          "description": "Foreign key fields.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "description": "Unique relationship name.",
+          "type": "string"
+        },
+        "to": {
+          "description": "Dataset on the one side.",
+          "type": "string"
+        },
+        "to_columns": {
+          "description": "Referenced unique fields.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "from",
+        "to",
+        "from_columns",
+        "to_columns"
+      ]
+    },
+    "SafeAggregation": {
+      "description": "A safe strategy for a to-many dimension path.",
+      "oneOf": [
+        {
+          "description": "Deduplicate measure object identities within each output bucket, including\ncombinations of multiple fan-out paths. Never deduplicate by measure value.",
+          "type": "string",
+          "const": "symmetric"
+        }
+      ]
+    },
+    "SemanticModel": {
+      "description": "OSI semantic model.",
+      "type": "object",
+      "properties": {
+        "ai_context": {
+          "description": "OSI permits string or structured AI context.",
+          "$ref": "#/$defs/JsonValue"
+        },
+        "custom_extensions": {
+          "description": "Standard vendor extensions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CustomExtension"
+          }
+        },
+        "datasets": {
+          "description": "Generated logical datasets; never independently authored in Norn.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Dataset"
+          }
+        },
+        "description": {
+          "description": "Human context.",
+          "type": "string"
+        },
+        "metrics": {
+          "description": "Metric expressions and the DBT calculation extension.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Metric"
+          }
+        },
+        "name": {
+          "description": "Model name.",
+          "type": "string"
+        },
+        "relationships": {
+          "description": "Generated key relationships.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Relationship"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "datasets"
+      ]
+    },
+    "UnitRef": {
+      "description": "A reference to a unit of measure in a standard unit vocabulary (ruling\n2026-09-25 §27). The code is not interpreted here; resolving it against the\nvocabulary is registry work (T8-STD-1).",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "The unit's code in `system` (UCUM `kg`, `m/s`; QUDT `unit:KiloGM`).",
+          "type": "string"
+        },
+        "system": {
+          "$ref": "#/$defs/UnitSystem"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "code"
+      ]
+    },
+    "UnitSystem": {
+      "description": "A standard unit vocabulary.",
+      "oneOf": [
+        {
+          "description": "The Unified Code for Units of Measure (case-sensitive codes).",
+          "type": "string",
+          "const": "ucum"
+        },
+        {
+          "description": "A QUDT unit (`unit:` local name).",
+          "type": "string",
+          "const": "qudt"
+        }
+      ]
+    },
+    "UtcTimestamp": {
+      "description": "An RFC 3339 instant in UTC (`2026-10-01T09:30:00Z`).",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    },
+    "Vendor": {
+      "description": "Vendors in OSI 0.1.1.",
+      "oneOf": [
+        {
+          "description": "Shared metadata.",
+          "type": "string",
+          "const": "COMMON"
+        },
+        {
+          "description": "Snowflake.",
+          "type": "string",
+          "const": "SNOWFLAKE"
+        },
+        {
+          "description": "Salesforce.",
+          "type": "string",
+          "const": "SALESFORCE"
+        },
+        {
+          "description": "MetricFlow/dbt.",
+          "type": "string",
+          "const": "DBT"
+        },
+        {
+          "description": "Databricks.",
+          "type": "string",
+          "const": "DATABRICKS"
+        },
+        {
+          "description": "GoodData.",
+          "type": "string",
+          "const": "GOODDATA"
+        }
+      ]
+    },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    }
+  }
+}

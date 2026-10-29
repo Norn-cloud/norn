@@ -1,0 +1,8 @@
+{
+  "name": "party.Party",
+  "description": "A person or organization the business deals with. Norn Core interface: source systems map their customers, suppliers, and employees to it.",
+  "properties": [
+    { "id": "display_name", "type": { "kind": "text" }, "constraints": { "minLength": 1, "maxLength": 200 } },
+    { "id": "email", "type": { "kind": "text" }, "constraints": { "nullable": true } }
+  ]
+}

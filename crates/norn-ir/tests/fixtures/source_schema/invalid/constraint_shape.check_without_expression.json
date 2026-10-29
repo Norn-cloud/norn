@@ -1,0 +1,333 @@
+{
+  "format": "norn.source-schema/1",
+  "source": {
+    "system": "PostgreSQL",
+    "instance": "shop-db.example.test/shop",
+    "version": "16.4"
+  },
+  "observedAt": "2026-09-30T08:00:00Z",
+  "adapter": {
+    "name": "norn.pool.sql-profiler",
+    "version": "0.1.0"
+  },
+  "rawMetadata": {
+    "uri": "evidence://sql/shop/catalog.json",
+    "sha256": "ac7d39dd4a694d50861c6a3ff459a59b56ec6135ea2d16acb7a7360b2ebf1e77"
+  },
+  "datasets": [
+    {
+      "id": "public.customers",
+      "nativeName": "customers",
+      "namespace": "public",
+      "kind": "table"
+    },
+    {
+      "id": "public.orders",
+      "nativeName": "orders",
+      "namespace": "public",
+      "kind": "table",
+      "description": "Customer orders"
+    },
+    {
+      "id": "public.open_orders",
+      "nativeName": "open_orders",
+      "namespace": "public",
+      "kind": "view"
+    }
+  ],
+  "fields": [
+    {
+      "dataset": "public.customers",
+      "name": "id",
+      "ordinal": 1,
+      "nativeType": "bigint",
+      "typeCandidate": {
+        "type": "integer",
+        "origin": "declared"
+      },
+      "required": true
+    },
+    {
+      "dataset": "public.customers",
+      "name": "email",
+      "ordinal": 2,
+      "nativeType": "text",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "declared"
+      },
+      "required": false
+    },
+    {
+      "dataset": "public.customers",
+      "name": "tier",
+      "ordinal": 3,
+      "nativeType": "customer_tier",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "declared"
+      },
+      "required": true
+    },
+    {
+      "dataset": "public.orders",
+      "name": "id",
+      "ordinal": 1,
+      "nativeType": "bigint",
+      "typeCandidate": {
+        "type": "integer",
+        "origin": "declared"
+      },
+      "required": true
+    },
+    {
+      "dataset": "public.orders",
+      "name": "customer_id",
+      "ordinal": 2,
+      "nativeType": "bigint",
+      "typeCandidate": {
+        "type": "integer",
+        "origin": "declared"
+      },
+      "required": true
+    },
+    {
+      "dataset": "public.orders",
+      "name": "placed_by",
+      "ordinal": 3,
+      "nativeType": "bigint",
+      "typeCandidate": {
+        "type": "integer",
+        "origin": "declared"
+      }
+    },
+    {
+      "dataset": "public.orders",
+      "name": "total",
+      "ordinal": 4,
+      "nativeType": "numeric(12,2)",
+      "typeCandidate": {
+        "type": "decimal",
+        "origin": "declared"
+      },
+      "required": true
+    },
+    {
+      "dataset": "public.orders",
+      "name": "status",
+      "ordinal": 5,
+      "nativeType": "text",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "declared"
+      },
+      "required": true
+    },
+    {
+      "dataset": "public.orders",
+      "name": "notes",
+      "ordinal": 6,
+      "nativeType": "text",
+      "typeCandidate": {
+        "type": "json",
+        "origin": "inferred"
+      }
+    },
+    {
+      "dataset": "public.open_orders",
+      "name": "id",
+      "ordinal": 1,
+      "nativeType": "bigint",
+      "typeCandidate": {
+        "type": "integer",
+        "origin": "declared"
+      }
+    }
+  ],
+  "constraints": [
+    {
+      "id": "customers_pkey",
+      "kind": "primary_key",
+      "dataset": "public.customers",
+      "fields": [
+        "id"
+      ],
+      "origin": "declared"
+    },
+    {
+      "id": "customers_email_key",
+      "kind": "unique",
+      "dataset": "public.customers",
+      "fields": [
+        "email"
+      ],
+      "origin": "declared"
+    },
+    {
+      "id": "orders_pkey",
+      "kind": "primary_key",
+      "dataset": "public.orders",
+      "fields": [
+        "id"
+      ],
+      "origin": "declared"
+    },
+    {
+      "id": "orders_customer_id_fkey",
+      "kind": "foreign_key",
+      "dataset": "public.orders",
+      "fields": [
+        "customer_id"
+      ],
+      "target": {
+        "dataset": "public.customers",
+        "fields": [
+          "id"
+        ]
+      },
+      "origin": "declared"
+    },
+    {
+      "id": "orders_total_check",
+      "kind": "check",
+      "dataset": "public.orders",
+      "fields": [
+        "total"
+      ],
+      "origin": "declared"
+    },
+    {
+      "id": "inferred:orders.placed_by",
+      "kind": "foreign_key",
+      "dataset": "public.orders",
+      "fields": [
+        "placed_by"
+      ],
+      "target": {
+        "dataset": "public.customers",
+        "fields": [
+          "id"
+        ]
+      },
+      "origin": "inferred",
+      "evidence": [
+        {
+          "uri": "evidence://sql/shop/inclusion/orders.placed_by.json",
+          "sha256": "4b860052a5153200fdd687aa1aea7a2018dda21d9c851fb1686d479b389f74c3"
+        }
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "dataset": "public.orders",
+      "asOf": "2026-09-30T08:01:12Z",
+      "method": "full_scan",
+      "rowsSeen": 1840
+    },
+    {
+      "dataset": "public.orders",
+      "field": "status",
+      "asOf": "2026-09-30T08:01:12Z",
+      "method": "full_scan",
+      "rowsSeen": 1840,
+      "nullCount": 0,
+      "distinctCount": 4,
+      "distinctPrecision": "exact",
+      "samples": {
+        "policy": {
+          "maxValues": 4,
+          "redaction": "none"
+        },
+        "values": [
+          "cancelled",
+          "delivered",
+          "open",
+          "shipped"
+        ]
+      }
+    },
+    {
+      "dataset": "public.customers",
+      "field": "email",
+      "asOf": "2026-09-30T08:01:40Z",
+      "method": "sample",
+      "rowsSeen": 500,
+      "nullCount": 12,
+      "distinctCount": 488,
+      "distinctPrecision": "approximate",
+      "samples": {
+        "policy": {
+          "maxValues": 3,
+          "redaction": "masked"
+        },
+        "values": [
+          "a***@example.test",
+          "j***@example.test",
+          "m***@example.test"
+        ]
+      },
+      "evidence": [
+        {
+          "uri": "evidence://sql/shop/profile/customers.email.json",
+          "sha256": "23fcd689a7748500e0bf020bd5085ba13eeb7acf2d2612ac6ef67a41776c9acc"
+        }
+      ]
+    }
+  ],
+  "codeSets": [
+    {
+      "id": "enum:customer_tier",
+      "dataset": "public.customers",
+      "field": "tier",
+      "origin": "declared",
+      "values": [
+        {
+          "value": "gold"
+        },
+        {
+          "value": "silver"
+        },
+        {
+          "value": "standard"
+        }
+      ]
+    },
+    {
+      "id": "observed:orders.status",
+      "dataset": "public.orders",
+      "field": "status",
+      "origin": "observed_candidate",
+      "values": [
+        {
+          "value": "cancelled"
+        },
+        {
+          "value": "delivered"
+        },
+        {
+          "value": "open"
+        },
+        {
+          "value": "shipped"
+        }
+      ]
+    }
+  ],
+  "lineage": [
+    {
+      "id": "view:open_orders",
+      "kind": "view",
+      "inputs": [
+        "public.orders"
+      ],
+      "output": "public.open_orders",
+      "evidence": [
+        {
+          "uri": "evidence://sql/shop/views/open_orders.sql",
+          "sha256": "58426825ead2f99b1a8be479e0a80078735ccdc1bfcaa2f9010ca213e5dbfd93"
+        }
+      ]
+    }
+  ]
+}

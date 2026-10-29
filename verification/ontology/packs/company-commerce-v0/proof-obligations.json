@@ -1,0 +1,101 @@
+{
+  "packId": "norn.ontology-pack.company-commerce",
+  "packVersion": "0.1",
+  "statusVocabulary": [
+    "implemented_executable",
+    "implemented_bounded_static_checker",
+    "implemented_bounded_external_reasoner",
+    "implemented_bounded_shacl_differential",
+    "partial_executable",
+    "open_foundational_proof"
+  ],
+  "obligations": [
+    {
+      "obligationId": "ontology.closed-promotion",
+      "claim": "Only fields declared by the term's active closed shape can be promoted as a semantic instance.",
+      "status": "implemented_executable",
+      "implementedBy": ["norn_checker::validate_ontology_instance"],
+      "evidence": ["crates/norn-checker/tests/ontology_pack.rs"]
+    },
+    {
+      "obligationId": "ontology.registry-membership",
+      "claim": "Every term_ref target resolves in an explicitly supplied registry, and instance references are active members of the declared target hierarchy.",
+      "status": "implemented_executable",
+      "implementedBy": ["norn_checker::validate_ontology_registry", "norn_checker::ontology_term_is_a"],
+      "evidence": ["verification/ontology/fixtures/registry-conformance-v0.json", "crates/norn-checker/tests/ontology_registry.rs"]
+    },
+    {
+      "obligationId": "ontology.semantic-only",
+      "claim": "Ontology terms and mappings carry no transition, effect, role, or capability grant.",
+      "status": "partial_executable",
+      "implementedBy": ["closed ontology pack validator", "semanticAuthority=semantic_only"],
+      "evidence": [
+        "crates/norn-checker/tests/ontology_pack.rs",
+        "verification/ontology/packs/company-commerce-v0/projection-contract.json"
+      ],
+      "residual": "The closed pack schema rejects authority-shaped fields, but no engine/API integration test yet establishes that an inferred triple cannot invoke a privileged transition."
+    },
+    {
+      "obligationId": "ontology.pinned-sources",
+      "claim": "Every external mapping resolves through an immutable, licensed, provenance-bearing source pin.",
+      "status": "implemented_executable",
+      "implementedBy": ["closed ontology pack validator"],
+      "evidence": [
+        "crates/norn-checker/tests/ontology_pack.rs"
+      ]
+    },
+    {
+      "obligationId": "ontology.mapping-provenance",
+      "claim": "Every external mapping records bounded integer confidence and reviewer identity/time, and any supersession points directly to an active mapping for the same Norn term and pinned source.",
+      "status": "implemented_executable",
+      "implementedBy": [
+        "norn_checker::validate_ontology_pack",
+        "verification/ontology/scripts/validate.py"
+      ],
+      "evidence": [
+        "verification/ontology/packs/company-commerce-v0/pack.json",
+        "crates/norn-checker/tests/ontology_pack.rs",
+        "verification/ontology/scripts/validate.py"
+      ]
+    },
+    {
+      "obligationId": "ontology.projection-static-reproducibility",
+      "claim": "Pinned OWL and SHACL files have complete identity mappings and contain the declared class, parent, shape, and term-reference range statements checked by the bounded static profile.",
+      "status": "implemented_bounded_static_checker",
+      "implementedBy": ["verification/ontology/scripts/validate.py", "projection-contract.json"],
+      "evidence": [
+        "verification/ontology/packs/company-commerce-v0/projection-contract.json",
+        "verification/ontology/scripts/validate.py"
+      ]
+    },
+    {
+      "obligationId": "ontology.owl-semantic-equivalence",
+      "claim": "OWL 2 RL closure over the company-commerce witness corpus produces no disjointness inconsistency or owl:Nothing instance.",
+      "status": "implemented_bounded_external_reasoner",
+      "implementedBy": ["owlrl 7.6.2", "verification/ontology/scripts/semantic_check.py"],
+      "evidence": [
+        "verification/ontology/packs/company-commerce-v0/ontology.owl.ttl",
+        "verification/ontology/packs/company-commerce-v0/semantic-check-report.json",
+        "verification/ontology/scripts/semantic_check.py"
+      ]
+    },
+    {
+      "obligationId": "ontology.shacl-differential-equivalence",
+      "claim": "A pinned SHACL engine accepts the generated positive witness corpus and rejects an Order witness with no lineItems.",
+      "status": "implemented_bounded_shacl_differential",
+      "implementedBy": ["pyshacl 0.40.1", "verification/ontology/scripts/semantic_check.py"],
+      "evidence": [
+        "verification/ontology/packs/company-commerce-v0/shapes.shacl.ttl",
+        "verification/ontology/packs/company-commerce-v0/semantic-check-report.json",
+        "verification/ontology/scripts/semantic_check.py"
+      ]
+    },
+    {
+      "obligationId": "ontology.registry-checker-proof",
+      "claim": "The executable registry and membership checker has a pending foundational soundness and completeness argument for its declared closed-world hierarchy semantics.",
+      "status": "open_foundational_proof",
+      "implementedBy": [],
+      "evidence": []
+    }
+  ]
+}

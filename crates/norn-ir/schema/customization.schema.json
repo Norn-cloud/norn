@@ -1,0 +1,464 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CustomizationPayload",
+  "type": "object",
+  "properties": {
+    "approval": {
+      "$ref": "#/$defs/CustomizationApproval"
+    },
+    "customizationId": {
+      "type": "string"
+    },
+    "customizationVersion": {
+      "$ref": "#/$defs/IrVersion01"
+    },
+    "executable": {
+      "$ref": "#/$defs/CustomizationExecutable"
+    },
+    "extensions": {
+      "description": "Reserved extension slots keyed by `<name>/<semver>`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "intent": {
+      "$ref": "#/$defs/CustomizationIntent"
+    },
+    "overlay": {
+      "$ref": "#/$defs/CustomizationOverlay"
+    },
+    "scopeRequired": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "targetArtifact": {
+      "$ref": "#/$defs/CustomizationTarget"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "customizationVersion",
+    "customizationId",
+    "intent",
+    "targetArtifact",
+    "overlay",
+    "approval",
+    "scopeRequired"
+  ],
+  "$defs": {
+    "CustomizationApproval": {
+      "description": "Approval state of a customization.",
+      "type": "object",
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/CustomizationApprovalState"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "state",
+        "required"
+      ]
+    },
+    "CustomizationApprovalState": {
+      "description": "Approval states.",
+      "type": "string",
+      "enum": [
+        "draft",
+        "proposed",
+        "approved",
+        "active",
+        "rejected"
+      ]
+    },
+    "CustomizationExecutable": {
+      "description": "The capability-scoped executable boundary of a customization.",
+      "type": "object",
+      "properties": {
+        "ambientCredentials": {
+          "description": "Only `false` is admitted.",
+          "type": "boolean"
+        },
+        "boundary": {
+          "$ref": "#/$defs/ExecutableBoundary"
+        },
+        "directDatabaseAccess": {
+          "description": "Only `false` is admitted.",
+          "type": "boolean"
+        },
+        "errorSchema": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "requiredServices": {
+          "description": "Services the code needs.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resourceLimits": {
+          "$ref": "#/$defs/ResourceLimits"
+        },
+        "scopeCapabilities": {
+          "description": "Non-empty capability scope.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sourceRef": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "boundary",
+        "inputSchema",
+        "outputSchema",
+        "errorSchema",
+        "scopeCapabilities",
+        "requiredServices",
+        "resourceLimits"
+      ]
+    },
+    "CustomizationIntent": {
+      "description": "Why the customization exists and who asked for it.",
+      "type": "object",
+      "properties": {
+        "requestedBy": {
+          "$ref": "#/$defs/CustomizationRequester"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "summary",
+        "requestedBy"
+      ]
+    },
+    "CustomizationOverlay": {
+      "description": "The overlay applied to the target.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/CustomizationOverlayKind"
+        },
+        "operations": {
+          "description": "Non-empty, ordered overlay operations.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CustomizationOverlayOp"
+          }
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "kind",
+        "operations"
+      ]
+    },
+    "CustomizationOverlayKind": {
+      "description": "What an overlay changes.",
+      "type": "string",
+      "enum": [
+        "field",
+        "validation",
+        "widget",
+        "connector",
+        "rule",
+        "policy",
+        "pack"
+      ]
+    },
+    "CustomizationOverlayOp": {
+      "description": "One overlay operation, tagged by `op`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "definition": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            },
+            "field": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "add_field"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "op",
+            "field",
+            "definition"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "definition": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            },
+            "field": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "update_field"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "op",
+            "field",
+            "definition"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "remove_field"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "add_validation"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "update_validation"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "op"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "add_widget_binding"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "op"
+          ]
+        },
+        {
+          "description": "Requires the root's `executable` boundary declaration.",
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "custom_hook"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "op"
+          ]
+        }
+      ]
+    },
+    "CustomizationRequester": {
+      "description": "Who requested a customization.",
+      "type": "string",
+      "enum": [
+        "user",
+        "agent"
+      ]
+    },
+    "CustomizationTarget": {
+      "description": "The exact artifact a customization overlays.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/CustomizationTargetKind"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "artifactId",
+        "kind",
+        "version"
+      ]
+    },
+    "CustomizationTargetKind": {
+      "description": "Artifact kinds a customization may target (not `setting` or `derived`).",
+      "type": "string",
+      "enum": [
+        "entity",
+        "relation",
+        "action",
+        "rule",
+        "connector",
+        "widget",
+        "customization",
+        "business_pack",
+        "policy"
+      ]
+    },
+    "ExecutableBoundary": {
+      "description": "Where customization code runs.\n\n`effectful_ts` and `wasm` are retired and do not decode: there is no\nserver-side custom TypeScript runtime (ruling 2026-09-25 §11), and inline\ncustom execution is rejected in v1 (ruling 2026-09-27 compute boundary\n§1/§2, D33). Custom code is a pool Function invoked through `perform`\n(T1-FN-1, #2776). The checker reports them as\n`customization.validation.retired_boundary`.",
+      "type": "string",
+      "enum": [
+        "trusted_rust",
+        "capability_rpc"
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "ResourceLimits": {
+      "description": "Resource ceilings of a customization executable.",
+      "type": "object",
+      "properties": {
+        "maxMemoryMb": {
+          "description": "At least 1.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "maxNetworkCalls": {
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "maxStorageBytes": {
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "maxWallTimeMs": {
+          "description": "At least 1.",
+          "$ref": "#/$defs/WholeNumber"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "maxWallTimeMs",
+        "maxMemoryMb",
+        "maxNetworkCalls",
+        "maxStorageBytes"
+      ]
+    },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    }
+  }
+}

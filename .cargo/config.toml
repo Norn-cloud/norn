@@ -1,0 +1,11 @@
+# Fast native linking is opt-in. No linker or rustflags are set by this file.
+# See docs/platform/build.md for a guarded, invocation-scoped wild/mold example.
+# Equivalent LOCAL configuration (do not uncomment in the shared repository):
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=--ld-path=/absolute/path/to/wild"]
+# Substitute an installed mold binary for wild to compare linkers.
+
+[alias]
+# Typed CI gate runner (#3472): `cargo xtask ci <gate>`.
+xtask = "run --locked --quiet -p norn-skeleton-guard --bin xtask --"

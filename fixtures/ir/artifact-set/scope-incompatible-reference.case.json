@@ -1,0 +1,24 @@
+{
+  "description": "A registry-layer view depends on a tenant-scoped entity: an artifact may reference only artifacts of its own or a broader scope (2026-08-27: scope is explicit and fails closed).",
+  "base": [],
+  "artifacts": [
+    "ir/retail-low-stock.derived.json",
+    {
+      "fixture": "ir/retail-sku.entity.json",
+      "patch": {
+        "scope": {
+          "orgId": "org_demo",
+          "tenantId": "tenant_acme",
+          "environmentId": "dev"
+        }
+      }
+    }
+  ],
+  "expect": [
+    [
+      "retail.low_stock.view",
+      "artifact_set.scope.incompatible_reference",
+      "/dependencies/0"
+    ]
+  ]
+}

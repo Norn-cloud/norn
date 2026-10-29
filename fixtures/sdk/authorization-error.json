@@ -1,0 +1,13 @@
+{
+  "code": "authz.denied",
+  "category": "authorization",
+  "message": "capability.missing for action 'retail.replenishment.approve'",
+  "retryable": false,
+  "scope": {
+    "orgId": "org_demo",
+    "tenantId": "tenant_demo",
+    "workspaceId": "workspace_demo",
+    "environmentId": "dev"
+  },
+  "correlationId": "corr_1"
+}

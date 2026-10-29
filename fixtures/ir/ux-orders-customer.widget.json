@@ -1,0 +1,366 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "commerce.widget.orders",
+  "kind": "widget",
+  "namespace": "commerce",
+  "name": "Orders and customer detail",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [
+    {
+      "artifactId": "commerce.Order.entity",
+      "kind": "entity",
+      "version": "0.1.0",
+      "required": true
+    },
+    {
+      "artifactId": "crm.Customer.entity",
+      "kind": "entity",
+      "version": "0.1.0",
+      "required": true
+    },
+    {
+      "artifactId": "commerce.order.approve.action",
+      "kind": "action",
+      "version": "0.1.0",
+      "required": true
+    }
+  ],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/ux-orders-customer.widget.json"
+  },
+  "payload": {
+    "widgetVersion": "0.1",
+    "widgetId": "commerce.widget.orders",
+    "dataDependencies": [],
+    "viewStates": [
+      { "stateId": "ready", "kind": "ready" }
+    ],
+    "actionBindings": [],
+    "permissions": [],
+    "ux": {
+      "uxVersion": "0.1",
+      "app": {
+        "appId": "commerce.app.orders",
+        "entryPageId": "orders",
+        "pageRefs": [
+          { "pageId": "orders" },
+          { "pageId": "customer" }
+        ],
+        "routes": [
+          {
+            "routeId": "orders-home",
+            "path": "/orders",
+            "pageId": "orders",
+            "parameters": []
+          },
+          {
+            "routeId": "customer-detail",
+            "path": "/customers/{customerNumber}",
+            "pageId": "customer",
+            "parameters": [
+              {
+                "routeParameter": "customerNumber",
+                "contextParameterId": "customerNumber"
+              }
+            ]
+          }
+        ],
+        "navigationItemIds": []
+      },
+      "pages": [
+        {
+          "pageId": "orders",
+          "name": "Orders",
+          "contextParams": [],
+          "root": {
+            "nodeId": "orders-page",
+            "semanticId": "orders-page",
+            "component": {
+              "kind": "section",
+              "section": {
+                "sectionId": "orders-main",
+                "kind": "section",
+                "label": { "en": "Orders" },
+                "fields": [],
+                "order": 1
+              }
+            },
+            "children": [
+              {
+                "nodeId": "orders-list-node",
+                "semanticId": "orders-list",
+                "component": {
+                  "kind": "list",
+                  "dataBindingId": "orders",
+                  "fields": [
+                    { "bindingId": "orders", "propertyId": "order_number" },
+                    { "bindingId": "orders", "propertyId": "status" }
+                  ],
+                  "selection": "single"
+                },
+                "children": [
+                  {
+                    "nodeId": "customer-navigation-node",
+                    "semanticId": "customer-navigation",
+                    "component": { "kind": "navigation", "itemId": "customer-nav" },
+                    "children": []
+                  },
+                  {
+                    "nodeId": "approve-action-node",
+                    "semanticId": "approve-action",
+                    "component": { "kind": "action", "placementId": "approve-submit" },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "nodeId": "linked-customers-node",
+                "semanticId": "linked-customers",
+                "component": {
+                  "kind": "list",
+                  "dataBindingId": "order-customers",
+                  "fields": [
+                    { "bindingId": "order-customers", "propertyId": "display_name" }
+                  ],
+                  "selection": "none"
+                },
+                "children": []
+              },
+              {
+                "nodeId": "approve-form-node",
+                "semanticId": "approve-form-surface",
+                "component": { "kind": "form", "formId": "approve-form" },
+                "children": [
+                  {
+                    "nodeId": "approve-order-id-node",
+                    "semanticId": "approve-order-id-field",
+                    "component": { "kind": "field", "fieldId": "approve-order-id" },
+                    "children": []
+                  },
+                  {
+                    "nodeId": "approve-reason-node",
+                    "semanticId": "approve-reason-field",
+                    "component": { "kind": "field", "fieldId": "approve-reason" },
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "pageId": "customer",
+          "name": "Customer detail",
+          "contextParams": [
+            { "paramId": "customerNumber", "type": "text", "required": true }
+          ],
+          "root": {
+            "nodeId": "customer-page",
+            "semanticId": "customer-page",
+            "component": { "kind": "detail", "dataBindingId": "customer-detail" },
+            "children": [
+              {
+                "nodeId": "customer-name-field-node",
+                "semanticId": "customer-name-field",
+                "component": { "kind": "field", "fieldId": "customer-name" },
+                "children": []
+              }
+            ]
+          }
+        }
+      ],
+      "dataBindings": [
+        {
+          "bindingId": "orders",
+          "object": { "id": "commerce.Order.entity", "version": "0.1.0" },
+          "query": {
+            "kind": "object_list",
+            "filters": [
+              {
+                "property": { "bindingId": "orders", "propertyId": "status" },
+                "operator": "eq",
+                "value": { "kind": "literal", "value": "draft" }
+              }
+            ],
+            "sort": [
+              {
+                "property": { "bindingId": "orders", "propertyId": "order_number" },
+                "direction": "asc"
+              }
+            ],
+            "page": { "size": 10, "maxSize": 10 }
+          }
+        },
+        {
+          "bindingId": "order-customers",
+          "object": { "id": "crm.Customer.entity", "version": "0.1.0" },
+          "query": {
+            "kind": "link_traversal",
+            "sourceBindingId": "orders",
+            "linkId": "customer",
+            "maxDepth": 1,
+            "maxRows": 10,
+            "page": { "size": 10, "maxSize": 10 }
+          }
+        },
+        {
+          "bindingId": "customer-detail",
+          "object": { "id": "crm.Customer.entity", "version": "0.1.0" },
+          "query": {
+            "kind": "object_detail",
+            "key": [
+              {
+                "propertyId": "customer_number",
+                "value": {
+                  "kind": "context_parameter",
+                  "pageId": "customer",
+                  "parameterId": "customerNumber"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "actionBindings": [
+        {
+          "bindingId": "approve",
+          "action": { "id": "commerce.order.approve.action", "version": "0.1.0" },
+          "inputMapping": {
+            "orderId": "input.draft.orderId",
+            "reason": "input.draft.reason"
+          },
+          "inputs": { "recordBindingId": "orders", "draftFormId": "approve-form" },
+          "requiredCapability": "commerce.order.approve"
+        }
+      ],
+      "fields": [
+        {
+          "fieldId": "order-number",
+          "target": {
+            "kind": "property",
+            "property": { "bindingId": "orders", "propertyId": "order_number" }
+          },
+          "label": { "en": "Order#" },
+          "control": "text",
+          "visibleWhen": {
+            "expression": "input.record.status == \"draft\"",
+            "inputs": { "recordBindingId": "orders" }
+          }
+        },
+        {
+          "fieldId": "order-status",
+          "target": {
+            "kind": "property",
+            "property": { "bindingId": "orders", "propertyId": "status" }
+          },
+          "label": { "en": "Status" },
+          "control": "display"
+        },
+        {
+          "fieldId": "linked-customer-name",
+          "target": {
+            "kind": "property",
+            "property": { "bindingId": "order-customers", "propertyId": "display_name" }
+          },
+          "label": { "en": "Customer" },
+          "control": "text"
+        },
+        {
+          "fieldId": "customer-name",
+          "target": {
+            "kind": "property",
+            "property": { "bindingId": "customer-detail", "propertyId": "display_name" }
+          },
+          "label": { "en": "Customer name" },
+          "control": "text",
+          "visibleWhen": {
+            "expression": "input.context.customerNumber != \"\"",
+            "inputs": { "contextPageId": "customer" }
+          }
+        },
+        {
+          "fieldId": "approve-order-id",
+          "target": {
+            "kind": "form_input",
+            "formId": "approve-form",
+            "inputName": "orderId",
+            "initial": { "bindingId": "orders", "propertyId": "order_id" }
+          },
+          "label": { "en": "Order ID" },
+          "control": "display"
+        },
+        {
+          "fieldId": "approve-reason",
+          "target": {
+            "kind": "form_input",
+            "formId": "approve-form",
+            "inputName": "reason"
+          },
+          "label": { "en": "Reason" },
+          "control": "text_area"
+        }
+      ],
+      "forms": [
+        {
+          "formId": "approve-form",
+          "mode": "action_input",
+          "inputNames": ["orderId", "reason"],
+          "dataBindingId": "orders",
+          "submitBindingId": "approve",
+          "submit": {
+            "label": { "en": "Approve order" },
+            "confirmation": {
+              "severity": "confirm",
+              "strength": "click",
+              "message": { "en": "Approve this order?" }
+            }
+          }
+        }
+      ],
+      "actionPlacements": [
+        {
+          "placementId": "approve-submit",
+          "bindingId": "approve",
+          "label": { "en": "Approve" },
+          "formId": "approve-form",
+          "location": "row",
+          "order": 1,
+          "selectionBindingId": "orders",
+          "selectionInputMapping": {},
+          "enabledWhen": {
+            "expression": "input.record.status == \"draft\"",
+            "inputs": { "recordBindingId": "orders" }
+          },
+          "confirmation": {
+            "severity": "safe",
+            "strength": "none"
+          }
+        }
+      ],
+      "navigationItems": [
+        {
+          "itemId": "customer-nav",
+          "label": { "en": "Customer" },
+          "destination": {
+            "kind": "page",
+            "pageId": "customer",
+            "parameters": {
+              "customerNumber": {
+                "kind": "record",
+                "property": { "bindingId": "orders", "propertyId": "customer_number" }
+              }
+            }
+          },
+          "requiredCapability": "crm.customer.read"
+        }
+      ],
+      "overrides": []
+    }
+  }
+}

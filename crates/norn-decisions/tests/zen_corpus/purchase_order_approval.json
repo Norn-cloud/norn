@@ -1,0 +1,78 @@
+{
+  "description": "The checker's valid lifecycle fixture: fact changes create a lifecycle object and fire declared transitions (string enums declare the write set).",
+  "ruleFile": "fixtures/rule-ir-v2/valid/purchase-order-approval.rule.json",
+  "cases": [
+    {
+      "name": "opened creates a draft",
+      "slice": {
+        "order": {
+          "poNumber": "PO-1",
+          "status": "none"
+        }
+      },
+      "event": {
+        "kind": "opened",
+        "poNumber": "PO-1"
+      },
+      "expect": {
+        "facts": [
+          {
+            "op": "create",
+            "objectType": "commerce.PurchaseOrder",
+            "key": "PO-1",
+            "values": {
+              "po_number": "PO-1",
+              "status": "draft"
+            }
+          }
+        ],
+        "commands": [],
+        "timers": []
+      }
+    },
+    {
+      "name": "submitted fires submit",
+      "slice": {
+        "order": {
+          "poNumber": "PO-1",
+          "status": "draft"
+        }
+      },
+      "event": {
+        "kind": "submitted",
+        "poNumber": "PO-1"
+      },
+      "expect": {
+        "facts": [
+          {
+            "op": "transition",
+            "objectType": "commerce.PurchaseOrder",
+            "key": "PO-1",
+            "lifecycle": "status",
+            "transition": "submit"
+          }
+        ],
+        "commands": [],
+        "timers": []
+      }
+    },
+    {
+      "name": "unknown event: no effects",
+      "slice": {
+        "order": {
+          "poNumber": "PO-1",
+          "status": "draft"
+        }
+      },
+      "event": {
+        "kind": "noise",
+        "poNumber": "PO-1"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [],
+        "timers": []
+      }
+    }
+  ]
+}

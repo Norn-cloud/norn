@@ -1,0 +1,11 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-TYPED-FAILURE-CATCH",
+      "start": "10:7",
+      "end": "10:37",
+      "construct": "throw new Error(\"not overdue\")"
+    }
+  ]
+}

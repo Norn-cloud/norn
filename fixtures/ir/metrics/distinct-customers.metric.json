@@ -1,0 +1,982 @@
+{
+  "version": "0.1.1",
+  "semantic_model": [
+    {
+      "name": "erpnext",
+      "datasets": [
+        {
+          "name": "erpnext.Customer",
+          "source": "norn://object/erpnext.Customer",
+          "primary_key": [
+            "_norn_identity"
+          ],
+          "fields": [
+            {
+              "name": "_norn_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_norn_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "customer_name",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"customer_name\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "name",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"name\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ]
+        },
+        {
+          "name": "erpnext.Customer::region",
+          "source": "norn://link/erpnext.Customer/region",
+          "primary_key": [
+            "_from_identity",
+            "_to_identity"
+          ],
+          "unique_keys": [
+            [
+              "_from_identity"
+            ]
+          ],
+          "fields": [
+            {
+              "name": "_from_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_from_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "_to_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_to_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ],
+          "x-norn": {
+            "cardinality": {
+              "to": "one",
+              "from": "many"
+            },
+            "role": "region"
+          }
+        },
+        {
+          "name": "erpnext.Customer::stores",
+          "source": "norn://link/erpnext.Customer/stores",
+          "primary_key": [
+            "_from_identity",
+            "_to_identity"
+          ],
+          "fields": [
+            {
+              "name": "_from_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_from_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "_to_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_to_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ],
+          "x-norn": {
+            "cardinality": {
+              "to": "many",
+              "from": "many"
+            },
+            "role": "stores"
+          }
+        },
+        {
+          "name": "erpnext.Region",
+          "source": "norn://object/erpnext.Region",
+          "primary_key": [
+            "_norn_identity"
+          ],
+          "fields": [
+            {
+              "name": "_norn_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_norn_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "name",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"name\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoice",
+          "source": "norn://object/erpnext.SalesInvoice",
+          "primary_key": [
+            "_norn_identity"
+          ],
+          "fields": [
+            {
+              "name": "_norn_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_norn_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "base_currency",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"base_currency\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "currency",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"currency\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "customer_key",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"customer_key\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "docstatus",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"docstatus\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "fx_currency",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"fx_currency\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "grand_total",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"grand_total\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "is_return",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"is_return\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "name",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"name\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "posting_date",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"posting_date\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": true
+              }
+            },
+            {
+              "name": "usd_currency",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"usd_currency\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoice::customer",
+          "source": "norn://link/erpnext.SalesInvoice/customer",
+          "primary_key": [
+            "_from_identity",
+            "_to_identity"
+          ],
+          "unique_keys": [
+            [
+              "_from_identity"
+            ]
+          ],
+          "fields": [
+            {
+              "name": "_from_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_from_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "_to_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_to_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ],
+          "x-norn": {
+            "cardinality": {
+              "to": "one",
+              "from": "many",
+              "required": true
+            },
+            "role": "customer"
+          }
+        },
+        {
+          "name": "erpnext.SalesInvoice::items",
+          "source": "norn://link/erpnext.SalesInvoice/items",
+          "primary_key": [
+            "_from_identity",
+            "_to_identity"
+          ],
+          "unique_keys": [
+            [
+              "_to_identity"
+            ]
+          ],
+          "fields": [
+            {
+              "name": "_from_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_from_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "_to_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_to_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ],
+          "x-norn": {
+            "cardinality": {
+              "to": "many",
+              "from": "one",
+              "required": true
+            },
+            "role": "items"
+          }
+        },
+        {
+          "name": "erpnext.SalesInvoice::store",
+          "source": "norn://link/erpnext.SalesInvoice/store",
+          "primary_key": [
+            "_from_identity",
+            "_to_identity"
+          ],
+          "unique_keys": [
+            [
+              "_from_identity"
+            ]
+          ],
+          "fields": [
+            {
+              "name": "_from_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_from_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "_to_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_to_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ],
+          "x-norn": {
+            "cardinality": {
+              "to": "one",
+              "from": "many"
+            },
+            "role": "store"
+          }
+        },
+        {
+          "name": "erpnext.SalesInvoiceItem",
+          "source": "norn://object/erpnext.SalesInvoiceItem",
+          "primary_key": [
+            "_norn_identity"
+          ],
+          "fields": [
+            {
+              "name": "_norn_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_norn_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "conversion_rate",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"conversion_rate\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "idx",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"idx\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "name",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"name\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "net_amount",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"net_amount\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "qty",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"qty\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "rate",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"rate\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "so_detail",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"so_detail\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "volume",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"volume\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "weight",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"weight\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoiceItem::parent_sales_invoice",
+          "source": "norn://link/erpnext.SalesInvoiceItem/parent_sales_invoice",
+          "primary_key": [
+            "_from_identity",
+            "_to_identity"
+          ],
+          "unique_keys": [
+            [
+              "_from_identity"
+            ]
+          ],
+          "fields": [
+            {
+              "name": "_from_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_from_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "_to_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_to_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ],
+          "x-norn": {
+            "cardinality": {
+              "to": "one",
+              "from": "many",
+              "required": true
+            },
+            "role": "parent_sales_invoice"
+          }
+        },
+        {
+          "name": "erpnext.Store",
+          "source": "norn://object/erpnext.Store",
+          "primary_key": [
+            "_norn_identity"
+          ],
+          "fields": [
+            {
+              "name": "_norn_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_norn_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "name",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"name\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ]
+        },
+        {
+          "name": "erpnext.Store::region",
+          "source": "norn://link/erpnext.Store/region",
+          "primary_key": [
+            "_from_identity",
+            "_to_identity"
+          ],
+          "unique_keys": [
+            [
+              "_from_identity"
+            ]
+          ],
+          "fields": [
+            {
+              "name": "_from_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_from_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            },
+            {
+              "name": "_to_identity",
+              "expression": {
+                "dialects": [
+                  {
+                    "dialect": "ANSI_SQL",
+                    "expression": "\"_to_identity\""
+                  }
+                ]
+              },
+              "dimension": {
+                "is_time": false
+              }
+            }
+          ],
+          "x-norn": {
+            "cardinality": {
+              "to": "one",
+              "from": "many"
+            },
+            "role": "region"
+          }
+        }
+      ],
+      "relationships": [
+        {
+          "name": "erpnext.Customer::region::_from_identity",
+          "from": "erpnext.Customer::region",
+          "to": "erpnext.Customer",
+          "from_columns": [
+            "_from_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.Customer::region::_to_identity",
+          "from": "erpnext.Customer::region",
+          "to": "erpnext.Region",
+          "from_columns": [
+            "_to_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.Customer::stores::_from_identity",
+          "from": "erpnext.Customer::stores",
+          "to": "erpnext.Customer",
+          "from_columns": [
+            "_from_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.Customer::stores::_to_identity",
+          "from": "erpnext.Customer::stores",
+          "to": "erpnext.Store",
+          "from_columns": [
+            "_to_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoice::customer::_from_identity",
+          "from": "erpnext.SalesInvoice::customer",
+          "to": "erpnext.SalesInvoice",
+          "from_columns": [
+            "_from_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoice::customer::_to_identity",
+          "from": "erpnext.SalesInvoice::customer",
+          "to": "erpnext.Customer",
+          "from_columns": [
+            "_to_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoice::items::_from_identity",
+          "from": "erpnext.SalesInvoice::items",
+          "to": "erpnext.SalesInvoice",
+          "from_columns": [
+            "_from_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoice::items::_to_identity",
+          "from": "erpnext.SalesInvoice::items",
+          "to": "erpnext.SalesInvoiceItem",
+          "from_columns": [
+            "_to_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoice::store::_from_identity",
+          "from": "erpnext.SalesInvoice::store",
+          "to": "erpnext.SalesInvoice",
+          "from_columns": [
+            "_from_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoice::store::_to_identity",
+          "from": "erpnext.SalesInvoice::store",
+          "to": "erpnext.Store",
+          "from_columns": [
+            "_to_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoiceItem::parent_sales_invoice::_from_identity",
+          "from": "erpnext.SalesInvoiceItem::parent_sales_invoice",
+          "to": "erpnext.SalesInvoiceItem",
+          "from_columns": [
+            "_from_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.SalesInvoiceItem::parent_sales_invoice::_to_identity",
+          "from": "erpnext.SalesInvoiceItem::parent_sales_invoice",
+          "to": "erpnext.SalesInvoice",
+          "from_columns": [
+            "_to_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.Store::region::_from_identity",
+          "from": "erpnext.Store::region",
+          "to": "erpnext.Store",
+          "from_columns": [
+            "_from_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        },
+        {
+          "name": "erpnext.Store::region::_to_identity",
+          "from": "erpnext.Store::region",
+          "to": "erpnext.Region",
+          "from_columns": [
+            "_to_identity"
+          ],
+          "to_columns": [
+            "_norn_identity"
+          ]
+        }
+      ],
+      "metrics": [
+        {
+          "name": "erpnext.distinct_customers",
+          "expression": {
+            "dialects": [
+              {
+                "dialect": "ANSI_SQL",
+                "expression": "COUNT(DISTINCT \"erpnext.SalesInvoice\".\"customer_key\")"
+              }
+            ]
+          },
+          "custom_extensions": [
+            {
+              "vendor_name": "DBT",
+              "data": "{\"name\":\"erpnext_distinct_ucustomers\",\"label\":\"erpnext.distinct_customers\",\"type\":\"simple\",\"type_params\":{\"expr\":\"customer_key\",\"metric_aggregation_params\":{\"semantic_model\":\"erpnext.SalesInvoice\",\"agg\":\"count_distinct\",\"agg_time_dimension\":\"posting_date\"}}}"
+            }
+          ],
+          "x-norn": {
+            "irVersion": "0.1",
+            "additivity": {
+              "kind": "non_additive"
+            },
+            "timeDimension": {
+              "property": "posting_date"
+            },
+            "owner": "sales",
+            "certified": false,
+            "derived": {}
+          }
+        }
+      ]
+    }
+  ]
+}

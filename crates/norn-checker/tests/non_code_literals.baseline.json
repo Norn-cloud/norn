@@ -1,0 +1,24 @@
+{
+  "non_code_literals": [
+    "norn.quantity.evaluation.v1",
+    "norn.quantity.parameters.v1",
+    "payload.approval.required",
+    "payload.approval.state",
+    "payload.auth.kind",
+    "payload.auth.name",
+    "payload.auth.placement",
+    "payload.auth.scopes",
+    "payload.calc.fields",
+    "payload.calc.kind",
+    "payload.decision.inputs",
+    "payload.decision.kind",
+    "payload.decision.rows",
+    "payload.decision.value",
+    "payload.executable.boundary",
+    "payload.intent.summary",
+    "payload.overlay.kind",
+    "payload.overlay.operations",
+    "payload.review.state",
+    "payload.supersedes.version"
+  ]
+}

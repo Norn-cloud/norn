@@ -1,0 +1,21 @@
+{
+  "description": "The demo's agent refusal: the agent calls submit_invoice on a sales order that is still draft. The action set is admitted, but invoice leaves only approved, so firing it from draft would write status draft -> invoiced, which no declared transition allows.",
+  "artifacts": [
+    "ir/entity-v2/artifact-set/commerce-sales-order.entity.json",
+    "ir/commerce-sales-order-submit-invoice.action.json"
+  ],
+  "action": "commerce.sales_order.submit_invoice.action",
+  "object": {
+    "entityArtifactId": "commerce.SalesOrder.entity",
+    "values": {
+      "so_number": "SO-0001",
+      "status": "draft"
+    }
+  },
+  "expect": [
+    [
+      "lifecycle.validation.undeclared_write",
+      "/payload/effectProgram/transition"
+    ]
+  ]
+}

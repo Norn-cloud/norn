@@ -1,0 +1,700 @@
+standard.csv	true and true	null	ok
+standard.csv	true and false	null	ok
+standard.csv	false and true	null	ok
+standard.csv	false and false	null	ok
+standard.csv	true or true	null	ok
+standard.csv	true or false	null	ok
+standard.csv	false or true	null	ok
+standard.csv	false or false	null	ok
+standard.csv	not true	null	ok
+standard.csv	not false	null	ok
+standard.csv	1 == 1	null	ok
+standard.csv	1 == 2	null	ok
+standard.csv	1 != 2	null	ok
+standard.csv	1 != 1	null	ok
+standard.csv	1 < 2	null	ok
+standard.csv	1 < 1	null	ok
+standard.csv	1 <= 1	null	ok
+standard.csv	2 <= 1	null	ok
+standard.csv	2 > 1	null	ok
+standard.csv	1 > 1	null	ok
+standard.csv	1 >= 1	null	ok
+standard.csv	1 >= 2	null	ok
+standard.csv	-1 == -1	null	ok
+standard.csv	-1 == 1	null	ok
+standard.csv	-1 != 1	null	ok
+standard.csv	-1 != -1	null	ok
+standard.csv	-1 < 1	null	ok
+standard.csv	-1 < -1	null	ok
+standard.csv	-1 <= -1	null	ok
+standard.csv	1 <= -1	null	ok
+standard.csv	1 > -1	null	ok
+standard.csv	-1 > -1	null	ok
+standard.csv	-1 >= -1	null	ok
+standard.csv	-1 >= 1	null	ok
+standard.csv	1 + 2 == 3	null	ok
+standard.csv	1 + 2 == 4	null	ok
+standard.csv	1 - 2 == -1	null	ok
+standard.csv	1 - 2 == 0	null	ok
+standard.csv	2 * 3 == 6	null	ok
+standard.csv	2 * 3 == 7	null	ok
+standard.csv	6 / 3 == 2	null	ok
+standard.csv	6 / 3 == 2.5	null	ok
+standard.csv	5 % 2 == 1	null	expr.construct.unsupported
+standard.csv	6 % 2 == 0	null	expr.construct.unsupported
+standard.csv	-5 + 5 == 0	null	ok
+standard.csv	-5 * 5 == -25	null	ok
+standard.csv	-5 * -5 == 25	null	ok
+standard.csv	10 / 0	null	ok
+standard.csv	abs(-5) == 5	null	ok
+standard.csv	abs(5) == 5	null	ok
+standard.csv	2 ^ 3 == 8	null	expr.construct.unsupported
+standard.csv	2 ^ -1 == 0.5	null	expr.construct.unsupported
+standard.csv	max([3, 5]) == 5	null	expr.construct.unsupported
+standard.csv	max([-3, -5]) == -3	null	expr.construct.unsupported
+standard.csv	min([3, 5]) == 3	null	expr.construct.unsupported
+standard.csv	min([-3, -5]) == -5	null	expr.construct.unsupported
+standard.csv	3 + 4 * 2	null	ok
+standard.csv	(3 + 4) * 2	null	ok
+standard.csv	(10 - 4) / 2	null	ok
+standard.csv	abs(-5)	null	ok
+standard.csv	sum([1, 2, 3, 4, 5])	null	ok
+standard.csv	avg([10, 20, 30])	null	expr.construct.unsupported
+standard.csv	min([5, 8, 2, 11, 7])	null	expr.construct.unsupported
+standard.csv	max([5, 8, 2, 11, 7])	null	expr.construct.unsupported
+standard.csv	floor(4.8)	null	ok
+standard.csv	ceil(4.1)	null	ok
+standard.csv	round(3.5)	null	ok
+standard.csv	rand(100) >= 0 and rand(100) <= 100	null	expr.construct.unsupported
+standard.csv	median([4, 2, 7, 5, 3])	null	expr.construct.unsupported
+standard.csv	mode([1, 2, 2, 3, 3, 3, 4, 4, 4, 4])	null	expr.construct.unsupported
+standard.csv	5 % 2 == 1	null	expr.construct.unsupported
+standard.csv	10 % 4 == 2	null	expr.construct.unsupported
+standard.csv	true ? 10 == 10 : 20 == 30	null	ok
+standard.csv	false ? 10 == 10 : 20 == 30	null	ok
+standard.csv	true ? 10 == 20 : false ? 30 == 40 : true ? 50 == 60 : 70 == 80	null	ok
+standard.csv	'hello' + " " + "world"	null	ok
+standard.csv	len("Hello, World!")	null	ok
+standard.csv	lower("Hello, World!")	null	ok
+standard.csv	upper("Hello, World!")	null	ok
+standard.csv	trim("HELLO, WORLD!")	null	ok
+standard.csv	trim("  HELLO, WORLD!")	null	ok
+standard.csv	trim("HELLO, WORLD!  ")	null	ok
+standard.csv	startsWith("Hello, World!", "Hello")	null	ok
+standard.csv	startsWith("Hello, World!", "World")	null	ok
+standard.csv	endsWith("Hello, World!", "World!")	null	ok
+standard.csv	endsWith("Hello, World!", "Hello!")	null	ok
+standard.csv	contains("Hello, World!", "lo")	null	ok
+standard.csv	contains("Hello, World!", "foo")	null	ok
+standard.csv	matches("Hello, World!", "H[a-z]+, W[a-z]+!")	null	expr.construct.unsupported
+standard.csv	matches("Hello, World!", "[0-9]+")	null	expr.construct.unsupported
+standard.csv	extract("2022-09-18", "(\d{4})-(\d{2})-(\d{2})")	null	expr.construct.unsupported
+standard.csv	fuzzyMatch("hello", "hello")	null	expr.construct.unsupported
+standard.csv	fuzzyMatch("world", "hello")	null	expr.construct.unsupported
+standard.csv	fuzzyMatch(["hello", "world"], "hello")	null	expr.construct.unsupported
+standard.csv	split("hello1,hello2,hello3", ",")	null	expr.construct.unsupported
+standard.csv	map(split("123,456,789", ","), number(#))	null	expr.construct.unsupported
+standard.csv	`simple template`	null	expr.construct.unsupported
+standard.csv	`sum of numbers ${sum([1, 2, 3])}`	null	expr.construct.unsupported
+standard.csv	`uppercase inner ${upper('string')}`	null	expr.construct.unsupported
+standard.csv	len([1, 2, 3, 4, 5])	null	ok
+standard.csv	sum([1, 2, 3, 4, 5])	null	ok
+standard.csv	avg([10, 20, 30])	null	expr.construct.unsupported
+standard.csv	min([5, 8, 2, 11, 7])	null	expr.construct.unsupported
+standard.csv	max([5, 8, 2, 11, 7])	null	expr.construct.unsupported
+standard.csv	contains([1, 2, 3, 4, 5], 3)	null	expr.type.error
+standard.csv	contains([1, 2, 3, 4, 5], 6)	null	expr.type.error
+standard.csv	count([1, 2, 3, 4, 5, 2], # == 2)	null	ok
+standard.csv	filter([1, 2, 3, 4, 5], # > 3)	null	ok
+standard.csv	map([1, 2, 3, 4, 5], # * 2)	null	ok
+standard.csv	one([1, 2, 3, 4, 5], # == 3)	null	ok
+standard.csv	one([1, 2, 3, 4, 5], # == 6)	null	ok
+standard.csv	none([1, 2, 3, 4, 5], # > 5)	null	ok
+standard.csv	some([1, 2, 3, 4, 5], # > 3)	null	ok
+standard.csv	flatMap([[1, 2], [3, 4], [5, 6]], #)	null	ok
+standard.csv	keys([10, 11, 12])	null	expr.construct.unsupported
+standard.csv	merge([[1, 2], [3, 4], [5]])	null	expr.construct.unsupported
+standard.csv	merge([[1, 2], [], [3]])	null	expr.construct.unsupported
+standard.csv	merge([null, [1, 2], [3]])	null	expr.construct.unsupported
+standard.csv	merge([[1, 2], null, [3]])	null	expr.construct.unsupported
+standard.csv	merge([null, {"a": 1}, {"b": 2}])	null	expr.construct.unsupported
+standard.csv	merge([null])	null	expr.construct.unsupported
+standard.csv	merge([null, null])	null	expr.construct.unsupported
+standard.csv	merge([])	null	expr.construct.unsupported
+standard.csv	merge([{"a": 1}, {"b": 2}, {"c": 3}])	null	expr.construct.unsupported
+standard.csv	merge([{"a": 1, "b": 2}, {"b": 3, "c": 4}])	null	expr.construct.unsupported
+standard.csv	mergeDeep([{"a": 1}, {"b": 2}])	null	expr.construct.unsupported
+standard.csv	mergeDeep([{"a": 1, "b": 2}, {"b": 3, "c": 4}])	null	expr.construct.unsupported
+standard.csv	mergeDeep([{"a": {"x": 1}}, {"a": {"y": 2}}])	null	expr.construct.unsupported
+standard.csv	mergeDeep([{"a": [1, 2]}, {"a": [3, 4]}])	null	expr.construct.unsupported
+standard.csv	mergeDeep([{"a": {"b": {"c": 1}}}, {"a": {"b": {"d": 2}}}])	null	expr.construct.unsupported
+standard.csv	mergeDeep([{"a": 1}, {"a": 2}])	null	expr.construct.unsupported
+standard.csv	mergeDeep([null, {"a": 1}])	null	expr.construct.unsupported
+standard.csv	mergeDeep([])	null	expr.construct.unsupported
+standard.csv	date("2023-09-18T12:00:00Z")	null	expr.type.error
+standard.csv	date("2023-09-18T00:00:00Z")	null	expr.type.error
+standard.csv	time("2023-09-18T12:00:00Z")	null	expr.syntax.invalid
+standard.csv	time("2023-09-18T00:00:00Z")	null	expr.syntax.invalid
+standard.csv	duration("1h 30m")	null	expr.syntax.invalid
+standard.csv	year("2023-09-18")	null	expr.syntax.invalid
+standard.csv	monthOfYear("2023-09-18")	null	expr.syntax.invalid
+standard.csv	monthString("2023-09-18")	null	expr.syntax.invalid
+standard.csv	dayOfMonth("2023-09-18")	null	expr.syntax.invalid
+standard.csv	dayOfWeek("2023-09-18")	null	expr.syntax.invalid
+standard.csv	dayOfYear("2023-09-18")	null	expr.syntax.invalid
+standard.csv	weekOfYear("2023-09-18")	null	expr.syntax.invalid
+standard.csv	weekdayString("2023-09-18")	null	expr.syntax.invalid
+standard.csv	0.1 + 0.2 == 0.3	null	ok
+standard.csv	0.1 + 0.2	null	ok
+standard.csv	0.1 * 0.2 == 0.02	null	ok
+standard.csv	0.1 * 0.2	null	ok
+standard.csv	0.3 - 0.1 == 0.2	null	ok
+standard.csv	0.3 - 0.1	null	ok
+standard.csv	0.3 / 0.1 == 3.0	null	expr.type.nullable
+standard.csv	0.3 / 0.1	null	ok
+standard.csv	(10 + 5) * 3 / 2 > 15	null	ok
+standard.csv	(100 - 25) / (5 * 2) < 10	null	expr.type.nullable
+standard.csv	1000 / (10 - 2) + 50 == 175	null	expr.type.nullable
+standard.csv	(3 + 4) * (8 - 6) == 14	null	ok
+standard.csv	10^3 != 999	null	expr.construct.unsupported
+standard.csv	1000 / 10^3 <= 1.1	null	expr.construct.unsupported
+standard.csv	abs(-20) > 10	null	ok
+standard.csv	floor(8.9) == 8	null	ok
+standard.csv	ceil(8.1) == 9	null	ok
+standard.csv	round(7.6) == 8	null	ok
+standard.csv	10 % 3 != 0	null	expr.construct.unsupported
+standard.csv	-8 + 2^3 == 0	null	expr.construct.unsupported
+standard.csv	2 * -(-5) == 10	null	ok
+standard.csv	20 / (5 / 2) == 8.0	null	expr.type.nullable
+standard.csv	(4 + 2) * 3 - (5 / 2) + 1 < 18	null	ok
+standard.csv	5^2 + 3 * 4 - 6 / 2 > 20	null	expr.construct.unsupported
+standard.csv	4^3 - 2 * 5 + 7 / 2 == 57.5	null	expr.construct.unsupported
+standard.csv	abs(-7 + 4) * (8 - 6^2) < 34	null	expr.construct.unsupported
+standard.csv	5 in [1..10]	null	ok
+standard.csv	5 in (1..10)	null	ok
+standard.csv	5 not in [1..10)	null	ok
+standard.csv	5 not in (1..10)	null	ok
+standard.csv	-5 in [-10..-1]	null	ok
+standard.csv	-5 in [-10..-1)	null	ok
+standard.csv	-5 not in [-10..-1]	null	ok
+standard.csv	-5 not in [-10..-1)	null	ok
+standard.csv	-5 in [-5..5]	null	ok
+standard.csv	-5 in (-5..5)	null	ok
+standard.csv	-5 not in [-5..5)	null	ok
+standard.csv	-5 not in (-5..5)	null	ok
+standard.csv	10 > 5	null	ok
+standard.csv	5 < 10	null	ok
+standard.csv	10 >= 10	null	ok
+standard.csv	5 <= 5	null	ok
+standard.csv	(1 + 2) == 3	null	ok
+standard.csv	(1 + 2) != 4	null	ok
+standard.csv	(1 + 2) > 2	null	ok
+standard.csv	(1 + 2) < 5	null	ok
+standard.csv	dateString(startOf('2023-01-01 15:45:01', 'day'))	null	expr.syntax.invalid
+standard.csv	dateString(endOf('2023-01-01 15:45:01', 'd'))	null	expr.syntax.invalid
+standard.csv	dateString(startOf('2023-01-01 15:45:01', 'hour'))	null	expr.syntax.invalid
+standard.csv	dateString(endOf('2023-01-01 15:45:01', 'h'))	null	expr.syntax.invalid
+standard.csv	dateString(startOf('2023-01-01 15:45:01', 'minute'))	null	expr.syntax.invalid
+standard.csv	dateString(endOf('2023-01-01 15:45:01', 'm'))	null	expr.syntax.invalid
+standard.csv	dateString(startOf('2023-01-04 15:45:01', 'week'))	null	expr.syntax.invalid
+standard.csv	dateString(endOf('2023-01-04 15:45:01', 'w'))	null	expr.syntax.invalid
+standard.csv	dateString(startOf('2023-01-04 15:45:01', 'month'))	null	expr.syntax.invalid
+standard.csv	dateString(endOf('2023-01-04 15:45:01', 'M'))	null	expr.syntax.invalid
+standard.csv	dateString(startOf('2023-01-04 15:45:01', 'year'))	null	expr.syntax.invalid
+standard.csv	dateString(endOf('2023-01-04 15:45:01', 'y'))	null	expr.syntax.invalid
+standard.csv	string(123.123)	null	expr.construct.unsupported
+standard.csv	string(123)	null	expr.construct.unsupported
+standard.csv	string(true)	null	expr.construct.unsupported
+standard.csv	string(false)	null	expr.construct.unsupported
+standard.csv	string('already string')	null	expr.construct.unsupported
+standard.csv	number('123.123')	null	expr.construct.unsupported
+standard.csv	number('123')	null	expr.construct.unsupported
+standard.csv	number(123.123)	null	expr.construct.unsupported
+standard.csv	number(123)	null	expr.construct.unsupported
+standard.csv	number(true)	null	expr.construct.unsupported
+standard.csv	number(false)	null	expr.construct.unsupported
+standard.csv	isNumeric(123.123)	null	expr.construct.unsupported
+standard.csv	isNumeric(123)	null	expr.construct.unsupported
+standard.csv	isNumeric('123.123')	null	expr.construct.unsupported
+standard.csv	isNumeric('123')	null	expr.construct.unsupported
+standard.csv	isNumeric('string')	null	expr.construct.unsupported
+standard.csv	isNumeric(true)	null	expr.construct.unsupported
+standard.csv	type('hello')	null	expr.construct.unsupported
+standard.csv	type(123)	null	expr.construct.unsupported
+standard.csv	type(true)	null	expr.construct.unsupported
+standard.csv	type(null)	null	expr.construct.unsupported
+standard.csv	type([1, 2, 3])	null	expr.construct.unsupported
+standard.csv	{customer: { firstName: "John", lastName: "Doe" }}	null	ok
+standard.csv	sum(values({a: 1, b: 2, c: 3}))	null	expr.construct.unsupported
+standard.csv	keys({[`dynamic-${'key'}`]: 123})	null	expr.construct.unsupported
+standard.csv	{}	null	ok
+standard.csv	null ?? 'hello'	null	expr.type.error
+standard.csv	null ?? 123 ?? 321	null	expr.type.error
+standard.csv	null ?? null ?? 321	null	expr.type.error
+standard.csv	false or true ? null ?? 'test' : false	null	expr.type.error
+standard.csv	len(['a', 'b', 'c'])	null	ok
+standard.csv	contains(['a', 'b', 'c'], 'b')	null	expr.type.error
+standard.csv	contains(['a', 'b', 'c'], 'd')	null	expr.type.error
+standard.csv	some(['a', 'b', 'c'], # == 'b')	null	ok
+standard.csv	some(['a', 'b', 'c'], # == 'd')	null	expr.type.constant_comparison
+standard.csv	all(['a', 'b', 'c'], # in ['a', 'b', 'c', 'd'])	null	ok
+standard.csv	all(['a', 'b', 'c'], # in ['a', 'b'])	null	ok
+standard.csv	filter(['a', 'b', 'c', 'd'], # in ['a', 'c'])	null	ok
+standard.csv	map(['a', 'b', 'c'], # + '!')	null	ok
+standard.csv	map(filter([1, 2, 3, 4, 5], # > 2), # * 2)	null	ok
+standard.csv	len(filter([1, 2, 3, 4, 5], # % 2 == 0))	null	expr.construct.unsupported
+standard.csv	sum(filter([1, 2, 3, 4, 5], # % 2 == 0))	null	expr.construct.unsupported
+standard.csv	sum(map(filter([1, 2, 3, 4, 5], # > 3), # ^ 2))	null	expr.construct.unsupported
+standard.csv	some(map([1, 2, 3], # * 2), # > 5)	null	ok
+standard.csv	all(map([1, 2, 3], # + 2), # > 2)	null	ok
+standard.csv	contains(map([1, 2, 3], # * 2), 6)	null	expr.type.error
+standard.csv	contains(values({a: 1, b: 2, c: 3}), 2)	null	expr.construct.unsupported,expr.type.error
+standard.csv	map([{id: 1, name: 'John'}, {id: 2, name: 'Jane'}], #.id)	null	ok
+standard.csv	filter([{id: 1, name: 'John'}, {id: 2, name: 'Jane'}], #.id > 1)	null	ok
+standard.csv	map(filter([{id: 1, name: 'John'}, {id: 2, name: 'Jane'}], #.id > 1), #.name)	null	ok
+standard.csv	'Hello' + ' ' + 'World' + '!'	null	ok
+standard.csv	len('Hello')	null	ok
+standard.csv	upper('Hello')	null	ok
+standard.csv	lower('HELLO')	null	ok
+standard.csv	trim('  hello  ')	null	ok
+standard.csv	startsWith('Hello World', 'Hell')	null	ok
+standard.csv	endsWith('Hello World', 'orld')	null	ok
+standard.csv	contains('Hello World', 'lo Wo')	null	ok
+standard.csv	matches('123-456-7890', '[0-9]{3}-[0-9]{3}-[0-9]{4}')	null	expr.construct.unsupported
+standard.csv	extract('2023-10-15', '([0-9]{4})-([0-9]{2})-([0-9]{2})')	null	expr.construct.unsupported
+standard.csv	`Total: ${sum([1, 2, 3])}`	null	expr.construct.unsupported
+standard.csv	date('2023-10-15') + duration('1d')	null	expr.syntax.invalid
+standard.csv	date('2023-10-15') - duration('7d')	null	expr.syntax.invalid
+standard.csv	dateString(date('2023-10-15') + duration('1d'))	null	expr.syntax.invalid
+standard.csv	dateString(date('2023-10-15') - duration('7d'))	null	expr.syntax.invalid
+standard.csv	date('2023-10-15') > date('2023-10-14')	null	ok
+standard.csv	date('2023-10-15') < date('2023-10-16')	null	ok
+standard.csv	date('2023-10-15') + duration('1d') == date('2023-10-16')	null	expr.syntax.invalid
+standard.csv	year(date('2023-10-15'))	null	expr.syntax.invalid
+standard.csv	monthOfYear(date('2023-10-15'))	null	expr.syntax.invalid
+standard.csv	dayOfMonth(date('2023-10-15'))	null	expr.syntax.invalid
+standard.csv	dayOfWeek(date('2023-10-15'))	null	expr.syntax.invalid
+standard.csv	weekOfYear(date('2023-10-15'))	null	expr.syntax.invalid
+standard.csv	dateString(date('2023-10-15'))	null	expr.syntax.invalid
+standard.csv	dateString(date('2023-10-15') + duration('12h'))	null	expr.syntax.invalid
+standard.csv	string(123)	null	expr.construct.unsupported
+standard.csv	string(true)	null	expr.construct.unsupported
+standard.csv	number('123')	null	expr.construct.unsupported
+standard.csv	number('12.3')	null	expr.construct.unsupported
+standard.csv	number(true)	null	expr.construct.unsupported
+standard.csv	number(false)	null	expr.construct.unsupported
+standard.csv	bool(1)	null	expr.construct.unsupported
+standard.csv	bool(0)	null	expr.construct.unsupported
+standard.csv	bool('true')	null	expr.construct.unsupported
+standard.csv	bool('false')	null	expr.construct.unsupported
+standard.csv	len(filter(map([1, 2, 3, 4, 5], # * 2), # > 5))	null	ok
+standard.csv	sum(map(filter([{id: 1, val: 10}, {id: 2, val: 20}, {id: 3, val: 30}], #.id > 1), #.val))	null	ok
+standard.csv	map([1, 2, 3], # * 2)	null	ok
+standard.csv	filter([1, 2, 3, 4, 5], # % 2 == 0)	null	expr.construct.unsupported
+standard.csv	some([1, 2, 3], # > 2)	null	ok
+standard.csv	all([1, 2, 3], # > 0)	null	ok
+standard.csv	count([1, 2, 2, 3, 3, 3], # == 3)	null	ok
+standard.csv	one([1, 2, 3], # == 2)	null	ok
+standard.csv	none([1, 2, 3], # > 3)	null	ok
+standard.csv	filter(map([1, 2, 3, 4], # * 2), # > 5)	null	ok
+standard.csv	map(filter([1, 2, 3, 4], # % 2 == 0), # * 3)	null	expr.construct.unsupported
+standard.csv	map([0..5], # * 2)	null	expr.construct.unsupported
+standard.csv	filter([0..10], # % 2 == 0)	null	expr.construct.unsupported
+standard.csv	round(7.4)	null	ok
+standard.csv	round(7.5)	null	ok
+standard.csv	round(7.6)	null	ok
+standard.csv	round(-7.4)	null	ok
+standard.csv	round(-7.5)	null	ok
+standard.csv	round(-7.6)	null	ok
+standard.csv	round(0.5)	null	ok
+standard.csv	round(-0.5)	null	ok
+standard.csv	round(1.5)	null	ok
+standard.csv	round(-1.5)	null	ok
+standard.csv	round(0.4)	null	ok
+standard.csv	round(-0.4)	null	ok
+standard.csv	round(7.444, 0)	null	ok
+standard.csv	round(7.444, 1)	null	ok
+standard.csv	round(7.444, 2)	null	ok
+standard.csv	round(7.555, 0)	null	ok
+standard.csv	round(7.555, 1)	null	ok
+standard.csv	round(7.555, 2)	null	ok
+standard.csv	round(-7.444, 2)	null	ok
+standard.csv	round(-7.555, 2)	null	ok
+standard.csv	trunc(7.4)	null	ok
+standard.csv	trunc(7.5)	null	ok
+standard.csv	trunc(7.6)	null	ok
+standard.csv	trunc(-7.4)	null	ok
+standard.csv	trunc(-7.5)	null	ok
+standard.csv	trunc(-7.6)	null	ok
+standard.csv	trunc(7.444, 0)	null	ok
+standard.csv	trunc(7.444, 1)	null	ok
+standard.csv	trunc(7.444, 2)	null	ok
+standard.csv	trunc(7.999, 0)	null	ok
+standard.csv	trunc(7.999, 1)	null	ok
+standard.csv	trunc(7.999, 2)	null	ok
+standard.csv	trunc(-7.444, 2)	null	ok
+standard.csv	trunc(-7.999, 2)	null	ok
+standard.csv	1e5	null	expr.construct.unsupported
+standard.csv	2e3	null	expr.construct.unsupported
+standard.csv	5e0	null	expr.construct.unsupported
+standard.csv	1e-2	null	expr.construct.unsupported
+standard.csv	2.5e2	null	expr.construct.unsupported
+standard.csv	3.14e1	null	expr.construct.unsupported
+standard.csv	1.23e-3	null	expr.construct.unsupported
+standard.csv	-1e3	null	expr.construct.unsupported
+standard.csv	-2.5e-2	null	expr.construct.unsupported
+standard.csv	1e2 + 1e1	null	expr.construct.unsupported
+standard.csv	2e3 - 5e2	null	expr.construct.unsupported
+standard.csv	3e2 * 2e1	null	expr.construct.unsupported
+standard.csv	1e4 / 2e2	null	expr.construct.unsupported
+standard.csv	1e2 + 50	null	expr.construct.unsupported
+standard.csv	1e3 - 100	null	expr.construct.unsupported
+standard.csv	2e2 * 3	null	expr.construct.unsupported
+standard.csv	1e3 / 10	null	expr.construct.unsupported
+standard.csv	1e3 == 1000	null	expr.construct.unsupported
+standard.csv	1e3 != 999	null	expr.construct.unsupported
+standard.csv	1e2 > 50	null	expr.construct.unsupported
+standard.csv	1e2 < 200	null	expr.construct.unsupported
+standard.csv	1e2 >= 100	null	expr.construct.unsupported
+standard.csv	1e2 <= 100	null	expr.construct.unsupported
+standard.csv	2.5e2 == 250	null	expr.construct.unsupported
+standard.csv	1.5e-2 == 0.015	null	expr.construct.unsupported
+standard.csv	string(1e3)	null	expr.construct.unsupported
+standard.csv	string(2.5e2)	null	expr.construct.unsupported
+standard.csv	string(1.23e-3)	null	expr.construct.unsupported
+standard.csv	number('1e3')	null	expr.construct.unsupported
+standard.csv	number('2.5e2')	null	expr.construct.unsupported
+standard.csv	number('1.23e-3')	null	expr.construct.unsupported
+standard.csv	isNumeric('1e3')	null	expr.construct.unsupported
+standard.csv	isNumeric('2.5e-2')	null	expr.construct.unsupported
+standard.csv	isNumeric('1.23e-3')	null	expr.construct.unsupported
+standard.csv	sum([1e2, 2e2, 3e2])	null	expr.construct.unsupported
+standard.csv	max([1e1, 2e1, 3e1])	null	expr.construct.unsupported
+standard.csv	min([1e1, 2e1, 3e1])	null	expr.construct.unsupported
+standard.csv	avg([1e2, 2e2, 3e2])	null	expr.construct.unsupported
+standard.csv	contains([1e2, 2e2, 3e2], 200)	null	expr.construct.unsupported
+standard.csv	map([1e1, 2e1, 3e1], # * 2)	null	expr.construct.unsupported
+standard.csv	filter([1e1, 2e1, 3e1, 4e1], # > 25)	null	expr.construct.unsupported
+standard.csv	1e+3	null	expr.construct.unsupported
+standard.csv	1e-0	null	expr.construct.unsupported
+standard.csv	0e5	null	expr.construct.unsupported
+standard.csv	1.0e2	null	expr.construct.unsupported
+standard.csv	10e1	null	expr.construct.unsupported
+standard.csv	0.1e3	null	expr.construct.unsupported
+standard.csv	1.5e+2	null	expr.construct.unsupported
+standard.csv	2e-1	null	expr.construct.unsupported
+standard.csv	1e2 + 50.5	null	expr.construct.unsupported
+standard.csv	1000 - 1e2	null	expr.construct.unsupported
+standard.csv	15 * 1e2	null	expr.construct.unsupported
+standard.csv	1e3 / 2.5	null	expr.construct.unsupported
+standard.csv	(1e2 + 2e2) * 1e1	null	expr.construct.unsupported
+standard.csv	1e3 / (2e1 + 3e1)	null	expr.construct.unsupported
+standard.csv	abs(-1e2)	null	expr.construct.unsupported
+standard.csv	floor(1.23e2)	null	expr.construct.unsupported
+standard.csv	ceil(1.23e2)	null	expr.construct.unsupported
+standard.csv	round(1.234e2)	null	expr.construct.unsupported
+standard.csv	1e1 ^ 2	null	expr.construct.unsupported
+standard.csv	`Value: ${1e3}`	null	expr.construct.unsupported
+standard.csv	`Scientific: ${2.5e2}`	null	expr.construct.unsupported
+standard.csv	`Negative: ${-1e2}`	null	expr.construct.unsupported
+standard.csv	map([1, 2, 3], # * 2)	null	ok
+standard.csv	filter([1, 2, 3, 4], # > 2)	null	ok
+date.csv	d('2023-10-15')	null	expr.syntax.invalid
+date.csv	d('2023-10-15 14:30')	null	expr.syntax.invalid
+date.csv	d('2023-10-15 14:30:45')	null	expr.syntax.invalid
+date.csv	d('2023-10-15', 'Europe/Berlin')	null	expr.syntax.invalid
+date.csv	d('2023-10-15 14:30', 'Europe/Berlin')	null	expr.syntax.invalid
+date.csv	d('2023-10-15 14:30:45', 'Europe/Berlin')	null	expr.syntax.invalid
+date.csv	d('Europe/Berlin').isValid() and d('Europe/Berlin').isToday()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').add('1d')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').add('1d 5h')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').add(1, 'd')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').sub('2d')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').sub(1, 'M')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isBefore(d('2023-10-16'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isBefore(d('2023-10-15'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isAfter(d('2023-10-14'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isAfter(d('2023-10-15'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isSame(d('2023-10-15'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isSame(d('2023-10-16'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isSameOrBefore(d('2023-10-15'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isSameOrBefore(d('2023-10-16'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isSameOrBefore(d('2023-10-14'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isSameOrAfter(d('2023-10-15'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isSameOrAfter(d('2023-10-14'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isSameOrAfter(d('2023-10-16'))	null	expr.syntax.invalid
+date.csv	d('2025-02-01').isAfter(d('2025-01-05'), 'year')	null	expr.syntax.invalid
+date.csv	d('2025-02-01').isAfter(d('2024-12-31'), 'year')	null	expr.syntax.invalid
+date.csv	d('2025-02-01').isBefore(d('2025-03-01'), 'year')	null	expr.syntax.invalid
+date.csv	d('2025-02-01').isBefore(d('2026-01-01'), 'year')	null	expr.syntax.invalid
+date.csv	d('2025-02-01').isSame(d('2025-12-31'), 'year')	null	expr.syntax.invalid
+date.csv	d('2025-02-01').isSame(d('2026-01-01'), 'year')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isAfter(d('2025-01-05'), 'month')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isAfter(d('2025-02-05'), 'month')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isBefore(d('2025-03-01'), 'month')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isBefore(d('2025-02-28'), 'month')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isSame(d('2025-02-28'), 'month')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isSame(d('2025-03-01'), 'month')	null	expr.syntax.invalid
+date.csv	d('2025-04-15').isAfter(d('2025-01-01'), 'quarter')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isAfter(d('2025-03-31'), 'quarter')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isBefore(d('2025-04-01'), 'quarter')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isBefore(d('2025-03-31'), 'quarter')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isSame(d('2025-03-15'), 'quarter')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isSame(d('2025-04-01'), 'quarter')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isAfter(d('2025-02-14'), 'day')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isAfter(d('2025-02-15'), 'day')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isBefore(d('2025-02-16'), 'day')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isBefore(d('2025-02-15'), 'day')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isSame(d('2025-02-15 12:00:00'), 'day')	null	expr.syntax.invalid
+date.csv	d('2025-02-15').isSame(d('2025-02-16'), 'day')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').year()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').month()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').day()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').weekday()	null	expr.syntax.invalid
+date.csv	d('2023-10-16').weekday()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').hour()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').minute()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').second()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').dayOfYear()	null	expr.syntax.invalid
+date.csv	d('2023-01-01').dayOfYear()	null	expr.syntax.invalid
+date.csv	d('2023-12-31').dayOfYear()	null	expr.syntax.invalid
+date.csv	d('2024-12-31').dayOfYear()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').quarter()	null	expr.syntax.invalid
+date.csv	d('2023-01-15').quarter()	null	expr.syntax.invalid
+date.csv	d('2023-04-15').quarter()	null	expr.syntax.invalid
+date.csv	d('2023-07-15').quarter()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').timestamp()	null	expr.syntax.invalid
+date.csv	d('2023-10-15', 'Europe/Berlin').offsetName()	null	expr.syntax.invalid
+date.csv	d('2023-10-15', 'America/Los_Angeles').offsetName()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isLeapYear()	null	expr.syntax.invalid
+date.csv	d('2024-10-15').isLeapYear()	null	expr.syntax.invalid
+date.csv	d('2000-10-15').isLeapYear()	null	expr.syntax.invalid
+date.csv	d('1900-10-15').isLeapYear()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').set('year', 2024)	null	expr.syntax.invalid
+date.csv	d('2023-10-15').set('month', 5)	null	expr.syntax.invalid
+date.csv	d('2023-10-15').set('day', 20)	null	expr.syntax.invalid
+date.csv	d('2023-10-15T10:30:00Z').set('hour', 15)	null	expr.syntax.invalid
+date.csv	d('2023-10-15T10:30:00Z').set('minute', 45)	null	expr.syntax.invalid
+date.csv	d('2023-10-15T10:30:00Z').set('second', 30)	null	expr.syntax.invalid
+date.csv	d().isSame(d(), 'day')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').startOf('day')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T10:30:45Z').startOf('hour')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').endOf('day')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T10:30:45Z').endOf('hour')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').startOf('month')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').endOf('month')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').startOf('year')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').endOf('year')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').startOf('week')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').endOf('week')	null	expr.syntax.invalid
+date.csv	d('2024-01-15').startOf('week')	null	expr.syntax.invalid
+date.csv	d('2024-01-15').endOf('week')	null	expr.syntax.invalid
+date.csv	d('2024-01-16').endOf('week')	null	expr.syntax.invalid
+date.csv	d('2024-01-21').endOf('week')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').startOf('quarter')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').endOf('quarter')	null	expr.syntax.invalid
+date.csv	d('2023-03-15').startOf('quarter')	null	expr.syntax.invalid
+date.csv	d('2023-03-15').endOf('quarter')	null	expr.syntax.invalid
+date.csv	d('2023-06-15').startOf('quarter')	null	expr.syntax.invalid
+date.csv	d('2023-06-15').endOf('quarter')	null	expr.syntax.invalid
+date.csv	d('2023-09-15').startOf('quarter')	null	expr.syntax.invalid
+date.csv	d('2023-09-15').endOf('quarter')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T00:00:00Z').tz('America/New_York')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T00:00:00Z').tz('Europe/London')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T00:00:00+00:00').tz('UTC')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T12:00:00+02:00', 'Etc/GMT-2').tz('UTC')	null	expr.syntax.invalid
+date.csv	d().sub(1, 'd').isYesterday()	null	expr.syntax.invalid
+date.csv	d().add(1, 'd').isTomorrow()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').isToday()	null	expr.syntax.invalid
+date.csv	d('2023-10-15').diff(d('2023-10-10'), 'day')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T10:00:00Z').diff(d('2023-10-15T08:30:00Z'), 'hour')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').diff(d('2023-09-15'), 'month')	null	expr.syntax.invalid
+date.csv	d('2023-12-31').diff(d('2023-01-01'), 'year')	null	expr.syntax.invalid
+date.csv	d('2023-12-31').diff(d('2022-01-01'), 'year')	null	expr.syntax.invalid
+date.csv	d('2023-10-10').diff(d('2023-10-15'), 'day')	null	expr.syntax.invalid
+date.csv	d('2023-09-15').diff(d('2023-10-15'), 'month')	null	expr.syntax.invalid
+date.csv	d('2022-01-01').diff(d('2023-12-31'), 'year')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T10:30:00Z').diff(d('2023-10-15T10:00:00Z'), 'minute')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T10:00:30Z').diff(d('2023-10-15T10:00:00Z'), 'second')	null	expr.syntax.invalid
+date.csv	d('2023-10-22').diff(d('2023-10-15'), 'week')	null	expr.syntax.invalid
+date.csv	d('2023-10-29').diff(d('2023-10-15'), 'week')	null	expr.syntax.invalid
+date.csv	d('2023-07-01').diff(d('2023-01-01'), 'quarter')	null	expr.syntax.invalid
+date.csv	d('2023-12-31').diff(d('2023-01-01'), 'quarter')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').diff(d('2023-10-15'), 'day')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').diff(d('2023-10-15'), 'month')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').diff(d('2023-10-15'), 'year')	null	expr.syntax.invalid
+date.csv	d('2023-03-31').diff(d('2023-02-28'), 'month')	null	expr.syntax.invalid
+date.csv	d('2024-02-29').diff(d('2024-01-31'), 'month')	null	expr.syntax.invalid
+date.csv	d('2023-05-31').diff(d('2023-04-30'), 'month')	null	expr.syntax.invalid
+date.csv	d('2023-03-31').diff(d('2023-02-28'), 'month')	null	expr.syntax.invalid
+date.csv	d('2023-02-28').diff(d('2023-01-31'), 'month')	null	expr.syntax.invalid
+date.csv	d('2023-04-30').diff(d('2023-03-31'), 'month')	null	expr.syntax.invalid
+date.csv	d('2024-02-29').diff(d('2023-02-28'), 'year')	null	expr.syntax.invalid
+date.csv	d('2023-12-31').diff(d('2023-01-01'), 'year')	null	expr.syntax.invalid
+date.csv	d('2024-01-01').diff(d('2023-01-01'), 'year')	null	expr.syntax.invalid
+date.csv	d('2025-01-01').diff(d('2020-01-01'), 'year')	null	expr.syntax.invalid
+date.csv	d('2023-12-01').diff(d('2023-01-01'), 'month')	null	expr.syntax.invalid
+date.csv	d('2023-12-31').diff(d('2023-01-01'), 'day')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T12:00:00Z').diff(d('2023-10-15T10:30:00Z'), 'hour')	null	expr.syntax.invalid
+date.csv	d('2023-10-16T12:00:00Z').diff(d('2023-10-15T18:00:00Z'), 'day')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').format('%Y-%m-%d')	null	expr.syntax.invalid
+date.csv	d('2023-10-15').format('%Y/%m/%d')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T14:30:45Z').format('%A, %B %d %Y, %H:%M:%S')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T14:30:45Z').format('%a %b %d %H:%M')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T14:30:45Z').format('Day %j of year %Y')	null	expr.syntax.invalid
+date.csv	d('2023-10-15T14:30:45.123Z').format('%H:%M:%S.%f')	null	expr.syntax.invalid
+date.csv	d(null).isValid()	null	expr.syntax.invalid
+date.csv	d('foo').isValid()	null	expr.syntax.invalid
+date.csv	d('2023-13-01').isValid()	null	expr.syntax.invalid
+date.csv	d('2023-02-30').isValid()	null	expr.syntax.invalid
+date.csv	d('2023-10-15') == d('2023-10-15')	null	expr.syntax.invalid
+date.csv	d('2023-10-15') == d('2023-10-16')	null	expr.syntax.invalid
+date.csv	d('2023-10-15') != d('2023-10-16')	null	expr.syntax.invalid
+date.csv	d('2023-10-15') != d('2023-10-15')	null	expr.syntax.invalid
+date.csv	d('2023-10-15') < d('2023-10-16')	null	expr.syntax.invalid
+date.csv	d('2023-10-15') < d('2023-10-15')	null	expr.syntax.invalid
+date.csv	d('2023-10-15') <= d('2023-10-15')	null	expr.syntax.invalid
+date.csv	d('2023-10-16') <= d('2023-10-15')	null	expr.syntax.invalid
+date.csv	d('2023-10-16') > d('2023-10-15')	null	expr.syntax.invalid
+date.csv	d('2023-10-15') > d('2023-10-15')	null	expr.syntax.invalid
+date.csv	d('2023-10-15') >= d('2023-10-15')	null	expr.syntax.invalid
+date.csv	d('2023-10-15') >= d('2023-10-16')	null	expr.syntax.invalid
+date.csv	d('2023-10-15') in [d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-10-01') in [d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-10-31') in [d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-09-30') in [d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-11-01') in [d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-10-15') in (d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-01') in (d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-31') in (d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-02') in (d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-30') in (d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15') in [d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-01') in [d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-31') in [d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-30') in [d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15') in (d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-10-01') in (d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-10-31') in (d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-10-02') in (d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-10-15') not in [d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-09-30') not in [d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-11-01') not in [d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	d('2023-10-01') not in (d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-31') not in (d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-15') not in (d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-31') not in [d('2023-10-01')..d('2023-10-31'))	null	expr.syntax.invalid
+date.csv	d('2023-10-01') not in (d('2023-10-01')..d('2023-10-31')]	null	expr.syntax.invalid
+date.csv	min([d('2023-01-15'), d('2023-03-20'), d('2023-02-10')])	null	expr.syntax.invalid
+date.csv	max([d('2023-01-15'), d('2023-03-20'), d('2023-02-10')])	null	expr.syntax.invalid
+date.csv	min([d('2023-10-15'), d('2023-10-01'), d('2023-10-31')])	null	expr.syntax.invalid
+date.csv	max([d('2023-10-15'), d('2023-10-01'), d('2023-10-31')])	null	expr.syntax.invalid
+date.csv	min([d('2023-10-15T10:30:00Z'), d('2023-10-15T08:15:00Z'), d('2023-10-15T14:45:00Z')])	null	expr.syntax.invalid
+date.csv	max([d('2023-10-15T10:30:00Z'), d('2023-10-15T08:15:00Z'), d('2023-10-15T14:45:00Z')])	null	expr.syntax.invalid
+date.csv	min([d('2022-12-31'), d('2023-01-01'), d('2024-01-01')])	null	expr.syntax.invalid
+date.csv	max([d('2022-12-31'), d('2023-01-01'), d('2024-01-01')])	null	expr.syntax.invalid
+date.csv	min([d('2023-10-15'), d('2023-10-15'), d('2023-10-15')])	null	expr.syntax.invalid
+date.csv	max([d('2023-10-15'), d('2023-10-15'), d('2023-10-15')])	null	expr.syntax.invalid
+date.csv	min([d('2023-10-15')])	null	expr.syntax.invalid
+date.csv	max([d('2023-10-15')])	null	expr.syntax.invalid
+date.csv	min([d('2023-10-15T10:00:00Z'), d('2023-10-15T12:00:00Z')])	null	expr.syntax.invalid
+date.csv	max([d('2023-10-15T10:00:00Z'), d('2023-10-15T12:00:00Z')])	null	expr.syntax.invalid
+date.csv	min([d('1900-01-01'), d('2000-01-01'), d('1950-06-15')])	null	expr.syntax.invalid
+date.csv	max([d('1900-01-01'), d('2000-01-01'), d('1950-06-15')])	null	expr.syntax.invalid
+date.csv	min([d('2024-02-29'), d('2023-02-28'), d('2024-03-01')])	null	expr.syntax.invalid
+date.csv	max([d('2024-02-29'), d('2023-02-28'), d('2024-03-01')])	null	expr.syntax.invalid
+date.csv	min([d('2023-01-31'), d('2023-02-28'), d('2023-03-31')])	null	expr.syntax.invalid
+date.csv	max([d('2023-01-31'), d('2023-02-28'), d('2023-03-31')])	null	expr.syntax.invalid
+date.csv	min([d('2023-10-15').add(1, 'd'), d('2023-10-15').sub(1, 'd'), d('2023-10-15')])	null	expr.syntax.invalid
+date.csv	max([d('2023-10-15').add(1, 'd'), d('2023-10-15').sub(1, 'd'), d('2023-10-15')])	null	expr.syntax.invalid
+date.csv	min([d('2023-01-01'), d('2023-12-31')]).isBefore(d('2023-06-01'))	null	expr.syntax.invalid
+date.csv	max([d('2023-01-01'), d('2023-12-31')]).isAfter(d('2023-06-01'))	null	expr.syntax.invalid
+unary.csv	true	{"$":true}	ok
+unary.csv	true	{"$":false}	ok
+unary.csv	false	{"$":true}	ok
+unary.csv	false	{"$":false}	ok
+unary.csv	> 5	{"$":10}	ok
+unary.csv	< 10	{"$":5}	ok
+unary.csv	>= 10	{"$":10}	ok
+unary.csv	<= 5	{"$":5}	ok
+unary.csv	[-10..0]	{"$":0}	ok
+unary.csv	(-10..0]	{"$":-10}	ok
+unary.csv	[-10..0)	{"$":-10}	ok
+unary.csv	(-10..0)	{"$":0}	ok
+unary.csv	[-15..-5]	{"$":-4.99}	ok
+unary.csv	[-5..5]	{"$":5}	ok
+unary.csv	[-6..6]	{"$":5}	ok
+unary.csv	[-5..5]	{"$":5}	ok
+unary.csv	[0..0]	{"$":5}	ok
+unary.csv	> 5 and < 10	{"$":5}	ok
+unary.csv	<= 10 and > 5	{"$":10}	ok
+unary.csv	>= 10 or < 5	{"$":10}	ok
+unary.csv	<= 5 or >= 10	{"$":10}	ok
+unary.csv	[-10..0] and > -5	{"$":-5}	ok
+unary.csv	[-10..0] and > -5	{"$":-4.99}	ok
+unary.csv	(-10..0] or > 0	{"$":-10}	ok
+unary.csv	[-10..0) and > -5	{"$":-5}	ok
+unary.csv	(-10..0) or > 0	{"$":5}	ok
+unary.csv	[-15..-5] and <= -10	{"$":-10}	ok
+unary.csv	[-5..5] or > 0	{"$":5}	ok
+unary.csv	[-5..5] or < 0	{"$":5.01}	ok
+unary.csv	[-5..5] and > 0	{"$":5}	ok
+unary.csv	[0..0] and < 5	{"$":0}	ok
+unary.csv	> 10 or < -5	{"$":5}	ok
+unary.csv	> 10, < -5	{"$":15}	ok
+unary.csv	<= -10 and >= -15	{"$":-5}	ok
+unary.csv	>= 5 + 2	{"$":7}	ok
+unary.csv	< 5 * 3	{"$":15}	ok
+unary.csv	>= 2 * 3	{"$":6}	ok
+unary.csv	<= 5 / 2	{"$":2.5}	ok
+unary.csv	!= 10 - 3	{"$":7}	ok
+unary.csv	5 % 2	{"$":1}	expr.construct.unsupported
+unary.csv	abs(-5)	{"$":5}	ok
+unary.csv	floor(4.8)	{"$":4}	ok
+unary.csv	ceil(4.1)	{"$":5}	ok
+unary.csv	round(3.5)	{"$":4}	ok
+unary.csv	max([3, 5, 8])	{"$":8}	expr.construct.unsupported
+unary.csv	min([3, 5, 8])	{"$":3}	expr.construct.unsupported
+unary.csv	(5 + 3) * 2	{"$":16}	ok
+unary.csv	(10 - 4) / 2	{"$":3}	ok
+unary.csv	abs(-5) * (3 + 2)	{"$":25}	ok
+unary.csv	2 ^ 3	{"$":8}	expr.construct.unsupported
+unary.csv	max([3, 5, 8]) - min([2, 7, 4])	{"$":6}	expr.construct.unsupported
+unary.csv	floor(8.9) + ceil(4.1) * 2	{"$":18}	ok
+unary.csv	rand(100) >= 0 and rand(100) <= 100	{"$":true}	expr.construct.unsupported
+unary.csv	sum([1, 2, 3, 4, 5]) / len([1, 2, 3, 4, 5])	{"$":3}	expr.type.nullable
+unary.csv	median([4, 2, 7, 5, 3])	{"$":4}	expr.construct.unsupported
+unary.csv	mode([1, 2, 2, 3, 3, 3, 4, 4, 4, 4])	{"$":4}	expr.construct.unsupported
+unary.csv	some($, # > 10 and # < 20)	{"$":[1,2,3,15]}	expr.cost.exceeds_budget
+unary.csv	'GB','US'	{"$":"US"}	ok
+unary.csv	'GB','US'	{"$":"FR"}	ok
+unary.csv	'hello' + " " + "world"	{"$":"hello world"}	ok
+unary.csv	len($) == 13	{"$":"Hello, World!"}	ok
+unary.csv	lower("Hello, World!")	{"$":"HELLO, WORLD!"}	ok
+unary.csv	upper("Hello, World!")	{"$":"HELLO, WORLD!"}	ok
+unary.csv	startsWith($, "Hello")	{"$":"Hello, World!"}	ok
+unary.csv	startsWith($, "World")	{"$":"Hello, World!"}	ok
+unary.csv	endsWith($, "World!")	{"$":"Hello, World!"}	ok
+unary.csv	endsWith($, "Hello!")	{"$":"Hello, World!"}	ok
+unary.csv	contains($, "lo")	{"$":"Hello, World!"}	ok
+unary.csv	contains($, "foo")	{"$":"Hello, World!"}	ok
+unary.csv	matches($, "H[a-z]+, W[a-z]+!")	{"$":"Hello, World!"}	expr.construct.unsupported
+unary.csv	matches($, "[0-9]+")	{"$":"Hello, World!"}	expr.construct.unsupported
+unary.csv	`simple template`	{"$":"simple template"}	expr.construct.unsupported
+unary.csv	`sum of numbers ${sum([1, 2, 3])}`	{"$":"sum of numbers 6"}	expr.construct.unsupported
+unary.csv	`reference env: ${a}`	{"$":"reference env: example","a":"example"}	expr.construct.unsupported
+unary.csv	`uppercase inner ${upper('string')}`	{"$":"uppercase inner STRING"}	expr.construct.unsupported
+unary.csv	$[0:5] == 'sample'	{"$":"sample_string"}	expr.construct.unsupported
+unary.csv	$[7:12] == 'string'	{"$":"sample_string"}	expr.construct.unsupported
+unary.csv	$[7:] == 'string'	{"$":"sample_string"}	expr.construct.unsupported
+unary.csv	$[:5] == 'sample'	{"$":"sample_string"}	expr.construct.unsupported
+unary.csv	string(true)	{"$":"true"}	expr.construct.unsupported
+unary.csv	string(false)	{"$":"false"}	expr.construct.unsupported
+unary.csv	string(123)	{"$":"123"}	expr.construct.unsupported
+unary.csv	number('123.45')	{"$":123.45}	expr.construct.unsupported
+unary.csv	number('-56.78')	{"$":-56.78}	expr.construct.unsupported
+unary.csv	number(true)	{"$":1}	expr.construct.unsupported
+unary.csv	bool('true')	{"$":true}	expr.construct.unsupported
+unary.csv	bool('false')	{"$":false}	expr.construct.unsupported
+unary.csv	bool(1)	{"$":true}	expr.construct.unsupported
+unary.csv	bool(0)	{"$":false}	expr.construct.unsupported

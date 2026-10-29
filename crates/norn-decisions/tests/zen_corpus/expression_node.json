@@ -1,0 +1,233 @@
+{
+  "description": "expressionNode: exact decimal arithmetic; a fraction is never truncated (upstream #530 at the -6/-7 pin: serde would turn 3.5 into 3).",
+  "rule": {
+    "ruleId": "demo.rule.expression_node",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "amount": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "amount"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "demo.Order"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "half"
+                ]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "property",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string"
+              },
+              "half": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "actionId",
+              "half"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              },
+              "dueIn": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId",
+              "dueIn"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "x",
+          "name": "x",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "event.kind == 'submitted' ? [{op: 'set', objectType: 'demo.Order', key: 'o1', property: 'half', value: slice.amount / 2}] : []"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "[{actionId: 'notify', half: slice.amount / 2}]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "x",
+          "type": "edge"
+        },
+        {
+          "id": "e2",
+          "sourceId": "x",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "seven halves",
+      "slice": {
+        "amount": 7
+      },
+      "event": {
+        "kind": "submitted"
+      },
+      "expect": {
+        "facts": [
+          {
+            "op": "set",
+            "objectType": "demo.Order",
+            "key": "o1",
+            "property": "half",
+            "value": 3.5
+          }
+        ],
+        "commands": [
+          {
+            "actionId": "notify",
+            "half": 3.5
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "a tenth halves exactly",
+      "slice": {
+        "amount": 0.1
+      },
+      "event": {
+        "kind": "opened"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "actionId": "notify",
+            "half": 0.05
+          }
+        ],
+        "timers": []
+      }
+    }
+  ]
+}

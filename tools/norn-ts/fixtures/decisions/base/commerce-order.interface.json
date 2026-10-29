@@ -1,0 +1,51 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "commerce.Order.interface",
+  "kind": "entity",
+  "namespace": "commerce",
+  "name": "Order",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/dev/sales-order/commerce-order.interface.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "commerce.Order",
+      "description": "An order a source system can report: its number, customer, and total in integer minor units (#3010).",
+      "properties": [
+        {
+          "id": "so_number",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "customer",
+          "type": {
+            "kind": "text"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "total",
+          "type": {
+            "kind": "integer"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        }
+      ]
+    }
+  }
+}

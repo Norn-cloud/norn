@@ -1,0 +1,31 @@
+import { Effect } from "effect"
+import { Norn } from "@norn/authoring"
+export default Norn.flow({ id: "billing.expanded_local", version: "1.0.0" }, Effect.gen(function* () {
+const a0 = "leaf"
+const a1 = { left: a0, right: a0 }
+const a2 = { left: a1, right: a1 }
+const a3 = { left: a2, right: a2 }
+const a4 = { left: a3, right: a3 }
+const a5 = { left: a4, right: a4 }
+const a6 = { left: a5, right: a5 }
+const a7 = { left: a6, right: a6 }
+const a8 = { left: a7, right: a7 }
+const a9 = { left: a8, right: a8 }
+const a10 = { left: a9, right: a9 }
+const a11 = { left: a10, right: a10 }
+const a12 = { left: a11, right: a11 }
+const a13 = { left: a12, right: a12 }
+const a14 = { left: a13, right: a13 }
+const a15 = { left: a14, right: a14 }
+const a16 = { left: a15, right: a15 }
+const a17 = { left: a16, right: a16 }
+const a18 = { left: a17, right: a17 }
+const a19 = { left: a18, right: a18 }
+const a20 = { left: a19, right: a19 }
+const a21 = { left: a20, right: a20 }
+const a22 = { left: a21, right: a21 }
+const a23 = { left: a22, right: a22 }
+const a24 = { left: a23, right: a23 }
+const a25 = { left: a24, right: a24 }
+return a25
+}))

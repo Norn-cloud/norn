@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "6:23",
+      "end": "6:28",
+      "construct": "1e400"
+    },
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "11:20",
+      "end": "11:25",
+      "construct": "1e400"
+    }
+  ]
+}

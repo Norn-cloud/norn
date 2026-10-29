@@ -1,0 +1,23 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.Sku.preferred_supplier.relation",
+  "kind": "relation",
+  "namespace": "retail",
+  "name": "preferred_supplier",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/retail-sku-supplier.relation.json"
+  },
+  "payload": {
+    "from": "retail.Sku",
+    "to": "purchasing.Supplier",
+    "cardinality": "many_to_one"
+  }
+}

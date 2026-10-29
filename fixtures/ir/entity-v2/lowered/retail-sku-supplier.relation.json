@@ -1,0 +1,11 @@
+{
+  "link": {
+    "cardinality": {
+      "from": "many",
+      "to": "one"
+    },
+    "id": "preferred_supplier",
+    "target": "purchasing.Supplier"
+  },
+  "source": "retail.Sku"
+}

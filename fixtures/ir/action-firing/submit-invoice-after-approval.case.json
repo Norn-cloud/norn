@@ -1,0 +1,16 @@
+{
+  "description": "After approval the same call fires invoice: approved is its source state.",
+  "artifacts": [
+    "ir/entity-v2/artifact-set/commerce-sales-order.entity.json",
+    "ir/commerce-sales-order-submit-invoice.action.json"
+  ],
+  "action": "commerce.sales_order.submit_invoice.action",
+  "object": {
+    "entityArtifactId": "commerce.SalesOrder.entity",
+    "values": {
+      "so_number": "SO-0001",
+      "status": "approved"
+    }
+  },
+  "expect": []
+}

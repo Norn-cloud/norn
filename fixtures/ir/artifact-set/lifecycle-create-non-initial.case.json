@@ -1,0 +1,240 @@
+{
+  "description": "The decision may create a purchase order already approved, which is not an initial state of its status lifecycle.",
+  "base": [],
+  "artifacts": [
+    "ir/entity-v2/artifact-set/commerce-purchase-order.entity.json",
+    {
+      "fixture": "rule-ir-v2/valid/purchase-order-approval.rule.json",
+      "patch": {
+        "payload": {
+          "ruleId": "commerce.rule.purchase_order_approval",
+          "ruleVersion": "2.0",
+          "contract": "decide",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "slice": {
+                "type": "object",
+                "properties": {
+                  "order": {
+                    "type": "object",
+                    "properties": {
+                      "poNumber": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "poNumber",
+                      "status"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "order"
+                ],
+                "additionalProperties": false
+              },
+              "event": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "poNumber": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "poNumber"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "slice",
+              "event"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "facts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "create",
+                        "transition"
+                      ]
+                    },
+                    "objectType": {
+                      "type": "string",
+                      "enum": [
+                        "commerce.PurchaseOrder"
+                      ]
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "values": {
+                      "type": "object",
+                      "properties": {
+                        "po_number": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "draft",
+                            "approved"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "po_number",
+                        "status"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "lifecycle": {
+                      "type": "string",
+                      "enum": [
+                        "status"
+                      ]
+                    },
+                    "transition": {
+                      "type": "string",
+                      "enum": [
+                        "submit",
+                        "approve"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "objectType",
+                    "key"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "commands": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "actionId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "actionId"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "timers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "timerId": {
+                      "type": "string"
+                    },
+                    "dueIn": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "timerId",
+                    "dueIn"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "facts",
+              "commands",
+              "timers"
+            ],
+            "additionalProperties": false
+          },
+          "scopeRequired": [
+            "orgId",
+            "environmentId"
+          ],
+          "graph": {
+            "contentType": "application/vnd.gorules.decision",
+            "nodes": [
+              {
+                "id": "in",
+                "name": "slice and event",
+                "type": "inputNode"
+              },
+              {
+                "id": "emit",
+                "name": "emit",
+                "type": "expressionNode",
+                "content": {
+                  "expressions": [
+                    {
+                      "id": "x_facts",
+                      "key": "facts",
+                      "value": "event.kind == 'opened' ? [{op: 'create', objectType: 'commerce.PurchaseOrder', key: event.poNumber, values: {po_number: event.poNumber, status: 'draft'}}] : event.kind == 'submitted' ? [{op: 'transition', objectType: 'commerce.PurchaseOrder', key: slice.order.poNumber, lifecycle: 'status', transition: 'submit'}] : event.kind == 'approved' ? [{op: 'transition', objectType: 'commerce.PurchaseOrder', key: slice.order.poNumber, lifecycle: 'status', transition: 'approve'}] : []"
+                    },
+                    {
+                      "id": "x_commands",
+                      "key": "commands",
+                      "value": "[]"
+                    },
+                    {
+                      "id": "x_timers",
+                      "key": "timers",
+                      "value": "[]"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "out",
+                "name": "decision",
+                "type": "outputNode"
+              }
+            ],
+            "edges": [
+              {
+                "id": "e_in",
+                "sourceId": "in",
+                "targetId": "emit",
+                "type": "edge"
+              },
+              {
+                "id": "e_out",
+                "sourceId": "emit",
+                "targetId": "out",
+                "type": "edge"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "expect": [
+    [
+      "commerce.purchase_order_approval.rule",
+      "lifecycle.validation.undeclared_write",
+      "/payload/outputSchema/properties/facts/items/properties/values/properties/status/enum/1"
+    ]
+  ]
+}

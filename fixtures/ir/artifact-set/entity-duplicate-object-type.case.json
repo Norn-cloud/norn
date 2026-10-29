@@ -1,0 +1,20 @@
+{
+  "description": "Two entity artifacts define the object type retail.Sku; one is EntityIR v1, which the v2 whole-model check does not see.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-sku.entity.json",
+    {
+      "fixture": "ir/retail-sku.entity.json",
+      "patch": {
+        "artifactId": "retail.Sku.entity.copy"
+      }
+    }
+  ],
+  "expect": [
+    [
+      "retail.Sku.entity.copy",
+      "artifact_set.entity.duplicate_object_type",
+      "/payload/objectKind"
+    ]
+  ]
+}

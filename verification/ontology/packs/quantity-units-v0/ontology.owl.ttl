@@ -1,0 +1,39 @@
+@prefix norn: <https://norn.dev/ontology/quantity-units/0.1/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix qudtqk: <https://qudt.org/vocab/quantitykind/> .
+@prefix qudtunit: <https://qudt.org/vocab/unit/> .
+
+norn:ontology a owl:Ontology ;
+  owl:versionIRI <https://norn.dev/ontology/quantity-units/0.1/> ;
+  owl:versionInfo "0.1.0 semantic projection; OWL 2 RL; never transition or conversion authority" .
+
+norn:QuantityKind a owl:Class ; rdfs:label "Quantity Kind" .
+norn:CountQuantityKind a owl:Class ; rdfs:subClassOf norn:QuantityKind ; rdfs:label "Count" ;
+  skos:closeMatch qudtqk:Count .
+norn:MassQuantityKind a owl:Class ; rdfs:subClassOf norn:QuantityKind ; rdfs:label "Mass" ;
+  skos:closeMatch qudtqk:Mass .
+norn:DurationQuantityKind a owl:Class ; rdfs:subClassOf norn:QuantityKind ; rdfs:label "Duration" ;
+  skos:relatedMatch qudtqk:Time .
+norn:RatioQuantityKind a owl:Class ; rdfs:subClassOf norn:QuantityKind ; rdfs:label "Ratio" ;
+  skos:closeMatch qudtqk:DimensionlessRatio .
+
+norn:Unit a owl:Class ; rdfs:label "Unit" .
+norn:CountUnit a owl:Class ; rdfs:subClassOf norn:Unit ; rdfs:label "Count Unit" ;
+  skos:closeMatch qudtunit:COUNT .
+norn:Kilogram a owl:Class ; rdfs:subClassOf norn:Unit ; rdfs:label "Kilogram" ;
+  skos:closeMatch qudtunit:KiloGM .
+norn:Gram a owl:Class ; rdfs:subClassOf norn:Unit ; rdfs:label "Gram" ;
+  skos:closeMatch qudtunit:GM .
+norn:Hour a owl:Class ; rdfs:subClassOf norn:Unit ; rdfs:label "Hour" ;
+  skos:closeMatch qudtunit:HR .
+norn:Fraction a owl:Class ; rdfs:subClassOf norn:Unit ; rdfs:label "Fraction" ;
+  skos:closeMatch qudtunit:ONE-PER-ONE .
+norn:Percent a owl:Class ; rdfs:subClassOf norn:Unit ; rdfs:label "Percent" ;
+  skos:closeMatch qudtunit:PERCENT .
+
+norn:code a owl:DatatypeProperty .
+norn:label a owl:DatatypeProperty .
+norn:symbol a owl:DatatypeProperty .
+norn:quantityKind a owl:ObjectProperty ; rdfs:range norn:QuantityKind .

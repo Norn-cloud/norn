@@ -1,0 +1,37 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "party.Party.interface.v2",
+  "kind": "entity",
+  "namespace": "party",
+  "name": "Party",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "party.Party",
+      "description": "A person or organization the business deals with.",
+      "properties": [
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "text"
+          },
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      ]
+    }
+  }
+}

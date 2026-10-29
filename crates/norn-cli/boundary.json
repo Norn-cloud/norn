@@ -1,0 +1,13 @@
+{
+  "name": "norn-cli",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-api",
+    "norn-checker-wasm",
+    "norn-ir",
+    "norn-expr",
+    "norn-decisions"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}

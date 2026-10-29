@@ -1,0 +1,30 @@
+{
+  "description": "A sub-decision that resolves, through its pinned dependency, to a RuleIR v1 rule, which is not a decision graph (T3-DEC-1).",
+  "base": [
+    "rule-ir-v2/sets/v1-priority.rule.json"
+  ],
+  "artifacts": [
+    {
+      "fixture": "ir/retail-sku.entity.json",
+      "patch": {
+        "payload": {
+          "objectKind": "retail.Sku",
+          "fields": {
+            "skuId": { "type": "text", "required": true },
+            "reorder_state": { "type": "text", "required": false }
+          }
+        }
+      }
+    },
+    "ir/retail-reorder.action.json",
+    "ir/retail-purchase-request.entity.json",
+    "rule-ir-v2/valid/reorder-decision.rule.json"
+  ],
+  "expect": [
+    [
+      "retail.reorder_decision.rule",
+      "artifact_set.decision.sub_decision_target",
+      "/payload/graph/nodes/2/content/key"
+    ]
+  ]
+}

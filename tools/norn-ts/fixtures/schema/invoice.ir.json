@@ -1,0 +1,223 @@
+[
+  {
+    "artifactId": "billing.Billable.interface",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "entity",
+    "lifecycle": "draft",
+    "name": "Billable",
+    "namespace": "billing",
+    "payload": {
+      "entityVersion": "2.0",
+      "interface": {
+        "description": "Anything with an exact amount in an ISO 4217 currency.",
+        "name": "billing.Billable",
+        "properties": [
+          {
+            "id": "amount",
+            "type": {
+              "kind": "decimal",
+              "scale": 2
+            }
+          },
+          {
+            "id": "currency",
+            "type": {
+              "kind": "ref",
+              "name": "iso4217.currency_code"
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/schema/invoice.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "billing.Invoice.entity",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "entity",
+    "lifecycle": "draft",
+    "name": "Invoice",
+    "namespace": "billing",
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "description": "An invoice for an exact amount.",
+        "identity": [
+          {
+            "name": "primary",
+            "properties": [
+              "number"
+            ]
+          }
+        ],
+        "implements": [
+          "billing.Billable"
+        ],
+        "lifecycles": [
+          {
+            "description": "Issue, then pay or void.",
+            "initial": [
+              "draft"
+            ],
+            "property": "status",
+            "terminal": [
+              "paid",
+              "void"
+            ],
+            "transitions": [
+              {
+                "from": [
+                  "draft"
+                ],
+                "id": "issue",
+                "to": "issued"
+              },
+              {
+                "description": "Record full payment.",
+                "from": [
+                  "issued"
+                ],
+                "id": "pay",
+                "to": "paid"
+              },
+              {
+                "from": [
+                  "draft",
+                  "issued"
+                ],
+                "id": "cancel",
+                "to": "void"
+              }
+            ]
+          }
+        ],
+        "name": "billing.Invoice",
+        "properties": [
+          {
+            "id": "number",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "default": "0.00",
+            "id": "amount",
+            "type": {
+              "kind": "decimal",
+              "scale": 2
+            }
+          },
+          {
+            "id": "currency",
+            "type": {
+              "kind": "ref",
+              "name": "iso4217.currency_code"
+            }
+          },
+          {
+            "default": "19.990",
+            "id": "weight",
+            "type": {
+              "kind": "decimal",
+              "scale": 3,
+              "unit": {
+                "code": "kg",
+                "system": "ucum"
+              }
+            }
+          },
+          {
+            "default": "0",
+            "id": "lines",
+            "type": {
+              "kind": "integer"
+            }
+          },
+          {
+            "constraints": {
+              "nullable": true
+            },
+            "id": "issued_at",
+            "type": {
+              "kind": "timestamp",
+              "timezone": "utc"
+            }
+          },
+          {
+            "constraints": {
+              "nullable": true
+            },
+            "id": "due_on",
+            "type": {
+              "kind": "date"
+            }
+          },
+          {
+            "default": false,
+            "id": "paid",
+            "type": {
+              "kind": "boolean"
+            }
+          },
+          {
+            "constraints": {
+              "nullable": true
+            },
+            "id": "channel",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "web"
+                },
+                {
+                  "value": "pos"
+                }
+              ]
+            }
+          },
+          {
+            "default": "draft",
+            "id": "status",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "draft"
+                },
+                {
+                  "value": "issued"
+                },
+                {
+                  "value": "paid"
+                },
+                {
+                  "value": "void"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/schema/invoice.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  }
+]

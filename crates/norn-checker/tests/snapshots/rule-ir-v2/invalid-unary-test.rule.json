@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.reorder_decision.rule",
+      "code": "rule.validation.jdm_invalid_expression",
+      "message": "'> > 10000' is not a ZEN unary test: expression failed to compile: Parser error: Unexpected token: Operator at (2, 3); Expected UnaryOperator.",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/graph/nodes/4/content/rules/0/c_total",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

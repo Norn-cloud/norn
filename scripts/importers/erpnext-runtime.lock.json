@@ -1,0 +1,53 @@
+{
+  "format": "norn.runtime-upstream-inputs/1",
+  "interop": {
+    "openlineage-2-0-2.schema.json": {
+      "url": "https://openlineage.io/spec/2-0-2/OpenLineage.json",
+      "sha256": "69f68bee00b9beac88a87059c0102410e7bb05f3f43c46d02a0409831eceb0d2",
+      "license": "Apache-2.0",
+      "distribution": "external-runtime-test-input-only"
+    },
+    "prov-jsonld.schema.json": {
+      "url": "https://raw.githubusercontent.com/openprov/prov-jsonld/bac4d8ad9f8163325fc5a62bc490e383b2dd5fea/2024-08-25/schema.json",
+      "sha256": "0d95917f8651f55c17c599e3d62f69b5deb4a7dfbc98f486102bed27ce91d5c6",
+      "license": "upstream-terms-unresolved",
+      "distribution": "external-runtime-test-input-only",
+      "canonicalUrl": "https://openprovenance.org/prov-jsonld/schema.json",
+      "revision": "bac4d8ad9f8163325fc5a62bc490e383b2dd5fea"
+    },
+    "prov-jsonld.context.jsonld": {
+      "url": "https://openprovenance.org/prov-jsonld/context.jsonld",
+      "sha256": "811d5e94d8cb568d7dc4461ef6a247644dd0e775cdc88b65c42238d8e832be1e",
+      "license": "upstream-terms-unresolved",
+      "distribution": "external-runtime-test-input-only"
+    },
+    "osi-schema.json": {
+      "url": "https://raw.githubusercontent.com/apache/ossie/faf581054dcf7964d5fe0ceae7d6f415c8ce32a5/core-spec/osi-schema.json",
+      "sha256": "c1e9adec39562786aa78809665fba568797b15f4c53a0847d9cbcf2dead1bc94",
+      "revision": "faf581054dcf7964d5fe0ceae7d6f415c8ce32a5",
+      "copyright": "2026 Open Semantic Interchange",
+      "license": "upstream-code-Apache-2.0-documents-CC-BY-4.0; schema-classification-unresolved",
+      "distribution": "external-runtime-test-input-only"
+    },
+    "dcterms.ttl": {
+      "url": "https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_terms.ttl",
+      "sha256": "13df401072dd7015bf9d75162f3e41c8138075304b7b9cc1aa1e9c16db976797",
+      "copyright": "Dublin Core Metadata Initiative",
+      "license": "CC-BY-4.0",
+      "terms": "https://www.dublincore.org/about/copyright/",
+      "distribution": "external-runtime-test-input-only"
+    },
+    "dcat3.ttl": {
+      "url": "https://www.w3.org/ns/dcat3.ttl",
+      "sha256": "d1624d3bbf364f6fc1d43b9a188bbb9e67639b1a7d46a5cb7ea3f5d47d02b62f",
+      "license": "upstream-terms-unresolved",
+      "distribution": "external-runtime-test-input-only"
+    },
+    "skos.rdf": {
+      "url": "https://www.w3.org/2009/08/skos-reference/skos.rdf",
+      "sha256": "e79633b8d0564816cee8a99f5c9acf9a0e6fc7257c7209acd684ecad53a89dd6",
+      "license": "upstream-terms-unresolved",
+      "distribution": "external-runtime-test-input-only"
+    }
+  }
+}

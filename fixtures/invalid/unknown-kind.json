@@ -1,0 +1,26 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.Sku.entity",
+  "kind": "gadget",
+  "namespace": "retail",
+  "name": "SKU",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk"
+  },
+  "payload": {
+    "objectKind": "retail.Sku",
+    "fields": {
+      "skuId": {
+        "type": "text",
+        "required": true
+      }
+    }
+  }
+}

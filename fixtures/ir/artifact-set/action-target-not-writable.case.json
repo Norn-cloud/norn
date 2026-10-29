@@ -1,0 +1,126 @@
+{
+  "description": "A generic action upserts an object type whose mutations belong to the inventory domain engine.",
+  "base": [],
+  "artifacts": [
+    {
+      "fixture": "ir/retail-reorder.action.json",
+      "patch": {
+        "payload": {
+          "actionId": "retail.sku.reorder",
+          "title": "Reorder SKU",
+          "description": "Create a purchase request that replenishes one SKU to its target stock level.",
+          "scopeRequired": [
+            "orgId",
+            "environmentId"
+          ],
+          "idempotent": true,
+          "ledgered": true,
+          "ledgerCategory": "procurement.purchase_request",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string"
+              },
+              "skuId": {
+                "type": "string"
+              },
+              "quantity": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "requestId",
+              "skuId",
+              "quantity"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "requestId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "requestId"
+            ],
+            "additionalProperties": false
+          },
+          "preconditions": [
+            "quantity > 0",
+            "len(skuId) > 0"
+          ],
+          "writes": [
+            {
+              "entityKind": "retail.PurchaseRequest",
+              "change": "created"
+            },
+            {
+              "entityKind": "retail.PurchaseRequest",
+              "change": "modified"
+            }
+          ],
+          "compensation": {
+            "actionId": "retail.sku.cancel_reorder"
+          },
+          "access": {
+            "artifactId": "retail.procurement.policy",
+            "version": "0.1.0"
+          },
+          "effectProgram": {
+            "kind": "upsert_input_object",
+            "objectIdField": "requestId",
+            "objectKind": "retail.PurchaseRequest",
+            "entityArtifactId": "retail.PurchaseRequest.entity",
+            "entityArtifactVersion": "0.1.0"
+          }
+        }
+      }
+    },
+    {
+      "fixture": "ir/retail-purchase-request.entity.json",
+      "patch": {
+        "payload": {
+          "objectKind": "retail.PurchaseRequest",
+          "fields": {
+            "requestId": {
+              "type": "text",
+              "required": true
+            },
+            "skuId": {
+              "type": "text",
+              "required": true
+            },
+            "quantity": {
+              "type": "integer",
+              "required": true
+            }
+          },
+          "mutationAuthority": {
+            "kind": "domain_engine",
+            "domain": "inventory"
+          }
+        }
+      }
+    }
+  ],
+  "expect": [
+    [
+      "retail.reorder.action",
+      "artifact_set.action.target_not_writable",
+      "/payload/effectProgram/objectKind"
+    ],
+    [
+      "retail.reorder.action",
+      "artifact_set.action.target_not_writable",
+      "/payload/writes/0/entityKind"
+    ],
+    [
+      "retail.reorder.action",
+      "artifact_set.action.target_not_writable",
+      "/payload/writes/1/entityKind"
+    ]
+  ]
+}

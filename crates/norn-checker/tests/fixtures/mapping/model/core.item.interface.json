@@ -1,0 +1,26 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "core.Item.interface",
+  "kind": "entity",
+  "namespace": "core",
+  "name": "Item",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": { "orgId": "org_demo", "environmentId": "dev" },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "crates/norn-checker/tests/fixtures/mapping/model/core.item.interface.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "core.Item",
+      "description": "An ERPNext item (synthetic Fashion pilot slice).",
+      "properties": [
+        { "id": "item_code", "type": { "kind": "text" } },
+        { "id": "display_name", "type": { "kind": "text" } }
+      ]
+    }
+  }
+}

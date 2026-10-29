@@ -1,0 +1,29 @@
+[package]
+name = "norn-checker-wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "checker ABI: JSON-in/JSON-out WASM bindings over norn-checker (ring 1; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+norn-checker = { path = "../norn-checker" }
+norn-expr = { path = "../norn-expr" }
+norn-ir = { path = "../norn-ir" }
+norn-projections = { path = "../norn-projections" }
+# Typed, deny-unknown-fields decoding of the `context` argument.
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+
+# The JS bindings exist only on wasm32; native callers (tests, a future C
+# ABI) use the plain Rust functions. Exact pin: the wasm-bindgen CLI that
+# post-processes the module must be the same version (scripts/build-pkg.sh,
+# CI job `checker-wasm`).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.129"
+
+[lints]
+workspace = true

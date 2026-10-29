@@ -1,0 +1,888 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ActionPayload",
+  "type": "object",
+  "properties": {
+    "access": {
+      "$ref": "#/$defs/AccessRef"
+    },
+    "actionId": {
+      "type": "string"
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActionCommand"
+      }
+    },
+    "compensation": {
+      "$ref": "#/$defs/ActionCompensation"
+    },
+    "createLinks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActionCreateLink"
+      }
+    },
+    "derive": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActionInputDerivation"
+      }
+    },
+    "description": {
+      "type": "string"
+    },
+    "effectProgram": {
+      "$ref": "#/$defs/ActionEffectProgram"
+    },
+    "extensions": {
+      "description": "Reserved extension slots keyed by `<name>/<semver>`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "idempotent": {
+      "type": "boolean"
+    },
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "ledgerCategory": {
+      "type": "string"
+    },
+    "ledgered": {
+      "type": "boolean"
+    },
+    "outputSchema": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ZenExpression"
+      }
+    },
+    "quantityEffect": {
+      "$ref": "#/$defs/ActionQuantityEffect"
+    },
+    "scopeRequired": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "slice": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SliceDeclaration"
+      }
+    },
+    "title": {
+      "type": "string"
+    },
+    "uiEffects": {
+      "$ref": "#/$defs/ActionUiEffects"
+    },
+    "writes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActionWrite"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "actionId",
+    "scopeRequired",
+    "idempotent",
+    "ledgered",
+    "inputSchema",
+    "outputSchema"
+  ],
+  "$defs": {
+    "AccessRef": {
+      "description": "Reference to the access definition that authorizes an action.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId"
+      ]
+    },
+    "ActionCommand": {
+      "description": "One declarative outbound command produced by an action call.",
+      "type": "object",
+      "properties": {
+        "childMerges": {
+          "description": "Owner-scoped child-table replacements declared by this command.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionCommandChildMerge"
+          }
+        },
+        "connector": {
+          "description": "The source system connector to perform this command against.",
+          "type": "string"
+        },
+        "doctype": {
+          "description": "The source document type, for example `Sales Order`.",
+          "type": "string"
+        },
+        "expectedModified": {
+          "description": "Expected source version for a guarded update. The evaluated value is\ncarried as `expectedModified` to the connector perform contract.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ZenExpression"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fields": {
+          "description": "Source fields whose values are derived from the action input.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ZenExpression"
+          }
+        },
+        "name": {
+          "description": "ZEN Expression yielding the source document name. Required for submit,\nupdate, and cancel operations; optional for create.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ZenExpression"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operation": {
+          "description": "The closed operation to perform.",
+          "$ref": "#/$defs/ActionCommandOperation"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "connector",
+        "operation",
+        "doctype"
+      ]
+    },
+    "ActionCommandChildMerge": {
+      "description": "A declarative owner-scoped complete desired set for one source child table.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "description": "Parent field holding the source child rows.",
+          "type": "string"
+        },
+        "ownershipField": {
+          "description": "Child row field that records Norn ownership.",
+          "type": "string"
+        },
+        "ownershipValue": {
+          "description": "ZEN Expression yielding the owner marker written to each desired row.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "rowKeyField": {
+          "description": "Child row field used to match an existing owned row.",
+          "type": "string"
+        },
+        "rows": {
+          "description": "ZEN Expression yielding the complete desired row array.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "ownershipField",
+        "ownershipValue",
+        "rowKeyField",
+        "rows"
+      ]
+    },
+    "ActionCommandOperation": {
+      "description": "Closed set of outbound command operations.",
+      "oneOf": [
+        {
+          "description": "Submit an existing source document.",
+          "type": "string",
+          "const": "submit"
+        },
+        {
+          "description": "Create a source document.",
+          "type": "string",
+          "const": "create"
+        },
+        {
+          "description": "Update an existing source document.",
+          "type": "string",
+          "const": "update"
+        },
+        {
+          "description": "Cancel an existing source document.",
+          "type": "string",
+          "const": "cancel"
+        }
+      ]
+    },
+    "ActionCompensation": {
+      "description": "The compensating action that reverses this one.",
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "actionId"
+      ]
+    },
+    "ActionCreateLink": {
+      "description": "Add an outgoing link alongside an ordinary action's business write.",
+      "type": "object",
+      "properties": {
+        "link": {
+          "description": "Link declared on the effect's business object type.",
+          "type": "string"
+        },
+        "targetIdField": {
+          "description": "Input field naming an existing authorized declared-slice object.",
+          "type": "string"
+        },
+        "targetType": {
+          "description": "Fixed concrete target type.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "link",
+        "targetType",
+        "targetIdField"
+      ]
+    },
+    "ActionEffectProgram": {
+      "description": "Closed, declarative authority-bearing operations admitted by ActionIR.\n\nThis is intentionally an enum rather than an open callback or expression\nlanguage. Every added variant expands the trusted execution surface and\ntherefore requires validation, correspondence tests, and proof obligations.",
+      "oneOf": [
+        {
+          "description": "Derive exactly one object upsert from the already schema-checked action\ninput and a pinned Entity artifact identity.",
+          "type": "object",
+          "properties": {
+            "entityArtifactId": {
+              "type": "string"
+            },
+            "entityArtifactVersion": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "upsert_input_object"
+            },
+            "objectIdField": {
+              "type": "string"
+            },
+            "objectKind": {
+              "type": "string"
+            },
+            "writeMode": {
+              "description": "Additional admission rule for an existing object. Omitted for a\nnormal upsert, which may create or update while the lifecycle is\nwritable.",
+              "$ref": "#/$defs/UpsertWriteMode"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectIdField",
+            "objectKind",
+            "entityArtifactId",
+            "entityArtifactVersion"
+          ]
+        },
+        {
+          "description": "Fire one declared transition of the object the action input names\n(`objectIdField`), pinned by Entity artifact identity. `lifecycle` is\nthe lifecycle property and `transition` the transition id it declares;\nthe lifecycle owns the source states, the target state, and the\nguards, so the effect writes that one property and nothing else\n(T3-LIFE-3, #2867).",
+          "type": "object",
+          "properties": {
+            "entityArtifactId": {
+              "type": "string"
+            },
+            "entityArtifactVersion": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "fire_transition"
+            },
+            "lifecycle": {
+              "$ref": "#/$defs/PropertyId"
+            },
+            "objectIdField": {
+              "type": "string"
+            },
+            "objectKind": {
+              "type": "string"
+            },
+            "transition": {
+              "$ref": "#/$defs/TransitionId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectIdField",
+            "objectKind",
+            "entityArtifactId",
+            "entityArtifactVersion",
+            "lifecycle",
+            "transition"
+          ]
+        },
+        {
+          "description": "Atomically mutate a parent and its declared ordered child rows.\nMembership and order are checked against the host's protected\n`norn.OwnedRows` manifest, never against a caller-provided row list.",
+          "type": "object",
+          "properties": {
+            "collections": {
+              "description": "Trusted row conditions and derivations per owned collection.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/OwnedCollectionAction"
+              }
+            },
+            "entityArtifactId": {
+              "type": "string"
+            },
+            "entityArtifactVersion": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "mutate_parent_with_rows"
+            },
+            "objectIdField": {
+              "type": "string"
+            },
+            "objectKind": {
+              "type": "string"
+            },
+            "parentDeleteField": {
+              "description": "Optional input bool requesting a parent delete.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "parentValuesField": {
+              "description": "Input object holding parent property changes.",
+              "type": "string"
+            },
+            "parentVersionField": {
+              "description": "Input canonical decimal-string expected parent version.",
+              "type": "string"
+            },
+            "rowOpsField": {
+              "description": "Input array holding closed row operations.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectIdField",
+            "objectKind",
+            "entityArtifactId",
+            "entityArtifactVersion",
+            "parentValuesField",
+            "rowOpsField",
+            "parentVersionField"
+          ]
+        }
+      ]
+    },
+    "ActionInputDerivation": {
+      "description": "One deterministic ZEN derivation of an action input field.\n\nDerivations run in list order. Every target must be a declared\n`inputSchema` property; repeated targets are permitted and let a later\nderivation refine an earlier result. When `input_required` is false, the\ncaller may omit the target before derivation. The derivation must still\nproduce a value accepted by the final input schema.",
+      "type": "object",
+      "properties": {
+        "expression": {
+          "description": "ZEN Expression evaluated against the input, including prior derivations.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "field": {
+          "description": "The input field written by this derivation.",
+          "type": "string"
+        },
+        "inputRequired": {
+          "description": "Whether the caller must supply the target field before derivation.\nDefaults to `true` and is omitted from the canonical representation.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "expression"
+      ]
+    },
+    "ActionQuantityEffect": {
+      "description": "A closed quantity intent. Ledger/template identities come from the admitted\ndefinition; callers supply only schema-checked values and optimistic fences.",
+      "type": "object",
+      "properties": {
+        "balanceVersionsField": {
+          "description": "Input field carrying the complete v2 balance-version read set. This\ntransport field is excluded from an upsert's business property writes.",
+          "type": "string"
+        },
+        "ledgerId": {
+          "description": "Fixed cell-local ledger selected by the installer.",
+          "type": "string"
+        },
+        "operation": {
+          "description": "The admitted operation; configuration, opening posts and partial\nresolution are intentionally outside the ordinary action vocabulary.",
+          "$ref": "#/$defs/ActionQuantityOperation"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ledgerId",
+        "balanceVersionsField",
+        "operation"
+      ]
+    },
+    "ActionQuantityOperation": {
+      "description": "Ordinary quantity-backed actions can reserve or fully post a reservation.",
+      "oneOf": [
+        {
+          "description": "Reserve the pinned template with exact string-valued parameters.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "reserve"
+            },
+            "parameters": {
+              "description": "Pack parameter to exact input field, including its pinned scale.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/ActionQuantityParameter"
+              }
+            },
+            "reservationIdField": {
+              "description": "Input field naming the reservation.",
+              "type": "string"
+            },
+            "templateId": {
+              "description": "Fixed template in the configured ledger's admitted pack.",
+              "type": "string"
+            },
+            "ttlMs": {
+              "description": "Exclusive deadline offset from the trusted cell clock.",
+              "$ref": "#/$defs/WholeNumber"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reservationIdField",
+            "templateId",
+            "parameters",
+            "ttlMs"
+          ]
+        },
+        {
+          "description": "Post all remaining legs of the named reservation.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "post_reservation"
+            },
+            "postingIdField": {
+              "description": "Input field naming the immutable posting.",
+              "type": "string"
+            },
+            "reservationIdField": {
+              "description": "Input field naming the reservation.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reservationIdField",
+            "postingIdField"
+          ]
+        }
+      ]
+    },
+    "ActionQuantityParameter": {
+      "description": "Exact parameter binding; no float or caller-selected scale crosses this boundary.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "description": "Input field containing the canonical unscaled integer string.",
+          "type": "string"
+        },
+        "scale": {
+          "description": "Scale expected by the pinned template parameter.",
+          "$ref": "#/$defs/WholeNumber"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "scale"
+      ]
+    },
+    "ActionUiEffects": {
+      "description": "Versioned, closed declarations for UI-facing effects that cannot be\ninferred from an action's commands, write set, or idempotency flag.",
+      "type": "object",
+      "properties": {
+        "destructive": {
+          "description": "Whether the action may destroy existing business data.",
+          "type": "boolean"
+        },
+        "effectsVersion": {
+          "description": "Version of the closed UI effect declaration vocabulary.",
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "errorCodes": {
+          "description": "Declared error codes that callers must handle.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "irreversible": {
+          "description": "Whether the action has an effect that cannot be reversed.",
+          "type": "boolean"
+        },
+        "money": {
+          "description": "Currency identities used by monetary effects.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resultCodes": {
+          "description": "Declared result codes that callers must handle.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "effectsVersion"
+      ]
+    },
+    "ActionWrite": {
+      "description": "One entry of an action's declared write set.",
+      "type": "object",
+      "properties": {
+        "change": {
+          "$ref": "#/$defs/WriteChange"
+        },
+        "entityKind": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entityKind",
+        "change"
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "LinkId": {
+      "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "ObjectTypeName": {
+      "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "OwnedCollectionAction": {
+      "description": "Trusted row-level conditions and derivations for one owned collection.",
+      "type": "object",
+      "properties": {
+        "derive": {
+          "description": "Trusted ZEN expressions used to derive row values.",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/ZenExpression"
+            }
+          }
+        },
+        "id": {
+          "description": "The collection link declared by the target entity type.",
+          "$ref": "#/$defs/LinkId"
+        },
+        "preconditions": {
+          "description": "Boolean ZEN expressions evaluated against every touched row.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ZenExpression"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "PropertyId": {
+      "description": "Id of a property within its object type (`sku_code`), unique there.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "SliceDeclaration": {
+      "description": "One entry of a `decide` rule's declared read slice: one object, or (a\n[`SliceKey::Link`] key) the bounded list of objects a link reaches\n(#3079).",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "How its key (or keys) are found.",
+          "$ref": "#/$defs/SliceKey"
+        },
+        "name": {
+          "description": "The member of the `slice` input record this entry fills.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "The type of the object (or of every listed object).",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "optional": {
+          "description": "A [`SliceKey::Property`] entry whose key property is absent or null\nis omitted instead of refusing the turn (#3079). A list entry is never\nrefused for being empty, so it needs no flag. Defaults to `false`; the\ncanonical form omits `false`.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "objectType",
+        "key"
+      ]
+    },
+    "SliceKey": {
+      "description": "Where a [`SliceDeclaration`]'s key comes from.",
+      "oneOf": [
+        {
+          "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
+          "type": "string",
+          "const": "triggerObject"
+        },
+        {
+          "description": "The immutable before snapshot of a `modified` trigger, as\n`{version, values}`. This is decision input and never authorizes writes.",
+          "type": "string",
+          "const": "triggerBefore"
+        },
+        {
+          "description": "The immutable after snapshot of a `modified` trigger, as\n`{version, values}`. This is decision input and never authorizes writes.",
+          "type": "string",
+          "const": "triggerAfter"
+        },
+        {
+          "description": "The sorted property ids changed by a `modified` trigger.",
+          "type": "string",
+          "const": "triggerChanges"
+        },
+        {
+          "description": "A text property of an earlier slice entry (a link by key).",
+          "type": "object",
+          "properties": {
+            "property": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "description": "The earlier entry's name.",
+                  "type": "string"
+                },
+                "property": {
+                  "description": "The property holding the key.",
+                  "$ref": "#/$defs/PropertyId"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "property"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "property"
+          ]
+        },
+        {
+          "description": "Every target of link `link`, declared on the type of earlier\nsingle-object entry `from`, loaded as a list ordered by target key\nand bounded by the limit profile's slice records (#3079).",
+          "type": "object",
+          "properties": {
+            "link": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "description": "The earlier (single-object) entry's name.",
+                  "type": "string"
+                },
+                "link": {
+                  "description": "The link id, declared on that entry's type or a supertype.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "link"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "link"
+          ]
+        }
+      ]
+    },
+    "TransitionId": {
+      "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "UpsertWriteMode": {
+      "description": "Write guard for an action's object upsert.",
+      "oneOf": [
+        {
+          "description": "Create or update the target, subject to lifecycle immutability.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "upsert"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The target must not exist.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "create_only"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The target must exist in the declared initial state of this lifecycle.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "draft_only"
+            },
+            "lifecycle": {
+              "description": "The lifecycle property that owns the draft state.",
+              "$ref": "#/$defs/PropertyId"
+            },
+            "state": {
+              "description": "The lifecycle's declared initial state used as the draft state.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "lifecycle",
+            "state"
+          ]
+        }
+      ]
+    },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    },
+    "WriteChange": {
+      "description": "How an action changes an entity kind in its write set.",
+      "type": "string",
+      "enum": [
+        "created",
+        "modified",
+        "deleted"
+      ]
+    },
+    "ZenExpression": {
+      "description": "Source text of one ZEN Expression (the IR's single expression language,\nruling 2026-09-25 §3): a decision-table cell, switch condition, expression\nassignment, or action precondition.\n\nStored verbatim; parsing and type checking belong to `norn-expr` and\n`norn-checker`.",
+      "type": "string"
+    }
+  }
+}

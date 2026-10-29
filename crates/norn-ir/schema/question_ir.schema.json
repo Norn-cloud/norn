@@ -1,0 +1,855 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QuestionIR",
+  "description": "A serializable analytical question over checked metrics.",
+  "type": "object",
+  "properties": {
+    "aggregate": {
+      "description": "Non-empty selected metrics.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/QuestionMetric"
+      }
+    },
+    "calendar": {
+      "description": "Explicit bucket calendar; omitted means immutable ISO/Gregorian UTC.",
+      "$ref": "#/$defs/CalendarPolicy",
+      "default": "iso_utc"
+    },
+    "compare": {
+      "description": "Optional comparison; every named question is resolved and cycle-checked.",
+      "$ref": "#/$defs/QuestionComparison"
+    },
+    "filter": {
+      "description": "Additional predicates.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MetricFilter"
+      }
+    },
+    "freshness": {
+      "description": "Freshness requirement.",
+      "$ref": "#/$defs/FreshnessPolicy"
+    },
+    "groupBy": {
+      "description": "Relative paths resolved for every underlying measure.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/QuestionDimension"
+      }
+    },
+    "irVersion": {
+      "description": "Contract version.",
+      "$ref": "#/$defs/IrVersion01"
+    },
+    "name": {
+      "description": "Unique dotted lower-case name.",
+      "type": "string"
+    },
+    "objectSet": {
+      "description": "Starting object population.",
+      "$ref": "#/$defs/ObjectTypeName"
+    },
+    "searchAround": {
+      "description": "Link traversal producing a deduplicated terminal object population.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LinkId"
+      }
+    },
+    "window": {
+      "description": "Half-open UTC interval.",
+      "$ref": "#/$defs/QuestionTimeWindow"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "irVersion",
+    "name",
+    "objectSet",
+    "aggregate",
+    "window",
+    "freshness"
+  ],
+  "$defs": {
+    "AdditivityAxis": {
+      "description": "The axis on which a metric is semi-additive.",
+      "oneOf": [
+        {
+          "description": "The declared time dimension.",
+          "type": "string",
+          "const": "time"
+        }
+      ]
+    },
+    "CalendarPolicy": {
+      "description": "Calendar semantics, independent of the query window. Future calendar\nsystems require new explicit variants; existing boundaries never change.",
+      "oneOf": [
+        {
+          "description": "Gregorian UTC buckets; ISO weeks start Monday. Dates mean UTC midnight.",
+          "type": "string",
+          "const": "iso_utc"
+        }
+      ]
+    },
+    "ComparisonMetricMapping": {
+      "description": "One explicit actual-to-reference metric alignment. A mapping is complete\nand bijective; dimensions use identical paths and windows must agree.",
+      "type": "object",
+      "properties": {
+        "metric": {
+          "description": "Metric selected in the actual question.",
+          "type": "string"
+        },
+        "referenceMetric": {
+          "description": "Compatible metric selected in the reference question.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "metric",
+        "referenceMetric"
+      ]
+    },
+    "CurrencyConversion": {
+      "description": "Explicit source-to-target conversion, before any aggregation.",
+      "type": "object",
+      "properties": {
+        "rate": {
+          "description": "Dimensionless decimal rate (target units per source unit) at measure grain.",
+          "$ref": "#/$defs/DimensionPath"
+        },
+        "target": {
+          "description": "Target ISO 4217 code.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "rate"
+      ]
+    },
+    "DimensionPath": {
+      "description": "A property reached by zero or more declared directional link roles.",
+      "type": "object",
+      "properties": {
+        "links": {
+          "description": "Forward or inverse roles, in traversal order; empty means the root object.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkId"
+          }
+        },
+        "property": {
+          "description": "The terminal property.",
+          "$ref": "#/$defs/PropertyId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property"
+      ]
+    },
+    "FilterOperator": {
+      "description": "Comparison operators for exact typed literals.",
+      "oneOf": [
+        {
+          "description": "Equality.",
+          "type": "string",
+          "const": "eq"
+        },
+        {
+          "description": "Inequality.",
+          "type": "string",
+          "const": "ne"
+        },
+        {
+          "description": "Less than.",
+          "type": "string",
+          "const": "lt"
+        },
+        {
+          "description": "Less than or equal.",
+          "type": "string",
+          "const": "le"
+        },
+        {
+          "description": "Greater than.",
+          "type": "string",
+          "const": "gt"
+        },
+        {
+          "description": "Greater than or equal.",
+          "type": "string",
+          "const": "ge"
+        }
+      ]
+    },
+    "FreshnessPolicy": {
+      "description": "Declarative freshness requirement; it chooses no runtime in this slice.",
+      "oneOf": [
+        {
+          "description": "Live series with a bounded age in milliseconds.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "live"
+            },
+            "maxAgeMs": {
+              "description": "Positive age bound.",
+              "$ref": "#/$defs/WholeNumber"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "maxAgeMs"
+          ]
+        },
+        {
+          "description": "Delayed series with a bounded age in milliseconds.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "delayed"
+            },
+            "maxAgeMs": {
+              "description": "Positive age bound.",
+              "$ref": "#/$defs/WholeNumber"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "maxAgeMs"
+          ]
+        },
+        {
+          "description": "Reproducible historical view.",
+          "type": "object",
+          "properties": {
+            "at": {
+              "description": "UTC instant.",
+              "$ref": "#/$defs/UtcTimestamp"
+            },
+            "kind": {
+              "type": "string",
+              "const": "as_of"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "at"
+          ]
+        }
+      ]
+    },
+    "IncrementalHint": {
+      "description": "Declarative incremental hint.",
+      "oneOf": [
+        {
+          "description": "Recompute from the authorized object population.",
+          "type": "string",
+          "const": "recompute"
+        },
+        {
+          "description": "Request maintenance from cell-ledger changes.",
+          "type": "string",
+          "const": "ledger_delta"
+        }
+      ]
+    },
+    "InlineAggregation": {
+      "description": "Inline aggregate; lowered through the same definition checker as named metrics.",
+      "type": "object",
+      "properties": {
+        "agg": {
+          "description": "Aggregate operator.",
+          "$ref": "#/$defs/MeasureAggregate"
+        },
+        "aggTimeDimension": {
+          "description": "Time dimension at the terminal population.",
+          "$ref": "#/$defs/DimensionPath"
+        },
+        "name": {
+          "description": "Unique selection name, usable by aggregate/compare.",
+          "type": "string"
+        },
+        "property": {
+          "description": "Stored property, omitted only for object count.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "x-norn": {
+          "description": "Conservative governance; the same rules apply as named metrics.",
+          "$ref": "#/$defs/MetricNorn"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "agg",
+        "aggTimeDimension",
+        "x-norn"
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "LinkId": {
+      "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "MeasureAggregate": {
+      "description": "Base aggregate operators. Count without a property counts objects.",
+      "oneOf": [
+        {
+          "description": "Exact total.",
+          "type": "string",
+          "const": "sum"
+        },
+        {
+          "description": "Count objects or non-null property values.",
+          "type": "string",
+          "const": "count"
+        },
+        {
+          "description": "Minimum value.",
+          "type": "string",
+          "const": "min"
+        },
+        {
+          "description": "Maximum value.",
+          "type": "string",
+          "const": "max"
+        },
+        {
+          "description": "Arithmetic mean.",
+          "type": "string",
+          "const": "average"
+        },
+        {
+          "description": "Count distinct property values.",
+          "type": "string",
+          "const": "count_distinct"
+        }
+      ]
+    },
+    "MetricAdditivity": {
+      "description": "Algebraic contract for re-aggregation.",
+      "oneOf": [
+        {
+          "description": "Sum across any dimension, including time.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Sum across non-time axes; use the declared reduction along time.",
+          "type": "object",
+          "properties": {
+            "aggregate": {
+              "description": "One of first/last/min/max; sum is rejected by the checker.",
+              "$ref": "#/$defs/Reaggregate"
+            },
+            "kind": {
+              "type": "string",
+              "const": "semi_additive"
+            },
+            "over": {
+              "description": "Restricted axis.",
+              "$ref": "#/$defs/AdditivityAxis"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "over",
+            "aggregate"
+          ]
+        },
+        {
+          "description": "Must be computed from underlying objects for each requested bucket.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "non_additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "MetricAuthorization": {
+      "description": "Authorization remains a runtime boundary; checker admission never grants access.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Named authorization action evaluated for the object population.",
+          "type": "string"
+        },
+        "minGroupSize": {
+          "description": "Minimum distinct objects allowed in disclosed buckets.",
+          "$ref": "#/$defs/WholeNumber"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "minGroupSize"
+      ]
+    },
+    "MetricCurrency": {
+      "description": "Currency binding; the amount itself remains an ontology decimal property.",
+      "type": "object",
+      "properties": {
+        "conversion": {
+          "description": "Required when summing a source whose currency is not a singleton enum.",
+          "$ref": "#/$defs/CurrencyConversion"
+        },
+        "property": {
+          "description": "ISO 4217 registry property or a closed currency-code enum.",
+          "$ref": "#/$defs/DimensionPath"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property"
+      ]
+    },
+    "MetricFilter": {
+      "description": "A predicate over a resolved property; numeric values retain exact decimals.",
+      "type": "object",
+      "properties": {
+        "operator": {
+          "description": "Operator compatible with the property's type.",
+          "$ref": "#/$defs/FilterOperator"
+        },
+        "path": {
+          "description": "Relative property path. To-many filters are existential predicates.",
+          "$ref": "#/$defs/DimensionPath"
+        },
+        "value": {
+          "description": "Exact runtime literal checked against the effective property contract.",
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "operator",
+        "value"
+      ]
+    },
+    "MetricNorn": {
+      "description": "Norn policy extension. Units are derived from typed properties, never asserted here.",
+      "type": "object",
+      "properties": {
+        "additivity": {
+          "description": "Conservative scalar roll-up policy.",
+          "$ref": "#/$defs/MetricAdditivity"
+        },
+        "authz": {
+          "description": "Explicit authorization and aggregate disclosure requirements.",
+          "$ref": "#/$defs/MetricAuthorization"
+        },
+        "certified": {
+          "description": "Certification does not grant access.",
+          "type": "boolean"
+        },
+        "currency": {
+          "description": "Optional FX conversion; authoritative currency comes from the amount type.",
+          "$ref": "#/$defs/MetricCurrency"
+        },
+        "defaultFilters": {
+          "description": "Exact predicates applied before aggregation.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MetricFilter"
+          }
+        },
+        "derived": {
+          "description": "Generated inspection metadata, never an author assertion.",
+          "$ref": "#/$defs/MetricPropertySemantics"
+        },
+        "freshness": {
+          "description": "Definition freshness requirement.",
+          "$ref": "#/$defs/FreshnessPolicy"
+        },
+        "incremental": {
+          "description": "Maintenance hint only; no incremental engine is selected.",
+          "$ref": "#/$defs/IncrementalHint"
+        },
+        "irVersion": {
+          "description": "Norn extension version.",
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "owner": {
+          "description": "Accountable owner.",
+          "type": "string"
+        },
+        "safeAggregation": {
+          "description": "Identity deduplication within each bucket.",
+          "$ref": "#/$defs/SafeAggregation"
+        },
+        "timeDimension": {
+          "description": "Time binding for composite metrics; simple metrics use agg_time_dimension.",
+          "$ref": "#/$defs/DimensionPath"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "irVersion",
+        "additivity",
+        "owner",
+        "certified"
+      ]
+    },
+    "MetricPropertySemantics": {
+      "description": "Generated type semantics for inspecting a standalone metric file.",
+      "type": "object",
+      "properties": {
+        "currencySource": {
+          "description": "Authoritative source attached to a monetary decimal type.",
+          "$ref": "#/$defs/DimensionPath"
+        },
+        "unit": {
+          "description": "Quantity unit of the underlying property; counts and ratios are dimensionless.",
+          "$ref": "#/$defs/UnitRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "MetricRollup": {
+      "description": "Explicit roll-up of previously aggregated results.",
+      "type": "object",
+      "properties": {
+        "across": {
+          "description": "Requested dimensions being collapsed.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DimensionPath"
+          }
+        },
+        "aggregate": {
+          "description": "Reduction operator.",
+          "$ref": "#/$defs/Reaggregate"
+        },
+        "overTime": {
+          "description": "Also collapse the metric's time axis (even if not in dimensions).",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "aggregate",
+        "across",
+        "overTime"
+      ]
+    },
+    "ObjectTypeName": {
+      "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "PropertyId": {
+      "description": "Id of a property within its object type (`sku_code`), unique there.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "QuestionComparison": {
+      "description": "A comparison series, without routing to any execution engine.",
+      "oneOf": [
+        {
+          "description": "Immediately preceding window of the same duration.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "previous_period"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Another checked question providing planned values.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "plan"
+            },
+            "mapping": {
+              "description": "Empty means identity mapping; otherwise map every selected metric.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ComparisonMetricMapping"
+              }
+            },
+            "question": {
+              "description": "Question name.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "question"
+          ]
+        },
+        {
+          "description": "Another checked question providing forecast values.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "forecast"
+            },
+            "mapping": {
+              "description": "Empty means identity mapping; otherwise map every selected metric.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ComparisonMetricMapping"
+              }
+            },
+            "question": {
+              "description": "Question name.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "question"
+          ]
+        }
+      ]
+    },
+    "QuestionDimension": {
+      "description": "One requested group-by dimension.",
+      "type": "object",
+      "properties": {
+        "grain": {
+          "description": "Calendar bucket; admitted only for date/timestamp properties.",
+          "$ref": "#/$defs/TimeGrain"
+        },
+        "path": {
+          "description": "Link path ending in a scalar property.",
+          "$ref": "#/$defs/DimensionPath"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "QuestionMetric": {
+      "description": "A selected metric, optionally with an explicit re-aggregation request.",
+      "type": "object",
+      "properties": {
+        "inline": {
+          "description": "Inline calculation at the terminal population; metric names its output.",
+          "$ref": "#/$defs/InlineAggregation"
+        },
+        "metric": {
+          "description": "Metric name.",
+          "type": "string"
+        },
+        "reaggregate": {
+          "description": "Omitted means aggregate underlying objects at requested grain. Snapshot\nmetrics are refused until series and ordered reduction semantics exist.",
+          "$ref": "#/$defs/MetricRollup"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "metric"
+      ]
+    },
+    "QuestionTimeWindow": {
+      "description": "Half-open UTC time window. Calendar bucketing is a separate concern.",
+      "type": "object",
+      "properties": {
+        "end": {
+          "description": "Exclusive UTC instant.",
+          "$ref": "#/$defs/UtcTimestamp"
+        },
+        "start": {
+          "description": "Inclusive UTC instant.",
+          "$ref": "#/$defs/UtcTimestamp"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "Reaggregate": {
+      "description": "Operators over already aggregated results.",
+      "oneOf": [
+        {
+          "description": "Total across admitted axes.",
+          "type": "string",
+          "const": "sum"
+        },
+        {
+          "description": "First value in time order.",
+          "type": "string",
+          "const": "first"
+        },
+        {
+          "description": "Last value in time order.",
+          "type": "string",
+          "const": "last"
+        },
+        {
+          "description": "Minimum.",
+          "type": "string",
+          "const": "min"
+        },
+        {
+          "description": "Maximum.",
+          "type": "string",
+          "const": "max"
+        }
+      ]
+    },
+    "SafeAggregation": {
+      "description": "A safe strategy for a to-many dimension path.",
+      "oneOf": [
+        {
+          "description": "Deduplicate measure object identities within each output bucket, including\ncombinations of multiple fan-out paths. Never deduplicate by measure value.",
+          "type": "string",
+          "const": "symmetric"
+        }
+      ]
+    },
+    "TimeGrain": {
+      "description": "Calendar bucket grain.",
+      "oneOf": [
+        {
+          "description": "Day.",
+          "type": "string",
+          "const": "day"
+        },
+        {
+          "description": "Week.",
+          "type": "string",
+          "const": "week"
+        },
+        {
+          "description": "Month.",
+          "type": "string",
+          "const": "month"
+        },
+        {
+          "description": "Quarter.",
+          "type": "string",
+          "const": "quarter"
+        },
+        {
+          "description": "Year.",
+          "type": "string",
+          "const": "year"
+        }
+      ]
+    },
+    "UnitRef": {
+      "description": "A reference to a unit of measure in a standard unit vocabulary (ruling\n2026-09-25 §27). The code is not interpreted here; resolving it against the\nvocabulary is registry work (T8-STD-1).",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "The unit's code in `system` (UCUM `kg`, `m/s`; QUDT `unit:KiloGM`).",
+          "type": "string"
+        },
+        "system": {
+          "$ref": "#/$defs/UnitSystem"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "code"
+      ]
+    },
+    "UnitSystem": {
+      "description": "A standard unit vocabulary.",
+      "oneOf": [
+        {
+          "description": "The Unified Code for Units of Measure (case-sensitive codes).",
+          "type": "string",
+          "const": "ucum"
+        },
+        {
+          "description": "A QUDT unit (`unit:` local name).",
+          "type": "string",
+          "const": "qudt"
+        }
+      ]
+    },
+    "UtcTimestamp": {
+      "description": "An RFC 3339 instant in UTC (`2026-10-01T09:30:00Z`).",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    }
+  }
+}

@@ -1,0 +1,190 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "location.Space.entity",
+  "kind": "entity",
+  "namespace": "location",
+  "name": "Space",
+  "version": "0.3.0",
+  "lifecycle": "active",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/location.Space.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "location.Space",
+      "description": "A structure or area within a site: a building, a floor, a room, or a yard. Spaces nest through parent (a room on a floor in a building). A space's reference point is the origin of its local planar frame. Site may be unknown for imported logical warehouse trees; parent nesting remains explicit.",
+      "implements": [
+        "core.GeoLocated"
+      ],
+      "properties": [
+        {
+          "id": "space_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "building"
+              },
+              {
+                "value": "floor"
+              },
+              {
+                "value": "room"
+              },
+              {
+                "value": "yard"
+              },
+              {
+                "value": "other"
+              }
+            ]
+          }
+        },
+        {
+          "id": "level",
+          "description": "The floor number of a floor (0 at ground, negative below).",
+          "type": {
+            "kind": "integer"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "latitude",
+          "type": {
+            "kind": "ref",
+            "name": "wgs84.latitude"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "longitude",
+          "type": {
+            "kind": "ref",
+            "name": "wgs84.longitude"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "altitude_m",
+          "type": {
+            "kind": "ref",
+            "name": "wgs84.altitude_m"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "accuracy_m",
+          "type": {
+            "kind": "ref",
+            "name": "geo.accuracy_m"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "shape",
+          "type": {
+            "kind": "ref",
+            "name": "geojson.geometry"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "h3_cell",
+          "type": {
+            "kind": "ref",
+            "name": "h3.cell_index"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "planar_bearing_deg",
+          "description": "Bearing of the local planar y axis from true north; absent means y points north.",
+          "type": {
+            "kind": "ref",
+            "name": "geo.bearing_deg"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "is_group",
+          "description": "Optional grouping flag for a logical space tree (ERPNext Warehouse.is_group). Does not imply a physical building.",
+          "type": {
+            "kind": "boolean"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        }
+      ],
+      "links": [
+        {
+          "id": "site",
+          "description": "The site the space belongs to.",
+          "target": "location.Site",
+          "cardinality": {
+            "to": "one",
+            "from": "many"
+          }
+        },
+        {
+          "id": "parent",
+          "description": "The space this one is inside, if any (the building of a floor).",
+          "target": "location.Space",
+          "cardinality": {
+            "to": "one",
+            "from": "many"
+          },
+          "acyclic": true
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "space_code"
+          ]
+        }
+      ]
+    },
+    "extensions": {
+      "norn.semantic-zoom/0.1.0": {
+        "level": "space",
+        "missingLevels": "skip"
+      }
+    }
+  }
+}

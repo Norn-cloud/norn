@@ -1,0 +1,213 @@
+{
+  "description": "T7-EFX-3 (#2786) golden event trace of crm.route_message (route-message.ir.json). Each step delivers one event to the flow's decide rule; `deliverTimer` delivers the timer the previous step requested. `expect.noop` steps (a stale and a duplicate result) must change nothing. Result deliveries carry the T1-FN-1 receipt summary of fixtures/function/receipt.wasm.json; which deliveries reach the rule at all is T2-RES-1 reconciliation (crates/norn-kernel/tests/flow_vertical.rs).",
+  "flow": "tools/norn-ts/fixtures/vertical/route-message.ir.json",
+  "function": {
+    "manifest": "fixtures/function/manifest.wasm.json",
+    "invocation": "fixtures/function/invocation.wasm.json",
+    "receipt": "fixtures/function/receipt.wasm.json"
+  },
+  "runs": [
+    {
+      "runId": "run-cmd-classify-msg-42",
+      "steps": [
+        {
+          "label": "start: dispatch classify attempt 1",
+          "event": {
+            "kind": "start",
+            "runId": "run-cmd-classify-msg-42"
+          },
+          "expect": {
+            "status": "awaiting_retry_classify_attempt_1",
+            "commands": [
+              {
+                "step": "classify",
+                "attempt": 1
+              }
+            ],
+            "timers": 0
+          }
+        },
+        {
+          "label": "typed failure on attempt 1: finite retry timer",
+          "event": {
+            "kind": "failure",
+            "runId": "run-cmd-classify-msg-42",
+            "step": "classify",
+            "attempt": 1,
+            "failure": {
+              "_tag": "UnsupportedLanguage",
+              "locale": "en"
+            }
+          },
+          "expect": {
+            "status": "retrying_classify_attempt_2",
+            "commands": [],
+            "timers": 1
+          }
+        },
+        {
+          "label": "retry timer fires: dispatch attempt 2",
+          "deliverTimer": true,
+          "expect": {
+            "status": "awaiting_retry_classify_attempt_2",
+            "commands": [
+              {
+                "step": "classify",
+                "attempt": 2
+              }
+            ],
+            "timers": 0
+          }
+        },
+        {
+          "label": "stale: attempt 1's result arrives late",
+          "event": {
+            "kind": "result",
+            "runId": "run-cmd-classify-msg-42",
+            "step": "classify",
+            "attempt": 1,
+            "results": {
+              "classify": {
+                "confidence": 0.92,
+                "intent": "order.modify",
+                "labels": [
+                  "order",
+                  "quantity"
+                ]
+              }
+            }
+          },
+          "expect": {
+            "noop": true
+          }
+        },
+        {
+          "label": "accepted proposal: attempt 2's result routes to orders",
+          "event": {
+            "kind": "result",
+            "runId": "run-cmd-classify-msg-42",
+            "step": "classify",
+            "attempt": 2,
+            "results": {
+              "classify": {
+                "confidence": 0.92,
+                "intent": "order.modify",
+                "labels": [
+                  "order",
+                  "quantity"
+                ]
+              }
+            }
+          },
+          "expect": {
+            "status": "completed",
+            "commands": [],
+            "timers": 0,
+            "result": {
+              "route": "orders",
+              "intent": "order.modify"
+            }
+          }
+        },
+        {
+          "label": "duplicate: attempt 2's result redelivered",
+          "event": {
+            "kind": "result",
+            "runId": "run-cmd-classify-msg-42",
+            "step": "classify",
+            "attempt": 2,
+            "results": {
+              "classify": {
+                "confidence": 0.92,
+                "intent": "order.modify",
+                "labels": [
+                  "order",
+                  "quantity"
+                ]
+              }
+            }
+          },
+          "expect": {
+            "noop": true
+          }
+        }
+      ]
+    },
+    {
+      "runId": "run-unsupported",
+      "steps": [
+        {
+          "label": "start",
+          "event": {
+            "kind": "start",
+            "runId": "run-unsupported"
+          },
+          "expect": {
+            "status": "awaiting_retry_classify_attempt_1",
+            "commands": [
+              {
+                "step": "classify",
+                "attempt": 1
+              }
+            ],
+            "timers": 0
+          }
+        },
+        {
+          "label": "typed failure on attempt 1",
+          "event": {
+            "kind": "failure",
+            "runId": "run-unsupported",
+            "step": "classify",
+            "attempt": 1,
+            "failure": {
+              "_tag": "UnsupportedLanguage",
+              "locale": "tl"
+            }
+          },
+          "expect": {
+            "status": "retrying_classify_attempt_2",
+            "commands": [],
+            "timers": 1
+          }
+        },
+        {
+          "label": "retry timer fires",
+          "deliverTimer": true,
+          "expect": {
+            "status": "awaiting_retry_classify_attempt_2",
+            "commands": [
+              {
+                "step": "classify",
+                "attempt": 2
+              }
+            ],
+            "timers": 0
+          }
+        },
+        {
+          "label": "typed failure on the last attempt: catchTag hands over to a human",
+          "event": {
+            "kind": "failure",
+            "runId": "run-unsupported",
+            "step": "classify",
+            "attempt": 2,
+            "failure": {
+              "_tag": "UnsupportedLanguage",
+              "locale": "tl"
+            }
+          },
+          "expect": {
+            "status": "completed",
+            "commands": [],
+            "timers": 0,
+            "result": {
+              "route": "human",
+              "intent": "tl"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

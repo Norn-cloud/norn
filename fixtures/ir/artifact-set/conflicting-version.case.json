@@ -1,0 +1,20 @@
+{
+  "description": "Two versions of one artifact id in one set.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-sku.entity.json",
+    {
+      "fixture": "ir/retail-sku.entity.json",
+      "patch": {
+        "version": "0.2.0"
+      }
+    }
+  ],
+  "expect": [
+    [
+      "retail.Sku.entity",
+      "artifact_set.resolution.conflicting_version",
+      "/version"
+    ]
+  ]
+}

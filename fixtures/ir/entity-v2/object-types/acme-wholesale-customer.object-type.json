@@ -1,0 +1,10 @@
+{
+  "name": "acme.WholesaleCustomer",
+  "description": "Tenant subtype in the acme namespace: new members are acme__ prefixed; tier is narrowed, not widened.",
+  "status": { "state": "experimental" },
+  "extends": "crm.Customer",
+  "properties": [
+    { "id": "tier", "type": { "kind": "enum", "values": [{ "value": "gold" }] }, "default": "gold" },
+    { "id": "acme__credit_limit", "type": { "kind": "decimal", "scale": 2 }, "constraints": { "min": "0" }, "default": "0.00" }
+  ]
+}

@@ -1,0 +1,129 @@
+@prefix norn: <https://norn.dev/ontology/company-commerce/0.1/> .
+@prefix nornunit: <https://norn.dev/ontology/quantity-units/0.1/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# SHACL 1.0 differential-oracle projection. The Rust Norn IR checker is the
+# promotion authority; conformance here never grants a capability or commits a transition.
+norn:PartyShape a sh:NodeShape ; sh:targetClass norn:Party ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:displayName ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:legalName ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:jurisdictionCode ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:givenName ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:familyName ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:email ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:telephone ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:address ; sh:class norn:PostalAddress ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:externalIdentifiers ; sh:class norn:ExternalIdentifier ; sh:maxCount 100 ] .
+
+norn:LegalEntityShape a sh:NodeShape ; sh:targetClass norn:LegalEntity ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:displayName ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:legalName ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:jurisdictionCode ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:externalIdentifiers ; sh:class norn:ExternalIdentifier ; sh:maxCount 100 ] .
+
+norn:OrganizationShape a sh:NodeShape ; sh:targetClass norn:Organization ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:displayName ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:legalName ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:address ; sh:class norn:PostalAddress ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:email ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:telephone ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:externalIdentifiers ; sh:class norn:ExternalIdentifier ; sh:maxCount 100 ] .
+
+norn:PersonShape a sh:NodeShape ; sh:targetClass norn:Person ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:displayName ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:givenName ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:familyName ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:email ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:telephone ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:address ; sh:class norn:PostalAddress ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:externalIdentifiers ; sh:class norn:ExternalIdentifier ; sh:maxCount 100 ] .
+
+norn:PostalAddressShape a sh:NodeShape ; sh:targetClass norn:PostalAddress ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:streetAddress ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:addressLocality ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:addressRegion ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:postalCode ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:addressCountry ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+norn:ProductShape a sh:NodeShape ; sh:targetClass norn:Product ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:name ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:description ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:sku ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:parentProduct ; sh:class norn:Product ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:externalIdentifiers ; sh:class norn:ExternalIdentifier ; sh:maxCount 100 ] ;
+  sh:property [ sh:path norn:category ; sh:class norn:Category ; sh:maxCount 100 ] ;
+  sh:property [ sh:path norn:categories ; sh:class norn:Category ; sh:maxCount 100 ] ;
+  sh:property [ sh:path norn:additionalProperty ; sh:class norn:ExternalIdentifier ; sh:maxCount 100 ] ;
+  sh:property [ sh:path norn:offers ; sh:class norn:Offer ; sh:maxCount 100 ] ;
+  sh:property [ sh:path norn:measurementUnit ; sh:class nornunit:Unit ; sh:maxCount 1 ] .
+
+norn:ProductVariantShape a sh:NodeShape ; sh:targetClass norn:ProductVariant ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:name ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:parentProduct ; sh:class norn:Product ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:sku ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:externalIdentifiers ; sh:class norn:ExternalIdentifier ; sh:maxCount 100 ] ;
+  sh:property [ sh:path norn:category ; sh:class norn:Category ; sh:maxCount 100 ] ;
+  sh:property [ sh:path norn:categories ; sh:class norn:Category ; sh:maxCount 100 ] ;
+  sh:property [ sh:path norn:additionalProperty ; sh:class norn:ExternalIdentifier ; sh:maxCount 100 ] .
+
+norn:OfferShape a sh:NodeShape ; sh:targetClass norn:Offer ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:itemOffered ; sh:class norn:Product ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:price ; sh:datatype xsd:decimal ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:priceCurrency ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:availability ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:seller ; sh:class norn:Party ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:additionalProperty ; sh:class norn:ExternalIdentifier ; sh:maxCount 100 ] .
+
+norn:OrderShape a sh:NodeShape ; sh:targetClass norn:Order ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:orderNumber ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:orderDate ; sh:datatype xsd:dateTime ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:orderStatus ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:customer ; sh:class norn:Party ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:merchant ; sh:class norn:Party ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:acceptedOffer ; sh:class norn:Offer ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:billingAddress ; sh:class norn:PostalAddress ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:shippingAddress ; sh:class norn:PostalAddress ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:lineItems ; sh:class norn:OrderItem ; sh:minCount 1 ; sh:maxCount 100 ] .
+
+norn:OrderItemShape a sh:NodeShape ; sh:targetClass norn:OrderItem ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:orderItemNumber ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:orderItemStatus ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:orderedProduct ; sh:class norn:Product ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:orderQuantity ; sh:datatype xsd:decimal ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:additionalProperty ; sh:class norn:ExternalIdentifier ; sh:maxCount 100 ] .
+
+norn:TradeItemShape a sh:NodeShape ; sh:targetClass norn:TradeItem ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:variantRef ; sh:class norn:ProductVariant ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:packagingLevel ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:externalIdentifiers ; sh:class norn:ExternalIdentifier ; sh:minCount 1 ; sh:maxCount 100 ] .
+
+norn:CategoryShape a sh:NodeShape ; sh:targetClass norn:Category ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:code ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:label ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:parentCategory ; sh:class norn:Category ; sh:maxCount 1 ] .
+
+norn:ExternalIdentifierShape a sh:NodeShape ; sh:targetClass norn:ExternalIdentifier ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:scheme ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:value ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:issuer ; sh:datatype xsd:string ; sh:maxCount 1 ] .
+
+norn:ProvenanceRecordShape a sh:NodeShape ; sh:targetClass norn:ProvenanceRecord ; sh:closed true ;
+  sh:ignoredProperties ( rdf:type ) ;
+  sh:property [ sh:path norn:sourceRef ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:observedAt ; sh:datatype xsd:dateTime ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path norn:evidenceRefs ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 100 ] .

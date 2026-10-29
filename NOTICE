@@ -1,0 +1,7 @@
+Norn
+Copyright 2026 Norn contributors.
+
+Norn-owned source is licensed under the Apache License, Version 2.0.
+Third-party source retains its original licences and notices.
+The vendored ZEN profile is derived from GoRules ZEN (MIT); see vendor/zen/LICENSE
+and vendor/zen/provenance.json. Other dependency notices accompany their source.

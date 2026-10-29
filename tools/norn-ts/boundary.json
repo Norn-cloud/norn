@@ -1,0 +1,9 @@
+{
+  "imports": [
+    "checker-wasm-abi",
+    "effect@4.0.0-rc.117",
+    "typescript@6.0.3"
+  ],
+  "definitions_io": false,
+  "dependency_pins": "exact"
+}

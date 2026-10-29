@@ -1,0 +1,51 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.reorder.action",
+  "kind": "action",
+  "namespace": "retail",
+  "name": "Reorder SKU",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/retail-reorder.action.json"
+  },
+  "payload": {
+    "actionId": "retail.sku.reorder",
+    "title": "Reorder SKU",
+    "description": "Create a purchase request that replenishes one SKU to its target stock level.",
+    "scopeRequired": ["orgId", "environmentId"],
+    "idempotent": true,
+    "ledgered": true,
+    "ledgerCategory": "procurement.purchase_request",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": { "type": "string" },
+        "skuId": { "type": "string" },
+        "quantity": { "type": "integer" }
+      },
+      "required": ["requestId", "skuId", "quantity"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": { "type": "string" }
+      },
+      "required": ["requestId"],
+      "additionalProperties": false
+    },
+    "preconditions": ["quantity > 0", "len(skuId) > 0"],
+    "writes": [
+      { "entityKind": "retail.PurchaseRequest", "change": "created" }
+    ],
+    "compensation": { "actionId": "retail.sku.cancel_reorder" },
+    "access": { "artifactId": "retail.procurement.policy", "version": "0.1.0" }
+  }
+}

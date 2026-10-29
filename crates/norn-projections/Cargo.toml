@@ -1,0 +1,27 @@
+[package]
+name = "norn-projections"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "JSON Schema, SQLite DDL, Cedar schema/loss, OWL, types (ring 0; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+norn-ir = { path = "../norn-ir" }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# Validates the interop exports against the vendored OpenLineage and
+# PROV-JSONLD schemas (T8-STD-2). No HTTP/file resolution: every schema is
+# vendored under fixtures/interop/vendor.
+# 0.48+ forces serde_json/float_roundtrip across workspace test builds,
+# changing the historical canonical number profile. Keep validation isolated
+# from that feature by pinning the last compatible release.
+jsonschema = { version = "=0.47.0", default-features = false }
+serde_json = "1.0.150"
+sha2 = "0.10.9"

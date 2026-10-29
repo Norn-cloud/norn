@@ -1,0 +1,566 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DataQualityFinding",
+  "description": "One persisted, versioned finding about observed or projected data.",
+  "type": "object",
+  "properties": {
+    "dedupeKey": {
+      "description": "Replay-stable identity of the rule failure and its evidence.",
+      "type": "string"
+    },
+    "evidenceDigest": {
+      "description": "Optional digest of candidate values or other stable evidence context.\nIncluding this distinguishes changed invalid values for the same rule\nand subject while leaving volatile timestamps out of the key.",
+      "type": "string"
+    },
+    "firstSeen": {
+      "description": "When this finding was first observed.",
+      "$ref": "#/$defs/UtcTimestamp"
+    },
+    "id": {
+      "description": "Stable id derived from the dedupe key.",
+      "type": "string"
+    },
+    "lastSeen": {
+      "description": "When this finding was most recently observed.",
+      "$ref": "#/$defs/UtcTimestamp"
+    },
+    "message": {
+      "description": "Human-readable summary of the finding.",
+      "type": "string"
+    },
+    "outcome": {
+      "description": "Typed result and evidence for the failed expectation.",
+      "$ref": "#/$defs/DataQualityOutcome"
+    },
+    "provenance": {
+      "description": "Source records and observations that contributed to the finding.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DataQualityLineage"
+      }
+    },
+    "ruleRef": {
+      "description": "The declared constraint or built-in rule, including its version.",
+      "$ref": "#/$defs/DataQualityRuleRef"
+    },
+    "schemaVersion": {
+      "description": "The finding schema version ([`DATA_QUALITY_FINDING_VERSION`]).",
+      "type": "integer",
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0
+    },
+    "severity": {
+      "description": "The finding's severity.",
+      "$ref": "#/$defs/DataQualitySeverity"
+    },
+    "status": {
+      "description": "Current state of the finding.",
+      "$ref": "#/$defs/DataQualityFindingStatus"
+    },
+    "subjects": {
+      "description": "Objects affected by the finding, sorted by type and key.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DataQualitySubject"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "dedupeKey",
+    "ruleRef",
+    "subjects",
+    "severity",
+    "message",
+    "outcome",
+    "provenance",
+    "firstSeen",
+    "lastSeen",
+    "status"
+  ],
+  "$defs": {
+    "DataQualityFindingStatus": {
+      "description": "The lifecycle state of a data quality finding.",
+      "oneOf": [
+        {
+          "description": "The finding has not been reviewed or resolved.",
+          "type": "string",
+          "const": "open"
+        },
+        {
+          "description": "A person or process accepted responsibility for the finding.",
+          "type": "string",
+          "const": "acknowledged"
+        },
+        {
+          "description": "The latest data no longer exhibits the finding.",
+          "type": "string",
+          "const": "resolved"
+        },
+        {
+          "description": "A newer finding or rule version replaced this finding.",
+          "type": "string",
+          "const": "superseded"
+        }
+      ]
+    },
+    "DataQualityLineage": {
+      "description": "One source and observation lineage contributing evidence to a finding.",
+      "type": "object",
+      "properties": {
+        "observationIds": {
+          "description": "Stable ids of observations that contributed to this evidence.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provenance": {
+          "description": "The provenance-bearing source fact.",
+          "$ref": "#/$defs/InstanceProvenance"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "provenance"
+      ]
+    },
+    "DataQualityOutcome": {
+      "description": "The result of evaluating a rule or constraint against data.",
+      "oneOf": [
+        {
+          "description": "An invariant expression evaluated to `false`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_satisfied"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The expression produced a non-boolean value.",
+          "type": "object",
+          "properties": {
+            "actual": {
+              "description": "The expression value's stable debug form.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "non_boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "actual"
+          ]
+        },
+        {
+          "description": "The expression could not be evaluated under the admitted runtime.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "evaluation_failed"
+            },
+            "reason": {
+              "description": "The bounded evaluator's explanation.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "description": "An observed lifecycle state was outside the declared transition graph.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "The current lifecycle state, or `None` when starting from initial.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "observed_out_of_band"
+            },
+            "property": {
+              "description": "The lifecycle property.",
+              "$ref": "#/$defs/PropertyId"
+            },
+            "reason": {
+              "description": "Why no unique shortest path reached the observed state.",
+              "$ref": "#/$defs/SnapshotDeviationReason"
+            },
+            "state": {
+              "description": "The state reported by the source.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property",
+            "state",
+            "reason"
+          ]
+        },
+        {
+          "description": "An external observation contained a value that violates temporal rules.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "invalid_temporal_observation"
+            },
+            "property": {
+              "description": "The temporal property.",
+              "$ref": "#/$defs/PropertyId"
+            },
+            "reason": {
+              "description": "The stable temporal validation reason.",
+              "type": "string"
+            },
+            "value": {
+              "description": "The exact invalid value reported by the source.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property",
+            "value",
+            "reason"
+          ]
+        },
+        {
+          "description": "A row was excluded from the trusted identity projection.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "description": "Stable code for the identity projection defect.",
+              "type": "string"
+            },
+            "detail": {
+              "description": "Concise reason that omits property values.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "identity_projection_isolation"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "code",
+            "detail"
+          ]
+        }
+      ]
+    },
+    "DataQualityRuleRef": {
+      "description": "A stable reference to the constraint or rule that produced a finding.",
+      "oneOf": [
+        {
+          "description": "An EntityIR invariant pinned by artifact version or declaration digest.",
+          "type": "object",
+          "properties": {
+            "invariantId": {
+              "description": "The invariant identity within its owner.",
+              "$ref": "#/$defs/InvariantId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "invariant"
+            },
+            "owner": {
+              "description": "The object type or interface that declares this invariant.",
+              "$ref": "#/$defs/InvariantOwner"
+            },
+            "version": {
+              "description": "The pinned declaration version or canonical content digest.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "owner",
+            "invariantId",
+            "version"
+          ]
+        },
+        {
+          "description": "A built-in rule, whose version identifies its predicate semantics.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "description": "The globally qualified built-in rule id.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "builtin"
+            },
+            "version": {
+              "description": "The built-in rule semantics version.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "version"
+          ]
+        }
+      ]
+    },
+    "DataQualitySeverity": {
+      "description": "How serious a data quality finding is.",
+      "oneOf": [
+        {
+          "description": "Informational evidence that needs no immediate action.",
+          "type": "string",
+          "const": "info"
+        },
+        {
+          "description": "An expectation failed and should be reviewed.",
+          "type": "string",
+          "const": "warning"
+        },
+        {
+          "description": "The data blocks a normal workflow or projection.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "The data presents an urgent integrity or authorization concern.",
+          "type": "string",
+          "const": "critical"
+        }
+      ]
+    },
+    "DataQualitySubject": {
+      "description": "An object affected by a finding.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "The object's identity key.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "The concrete object type.",
+          "$ref": "#/$defs/ObjectTypeName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "key"
+      ]
+    },
+    "FactRef": {
+      "description": "One committed version of one object: the unit lineage cites.\n\nVersions start at `1` and bump with every committed write to the object\n(the cell's owner version), so `(objectType, key, version)` names one\nimmutable fact.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "The object's identity key value.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "The object type.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "version": {
+          "description": "The object version this fact is.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "key",
+        "version"
+      ]
+    },
+    "InstanceProvenance": {
+      "description": "Where one instance (or one version of it) came from: one record per\ncontributing source record. See the module docs.",
+      "type": "object",
+      "properties": {
+        "mappingVersion": {
+          "description": "The mapping version that produced it.",
+          "$ref": "#/$defs/MappingVersion"
+        },
+        "markings": {
+          "description": "Effective classifications propagated from the value-producing and\nidentity-source fields, guards, and parent collections. Omitted when\nempty for older or unmarked facts.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingId"
+          }
+        },
+        "observedAt": {
+          "description": "When the source system reported the record, when it says so.",
+          "$ref": "#/$defs/UtcTimestamp"
+        },
+        "recordedAt": {
+          "description": "When Norn recorded the fact.",
+          "$ref": "#/$defs/UtcTimestamp"
+        },
+        "source": {
+          "description": "The source record the fact was produced from.",
+          "$ref": "#/$defs/SourceRecordRef"
+        },
+        "sourceFields": {
+          "description": "Source fields read by the value-producing expression, plus the map's\nsubject, source-record, and guard expressions, in mapping source order.\nNested property reads include the parent collection and qualified child\npredicate/value fields (`collection.field`).\nOmitted when unavailable or empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transform": {
+          "description": "The transform within that mapping (a mapping rule id such as\n`sales_order.header`); omitted when the mapping has one.",
+          "type": "string"
+        },
+        "upstream": {
+          "description": "The upstream facts the transform read, in mapping order. Omitted when\nempty (the fact came from the source record alone).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactRef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "mappingVersion",
+        "recordedAt"
+      ]
+    },
+    "InterfaceName": {
+      "description": "Qualified name of an interface: the object type name grammar\n([`OBJECT_TYPE_NAME_PATTERN`], `party.Party`). Interfaces and object types\nshare one name space.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "InvariantId": {
+      "description": "Id of an [`Invariant`], unique within its owner's effective invariant\ncontract. Same grammar as a property id ([`MEMBER_ID_PATTERN`]); invariants\nhave their own name space.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "InvariantOwner": {
+      "description": "Which declaration owns an invariant.",
+      "oneOf": [
+        {
+          "description": "An object type or one of its supertypes.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object"
+            },
+            "name": {
+              "$ref": "#/$defs/ObjectTypeName"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ]
+        },
+        {
+          "description": "An interface implemented by the object type or one of its supertypes.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "interface"
+            },
+            "name": {
+              "$ref": "#/$defs/InterfaceName"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ]
+        }
+      ]
+    },
+    "MappingVersion": {
+      "description": "The version of the mapping that produced a fact\n(`erpnext.sales_order@3`): the `Mapping` technical-view object it names.",
+      "type": "string"
+    },
+    "MarkingId": {
+      "description": "Stable identity of a data marking.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "ObjectTypeName": {
+      "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "PropertyId": {
+      "description": "Id of a property within its object type (`sku_code`), unique there.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "SnapshotDeviationReason": {
+      "description": "Why an observed lifecycle target cannot be reached by one unique shortest\npath from the current state (or the lifecycle's initial state).",
+      "oneOf": [
+        {
+          "description": "No declared transition path reaches the observed target.",
+          "type": "string",
+          "const": "no_declared_path"
+        },
+        {
+          "description": "More than one shortest declared transition path reaches the target.",
+          "type": "string",
+          "const": "ambiguous_shortest_path"
+        }
+      ]
+    },
+    "SourceRecordRef": {
+      "description": "The identity of one record in an external source system.",
+      "type": "object",
+      "properties": {
+        "record": {
+          "description": "The record's identity in that system (`Sales Order/SO-1001`).",
+          "type": "string"
+        },
+        "system": {
+          "description": "The source system (`ERPNext`); the key of its `Source` technical-view\nobject. Contains no `/`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "record"
+      ]
+    },
+    "UtcTimestamp": {
+      "description": "An RFC 3339 instant in UTC (`2026-10-01T09:30:00Z`).",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    }
+  }
+}

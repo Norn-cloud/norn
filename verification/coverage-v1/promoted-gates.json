@@ -1,0 +1,1113 @@
+{
+  "schemaVersion": "norn.verification.promoted-gates.v1",
+  "gates": [
+    {
+      "id": "tool-versions",
+      "profile": "fast",
+      "command": "scripts/check-verification-tools.sh",
+      "evidenceKind": "command",
+      "role": "toolchain-integrity",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "extraction-tool-versions",
+      "profile": "full",
+      "command": "scripts/check-rust-extraction-tools.sh",
+      "evidenceKind": "command",
+      "role": "toolchain-integrity",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "source-enrollment-regressions",
+      "profile": "fast",
+      "command": "python3 scripts/test_proof_enrollment.py",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "coverage-manifest",
+      "profile": "fast",
+      "command": "python3 verification/coverage-v1/validate.py",
+      "evidenceKind": "command",
+      "role": "manifest-validation",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "authority-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/stripmine-2026-08-22/models/authority-commit.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        },
+        {
+          "subsystem": "authorization",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "authority-quint",
+      "profile": "fast",
+      "command": "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        },
+        {
+          "subsystem": "authorization",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/authority-commit-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "transition-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "transition-closed-custom-effect-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "transition-closed-custom-effect-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/stripmine-2026-08-22/models/closed-action-effect.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "transition-closed-custom-effect-quint",
+      "profile": "fast",
+      "command": "quint verify verification/stripmine-2026-08-22/models/closed-action-effect.qnt --backend apalache --invariants typeOk oneClosedEffectPerCommit acceptedBoundExactDefinitions acceptedPassedClosedChecks noOpPreservesAuthority --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/closed-action-effect-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "transition-domain-authority-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "transition-domain-authority-quint",
+      "profile": "fast",
+      "command": "quint verify verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt --backend apalache --invariants typeOk genericNeverCommitsDomainOwned domainNeverCommitsGenericOwned domainCommitMatchesExactOwner rejectionIsNoOp --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/domain-engine-boundary-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "transition-domain-authority-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "artifact-direct-write-predicate-runtime",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-ir --test artifact_governance",
+      "evidenceKind": "rust-tests",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "artifact-governance",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "artifact-governance-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/stripmine-2026-08-22/models/artifact-promotion.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "artifact-governance",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "artifact-governance-quint",
+      "profile": "fast",
+      "command": "quint verify verification/stripmine-2026-08-22/models/artifact-promotion.qnt --backend apalache --invariants typeOk authorityRequiresExactAppliedPlan --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "artifact-governance",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/artifact-promotion-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "artifact-governance-active-pointer-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/stripmine-2026-08-22/models/active-artifact-authority.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "artifact-governance",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "artifact-governance-active-pointer-quint",
+      "profile": "fast",
+      "command": "quint verify verification/stripmine-2026-08-22/models/active-artifact-authority.qnt --backend apalache --invariants typeOk activePointerReferencesEnvelope immutableV1History exactlyOneExecutable competingV1PlansCannotBothPublish --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "artifact-governance",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/active-artifact-authority-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "artifact-governance-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ArtifactPromotion.lean",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "artifact-governance",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "artifact-governance-active-pointer-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ActiveArtifactAuthority.lean",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "artifact-governance",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "artifact-governance-checker-receipt-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ArtifactVerificationReceipt.lean",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "artifact-governance",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "artifact-governance-rust-extraction",
+      "profile": "full",
+      "command": "scripts/verify-artifact-governance-extraction.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "artifact-governance",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": [
+        "target/verification-results/artifact-governance-hax/Norn_ir.fst"
+      ]
+    },
+    {
+      "id": "authorization-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "authorization",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "authorization-authority-commit-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationAuthorityCommit.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "authorization",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "authorization-scope-exactness-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/authz-v1/AuthorizationScopeExactness.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "authorization",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "authorization-commit-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "authorization",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "authorization-commit-quint",
+      "profile": "fast",
+      "command": "quint verify verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt --backend apalache --invariants typeOk atMostOnce acceptedOnlyWithExactBindings acceptedOnlyWithFreshVersions acceptedOnlyWithinValidityWindow rejectionPreservesCommitAuthority --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "authorization",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/authorization-commit-boundary-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "authorization-scope-exactness-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/authz-v1/models/authorization-scope-exactness.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "authorization",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "authorization-scope-exactness-quint",
+      "profile": "fast",
+      "command": "quint verify verification/authz-v1/models/authorization-scope-exactness.qnt --backend apalache --invariants typeOk allowIffExact omittedGrantTenantRejectsPresentRequest omittedGrantSessionRejectsPresentRequest --max-steps 4",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "authorization",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/authorization-scope-exactness-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-runtime",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+      "evidenceKind": "rust-tests",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "runtime"
+        },
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        },
+        {
+          "subsystem": "verification-integrity",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "generic-posting-runtime",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-kernel --test accounting_commit",
+      "evidenceKind": "rust-tests",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-authority-runtime-unit",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+      "evidenceKind": "rust-tests",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "runtime"
+        },
+        {
+          "subsystem": "cala-boundary",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/stripmine-2026-08-22/models/quantity-ledger.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-quint",
+      "profile": "fast",
+      "command": "quint verify verification/stripmine-2026-08-22/models/quantity-ledger.qnt --backend apalache --invariants typeOk conserved terminalResolvedOnce noTerminalReservation --max-steps 8",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/quantity-ledger-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-authority-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-authority-quint",
+      "profile": "fast",
+      "command": "quint verify verification/stripmine-2026-08-22/models/quantity-authority.qnt --backend apalache --invariants typeOk perUnitLayerConserved atomicAuthorityRecords phaseMatchesCommitCount reversalRestoresBalances noOpPreservesAuthority --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/quantity-authority-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-authority-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-reservation-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-reservation-quint",
+      "profile": "fast",
+      "command": "quint verify verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt --backend apalache --invariants typeOk conserved recordsAligned terminalResolvedOnce noTerminalReservation pendingHasOneCreate noOpPreservesAuthority --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/quantity-reservation-authority-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-reservation-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-batch-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-batch-quint",
+      "profile": "fast",
+      "command": "quint verify verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt --backend apalache --invariants typeOk sequentialVersions batchAllOrNone stableReceipt --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/quantity-batch-atomicity-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-batch-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-unit-dimension-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-unit-dimension-quint",
+      "profile": "fast",
+      "command": "quint verify verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt --backend apalache --invariants typeOk certificateRemainsPinned acceptedPostingHasExactBinding differentDimensionCannotSubstitute differentDimensionsCannotBalance --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/quantity-unit-dimension-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-unit-dimension-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "quantity-kani",
+      "profile": "full",
+      "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "quantity-ledger",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "ontology-runtime-rust",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+      "evidenceKind": "rust-tests",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "ontology-closed-entity-ir-rust",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-ir -p norn-checker entity_",
+      "evidenceKind": "rust-tests",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "ontology-model",
+      "profile": "fast",
+      "command": "python3 verification/ontology/scripts/validate.py",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "ontology-semantic-differential",
+      "profile": "full",
+      "command": "scripts/check-ontology-semantics.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "ontology-mapping-provenance-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "ontology-mapping-provenance-quint",
+      "profile": "fast",
+      "command": "quint verify verification/ontology-v1/models/ontology-mapping-provenance.qnt --backend apalache --invariants typeOk replacementIsDirect replacementPreservesIdentity replacementHasReviewedBoundedProvenance exactlyOneActivePerIdentity rejectedAttemptIsNoOp --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/ontology-mapping-provenance-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "ontology-relation-authority-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/ontology-v1/models/ontology-relation-authority.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "ontology-relation-authority-quint",
+      "profile": "fast",
+      "command": "quint verify verification/ontology-v1/models/ontology-relation-authority.qnt --backend apalache --invariants typeOk acceptedVersionWasExact acceptedEndpointsHadExactKinds cardinalityPreserved rejectedAttemptIsNoOp --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/ontology-relation-authority-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "ontology-mapping-provenance-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/ontology-v1/OntologyMappingProvenance.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "ontology-authority-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "ontology",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "cala-boundary",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+      "evidenceKind": "rust-tests",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "cala-boundary",
+          "layer": "runtime"
+        },
+        {
+          "subsystem": "cala-boundary",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "verification-executed-test-selectors",
+      "profile": "full",
+      "command": "python3 scripts/validate-executed-test-selectors.py",
+      "evidenceKind": "command",
+      "role": "evidence-integrity",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "verification-executed-test-selectors-fast",
+      "profile": "fast",
+      "command": "python3 scripts/validate-executed-test-selectors.py --profile fast",
+      "evidenceKind": "command",
+      "role": "evidence-integrity",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "verification-proof-hole-audit-fast",
+      "profile": "fast",
+      "command": "python3 scripts/check-proof-holes.py",
+      "evidenceKind": "command",
+      "role": "evidence-integrity",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "verification-attestation-negative-canaries",
+      "profile": "fast",
+      "command": "python3 verification/coverage-v1/negative_canaries.py",
+      "evidenceKind": "command",
+      "role": "evidence-integrity",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-v2-commit-admission-typecheck",
+      "profile": "full",
+      "command": "quint typecheck verification/kernel-v2/models/commit-admission.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "kernel-v2",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-v2-commit-admission",
+      "profile": "full",
+      "command": "quint verify verification/kernel-v2/models/commit-admission.qnt --backend apalache --invariants invariant --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "kernel-v2",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/kernel-v2-commit-admission.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-v2-quantity-ledger-typecheck",
+      "profile": "full",
+      "command": "quint typecheck verification/kernel-v2/models/quantity-ledger.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "kernel-v2",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-v2-quantity-ledger",
+      "profile": "full",
+      "command": "quint test verification/kernel-v2/models/quantity-ledger.qnt --backend rust --match conservation.*Test --max-samples 1 --seed 1",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "kernel-v2",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-v2-projection-trust-typecheck",
+      "profile": "full",
+      "command": "quint typecheck verification/kernel-v2/models/projection-trust.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "kernel-v2",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-v2-projection-trust",
+      "profile": "full",
+      "command": "quint verify verification/kernel-v2/models/projection-trust.qnt --backend apalache --invariants invariant --max-steps 8",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "kernel-v2",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/kernel-v2-projection-trust.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-v2-commit-conformance",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-testkit --test kernel_quint",
+      "evidenceKind": "rust-tests",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "kernel-v2",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    }
+  ]
+}

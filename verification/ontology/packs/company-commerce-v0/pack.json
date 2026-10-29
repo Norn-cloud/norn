@@ -1,0 +1,891 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "norn.ontology-pack.company-commerce",
+  "kind": "business_pack",
+  "namespace": "norn.ontology",
+  "name": "Company Commerce Ontology v0",
+  "version": "0.1.0",
+  "lifecycle": "proposed",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "verification/ontology/packs/company-commerce-v0/pack.json",
+    "createdAt": "2026-08-25T00:00:00Z"
+  },
+  "payload": {
+    "packId": "norn.ontology-pack.company-commerce",
+    "packVersion": "0.1",
+    "packKind": "ontology",
+    "sources": [
+      {
+        "sourceId": "source.schema-org",
+        "releaseId": "30.0",
+        "releasedAt": "2026-03-19",
+        "retrievedAt": "2026-08-25",
+        "canonicalUrl": "https://schema.org/version/30.0/",
+        "license": "CC-BY-SA-3.0",
+        "redistribution": "reference_only",
+        "files": [
+          {
+            "path": "https://schema.org/version/latest/schemaorg-current-https.jsonld",
+            "sha256": "0f0c97a4f666b2f8563573fe48453782fd51b87a504523cf0c9aff6a71c3eec4"
+          }
+        ]
+      },
+      {
+        "sourceId": "source.norn-synthetic-taxonomy",
+        "releaseId": "toy-1@48623e1f673dfcf1e73dba2f28eb8875b4324524d1ab9bd9b3ed39cd51b958a3",
+        "releasedAt": "2026-08-25",
+        "retrievedAt": "2026-08-25",
+        "canonicalUrl": "https://example.invalid/norn/toy-taxonomy/1/",
+        "license": "Apache-2.0",
+        "redistribution": "vendored",
+        "files": [
+          {
+            "path": "verification/ontology/fixtures/toy-taxonomy/categories.json",
+            "sha256": "48623e1f673dfcf1e73dba2f28eb8875b4324524d1ab9bd9b3ed39cd51b958a3"
+          },
+          {
+            "path": "verification/ontology/fixtures/toy-taxonomy/attributes.json",
+            "sha256": "b1e29e7bc9047c06125b3433147dab096eed33ae49d0d9186d47ef0dc7deb5d5"
+          },
+          {
+            "path": "verification/ontology/fixtures/toy-taxonomy/attribute_values.json",
+            "sha256": "691557c841457441ba5731d1fdcd50a4cb20ec0206f68e58092b1e84c0a615ef"
+          },
+          {
+            "path": "verification/ontology/packs/company-commerce-v0/shopify-categories.toy-1.json",
+            "sha256": "95e1ae1a025b72575f327969a0ef6a7f36c04f1eb911811fa47f3a280e1d8674"
+          },
+          {
+            "path": "verification/ontology/packs/company-commerce-v0/shopify-attributes.toy-1.json",
+            "sha256": "60dc99bb3142b992492946ec1b80199f3068b906ae1cd7f1139cdcd119c143ef"
+          }
+        ]
+      }
+    ],
+    "terms": [
+      {
+        "termId": "norn.company.party",
+        "label": "Party",
+        "definition": "A person or organization represented in the operating model.",
+        "termKind": "class",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.company.legal-entity",
+        "label": "Legal Entity",
+        "definition": "A party recognized as a legal entity in a declared jurisdiction.",
+        "termKind": "class",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.company.party"
+      },
+      {
+        "termId": "norn.company.organization",
+        "label": "Organization",
+        "definition": "An organization participating in a commerce operating model.",
+        "termKind": "class",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.company.party"
+      },
+      {
+        "termId": "norn.company.person",
+        "label": "Person",
+        "definition": "A person participating in a commerce operating model.",
+        "termKind": "class",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.company.party"
+      },
+      {
+        "termId": "norn.company.postal-address",
+        "label": "Postal Address",
+        "definition": "A mailing address associated with a party or order.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.commerce.product",
+        "label": "Product",
+        "definition": "A commercial product concept independent of a sellable offer.",
+        "termKind": "class",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.commerce.product-variant",
+        "label": "Product Variant",
+        "definition": "A particular variation of a product that can carry identifiers and categories.",
+        "termKind": "class",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.commerce.product"
+      },
+      {
+        "termId": "norn.commerce.offer",
+        "label": "Offer",
+        "definition": "A sellable offer for a product with price and availability context.",
+        "termKind": "class",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.commerce.order",
+        "label": "Order",
+        "definition": "A commerce order containing one or more order items.",
+        "termKind": "class",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.commerce.order-item",
+        "label": "Order Item",
+        "definition": "A line item in an order that identifies a product and quantity.",
+        "termKind": "class",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.logistics.trade-item",
+        "label": "Trade Item",
+        "definition": "A product or service unit identified for trade and logistics handling.",
+        "termKind": "class",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.taxonomy.category",
+        "label": "Category",
+        "definition": "A Norn-owned classification concept that may map to external taxonomies.",
+        "termKind": "concept_scheme_root",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.identity.external-identifier",
+        "label": "External Identifier",
+        "definition": "A scoped identifier or additional-property value issued under an external scheme.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.evidence.provenance-record",
+        "label": "Provenance Record",
+        "definition": "Evidence describing the source and observation context of a semantic claim.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      }
+    ],
+    "mappings": [
+      {
+        "mappingId": "mapping.organization.schema",
+        "termId": "norn.company.organization",
+        "sourceId": "source.schema-org",
+        "externalIri": "https://schema.org/Organization",
+        "relation": "close_match",
+        "justification": "Schema.org Organization supplies the v0 interoperability class while Norn retains its own party hierarchy.",
+        "evidenceRefs": [
+          "https://schema.org/Organization"
+        ],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.person.schema",
+        "termId": "norn.company.person",
+        "sourceId": "source.schema-org",
+        "externalIri": "https://schema.org/Person",
+        "relation": "close_match",
+        "justification": "Schema.org Person supplies the v0 interoperability class while Norn retains its own party hierarchy.",
+        "evidenceRefs": [
+          "https://schema.org/Person"
+        ],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.postal-address.schema",
+        "termId": "norn.company.postal-address",
+        "sourceId": "source.schema-org",
+        "externalIri": "https://schema.org/PostalAddress",
+        "relation": "close_match",
+        "justification": "Schema.org PostalAddress supplies mailing-address interoperability without granting operational authority.",
+        "evidenceRefs": [
+          "https://schema.org/PostalAddress"
+        ],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.product.schema",
+        "termId": "norn.commerce.product",
+        "sourceId": "source.schema-org",
+        "externalIri": "https://schema.org/Product",
+        "relation": "close_match",
+        "justification": "Schema.org Product overlaps the Norn product concept; Norn owns the closed import shape and lifecycle.",
+        "evidenceRefs": [
+          "https://schema.org/Product"
+        ],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.offer.schema",
+        "termId": "norn.commerce.offer",
+        "sourceId": "source.schema-org",
+        "externalIri": "https://schema.org/Offer",
+        "relation": "close_match",
+        "justification": "Schema.org Offer supplies price and availability interoperability for a Norn offer.",
+        "evidenceRefs": [
+          "https://schema.org/Offer"
+        ],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.order.schema",
+        "termId": "norn.commerce.order",
+        "sourceId": "source.schema-org",
+        "externalIri": "https://schema.org/Order",
+        "relation": "close_match",
+        "justification": "Schema.org Order supplies order-document interoperability while Norn owns order transitions.",
+        "evidenceRefs": [
+          "https://schema.org/Order"
+        ],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.order-item.schema",
+        "termId": "norn.commerce.order-item",
+        "sourceId": "source.schema-org",
+        "externalIri": "https://schema.org/OrderItem",
+        "relation": "close_match",
+        "justification": "Schema.org OrderItem supplies line-item interoperability while Norn owns order membership rules.",
+        "evidenceRefs": [
+          "https://schema.org/OrderItem"
+        ],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.external-identifier.schema-property-value",
+        "termId": "norn.identity.external-identifier",
+        "sourceId": "source.schema-org",
+        "externalIri": "https://schema.org/PropertyValue",
+        "relation": "related_match",
+        "justification": "Schema.org PropertyValue carries named values; Norn constrains the same carrier for identifiers and taxonomy properties.",
+        "evidenceRefs": [
+          "https://schema.org/PropertyValue"
+        ],
+        "confidenceBasisPoints": 8000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.category.shopify-root",
+        "termId": "norn.taxonomy.category",
+        "sourceId": "source.norn-synthetic-taxonomy",
+        "externalIri": "https://example.invalid/norn/toy-taxonomy/1/?categoryId=sg",
+        "relation": "related_match",
+        "justification": "The prior Shopify root mapping is retained as a direct superseded record for the same Norn category scheme.",
+        "evidenceRefs": [
+          "https://example.invalid/norn/toy-taxonomy/1/?categoryId=sg"
+        ],
+        "confidenceBasisPoints": 7000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z",
+        "supersededByMappingId": "mapping.category.shopify-apparel-root"
+      },
+      {
+        "mappingId": "mapping.category.shopify-apparel-root",
+        "termId": "norn.taxonomy.category",
+        "sourceId": "source.norn-synthetic-taxonomy",
+        "externalIri": "https://example.invalid/norn/toy-taxonomy/1/?categoryId=aa",
+        "relation": "related_match",
+        "justification": "Apparel & Accessories is the v0 category root used by the commerce registry projection.",
+        "evidenceRefs": [
+          "https://example.invalid/norn/toy-taxonomy/1/?categoryId=aa"
+        ],
+        "confidenceBasisPoints": 7000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.attribute.shopify.sample-finish",
+        "termId": "norn.identity.external-identifier",
+        "sourceId": "source.norn-synthetic-taxonomy",
+        "externalIri": "https://example.invalid/norn/toy-taxonomy/1/?attributeId=1",
+        "relation": "related_match",
+        "justification": "Shopify attribute Sample finish maps to the Norn additionalProperty carrier; values remain source-scoped.",
+        "evidenceRefs": [
+          "https://example.invalid/norn/toy-taxonomy/1/?attributeId=1"
+        ],
+        "confidenceBasisPoints": 7000,
+        "reviewedBy": "unreviewed",
+        "reviewedAt": "2026-08-25T00:00:00Z"
+      }
+    ],
+    "shapes": [
+      {
+        "shapeId": "shape.company.party",
+        "termId": "norn.company.party",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "displayName",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "externalIdentifiers",
+            "valueType": "external_identifier",
+            "minCount": 0,
+            "maxCount": 100
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.company.legal-entity",
+        "termId": "norn.company.legal-entity",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "displayName",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "legalName",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "jurisdictionCode",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "externalIdentifiers",
+            "valueType": "external_identifier",
+            "minCount": 0,
+            "maxCount": 100
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.company.organization",
+        "termId": "norn.company.organization",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "displayName",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "legalName",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "address",
+            "valueType": "term_ref",
+            "minCount": 0,
+            "maxCount": 1,
+            "targetTermId": "norn.company.postal-address"
+          },
+          {
+            "fieldId": "email",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "telephone",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "externalIdentifiers",
+            "valueType": "external_identifier",
+            "minCount": 0,
+            "maxCount": 100
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.company.person",
+        "termId": "norn.company.person",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "displayName",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "givenName",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "familyName",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "email",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "telephone",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "address",
+            "valueType": "term_ref",
+            "minCount": 0,
+            "maxCount": 1,
+            "targetTermId": "norn.company.postal-address"
+          },
+          {
+            "fieldId": "externalIdentifiers",
+            "valueType": "external_identifier",
+            "minCount": 0,
+            "maxCount": 100
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.company.postal-address",
+        "termId": "norn.company.postal-address",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "streetAddress",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "addressLocality",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "addressRegion",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "postalCode",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "addressCountry",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.commerce.product",
+        "termId": "norn.commerce.product",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "description",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "sku",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "externalIdentifiers",
+            "valueType": "external_identifier",
+            "minCount": 0,
+            "maxCount": 100
+          },
+          {
+            "fieldId": "category",
+            "valueType": "category_ref",
+            "minCount": 0,
+            "maxCount": 100
+          },
+          {
+            "fieldId": "categories",
+            "valueType": "category_ref",
+            "minCount": 0,
+            "maxCount": 100
+          },
+          {
+            "fieldId": "additionalProperty",
+            "valueType": "external_identifier",
+            "minCount": 0,
+            "maxCount": 100
+          },
+          {
+            "fieldId": "offers",
+            "valueType": "term_ref",
+            "minCount": 0,
+            "maxCount": 100,
+            "targetTermId": "norn.commerce.offer"
+          },
+          {
+            "fieldId": "measurementUnit",
+            "valueType": "term_ref",
+            "minCount": 0,
+            "maxCount": 1,
+            "targetTermId": "norn.measure.unit"
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.commerce.product-variant",
+        "termId": "norn.commerce.product-variant",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "parentProduct",
+            "valueType": "term_ref",
+            "minCount": 1,
+            "maxCount": 1,
+            "targetTermId": "norn.commerce.product"
+          },
+          {
+            "fieldId": "sku",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "externalIdentifiers",
+            "valueType": "external_identifier",
+            "minCount": 0,
+            "maxCount": 100
+          },
+          {
+            "fieldId": "category",
+            "valueType": "category_ref",
+            "minCount": 0,
+            "maxCount": 100
+          },
+          {
+            "fieldId": "categories",
+            "valueType": "category_ref",
+            "minCount": 0,
+            "maxCount": 100
+          },
+          {
+            "fieldId": "additionalProperty",
+            "valueType": "external_identifier",
+            "minCount": 0,
+            "maxCount": 100
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.commerce.offer",
+        "termId": "norn.commerce.offer",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "itemOffered",
+            "valueType": "term_ref",
+            "minCount": 1,
+            "maxCount": 1,
+            "targetTermId": "norn.commerce.product"
+          },
+          {
+            "fieldId": "price",
+            "valueType": "decimal",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "priceCurrency",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "availability",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "seller",
+            "valueType": "term_ref",
+            "minCount": 0,
+            "maxCount": 1,
+            "targetTermId": "norn.company.party"
+          },
+          {
+            "fieldId": "additionalProperty",
+            "valueType": "external_identifier",
+            "minCount": 0,
+            "maxCount": 100
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.commerce.order",
+        "termId": "norn.commerce.order",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "orderNumber",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "orderDate",
+            "valueType": "date_time",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "orderStatus",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "customer",
+            "valueType": "term_ref",
+            "minCount": 0,
+            "maxCount": 1,
+            "targetTermId": "norn.company.party"
+          },
+          {
+            "fieldId": "merchant",
+            "valueType": "term_ref",
+            "minCount": 0,
+            "maxCount": 1,
+            "targetTermId": "norn.company.party"
+          },
+          {
+            "fieldId": "acceptedOffer",
+            "valueType": "term_ref",
+            "minCount": 0,
+            "maxCount": 1,
+            "targetTermId": "norn.commerce.offer"
+          },
+          {
+            "fieldId": "billingAddress",
+            "valueType": "term_ref",
+            "minCount": 0,
+            "maxCount": 1,
+            "targetTermId": "norn.company.postal-address"
+          },
+          {
+            "fieldId": "shippingAddress",
+            "valueType": "term_ref",
+            "minCount": 0,
+            "maxCount": 1,
+            "targetTermId": "norn.company.postal-address"
+          },
+          {
+            "fieldId": "lineItems",
+            "valueType": "term_ref",
+            "minCount": 1,
+            "maxCount": 100,
+            "targetTermId": "norn.commerce.order-item"
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.commerce.order-item",
+        "termId": "norn.commerce.order-item",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "orderItemNumber",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "orderItemStatus",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "orderedProduct",
+            "valueType": "term_ref",
+            "minCount": 1,
+            "maxCount": 1,
+            "targetTermId": "norn.commerce.product"
+          },
+          {
+            "fieldId": "orderQuantity",
+            "valueType": "decimal",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "additionalProperty",
+            "valueType": "external_identifier",
+            "minCount": 0,
+            "maxCount": 100
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.logistics.trade-item",
+        "termId": "norn.logistics.trade-item",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "variantRef",
+            "valueType": "term_ref",
+            "minCount": 1,
+            "maxCount": 1,
+            "targetTermId": "norn.commerce.product-variant"
+          },
+          {
+            "fieldId": "packagingLevel",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "externalIdentifiers",
+            "valueType": "external_identifier",
+            "minCount": 1,
+            "maxCount": 100
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.taxonomy.category",
+        "termId": "norn.taxonomy.category",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "code",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "label",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "parentCategory",
+            "valueType": "category_ref",
+            "minCount": 0,
+            "maxCount": 1
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.identity.external-identifier",
+        "termId": "norn.identity.external-identifier",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "scheme",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "value",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "issuer",
+            "valueType": "string",
+            "minCount": 0,
+            "maxCount": 1
+          }
+        ]
+      },
+      {
+        "shapeId": "shape.evidence.provenance-record",
+        "termId": "norn.evidence.provenance-record",
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "sourceRef",
+            "valueType": "string",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "observedAt",
+            "valueType": "date_time",
+            "minCount": 1,
+            "maxCount": 1
+          },
+          {
+            "fieldId": "evidenceRefs",
+            "valueType": "iri",
+            "minCount": 1,
+            "maxCount": 100
+          }
+        ]
+      }
+    ]
+  }
+}

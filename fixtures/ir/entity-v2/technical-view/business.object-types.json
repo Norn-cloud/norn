@@ -1,0 +1,149 @@
+[
+  {
+    "name": "crm.Customer",
+    "description": "A customer. Business view: credit standing. Technical view: backed by the ERPNext Customer table, derived by the customer mapping.",
+    "properties": [
+      {
+        "id": "customer_id",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "name",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "credit_limit",
+        "type": {
+          "kind": "decimal",
+          "scale": 2
+        },
+        "constraints": {
+          "min": "0"
+        }
+      },
+      {
+        "id": "outstanding",
+        "type": {
+          "kind": "decimal",
+          "scale": 2
+        },
+        "constraints": {
+          "min": "0"
+        }
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "customer_id"
+        ]
+      }
+    ],
+    "links": [
+      {
+        "id": "backed_by",
+        "description": "backedBy: the source tables this type's facts come from.",
+        "target": "technical.Table",
+        "cardinality": {
+          "to": "many",
+          "from": "many"
+        }
+      },
+      {
+        "id": "derived_from",
+        "description": "derivedFrom: the mapping versions that produce this type's facts.",
+        "target": "technical.Mapping",
+        "cardinality": {
+          "to": "many",
+          "from": "many"
+        }
+      }
+    ]
+  },
+  {
+    "name": "commerce.SalesOrder",
+    "description": "A sales order that a credit decision may put on hold.",
+    "properties": [
+      {
+        "id": "so_number",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "grand_total",
+        "type": {
+          "kind": "decimal",
+          "scale": 2
+        },
+        "constraints": {
+          "min": "0"
+        }
+      },
+      {
+        "id": "status",
+        "type": {
+          "kind": "enum",
+          "values": [
+            {
+              "value": "draft"
+            },
+            {
+              "value": "on_hold"
+            },
+            {
+              "value": "approved"
+            },
+            {
+              "value": "cancelled"
+            }
+          ]
+        },
+        "default": "draft"
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "so_number"
+        ]
+      }
+    ],
+    "links": [
+      {
+        "id": "customer",
+        "target": "crm.Customer",
+        "cardinality": {
+          "to": "one",
+          "from": "many",
+          "required": true
+        },
+        "inverse": "orders"
+      },
+      {
+        "id": "backed_by",
+        "description": "backedBy: the source tables this type's facts come from.",
+        "target": "technical.Table",
+        "cardinality": {
+          "to": "many",
+          "from": "many"
+        }
+      },
+      {
+        "id": "derived_from",
+        "description": "derivedFrom: the mapping versions that produce this type's facts.",
+        "target": "technical.Mapping",
+        "cardinality": {
+          "to": "many",
+          "from": "many"
+        }
+      }
+    ]
+  }
+]

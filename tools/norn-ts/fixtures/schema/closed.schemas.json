@@ -1,0 +1,122 @@
+{
+  "Channel": {
+    "enum": [
+      "web",
+      "pos"
+    ],
+    "type": "string"
+  },
+  "Code": {
+    "type": "string"
+  },
+  "Line": {
+    "additionalProperties": false,
+    "properties": {
+      "kind": {
+        "enum": [
+          "goods",
+          "service"
+        ],
+        "type": "string"
+      },
+      "note": {
+        "type": "string"
+      },
+      "quantity": {
+        "type": "integer"
+      },
+      "ratio": {
+        "type": "number"
+      },
+      "sku": {
+        "type": "string"
+      },
+      "tags": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "sku",
+      "quantity",
+      "ratio",
+      "kind",
+      "tags"
+    ],
+    "type": "object"
+  },
+  "LineAlias": {
+    "additionalProperties": false,
+    "properties": {
+      "kind": {
+        "enum": [
+          "goods",
+          "service"
+        ],
+        "type": "string"
+      },
+      "note": {
+        "type": "string"
+      },
+      "quantity": {
+        "type": "integer"
+      },
+      "ratio": {
+        "type": "number"
+      },
+      "sku": {
+        "type": "string"
+      },
+      "tags": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "sku",
+      "quantity",
+      "ratio",
+      "kind",
+      "tags"
+    ],
+    "type": "object"
+  },
+  "Plain": {
+    "type": "string"
+  },
+  "Shipped": {
+    "additionalProperties": false,
+    "properties": {
+      "_tag": {
+        "enum": [
+          "Shipped"
+        ],
+        "type": "string"
+      },
+      "at": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "_tag",
+      "at"
+    ],
+    "type": "object"
+  },
+  "Short": {
+    "additionalProperties": false,
+    "properties": {
+      "sku": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "sku"
+    ],
+    "type": "object"
+  }
+}

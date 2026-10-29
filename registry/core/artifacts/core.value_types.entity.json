@@ -1,0 +1,136 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "core.value_types.entity",
+  "kind": "entity",
+  "namespace": "core",
+  "name": "Norn Core value types",
+  "version": "0.2.0",
+  "lifecycle": "active",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.value_types.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "propertyTypes": [
+      {
+        "name": "core.display_name",
+        "description": "A human-readable name of a party, item, or place.",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      {
+        "name": "core.code",
+        "description": "A business code or key assigned by the source system (customer code, item code).",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "minLength": 1,
+          "maxLength": 140
+        }
+      },
+      {
+        "name": "core.document_number",
+        "description": "The number a business document carries (order, invoice, payment reference).",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "minLength": 1,
+          "maxLength": 140
+        }
+      },
+      {
+        "name": "core.email_address",
+        "description": "An email address (RFC 5322 addr-spec).",
+        "type": {
+          "kind": "text",
+          "format": "email"
+        },
+        "constraints": {
+          "maxLength": 254
+        },
+        "markings": [
+          "pii.contact"
+        ]
+      },
+      {
+        "name": "core.phone_number",
+        "description": "A telephone number as written by its source; E.164 when normalized.",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "markings": [
+          "pii.contact"
+        ]
+      },
+      {
+        "name": "core.money_amount",
+        "description": "A monetary amount. Money is a pair: an amount of this type and an iso4217.currency_code beside it.",
+        "type": {
+          "kind": "decimal",
+          "scale": 6
+        }
+      },
+      {
+        "name": "core.quantity",
+        "description": "A quantity of an item, in the unit recorded beside it.",
+        "type": {
+          "kind": "decimal",
+          "scale": 6
+        }
+      },
+      {
+        "name": "core.national_id",
+        "description": "A government-issued personal identifier, as reported by its source.",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "markings": [
+          "pii.identity"
+        ]
+      },
+      {
+        "name": "core.bank_account_number",
+        "description": "A bank account identifier, as reported by its source.",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "markings": [
+          "pii.financial",
+          "confidential.finance"
+        ]
+      },
+      {
+        "name": "core.health_information",
+        "description": "A health-related record or finding represented as source JSON.",
+        "type": {
+          "kind": "json-ext"
+        },
+        "markings": [
+          "pii.health"
+        ]
+      }
+    ]
+  }
+}

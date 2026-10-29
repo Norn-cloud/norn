@@ -1,0 +1,25 @@
+{
+  "name": "projects.Project",
+  "description": "A project staffed by employees. N:M link to hr.Employee with link properties (the member's role and allocation) and the inverse role `projects`.",
+  "properties": [
+    { "id": "code", "type": { "kind": "text" } },
+    { "id": "title", "type": { "kind": "text" }, "constraints": { "minLength": 1 } }
+  ],
+  "links": [
+    {
+      "id": "members",
+      "target": "hr.Employee",
+      "cardinality": { "to": "many", "from": "many" },
+      "inverse": "projects",
+      "properties": [
+        {
+          "id": "role",
+          "type": { "kind": "enum", "values": [{ "value": "lead" }, { "value": "contributor" }] },
+          "default": "contributor"
+        },
+        { "id": "allocation", "type": { "kind": "decimal", "scale": 2 }, "constraints": { "min": "0", "max": "1" } }
+      ]
+    }
+  ],
+  "identity": [{ "name": "primary", "properties": ["code"] }]
+}

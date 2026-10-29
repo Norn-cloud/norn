@@ -1,0 +1,12 @@
+{
+  "name": "norn-cell",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-kernel",
+    "norn-checker",
+    "norn-projections",
+    "norn-ir"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}

@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-LOOP",
+      "start": "9:5",
+      "end": "11:6",
+      "construct": "while (invoice.overdue === true) { yield* Norn.perform(\"charge\", chargeCard, ..."
+    },
+    {
+      "code": "NORN-FLOW-LOOP",
+      "start": "12:5",
+      "end": "14:6",
+      "construct": "for (const id of [\"a\", \"b\"]) { yield* Norn.perform(\"each\", loadInvoice, { inv..."
+    }
+  ]
+}

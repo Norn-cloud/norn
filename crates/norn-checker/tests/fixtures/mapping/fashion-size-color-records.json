@@ -1,0 +1,204 @@
+[
+  {
+    "map": "fashion_item_template",
+    "objectType": "fashion.Style",
+    "key": "ONE-DRS-001",
+    "invocations": [
+      {
+        "actionId": "erpnext.fashion_item.mapping.fashion_item_template.observe",
+        "input": {
+          "color": null,
+          "display_name": "One Dress",
+          "item_code": "ONE-DRS-001",
+          "objectId": "ONE-DRS-001",
+          "size": null
+        }
+      }
+    ],
+    "propertyProvenance": {
+      "color": {
+        "source": {
+          "system": "ToyVariants",
+          "record": "Item/ONE-DRS-001"
+        },
+        "mappingVersion": "erpnext.fashion_item.mapping@0.1.0",
+        "transform": "fashion_item_template.color",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "item_code",
+          "variant_of",
+          "attributes",
+          "attributes.attribute",
+          "attributes.attribute_value"
+        ]
+      },
+      "display_name": {
+        "source": {
+          "system": "ToyVariants",
+          "record": "Item/ONE-DRS-001"
+        },
+        "mappingVersion": "erpnext.fashion_item.mapping@0.1.0",
+        "transform": "fashion_item_template.display_name",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "item_code",
+          "item_name",
+          "variant_of"
+        ]
+      },
+      "item_code": {
+        "source": {
+          "system": "ToyVariants",
+          "record": "Item/ONE-DRS-001"
+        },
+        "mappingVersion": "erpnext.fashion_item.mapping@0.1.0",
+        "transform": "fashion_item_template.item_code",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "item_code",
+          "variant_of"
+        ]
+      },
+      "size": {
+        "source": {
+          "system": "ToyVariants",
+          "record": "Item/ONE-DRS-001"
+        },
+        "mappingVersion": "erpnext.fashion_item.mapping@0.1.0",
+        "transform": "fashion_item_template.size",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "item_code",
+          "variant_of",
+          "attributes",
+          "attributes.attribute",
+          "attributes.attribute_value"
+        ]
+      }
+    },
+    "provenance": {
+      "source": {
+        "system": "ToyVariants",
+        "record": "Item/ONE-DRS-001"
+      },
+      "mappingVersion": "erpnext.fashion_item.mapping@0.1.0",
+      "transform": "fashion_item_template.subject",
+      "observedAt": "2026-09-30T09:00:00Z",
+      "recordedAt": "2026-10-01T00:00:00Z",
+      "sourceFields": [
+        "name",
+        "item_code",
+        "variant_of"
+      ]
+    }
+  },
+  {
+    "map": "fashion_item",
+    "objectType": "fashion.Style",
+    "key": "ONE-DRS-001-S-BLK",
+    "invocations": [
+      {
+        "actionId": "erpnext.fashion_item.mapping.fashion_item.observe",
+        "input": {
+          "color": "Black",
+          "display_name": "ONE-DRS-001-S-BLK",
+          "item_code": "ONE-DRS-001-S-BLK",
+          "objectId": "ONE-DRS-001-S-BLK",
+          "size": "S"
+        }
+      }
+    ],
+    "propertyProvenance": {
+      "color": {
+        "source": {
+          "system": "ToyVariants",
+          "record": "Item/ONE-DRS-001-S-BLK"
+        },
+        "mappingVersion": "erpnext.fashion_item.mapping@0.1.0",
+        "transform": "fashion_item.color",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "item_code",
+          "variant_of",
+          "attributes",
+          "attributes.attribute",
+          "attributes.attribute_value"
+        ]
+      },
+      "display_name": {
+        "source": {
+          "system": "ToyVariants",
+          "record": "Item/ONE-DRS-001-S-BLK"
+        },
+        "mappingVersion": "erpnext.fashion_item.mapping@0.1.0",
+        "transform": "fashion_item.display_name",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "item_code",
+          "item_name",
+          "variant_of"
+        ]
+      },
+      "item_code": {
+        "source": {
+          "system": "ToyVariants",
+          "record": "Item/ONE-DRS-001-S-BLK"
+        },
+        "mappingVersion": "erpnext.fashion_item.mapping@0.1.0",
+        "transform": "fashion_item.item_code",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "item_code",
+          "variant_of"
+        ]
+      },
+      "size": {
+        "source": {
+          "system": "ToyVariants",
+          "record": "Item/ONE-DRS-001-S-BLK"
+        },
+        "mappingVersion": "erpnext.fashion_item.mapping@0.1.0",
+        "transform": "fashion_item.size",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "item_code",
+          "variant_of",
+          "attributes",
+          "attributes.attribute",
+          "attributes.attribute_value"
+        ]
+      }
+    },
+    "provenance": {
+      "source": {
+        "system": "ToyVariants",
+        "record": "Item/ONE-DRS-001-S-BLK"
+      },
+      "mappingVersion": "erpnext.fashion_item.mapping@0.1.0",
+      "transform": "fashion_item.subject",
+      "observedAt": "2026-09-30T09:00:00Z",
+      "recordedAt": "2026-10-01T00:00:00Z",
+      "sourceFields": [
+        "name",
+        "item_code",
+        "variant_of"
+      ]
+    }
+  }
+]

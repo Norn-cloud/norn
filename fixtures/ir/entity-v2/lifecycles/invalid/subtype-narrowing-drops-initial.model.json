@@ -1,0 +1,34 @@
+{
+  "objectTypes": [
+    {
+      "name": "test.NoDraft",
+      "extends": "commerce.PurchaseOrder",
+      "properties": [
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "submitted"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "rejected"
+              },
+              {
+                "value": "received"
+              },
+              {
+                "value": "cancelled"
+              }
+            ]
+          },
+          "default": "submitted"
+        }
+      ]
+    }
+  ]
+}

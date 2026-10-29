@@ -1,0 +1,63 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "party.Brand.entity",
+  "kind": "entity",
+  "namespace": "party",
+  "name": "Brand",
+  "version": "0.1.0",
+  "lifecycle": "active",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/party.Brand.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "party.Brand",
+      "description": "A trading brand owned by a legal entity/company represented by party.Organization.",
+      "properties": [
+        {
+          "id": "brand_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        }
+      ],
+      "links": [
+        {
+          "id": "legal_entity",
+          "target": "party.Organization",
+          "cardinality": {
+            "to": "one",
+            "from": "many",
+            "required": true
+          }
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "brand_code"
+          ]
+        }
+      ]
+    },
+    "extensions": {
+      "norn.semantic-zoom/0.1.0": {
+        "level": "brand",
+        "missingLevels": "skip"
+      }
+    }
+  }
+}

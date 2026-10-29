@@ -1,0 +1,74 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.Sku.entity.v2.two_definitions",
+  "kind": "entity",
+  "namespace": "retail",
+  "name": "SKU",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/invalid/two-definitions.entity-v2.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "retail.Sku",
+      "description": "A stock-keeping unit, reordered from its preferred supplier.",
+      "properties": [
+        {
+          "id": "sku_code",
+          "type": {
+            "kind": "ref",
+            "name": "commerce.sku_code"
+          }
+        },
+        {
+          "id": "title",
+          "type": {
+            "kind": "text"
+          },
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      ],
+      "links": [
+        {
+          "id": "preferred_supplier",
+          "target": "purchasing.Supplier",
+          "cardinality": {
+            "to": "one",
+            "from": "many"
+          },
+          "inverse": "preferred_skus"
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "sku_code"
+          ]
+        }
+      ]
+    },
+    "interface": {
+      "name": "retail.Stocked",
+      "properties": [
+        {
+          "id": "sku_code",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  }
+}

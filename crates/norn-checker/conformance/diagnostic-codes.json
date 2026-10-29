@@ -1,0 +1,3289 @@
+{
+  "checkerVersion": "0.2.0",
+  "codes": [
+    {
+      "code": "action.validation.command_environment_underivable",
+      "message": "outbound command expressions require an object input schema with a derivable expression environment",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "action.validation.invalid_effect_program",
+      "message": "payload.effectProgram is invalid: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "action.validation.invalid_payload",
+      "message": "ActionIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "action.validation.invalid_schema",
+      "message": "ActionIR {schema} is not a closed schema: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "artifact_set.action.create_link",
+      "message": "the action's create-only link effect or its authorized target slice is invalid",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.duplicate_action_id",
+      "message": "actionId {actionId} is already used by another action of the artifact set or the installed base",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.effect_kind_mismatch",
+      "message": "the effect writes {objectKind}, but entity artifact {artifactId} version {version} defines {definition}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.invalid_slice",
+      "message": "an action slice reads an unknown key property or link",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.invalid_write_mode",
+      "message": "the action write mode is not valid for its effective lifecycle",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.naming_series_target_mismatch",
+      "message": "the action input does not match the target key's naming-series create or update contract",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.quantity_effect",
+      "message": "the action's quantity effect or its input bindings are invalid: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.target_not_writable",
+      "message": "{target} of {objectKind} is not writable by a generic action: {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.undeclared_effect_write",
+      "message": "the effect program may write {objectKind} ({change}), but the write set does not declare it",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.unknown_slice_kind",
+      "message": "the action slice names an object type that is not in the artifact set or installed base",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.unknown_write_kind",
+      "message": "the write set names {entityKind}, which is not an object type of the artifact set or the installed base",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.unresolved_effect_entity",
+      "message": "the effect pins entity artifact {artifactId} version {version}, which is not an entity artifact of the artifact set or the installed base",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.action.write_without_effect",
+      "message": "the write set declares {entityKind} ({change}), which the effect program never writes",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.decision.fact_literal_outside_schema",
+      "message": "the literal {member} {value} is not admitted by the facts item schema's {member} enum {admitted}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.decision.invalid_source_command",
+      "message": "a declared source command does not bind an exact observed mapping and guarded connector capability: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.decision.invalid_stored_property_write",
+      "message": "the decision writes {property} of {objectType}, which violates its effective stored-property contract: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.decision.sub_decision_bound",
+      "message": "sub-decision {key} nests {depth} levels deep, or the closure holds {count} graphs; the Norn profile admits at most {max}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.decision.sub_decision_target",
+      "message": "sub-decision {key} resolves to {artifactId} version {version}, which is not a RuleIR v2 decision graph",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.decision.unknown_binding",
+      "message": "{detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.decision.unknown_fact_object_type",
+      "message": "the decision writes {objectType}, which is not an object type of the artifact set or the installed base",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.decision.unresolved_stored_property_contract",
+      "message": "the decision writes {objectType}, whose effective stored-property contracts cannot be resolved: {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.entity.duplicate_object_type",
+      "message": "object type {name} is already defined by entity artifact {artifactId}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.expression.environment_underivable",
+      "message": "the ZEN Expression type environment of the artifact set cannot be derived: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.flow_source_map.duplicate_flow",
+      "message": "flow id {flowId} appears more than once in the flow source map",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.flow_source_map.duplicate_step",
+      "message": "step id {stepId} is empty or appears more than once in the flow",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.flow_source_map.invalid_edge",
+      "message": "edge {from} -> {to} must reference steps in the same flow",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.flow_source_map.invalid_location",
+      "message": "source location requires a file and one-based line and column numbers",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.flow_source_map.invalid_mapping",
+      "message": "flow source map contains an invalid or duplicate mapping: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.flow_source_map.missing_artifact",
+      "message": "flow artifact {artifactId} version {version} is not in the admitted set",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.flow_source_map.missing_decision_row",
+      "message": "decision row id {rowId} is not declared by a mapped RuleIR artifact",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.flow_source_map.missing_state",
+      "message": "state id {stateId} is not declared by a mapped entity artifact",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.flow_source_map.stale_artifact",
+      "message": "flow artifact {artifactId} hash does not match its admitted version",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.lifecycle.delete_lifecycle_object",
+      "message": "the decision may delete {objectType}, which has a declared lifecycle; delete then create would reset its status without a transition",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.lifecycle.direct_write",
+      "message": "{writer} writes {property} of {objectType}, which its lifecycle owns; a status changes only through a declared transition",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.lifecycle.not_a_lifecycle",
+      "message": "{property} of {objectType} has no declared lifecycle to transition",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.lifecycle.unconstrained_state",
+      "message": "the decision creates {objectType} with lifecycle property {property}, which must be a string enum of initial states",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.lifecycle.undeclared_transition_literal",
+      "message": "the expression fires transition {transition}, but {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.lifecycle.unknown_transition",
+      "message": "{transition} is not a declared transition of the {property} lifecycle of {objectType}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.lifecycle.unresolved_lifecycles",
+      "message": "{writer} writes {objectType}, whose lifecycles cannot be resolved ({reason}); its status writes fail closed",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.marking.duplicate",
+      "message": "marking id {id} is already declared in the base or candidate set, or a marking reference is repeated",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.marking.unknown",
+      "message": "marking reference {id} has no declaration in the base or candidate set",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.resolution.conflicting_version",
+      "message": "artifact {artifactId} is in the artifact set at versions {first} and {second}; a resolved set holds one version of each artifact",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.resolution.dependency_cycle",
+      "message": "artifacts {artifactIds} depend on each other in a cycle; the set has no installation order",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.resolution.duplicate_artifact",
+      "message": "artifact {artifactId} version {version} appears more than once in the artifact set",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.resolution.kind_incompatible",
+      "message": "a {fromKind} artifact may not reference a {toKind} artifact ({artifactId})",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.resolution.kind_mismatch",
+      "message": "{artifactId} is referenced as a {declaredKind} artifact but is a {kind} artifact",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.resolution.missing_dependency",
+      "message": "required {kind} {artifactId} version {version} is neither in the artifact set nor installed",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.resolution.shadows_base",
+      "message": "{artifactId} is an installed base artifact, which is read-only",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.resolution.version_mismatch",
+      "message": "{artifactId} is pinned at version {version}, but resolves only at {available}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "artifact_set.scope.incompatible_reference",
+      "message": "{artifactId} is scoped to {dimension} {value}, which the referring artifact's scope cannot see",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "business_pack.validation.invalid_payload",
+      "message": "BusinessPackIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "connector.validation.invalid_payload",
+      "message": "ConnectorIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "connector.validation.unknown_resource",
+      "message": "resourceId '{resourceId}' does not match a declared connector resource",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "customization.validation.invalid_payload",
+      "message": "CustomizationIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "customization.validation.retired_boundary",
+      "message": "executable boundary \"{boundary}\" is retired: inline custom execution is not admitted; move the code into a pool Function invoked through perform",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "derived.validation.incremental_not_supported",
+      "message": "maintenance \"incremental\" is reserved for a future IVM phase and is not yet supported; use \"recompute_on_read\"",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "derived.validation.invalid_payload",
+      "message": "DerivedIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "derived.validation.io_in_view",
+      "message": "calc kind \"effectful_ts\" is not allowed inside a Derived view (IO must be in an Effect artifact)",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "entity.deprecation.v1_payload",
+      "message": "entity {artifactId} uses the deprecated EntityIR v1 payload form; it is accepted during the migration and lowered to EntityIR v2 on read; author new versions with entityVersion \"2.0\"",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T4"
+    },
+    {
+      "code": "entity.validation.invalid_mutation_authority",
+      "message": "payload.mutationAuthority is invalid: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "entity.validation.invalid_payload",
+      "message": "EntityIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "entity.validation.layer_scope_mismatch",
+      "message": "artifact scope.tenantId {detail} does not match the {layer} layer it is checked in",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "function.invocation.blank_value",
+      "message": "{member} must not be blank",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.invocation.fork_perform",
+      "message": "world {world} is a fork; only main performs, and a fork never dispatches a Function",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.invocation.freshness_shape",
+      "message": "{freshness} freshness needs {requirement}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.invocation.input_bound",
+      "message": "the staged inputs hold {staged} bytes; the manifest admits {bound}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.invocation.manifest_mismatch",
+      "message": "the command names manifest {manifest}, but the admitted manifest is {admitted}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.invocation.mutable_input",
+      "message": "input {name} is a mutable URL or object key; stage the bytes and pass their digest as a blob",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.invocation.non_canonical_text",
+      "message": "an invocation string or key is not in NFC form; hashing normalizes it, so it would share an identity with a different value",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.invocation.non_scalar_input",
+      "message": "input {name} is not a canonical scalar; pass structured data as a blob",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.invocation.secret_input",
+      "message": "input {name} is or names a secret; credentials are capabilities, never inputs",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.invocation.unbounded_command",
+      "message": "the command needs {ceiling}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.manifest.blank_value",
+      "message": "{member} must not be blank",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.conflicting_golden_runs",
+      "message": "golden runs produced {count} different output digests; the key is quarantined",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.dependency_closure_mismatch",
+      "message": "the dependency closure {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.duplicate_step",
+      "message": "pipeline step {id} is declared twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.embedded_secret",
+      "message": "{member} can carry a credential; credentials are bound by the supervisor, never part of a manifest",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.inadmissible_evidence",
+      "message": "{profile} evidence {member}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.missing_dependency_closure",
+      "message": "the transitive dependency/asset closure is required",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.missing_determinism_evidence",
+      "message": "the {profile} claim needs evidence field {member}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.mutable_identity",
+      "message": "{what} {value} is not a content digest (sha256:<64 hex>); a tag, URI, or object key is never an identity",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.non_canonical_text",
+      "message": "a manifest string or key is not in NFC form; hashing normalizes it, so it would share an identity with a different value",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.profile_mismatch",
+      "message": "{profile} {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.unbounded_resource",
+      "message": "bound {member} must be a positive number",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.uncacheable_profile",
+      "message": "profile {profile} is not qualified for content-based reuse; declare cache \"none\"",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.manifest.unsupported_abi",
+      "message": "abi {abi} is not supported; expected norn.function-abi/1",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "function.receipt.attempt_out_of_range",
+      "message": "attempt {attempt} is outside 1..={maxAttempts}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.receipt.blank_value",
+      "message": "{member} must not be blank",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.receipt.bound_exceeded",
+      "message": "a completed attempt reports {member} {value}, beyond the manifest's bound",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.receipt.cache_origin",
+      "message": "{detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.receipt.dispatch_mismatch",
+      "message": "{member} is {found}, but the dispatch pinned {expected}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.receipt.non_canonical_text",
+      "message": "a receipt string or key is not in NFC form; hashing normalizes it, so it would share an identity with a different value",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.receipt.output_manifest_mismatch",
+      "message": "the output manifest {digest} does not match the outputs and summary ({computed})",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.receipt.summary_bound",
+      "message": "the {what} holds {size} canonical bytes; at most 32768 cross the receipt",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "function.validation.invalid_document",
+      "message": "the document is not a Function {record}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "graph_load.validation.excessive_depth",
+      "message": "graph depth {depth} exceeds budget {budget}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "graph_load.validation.invalid_shape",
+      "message": "graph load shape is invalid: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "graph_load.validation.missing_relation_kind",
+      "message": "relationKind must be present",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "graph_load.validation.missing_scope",
+      "message": "required scope '{key}' is missing",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "graph_load.validation.n_plus_one_risk",
+      "message": "relation batch '{sourceKind}:{relationKind}' risks unbounded fan-out",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "graph_load.validation.over_budget",
+      "message": "{measure} exceeds budget {budget}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "identifier.validation.too_long",
+      "message": "{identifier} is {actualBytes} UTF-8 bytes; the admission limit is {limitBytes}; rename it before installing updated definitions",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "interface.validation.duplicate_link_id",
+      "message": "required link id {link} is already a required link or property id",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "interface.validation.duplicate_name",
+      "message": "interface {name} is already defined at index {index}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "interface.validation.duplicate_property_id",
+      "message": "required property id {property} is declared twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "interface.validation.invalid_link_id",
+      "message": "required link id {link} must match [a-z][a-z0-9_]* without the reserved extension separator \"__\"",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "interface.validation.invalid_name",
+      "message": "interface name {name} must be dotted lower-case namespace segments and a PascalCase name, such as \"party.Party\"",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "interface.validation.invalid_property_id",
+      "message": "required property id {property} must match [a-z][a-z0-9_]* without the reserved extension separator \"__\"",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "interface.validation.invalid_status_date",
+      "message": "deprecated since {date}, which is not a calendar date \"YYYY-MM-DD\"",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "interface.validation.shadows_base",
+      "message": "{name} is an installed base definition, which is read-only",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "interface.validation.tenant_interface",
+      "message": "interface {name} is declared by a tenant layer; interfaces are registry definitions a tenant implements, never authors",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "interface.validation.unknown_link_target",
+      "message": "required link {link} targets {target}, which names no object type or interface",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "interface.validation.unknown_replacement",
+      "message": "replacedBy {name} must name another definition of the same kind",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ir.validation.invalid_artifact",
+      "message": "artifact envelope is malformed: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ir.validation.invalid_dependency",
+      "message": "dependency is malformed or self-referential: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ir.validation.invalid_envelope",
+      "message": "artifact envelope does not decode: {error}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ir.validation.kind_mismatch",
+      "message": "envelope kind '{kind}' does not match its payload root '{payloadKind}'",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ir.validation.required_field",
+      "message": "{path} is required",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ir.validation.retired_kind",
+      "message": "artifact kind '{kind}' is retired: {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ir.validation.unknown_kind",
+      "message": "artifact kind '{kind}' is not a known kind",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ir.validation.unsupported_version",
+      "message": "unsupported IR version '{irVersion}'",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "law.model.closure_refused",
+      "message": "whole-set law dependency closure refused: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "law.model.predicate_type",
+      "message": "law predicate does not type-check against the effective ZEN environment: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "law.model.unknown_binding",
+      "message": "law slot requires an admitted ontology binding and exact visible dependency: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "law.model.weakens_inherited",
+      "message": "existing law identities cannot be replaced; tightening adds a conjunctive identity",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "law.validation.invalid_document",
+      "message": "law document is invalid: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "law.validation.unsupported_temporal",
+      "message": "law temporal shape is unsupported: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "layout.validation.invalid_inline_field",
+      "message": "legacy layout field is invalid: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "layout.validation.merge_conflict",
+      "message": "retained or explicit layout value at {path} took precedence over conflicting inline layout",
+      "severity": "warning",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "layout.validation.orphaned_entry",
+      "message": "layout {kind} id {id} has no matching semantic entry and was pruned",
+      "severity": "warning",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.account.duplicate",
+      "message": "duplicate account id `{accountId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.account.duplicate_unit",
+      "message": "account `{accountId}` declares unit `{unitId}` more than once",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.account.no_units",
+      "message": "account `{accountId}` must admit at least one unit",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.account.unknown_unit",
+      "message": "account `{accountId}` references unknown unit `{unitId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.amount.bound_overflow",
+      "message": "runtime coefficient for parameter `{parameterId}` overflows at a declared bound",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.amount.constant_scale_exceeds_result",
+      "message": "constant scale {scale} exceeds result scale {resultScale}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.amount.duplicate_parameter_term",
+      "message": "parameter `{parameterId}` appears more than once; normalize it to one coefficient",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.amount.normalization_overflow",
+      "message": "constant cannot be normalized to unit precision without i128 overflow",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.amount.result_scale_exceeds_unit",
+      "message": "result scale {scale} exceeds unit precision {precision}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.amount.result_scale_out_of_range",
+      "message": "result scale {scale} exceeds maximum {max}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.amount.term_scale_exceeds_result",
+      "message": "parameter and coefficient scales overflow their representation",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.amount.unknown_parameter",
+      "message": "unknown or invalid parameter `{parameterId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.certificate.claim_mismatch",
+      "message": "certificate claims are not in the deterministic checker result",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.certificate.hash_mismatch",
+      "message": "certificate identity does not match its claims",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.certificate.pack_mismatch",
+      "message": "certificate is not bound to the exact supplied ledger pack",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.certificate.version_mismatch",
+      "message": "certificate, IR, or checker version does not match the active checker",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.commit.evidence_mismatch",
+      "message": "commit evidence does not match the prepared posting: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.commit.idempotency_mismatch",
+      "message": "idempotency lookup returned a record from another scope or key",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.commit.owner_version_overflow",
+      "message": "expected owner version cannot advance without overflow",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.commit.partial_evidence",
+      "message": "commit evidence is partial: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.identifier.empty",
+      "message": "identifier must be non-empty and contain no surrounding whitespace",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.layer.duplicate",
+      "message": "duplicate layer id `{layer}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.leg.account_unit_mismatch",
+      "message": "account `{accountId}` does not admit unit `{unitId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.leg.duplicate",
+      "message": "duplicate leg id `{legId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.leg.empty_layer",
+      "message": "layer must be non-empty",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.leg.unknown_account",
+      "message": "unknown account `{accountId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.leg.unknown_layer",
+      "message": "unknown layer `{layer}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.leg.unknown_unit",
+      "message": "unknown unit `{unitId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.numeric.invalid_integer",
+      "message": "`{value}` is not a signed i128 decimal integer",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.numeric.non_canonical_integer",
+      "message": "`{value}` is not the canonical decimal encoding `{canonical}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.ontology.empty_artifact_id",
+      "message": "ontology artifactId must be non-empty and canonical",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.ontology.empty_artifact_version",
+      "message": "ontology artifactVersion must be non-empty and canonical",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.ontology.invalid_artifact_sha256",
+      "message": "ontology artifactSha256 must be exactly 64 lowercase hexadecimal characters",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.ontology.non_exact_artifact_id",
+      "message": "ontology artifactId must be one exact identity without whitespace or wildcards",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.ontology.non_exact_artifact_version",
+      "message": "ontology artifactVersion must be one exact version, not a range or wildcard",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.pack.empty_id",
+      "message": "packId must be non-empty",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.pack.no_accounts",
+      "message": "at least one posting account is required",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.pack.no_layers",
+      "message": "at least one declared balance layer is required",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.pack.no_templates",
+      "message": "at least one transaction template is required",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.pack.no_units",
+      "message": "at least one conserved unit is required",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.pack.unsupported_ir_version",
+      "message": "unsupported ledger pack IR version `{irVersion}`; expected `{expected}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.parameter.duplicate",
+      "message": "duplicate parameter id `{parameterId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.parameter.invalid_bounds",
+      "message": "minUnscaled must be less than or equal to maxUnscaled",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.parameter.scale_out_of_range",
+      "message": "parameter scale {scale} exceeds maximum {max}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.posting.certificate_coverage_mismatch",
+      "message": "certificate set does not exactly cover the evaluated unit/layer partitions",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.posting.contract_version_mismatch",
+      "message": "unsupported posting contract version `{version}`; expected `{expected}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.posting.identity_empty",
+      "message": "{path} must be non-empty and contain no surrounding whitespace",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.posting.reference_mismatch",
+      "message": "posting references do not match the installed pack seal and checker",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.runtime.duplicate_parameter",
+      "message": "duplicate runtime parameter `{parameterId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.runtime.evaluation_overflow",
+      "message": "coefficient multiplication overflowed for parameter `{parameterId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.runtime.missing_parameter",
+      "message": "missing runtime parameter `{parameterId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.runtime.parameter_out_of_bounds",
+      "message": "runtime parameter `{parameterId}` value {value} is outside sealed bounds [{min}, {max}]",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.runtime.parameter_scale_mismatch",
+      "message": "runtime parameter `{parameterId}` has scale {scale}; expected {expected}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.runtime.unbalanced",
+      "message": "runtime residual {residual} for unit `{unitId}` layer `{layer}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.runtime.unknown_parameter",
+      "message": "unknown runtime parameter `{parameterId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.runtime.unknown_template",
+      "message": "unknown compiled template `{templateId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ledger.template.duplicate",
+      "message": "duplicate template id `{templateId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.template.residual_overflow",
+      "message": "constant residual overflowed i128 while combining legs",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.template.too_few_legs",
+      "message": "a conserved transaction template requires at least two legs",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.template.unbalanced_coefficient",
+      "message": "template `{templateId}` has coefficient residual {coefficient} for parameter `{parameterId}`, unit `{unitId}`, layer `{layer}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.template.unbalanced_constant",
+      "message": "template `{templateId}` has constant residual {residual} for unit `{unitId}` layer `{layer}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.unit.duplicate",
+      "message": "duplicate unit id `{unitId}`",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.unit.duplicate_unit_term",
+      "message": "ontology unit term `{term}` is bound by more than one pack-local unit",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.unit.empty_quantity_kind_term",
+      "message": "quantityKindTermId must be non-empty and canonical",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.unit.empty_unit_term",
+      "message": "unitTermId must be non-empty and canonical",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.unit.inconsistent_dimension_binding",
+      "message": "a unit term cannot also be its quantity-kind/dimension term",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.unit.invalid_quantity_kind_term",
+      "message": "quantityKindTermId must be one exact term identity without whitespace or wildcards",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.unit.invalid_unit_term",
+      "message": "unitTermId must be one exact term identity without whitespace or wildcards",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.unit.scale_out_of_range",
+      "message": "unit precision {precision} exceeds maximum {max}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ledger.validation.too_many_diagnostics",
+      "message": "ledger validation stopped at its diagnostic count or byte limit",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.dead_end_state",
+      "message": "state {state} has no outgoing transition; declare one or list it as terminal",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.default_not_initial",
+      "message": "the default {state} of {property} is not an initial state",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.drops_guard",
+      "message": "transition {id} drops the inherited guard {guard}; a subtype restates every inherited guard and may only append its own",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "lifecycle.validation.duplicate_lifecycle",
+      "message": "property {property} already has a lifecycle on this type",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.duplicate_state",
+      "message": "state {state} is listed twice in {member}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.duplicate_transition",
+      "message": "{from} -> {to} is already declared by another transition",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.duplicate_transition_id",
+      "message": "transition id {id} is declared twice in this lifecycle",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.empty_guard",
+      "message": "a guard of transition {id} is blank",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.empty_initial",
+      "message": "a lifecycle declares at least one initial state",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.empty_transition_source",
+      "message": "transition {id} has no source state",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.invalid_guard",
+      "message": "guard {index} of transition {id} is not a ZEN Expression: {error}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.invalid_transition_id",
+      "message": "transition id {id} must match [a-z][a-z0-9_]*",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.path_property_violated",
+      "message": "a declared path to {target} avoids {via}; structural trace [transition, state]: {trace}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.property_computed",
+      "message": "lifecycle property {property} is computed; a lifecycle governs a stored property that rules write",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.property_not_enum",
+      "message": "lifecycle property {property} must be a local enum; its values are the states",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.property_nullable",
+      "message": "lifecycle property {property} is nullable; every object is in a state",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.self_transition",
+      "message": "transition {id} leaves and enters {state}; a transition changes the state",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.terminal_has_transition",
+      "message": "transition {id} leaves the terminal state {state}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.undeclared_write",
+      "message": "{writer} writes {property} from {from} to {to}, which is not a declared transition of its lifecycle",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "lifecycle.validation.unknown_property",
+      "message": "lifecycle property {property} is not a property of the type",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.unknown_state",
+      "message": "{state} is not a value of the lifecycle property's enum",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.unreachable_state",
+      "message": "state {state} is not reachable from an initial state",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.widens_initial",
+      "message": "initial state {state} is not an initial state of the inherited lifecycle",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "lifecycle.validation.widens_transition",
+      "message": "transition {id} is not a transition of the inherited lifecycle; a subtype may only drop transitions",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.expression_type",
+      "message": "{expression}: {detail} ({code})",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.interface_not_implemented",
+      "message": "{objectType} does not implement the interface artifact {interface}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.invalid_entitlement_condition",
+      "message": "condition link {link} must target {expectedTarget}, got {actualTarget}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.invalid_entitlement_grantee",
+      "message": "entitlement grantee kind and object type must match a canonical identity type",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.invalid_entitlement_join",
+      "message": "entitlement join {join} has an invalid alias, key, provenance, or field type",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.invalid_nesting",
+      "message": "dataset {dataset} is not a declared child table of {parent} held in its field {field}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.invalid_on_delete",
+      "message": "onDelete {state} of {property} is not a terminal state of {objectType}'s lifecycle",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.lifecycle_member",
+      "message": "{property} of {objectType}: a lifecycle property changes only through a lifecycle rule",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.link_target_mismatch",
+      "message": "link {link} of {objectType} targets {target}, which does not admit {produced}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.read_only_member",
+      "message": "{property} of {objectType} is computed and read-only",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.source_hash_mismatch",
+      "message": "source schema {schemaId} version {version} hashes to {actual}, not the bound {sha256}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.undeclared_dependency",
+      "message": "artifact reference {artifactId} is not a required, exact-version dependency",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.unencodable_member",
+      "message": "property {property} of {objectType} has no action-input encoding",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.unknown_dataset",
+      "message": "dataset {dataset} is not declared by the source schema",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.unknown_entitlement_field",
+      "message": "entitlement mapping references an undeclared or unbound source field",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.unknown_field",
+      "message": "dataset {dataset} has no field {field}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.unknown_interface",
+      "message": "{artifactId} is not an entity artifact defining an interface",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.unknown_member",
+      "message": "{objectType} has no {what} {member}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.unknown_object_type",
+      "message": "{entity} is not an entity artifact defining an available object type",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.model.unresolved_source",
+      "message": "source schema {schemaId} version {version} is not a source_schema artifact of the set or the base",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.runtime.evaluation_failed",
+      "message": "map {map}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "mapping.runtime.invalid_key",
+      "message": "map {map}: {expression} yielded {value}, not a non-empty string",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "mapping.runtime.invalid_record",
+      "message": "map {map}: field {field} {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "mapping.runtime.observed_out_of_band",
+      "message": "the observed lifecycle snapshot from {source} for {objectType}/{key}.{property} ({from} -> {to}) has no unique shortest declared path; mappingVersion={mappingVersion}, observedAt={observedAt}, reason={reason}",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "mapping.validation.duplicate_map",
+      "message": "map id {id} is declared twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.duplicate_member",
+      "message": "map {id} has two rules for member {member}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.empty_scope",
+      "message": "{member} must not be empty",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.incomplete_entitlement_snapshot",
+      "message": "entitlement mappings require every source and join dataset in the complete snapshot",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.interface_out_of_scope",
+      "message": "map {id} targets interface artifact {interface}, which is not in the mapping's interfaces",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.invalid_document",
+      "message": "the document is not a MappingIR document: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.invalid_entitlement_map",
+      "message": "entitlement map {map} has an invalid declaration",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.invalid_expression",
+      "message": "{expression} does not compile: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.invalid_id",
+      "message": "map id {id} is not a member id",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.invalid_identity_binding",
+      "message": "identity binding needs a unique source key, party.Person reference, and review evidence",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.invalid_key",
+      "message": "mapping id {artifactId} contains '@' or version {version} is not SemVer, so the key {key} is ambiguous",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.validation.invalid_required_link",
+      "message": "required relationship {link} has no exact target key",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T6"
+    },
+    {
+      "code": "mapping.validation.lifecycle_rule_shape",
+      "message": "map {id} lifecycle {property} must specify exactly one of state or transition",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.validation.unknown_target_map",
+      "message": "link {link} joins to map {map}, which the mapping does not declare",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "mapping.vendor.invalid_contract",
+      "message": "vendor-qualified mapping has an invalid sparse source contract: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "metric.validation.complexity_limit",
+      "message": "Metric dependencies and link paths are bounded to 64 levels.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.currency_source_mismatch",
+      "message": "Metric currency must match the amount type's authoritative currency source.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.cycle",
+      "message": "Ratio dependencies must be acyclic.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.duplicate_metric",
+      "message": "Metric names must be unique.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.fan_out",
+      "message": "To-many dimensions require a symmetric aggregation strategy.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.grain_mismatch",
+      "message": "Ratio operands must share their object and time grain.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.import_gap",
+      "message": "Interchange import requires explicit ontology or calculation semantics.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.invalid_additivity",
+      "message": "Additivity must match the measure algebra.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.invalid_conversion",
+      "message": "Conversion requires a target currency and a dimensionless decimal rate.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.invalid_currency",
+      "message": "Currency must bind a single-valued currency property.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.invalid_dimension",
+      "message": "Dimensions require a scalar property and compatible grain.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.invalid_filter",
+      "message": "The filter literal and operator must match the property contract.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.invalid_measure",
+      "message": "The aggregate requires a compatible property.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.invalid_name",
+      "message": "Metric names must be lower-case identifiers, optionally namespaced.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.invalid_owner",
+      "message": "Metrics require an explicit non-blank owner.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.invalid_policy",
+      "message": "Norn authorization or freshness policy is invalid.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.invalid_time",
+      "message": "The time axis must be a single-valued date or timestamp.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.mixed_currency",
+      "message": "Summing multiple currencies requires an explicit conversion.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.ontology_projection",
+      "message": "Generated semantic datasets or relationships differ from the ontology.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.partial_path",
+      "message": "Mandatory time, currency and rate inputs require total paths.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.unit_mismatch",
+      "message": "Ratio operand units and currencies must agree.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.unknown_metric",
+      "message": "The referenced metric does not exist.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.unknown_object",
+      "message": "The measure object type is unavailable.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.unknown_path",
+      "message": "Every path role and terminal property must resolve.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "metric.validation.unsupported_semantics",
+      "message": "Calculation requires semantics outside the admitted checker profile.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.computed_key_component",
+      "message": "key component {property} is computed; identity is stored, not derived",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.computed_with_default",
+      "message": "computed property {property} is read-only and cannot declare a default",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.default_out_of_range",
+      "message": "default {value} is outside the {range} range",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.default_type_mismatch",
+      "message": "default for a {kind} property must be {expected}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.default_unchecked",
+      "message": "default cannot be type-checked: {reason}; omit it",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.default_violates_constraint",
+      "message": "default {value} violates {constraint}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.duplicate_interface",
+      "message": "interface {interface} is listed twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.duplicate_invariant_id",
+      "message": "invariant id {invariant} is already declared on the type or a supertype; an invariant is never replaced",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.duplicate_key_component",
+      "message": "key component {property} is listed twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.duplicate_key_name",
+      "message": "key {key} is declared twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.duplicate_link_id",
+      "message": "link id {link} is declared twice, as a link or a property, in one declaration",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.duplicate_name",
+      "message": "object type {name} is already defined at index {index}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.duplicate_normalization",
+      "message": "component {property} is normalized twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.duplicate_property_id",
+      "message": "property id {property} is declared twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.empty_computed",
+      "message": "computed expression is blank",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.empty_identity_rule",
+      "message": "identity rule of key {key} declares neither normalize nor matchPolicy; omit it",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.empty_invariant_expression",
+      "message": "the expression of invariant {invariant} is blank",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.empty_invariant_message",
+      "message": "the message of invariant {invariant} is blank",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.empty_key",
+      "message": "key {key} declares no properties",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.empty_normalization",
+      "message": "normalization of {property} declares no steps",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.extension_namespace_mismatch",
+      "message": "extension namespace {namespace} is not the tenant namespace {tenant}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.extension_of_local_type",
+      "message": "extension target {type} is defined in the same layer; declare its properties on the type itself",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.extension_shadows_member",
+      "message": "extension {member} {id} shadows the member of the same id that {owner} declares on {type}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.foreign_inverse",
+      "message": "inverse role {id} would add a member to {target}, which another layer owns; declare the link in an extension so its inverse role is namespaced, or omit the inverse",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.inadmissible_key_kind",
+      "message": "key component {property} is {kind}, which has no canonical equality",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.inheritance_cycle",
+      "message": "the extends chain of {type} returns to it",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.interface_link_target_mismatch",
+      "message": "link {link} does not target {target}, which interface {interface} requires, or a narrowing of it",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.interface_link_widens_cardinality",
+      "message": "link {link} has a wider cardinality than interface {interface} requires",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.interface_property_type_mismatch",
+      "message": "property {property} does not have the type interface {interface} requires, or a narrowing of it",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.interface_property_widens_nullability",
+      "message": "property {property} is nullable, but interface {interface} requires a value",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.interface_requirement_conflict",
+      "message": "interfaces {interfaces} all require member {id}, but no single member can meet them together: {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.invalid_accounting_leg_declaration",
+      "message": "accounting leg declaration on {type} is invalid: {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.invalid_computed",
+      "message": "computed expression of {property} is not a ZEN Expression: {error}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.invalid_extension_namespace",
+      "message": "extension namespace {namespace} must be one lower-case alphanumeric segment ([a-z][a-z0-9]*)",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.invalid_invariant_expression",
+      "message": "the expression of invariant {invariant} is not a ZEN Expression: {error}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.invalid_invariant_id",
+      "message": "invariant id {invariant} must match [a-z][a-z0-9_]*",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.invalid_key_name",
+      "message": "key name {key} must match [a-z][a-z0-9_]*",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.invalid_link_id",
+      "message": "{role} {id} must match [a-z][a-z0-9_]*",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.invalid_match_policy",
+      "message": "match policy {policy} must be dot-separated segments of [a-z][a-z0-9_]*",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.invalid_name",
+      "message": "object type name {name} must be dotted lower-case namespace segments and a PascalCase name, such as \"retail.Sku\"",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.invalid_naming_series",
+      "message": "naming series is invalid: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.invalid_owned_collection",
+      "message": "owned collection {collection} is invalid: {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.invalid_property_id",
+      "message": "property id {property} must match [a-z][a-z0-9_]*",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.invalid_status_date",
+      "message": "deprecated since {date}, which is not a calendar date \"YYYY-MM-DD\"",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.link_override_changes_acyclic",
+      "message": "link {link} overrides the one {owner} declares and changes its acyclic constraint; an override must preserve the inherited value",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.link_override_redeclares",
+      "message": "link {link} overrides the one {owner} declares and redeclares its {member}, which the override inherits; omit it",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.link_override_target_mismatch",
+      "message": "link {link} overrides the one {owner} declares with a target that is not {target} or a narrowing of it; an override may only narrow",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.link_override_widens_cardinality",
+      "message": "link {link} overrides the one {owner} declares with a wider cardinality; an override may only narrow (many to one, optional to required)",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.link_property_markings_unsupported",
+      "message": "marked link properties require edge classification, which is not supported",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.member_id_conflict",
+      "message": "{member} {id} takes the id of the {other} on {type}; properties, links, and inverse roles share one member name space",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.missing_interface_link",
+      "message": "interface {interface} requires link {link}, which the type neither declares nor inherits",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.missing_interface_property",
+      "message": "interface {interface} requires property {property}, which the type neither declares nor inherits",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.normalization_not_applicable",
+      "message": "normalization applies to text, but component {property} is {kind}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.normalization_not_in_key",
+      "message": "normalization names {property}, which is not a component of key {key}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.nullable_key_component",
+      "message": "key component {property} is nullable",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.override_computed",
+      "message": "property {property} overrides the one {owner} declares; a computed property is never overridden, and an override is never computed",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.override_type_mismatch",
+      "message": "property {property} overrides the one {owner} declares with a type that is not the same or narrower; an override may only narrow",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.override_widens_nullability",
+      "message": "property {property} is nullable, but the property {owner} declares is not; an override may only narrow",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.redundant_key",
+      "message": "key {key} has the same components, normalization, and match policy as key {other}; component order does not change uniqueness",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.reserved_member_separator",
+      "message": "{member} id {id} contains \"__\", which is reserved for extension members (\"<namespace>__<name>\")",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.shadows_base",
+      "message": "{name} is an installed base definition, which is read-only; extend it or add a subtype instead",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.tenant_type_not_subtype",
+      "message": "tenant object type {type} must extend a type: a tenant adds subtypes of installed types, never new base types",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.tenant_type_outside_namespace",
+      "message": "tenant object type {type} must be named in the tenant namespace, such as {example}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.unknown_extension_target",
+      "message": "extension target {type} names no object type",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.unknown_interface",
+      "message": "implements {interface}, which names no interface",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.unknown_key_property",
+      "message": "key component {property} names no property of the object type",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.unknown_link_target",
+      "message": "link target {target} names no object type or interface",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.unknown_replacement",
+      "message": "replacedBy {name} must name another definition of the same kind",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.unknown_supertype",
+      "message": "extends {type}, which names no object type",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.unnamespaced_member",
+      "message": "added {member} {id} must be named \"{namespace}__<name>\" in its layer's extension namespace, so it cannot shadow a base member",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "object_type.validation.unsatisfiable_constraints",
+      "message": "the constraints that apply to property {property} together admit no value: {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.deep_hierarchy",
+      "message": "object type {name} has {depth} supertypes ({chain}), more than {max}; prefer interfaces or composition",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.duplicate_definition",
+      "message": "{kind} {name} has exactly the structure of {kind} {other} (artifact {artifactId}); reuse or extend it instead of redefining it",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.incomplete_provenance",
+      "message": "the provenance of this {source} artifact is missing {members}",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.mega_object",
+      "message": "object type {name} declares {count} properties and links, more than {max}; split it into the concepts it combines",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.plural_type_name",
+      "message": "{kind} {name} has a plural local name; name the concept for one instance",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.redundant_member_prefix",
+      "message": "member {id} of {name} repeats the type name as a prefix; the type already qualifies it",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.source_mirroring",
+      "message": "object type {name} mirrors source entity {entity} of {schemaId}: {shared} of its {members} members match the {fields} fields of {entity} by name; model the business concept and map the source onto it",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.unknown_mapping_target",
+      "message": "the mapping targets {target}, which the artifact set and the installed base do not declare",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.unmapped_required_member",
+      "message": "required {memberKind} {id} of {target} is neither mapped nor declared as a gap",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.unmapped_source_field",
+      "message": "source fields of {entity} in {schemaId} are neither mapped nor explicitly ignored: {fields}",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.untraceable_provenance",
+      "message": "this {source} artifact names no provenance {member}, so its origin cannot be traced",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.versioned_name",
+      "message": "{kind} {name} carries the version or copy marker {marker}; version the artifact, not the name",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology.lint.weak_relationship",
+      "message": "property {id} of {name} refers to {target} by a scalar value, and no link to {target} exists; model the relationship as a link",
+      "severity": "warning",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "ontology_instance.validation.invalid_payload",
+      "message": "ontology instance does not conform to its term at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "ontology_pack.validation.invalid_payload",
+      "message": "ontology pack is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ontology_registry.validation.invalid_payload",
+      "message": "ontology registry is inconsistent at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "policy.validation.invalid_payload",
+      "message": "PolicyIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.bound_exceeds_scale",
+      "message": "{member} {bound} has more fraction digits than the declared scale {scale}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.bound_not_integer",
+      "message": "{member} {bound} must be a signed 64-bit integer without a fraction",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.bound_out_of_range",
+      "message": "{member} {bound} is outside the ZEN Expression decimal range: {error}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.constraint_not_applicable",
+      "message": "constraint {member} does not apply to a {kind} property",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.duplicate_enum_value",
+      "message": "enum value {value} is declared twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.duplicate_member",
+      "message": "record member {member} is declared twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.duplicate_name",
+      "message": "property type {name} is already defined at index {index}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.empty_enum",
+      "message": "enum declares no values",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.empty_record",
+      "message": "record must declare members",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.invalid_bound",
+      "message": "{member} {bound} must be an exact decimal literal such as \"-12.50\"",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.invalid_enum_value",
+      "message": "enum value must be non-blank",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.invalid_member",
+      "message": "record member must match [a-z][a-z0-9_]*",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.invalid_name",
+      "message": "property type name {name} must be dot-separated segments of [a-z][a-z0-9_]*",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.invalid_pattern",
+      "message": "pattern {pattern} does not compile: {error}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.invalid_unit",
+      "message": "unit code {unit} must be non-blank without whitespace",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.inverted_range",
+      "message": "{lower} is greater than {upper}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.ref_cycle",
+      "message": "ref chain from {name} returns to itself",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.scale_out_of_range",
+      "message": "decimal scale {scale} exceeds the maximum of {max}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "property_type.validation.unknown_ref",
+      "message": "ref {name} names no property type in the catalog or registry",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "question.validation.comparison_cycle",
+      "message": "Question comparisons must be acyclic.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.duplicate_question",
+      "message": "Question names must be unique.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.duplicate_selection",
+      "message": "Metric and dimension selections must be unique.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.empty_metrics",
+      "message": "Questions require at least one metric.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.fan_out_rollup",
+      "message": "Overlapping fan-out buckets cannot be rolled up as scalars.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.invalid_freshness",
+      "message": "Freshness requires a positive age or a valid UTC instant.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.invalid_name",
+      "message": "Question names must be lower-case identifiers, optionally namespaced.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.invalid_rollup",
+      "message": "Roll-ups must name selected axes and use an admitted reduction.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.invalid_window",
+      "message": "The time window must be an ordered half-open UTC interval.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.mixed_axis_rollup",
+      "message": "Simultaneous time and non-time reductions require an ordered reduction contract.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.non_additive_rollup",
+      "message": "Non-additive metrics cannot be re-aggregated.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.semi_additive_time",
+      "message": "Semi-additive metrics require their declared time reduction.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.snapshot_aggregation",
+      "message": "Snapshot aggregation requires a series grain and ordered reductions; this contract refuses it.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "question.validation.unknown_comparison",
+      "message": "Comparison questions must exist and have compatible selections.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "relation.validation.invalid_payload",
+      "message": "RelationIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "relation.validation.v2_relation_is_link",
+      "message": "RelationIR has no v2 form: declare an EntityIR v2 relation as a link in the source entity's payload.objectType.links",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.invalid_binding",
+      "message": "a decide rule's triggers or slice are invalid: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.invalid_decision_contract",
+      "message": "a decide graph's {schema} declares exactly {members}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.invalid_fact_change",
+      "message": "a decide graph's facts item schema is not the canonical fact change: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.invalid_payload",
+      "message": "RuleIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.invalid_schema",
+      "message": "RuleIR {schema} is not a closed schema: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.invalid_source_command",
+      "message": "a declared source command or activation contract is invalid: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_custom_node_rejected",
+      "message": "customNode is not admitted by the Norn profile: inline custom nodes are rejected (D33); use a pool Function",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_cycle",
+      "message": "nodes {nodeIds} form a cycle; a decision graph is acyclic",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_dangling_edge",
+      "message": "edge {edgeId} names node {nodeId}, which the graph does not have",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_duplicate_id",
+      "message": "{what} id {id} is not unique",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_function_node_rejected",
+      "message": "functionNode is not admitted by the Norn profile: JavaScript is forbidden in the deterministic core",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_hit_policy_rejected",
+      "message": "hit policy {policy} is not admitted by the Norn profile: JDM admits first and collect; other DMN hit policies are translated or rejected at DMN ingress (T3-DEC-4)",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_invalid_edge",
+      "message": "edge {edgeId} {problem}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_invalid_expression",
+      "message": "{source} is not a ZEN {form}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_io_node_count",
+      "message": "the graph has {count} {inputOrOutput} nodes; a decision graph has exactly one",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_recursive_sub_decision",
+      "message": "sub-decision {key} names this rule; a decision graph cannot call itself",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_switch_default",
+      "message": "switch {nodeId} {problem}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_switch_unconnected_branch",
+      "message": "branch {statementId} of switch {nodeId} has no outgoing edge, so an event that takes it reaches no node",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_unknown_column",
+      "message": "row {rowId} has a cell for {columnId}, which is not a column of the table",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_unknown_node_type",
+      "message": "node type {type} is not a JDM node type; the Norn profile admits inputNode, outputNode, expressionNode, decisionTableNode, switchNode, and decisionNode",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_unreachable_node",
+      "message": "node {nodeId} {problem}; every node of a decision graph lies on a path from input to output",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_unresolved_import",
+      "message": "import {import} does not resolve: the Norn profile has no importable policy documents; declare value types in EntityIR v2",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.jdm_unresolved_sub_decision",
+      "message": "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "sealing.extension_point.capability_missing",
+      "message": "operation lacks the capabilities its extension point grants: {capabilities}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.extension_point.contract_violation",
+      "message": "overlay payload violates the extension-point contract: {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.extension_point.kind_mismatch",
+      "message": "extension-point contribution kind does not match the operation",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.extension_point.unresolved",
+      "message": "{operation} references an extension point not exposed by its seal",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.input.duplicate_extension_point",
+      "message": "extension-point definitions must contain at most one entry per ID",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.input.duplicate_seal",
+      "message": "seal annotations must contain at most one entry per node",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.monotonic.unseal_forbidden",
+      "message": "downstream overlays cannot unseal an upstream seal",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.overlay.base_mutation_denied",
+      "message": "base node '{nodeId}' is immutable: {reason}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.overlay.sealed_mutation",
+      "message": "sealed base nodes cannot be mutated without an exposed extension point",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.overlay.tenant_namespace_mismatch",
+      "message": "additive customization node and scope must belong to the declared tenant namespace",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.overlay.tenant_namespace_required",
+      "message": "additive tenant customization requires a tenant namespace",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "sealing.runtime.capability_denied",
+      "message": "custom code receives no handle to sealed nodes unless an extension point grants capabilities",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
+      "code": "sealing.upgrade.monotonic_violation",
+      "message": "base upgrades cannot weaken or remove an existing seal without kernel migration authority",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T4"
+    },
+    {
+      "code": "setting.validation.invalid_payload",
+      "message": "SettingIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.blank_value",
+      "message": "the value must not be blank",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.constraint_shape",
+      "message": "constraint {id}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.duplicate_code",
+      "message": "code set {id} is empty or lists {value} twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.duplicate_field",
+      "message": "dataset {dataset} declares field {field} (or ordinal {ordinal}) twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.duplicate_id",
+      "message": "{list} declares id {id} twice",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.invalid_document",
+      "message": "the document is not a SourceSchemaIR document: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.invalid_evidence",
+      "message": "evidence {uri} needs a non-blank uri and a lower-case hex SHA-256",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.invalid_source_identity",
+      "message": "source identity components must not contain control characters",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.invalid_timestamp",
+      "message": "{value} is not an RFC 3339 timestamp with an explicit offset",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.profile_counts",
+      "message": "profile measures are inconsistent: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.promoted_inference",
+      "message": "{entry} has origin {origin}, which its list does not admit; an inference is never a declaration",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.sample_bound",
+      "message": "sample set exceeds its bound: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.unknown_dataset",
+      "message": "dataset {dataset} is not declared",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "source_schema.validation.unknown_field",
+      "message": "dataset {dataset} has no field {field}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.validation.invalid_payload",
+      "message": "WidgetIR payload is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.validation.missing_dependency",
+      "message": "widget references '{artifactId}' without declaring it as a dependency",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.validation.unsafe_action_binding",
+      "message": "action binding must target a Norn action or process command, not a raw mutation",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostic-codes@1"
+}

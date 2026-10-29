@@ -1,0 +1,10 @@
+{
+  "name": "norn-projections",
+  "ring": "Zero",
+  "allowed_norn": [
+    "norn-ir",
+    "norn-graph"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}

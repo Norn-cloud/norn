@@ -1,0 +1,321 @@
+{
+  "profile": "norn-effect/2",
+  "status": "T7-EFX-1 (#2784); ruling knowledge/architecture/design-rulings-2026-09-27-authoring-effect-profile.md §1-§5",
+  "spec": "knowledge/architecture/build-plan-2026-09-09/norn-effect-profile-v1.md",
+  "identity": "Symbol identity is <package>/<declaring .d.ts path without extension>#<qualified declared name>, computed from the TypeScript checker after following import/re-export aliases. Spelling never matters.",
+  "pins": {
+    "effect": {
+      "version": "4.0.0-rc.117",
+      "integrity": "sha512-UUyi9QiOW4nySFIBM3KnYbNMd9EZliOdKfBcyLD0mPMPheO2fkuXS5y0opjWc9oqzlJxPQICEGm8gGw3kh9j/w==",
+      "license": "MIT"
+    },
+    "typescript": {
+      "version": "6.0.3",
+      "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
+      "license": "Apache-2.0",
+      "role": "Compiler API (ts.createProgram / TypeChecker). typescript@latest (7.x) ships no JS Compiler API; 6.0.3 is the newest release line that does."
+    }
+  },
+  "intrinsicsModule": "@norn/authoring",
+  "allowedImports": {
+    "packages": ["effect", "effect/*"],
+    "note": "Plus the intrinsics module and relative TypeScript source modules (checked as a closure, NORN-FLOW-IMPORT). Listed packages must resolve to the pinned copy. Everything else, and every side-effect-only import, is NORN-FLOW-MODULE."
+  },
+  "diagnostics": {
+    "NORN-FLOW-UNSUPPORTED-CALL": {
+      "summary": "Call to a symbol outside the profile (Effect.run*, sync, suspend, promise, tryPromise, await, arbitrary library or helper calls).",
+      "fix": "Use a declared Function through Norn.perform, or an admitted combinator."
+    },
+    "NORN-FLOW-SYMBOL": {
+      "summary": "The name is spelled like an admitted symbol but resolves to something else (local shadowing, hostile re-export, lookalike module).",
+      "fix": "Import the admitted symbol from `effect` / `effect/unstable/ai` / `@norn/authoring`; aliases are fine, lookalikes are not."
+    },
+    "NORN-FLOW-TYPED-FAILURE-CATCH": {
+      "summary": "JS try/catch/finally/throw. Effect typed failures never throw into the generator, so lexical catch cannot observe them.",
+      "fix": "Fail with Effect.fail(new SomeTaggedError(...)) and recover with Effect.catchTag."
+    },
+    "NORN-FLOW-EXPRESSION": {
+      "summary": "Expression outside the v1 expression subset: truthiness/coercion, runtime template interpolation, arithmetic, object equality, dynamic indexing, conditional/nullish operators, type assertions, arbitrary predicates.",
+      "fix": "Use a strict boolean, scalar ===/!==, numeric comparison, literal, or declared property path."
+    },
+    "NORN-FLOW-UNBOUNDED": {
+      "summary": "Unbounded or non-finite construct: schedule without a finite Schedule.recurs, jitter/forever/callback schedules, repeat/forever, non-literal Effect.all collections.",
+      "fix": "Intersect the delay with Schedule.recurs(n) via Schedule.max([...]); use a finite literal tuple."
+    },
+    "NORN-FLOW-LOOP": {
+      "summary": "General JS loop (while, do, for, for-in, for-of) or loop control.",
+      "fix": "Bounded iteration arrives only as a qualified Norn pattern (T7-EFX-6/7); use a retry schedule or explicit steps."
+    },
+    "NORN-FLOW-CAPTURE": {
+      "summary": "Mutable or opaque capture: let/var, assignment, ++/--, arbitrary closures, function-valued (non-inline) continuations.",
+      "fix": "Use const bindings and inline callbacks passed directly to an admitted combinator."
+    },
+    "NORN-FLOW-CONCURRENCY": {
+      "summary": "Interruption, fibers, fork/race/timeout, Queue/PubSub/Ref/Deferred/streams, or a concurrency option on Effect.all.",
+      "fix": "v1 is sequential. Explicit Norn parallel forms arrive after qualification (T7-EFX-6)."
+    },
+    "NORN-FLOW-CONTEXT": {
+      "summary": "Layer provisioning, Context services, or ambient context reads.",
+      "fix": "Reach capabilities through Norn.fn handles and Norn.perform."
+    },
+    "NORN-FLOW-RESOURCE": {
+      "summary": "Resource acquisition/finalizers: acquireRelease, scoped, ensuring, addFinalizer, onExit.",
+      "fix": "Model business compensation as explicit catchTag recovery steps."
+    },
+    "NORN-FLOW-AMBIENT": {
+      "summary": "Ambient runtime read: Date, clock, entropy, network, filesystem, console, or other host globals.",
+      "fix": "Time comes from timers/Effect.sleep; external reads go through Norn.perform."
+    },
+    "NORN-FLOW-LITERAL": {
+      "summary": "An argument that must be a compile-time literal is not (step id, error tag, duration, recurs count).",
+      "fix": "Write the literal inline."
+    },
+    "NORN-FLOW-ROUTE": {
+      "summary": "switch without a literal-union discriminant, with fall-through, with non-literal cases, or not exhaustive.",
+      "fix": "Switch on a literal union, cover every member (or add default), and end each clause with return or break."
+    },
+    "NORN-FLOW-SCHEMA-PROJECTION": {
+      "summary": "Schema feature without a qualified EntityIR projection: refinements/checks, transforms, suspend/lazy, declare, Date/BigInt/non-finite numbers.",
+      "fix": "Use the structural subset (Struct, literals, Int/Finite, arrays, unions, optional/null policy, brand)."
+    },
+    "NORN-FLOW-UNSUPPORTED-SYNTAX": {
+      "summary": "Syntax outside the positive grammar (default deny), or a durable step id used more than once.",
+      "fix": "Keep flow bodies inline inside Norn.flow(meta, Effect.gen(function* () { ... })) using only admitted statements and one occurrence per durable step id."
+    },
+    "NORN-FLOW-TYPE": {
+      "summary": "The TypeScript checker reports an error; the profile only admits well-typed sources.",
+      "fix": "Fix the reported type error."
+    },
+    "NORN-FLOW-IMPORT": {
+      "summary": "An imported local module fails the profile (definitions are checked as a closure over their local imports).",
+      "fix": "Fix the reported diagnostic in the imported module."
+    },
+    "NORN-FLOW-MODULE": {
+      "summary": "Import outside the allowlist (effect, effect/*, @norn/authoring, local TypeScript source modules), a listed package that does not resolve to the pinned copy, a declaration-only local module, or a side-effect-only import.",
+      "fix": "Import only admitted modules, and import named bindings; move other code behind a Norn.fn Function."
+    },
+    "NORN-FLOW-VALUE": {
+      "summary": "A flow data position (result, perform input, succeed value, error fields, object/array element, binding) holds a non-data value: an effect, or a reference to a top-level definition (Schema, Norn.flow, Norn.fn, Tool/Toolkit value, class) instead of a JSON data const.",
+      "fix": "Run effects with yield* and use the result; reference only top-level consts whose initializers are JSON literals, arrays, and objects."
+    },
+    "NORN-FLOW-RESULT": {
+      "summary": "A path yields undefined instead of an explicit result: a bare `return` in a flow generator or Effect.map callback, or a block-bodied Effect.map callback that can complete without returning.",
+      "fix": "Return an explicit JSON value on every path (use null for an empty result)."
+    },
+    "NORN-FLOW-SLICE": {
+      "summary": "Read of a binding or property path that is not declared at that point: a name not in scope, or a field the binding's schema (a Function output, an error's fields) does not declare. Emitted by the data builder and the syntax compiler; the profile checker does not emit it.",
+      "fix": "Read only bindings in scope and fields their schemas declare."
+    },
+    "NORN-FLOW-TAG": {
+      "summary": "A typed failure tag that is not registered where it is used: catchTag names a tag no Function performed in its body declares and no Effect.fail there raises, or one tag is registered with two field shapes. Emitted by the data builder and the syntax compiler.",
+      "fix": "Catch only tags the enclosed Functions declare (Norn.fn errors) or the body raises with Effect.fail; register each tag once."
+    }
+  },
+  "rows": {
+    "flow": "Norn.flow(meta, Effect.gen(function* () {...})) -> Run lifecycle + decisions; live bindings as bounded fact slots",
+    "perform": "yield* Norn.perform(stepId, fnRef, input) -> command + waiting facts; accepted result/failure events select the next transition",
+    "pipe": "pipe / .pipe -> compile-time composition",
+    "map-flatMap": "Effect.map / Effect.flatMap -> ZEN projection / sequence of transitions",
+    "succeed-return": "Effect.succeed / return -> result facts; terminal transition",
+    "fail-tagged-error": "Effect.fail + Data.TaggedError -> typed failure event {_tag, ...fields}",
+    "catchTag": "Effect.catchTag -> failure-event route; recovery/compensation commands",
+    "if-switch": "if/else, switch -> first-hit table / switch node",
+    "all": "Effect.all([...]) sequential -> sequence with tuple result slots",
+    "retry-schedule": "Effect.retry + Schedule.recurs/spaced/exponential/max -> attempt counter, retry timer, re-enqueued command",
+    "sleep": "Effect.sleep -> timer request + timer event",
+    "schema": "Schema structural subset + Norn value types (Norn.decimal/ref/timestamp/date) -> EntityIR v2 properties / closed Function and action schemas (T7-EFX-4)",
+    "ontology": "Norn.type / Norn.interfaceType -> EntityIR v2 object types and interfaces (properties from the Schema subset, links, keys, literal defaults, declared lifecycles); Norn.action -> ActionIR; Norn.access -> AccessIR; Norn.decision -> RuleIR v2; Norn.mapping -> MappingIR (T7-EFX-4, T7-TS-2, T7-TS-3)",
+    "tool-toolkit": "Tool / Toolkit (effect/unstable/ai) -> ActionIR projection -> MCP/OpenAPI (T7-EFX-5)"
+  },
+  "admitted": [
+    { "symbol": "@norn/authoring#Norn.dateBefore", "probe": "norn.Norn.dateBefore", "row": "ontology", "use": "call", "context": "any" },
+    { "symbol": "@norn/authoring#Norn.byteLength", "probe": "norn.Norn.byteLength", "row": "ontology", "use": "call", "context": "any" },
+    { "symbol": "@norn/authoring#Norn.evaluate", "probe": "norn.Norn.evaluate", "row": "ontology", "use": "call", "context": "any" },
+    { "symbol": "@norn/authoring#Norn.expression", "probe": "norn.Norn.expression", "row": "ontology", "use": "call", "context": "any" },
+    { "symbol": "@norn/authoring#Norn.unsafeZen", "probe": "norn.Norn.unsafeZen", "row": "ontology", "use": "call", "context": "any" },
+
+    { "symbol": "@norn/authoring#Norn.flow", "probe": "norn.Norn.flow", "row": "flow", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.perform", "probe": "norn.Norn.perform", "row": "perform", "use": "call", "context": "flow" },
+    { "symbol": "@norn/authoring#Norn.fn", "probe": "norn.Norn.fn", "row": "perform", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.type", "probe": "norn.Norn.type", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.interfaceType", "probe": "norn.Norn.interfaceType", "row": "ontology", "use": "call", "context": "definition", "note": "`interface` is a reserved word" },
+    { "symbol": "@norn/authoring#Norn.action", "probe": "norn.Norn.action", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.access", "probe": "norn.Norn.access", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.decision", "probe": "norn.Norn.decision", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.sourceSchema", "probe": "norn.Norn.sourceSchema", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.markings", "probe": "norn.Norn.markings", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.connector", "probe": "norn.Norn.connector", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.mapping", "probe": "norn.Norn.mapping", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.law", "probe": "norn.Norn.law", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.decimal", "probe": "norn.Norn.decimal", "row": "schema", "use": "call", "context": "definition", "note": "Norn value type: exact decimal with a declared scale (EntityIR `decimal`); Effect has no exact fixed-scale number" },
+    { "symbol": "@norn/authoring#Norn.ref", "probe": "norn.Norn.ref", "row": "schema", "use": "call", "context": "definition", "note": "Norn value type: a registry or shared property type by name (EntityIR `ref`, e.g. `iso4217.currency_code`)" },
+    { "symbol": "@norn/authoring#Norn.timestamp", "probe": "norn.Norn.timestamp", "row": "schema", "use": "call", "context": "definition", "note": "Norn value type: an instant with an explicit timezone policy (EntityIR `timestamp`)" },
+    { "symbol": "@norn/authoring#Norn.date", "probe": "norn.Norn.date", "row": "schema", "use": "call", "context": "definition", "note": "Norn value type: a calendar date (EntityIR `date`)" },
+    { "symbol": "effect/Function#pipe", "probe": "effect.pipe", "row": "pipe", "use": "call", "context": "any" },
+    { "symbol": "effect/Pipeable#Pipeable.pipe", "probe": "effect.Schema.String.pipe", "row": "pipe", "use": "method", "context": "any" },
+    { "symbol": "effect/Effect#gen", "probe": "effect.Effect.gen", "row": "flow", "use": "call", "context": "flow" },
+    { "symbol": "effect/Effect#map", "probe": "effect.Effect.map", "row": "map-flatMap", "use": "call", "context": "flow" },
+    { "symbol": "effect/Effect#flatMap", "probe": "effect.Effect.flatMap", "row": "map-flatMap", "use": "call", "context": "flow" },
+    { "symbol": "effect/Effect#succeed", "probe": "effect.Effect.succeed", "row": "succeed-return", "use": "call", "context": "flow" },
+    { "symbol": "effect/Effect#fail", "probe": "effect.Effect.fail", "row": "fail-tagged-error", "use": "call", "context": "flow" },
+    { "symbol": "effect/Data#TaggedError", "probe": "effect.Data.TaggedError", "row": "fail-tagged-error", "use": "class-heritage", "context": "definition" },
+    { "symbol": "effect/Effect#catchTag", "probe": "effect.Effect.catchTag", "row": "catchTag", "use": "call", "context": "flow" },
+    { "symbol": "effect/Effect#all", "probe": "effect.Effect.all", "row": "all", "use": "call", "context": "flow" },
+    { "symbol": "effect/Effect#retry", "probe": "effect.Effect.retry", "row": "retry-schedule", "use": "call", "context": "flow" },
+    { "symbol": "effect/Schedule#recurs", "probe": "effect.Schedule.recurs", "row": "retry-schedule", "use": "call", "context": "retry-policy" },
+    { "symbol": "effect/Schedule#spaced", "probe": "effect.Schedule.spaced", "row": "retry-schedule", "use": "call", "context": "retry-policy" },
+    { "symbol": "effect/Schedule#exponential", "probe": "effect.Schedule.exponential", "row": "retry-schedule", "use": "call", "context": "retry-policy" },
+    { "symbol": "effect/Schedule#max", "probe": "effect.Schedule.max", "row": "retry-schedule", "use": "call", "context": "retry-policy", "note": "v4 replacement for the ruling's v3 `Schedule.intersect` (recur while all recur, max delay); `intersect` does not exist in 4.0.0-rc.117" },
+    { "symbol": "effect/Effect#sleep", "probe": "effect.Effect.sleep", "row": "sleep", "use": "call", "context": "flow" },
+    { "symbol": "effect/Schema#Struct", "probe": "effect.Schema.Struct", "row": "schema", "use": "call", "context": "definition" },
+    { "symbol": "effect/Schema#TaggedStruct", "probe": "effect.Schema.TaggedStruct", "row": "schema", "use": "call", "context": "definition" },
+    { "symbol": "effect/Schema#Class", "probe": "effect.Schema.Class", "row": "schema", "use": "class-heritage", "context": "definition" },
+    { "symbol": "effect/Schema#String", "probe": "effect.Schema.String", "row": "schema", "use": "value", "context": "definition" },
+    { "symbol": "effect/Schema#Boolean", "probe": "effect.Schema.Boolean", "row": "schema", "use": "value", "context": "definition" },
+    { "symbol": "effect/Schema#Null", "probe": "effect.Schema.Null", "row": "schema", "use": "value", "context": "definition" },
+    { "symbol": "effect/Schema#Int", "probe": "effect.Schema.Int", "row": "schema", "use": "value", "context": "definition" },
+    { "symbol": "effect/Schema#Finite", "probe": "effect.Schema.Finite", "row": "schema", "use": "value", "context": "definition" },
+    { "symbol": "effect/Schema#Literal", "probe": "effect.Schema.Literal", "row": "schema", "use": "call", "context": "definition" },
+    { "symbol": "effect/Schema#Literals", "probe": "effect.Schema.Literals", "row": "schema", "use": "call", "context": "definition" },
+    { "symbol": "effect/Schema#ArraySchema", "probe": "effect.Schema.Array", "row": "schema", "use": "call", "context": "definition", "note": "exported as `Schema.Array`; bound required at lowering (T7-EFX-4)" },
+    { "symbol": "effect/Schema#Union", "probe": "effect.Schema.Union", "row": "schema", "use": "call", "context": "definition" },
+    { "symbol": "effect/Schema#TaggedUnion", "probe": "effect.Schema.TaggedUnion", "row": "schema", "use": "call", "context": "definition" },
+    { "symbol": "effect/Schema#optionalKey", "probe": "effect.Schema.optionalKey", "row": "schema", "use": "call", "context": "definition" },
+    { "symbol": "effect/Schema#NullOr", "probe": "effect.Schema.NullOr", "row": "schema", "use": "call", "context": "definition" },
+    { "symbol": "effect/Schema#brand", "probe": "effect.Schema.brand", "row": "schema", "use": "call", "context": "definition" },
+    { "symbol": "effect/unstable/ai/Tool#make", "probe": "ai.Tool.make", "row": "tool-toolkit", "use": "call", "context": "definition" },
+    { "symbol": "effect/unstable/ai/Toolkit#make", "probe": "ai.Toolkit.make", "row": "tool-toolkit", "use": "call", "context": "definition" }
+  ],
+  "rejected": [
+    { "symbol": "effect/Effect#runPromise", "probe": "effect.Effect.runPromise", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#runPromiseExit", "probe": "effect.Effect.runPromiseExit", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#runSync", "probe": "effect.Effect.runSync", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#runSyncExit", "probe": "effect.Effect.runSyncExit", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#runFork", "probe": "effect.Effect.runFork", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#runCallback", "probe": "effect.Effect.runCallback", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#sync", "probe": "effect.Effect.sync", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#suspend", "probe": "effect.Effect.suspend", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#callback", "probe": "effect.Effect.callback", "code": "NORN-FLOW-UNSUPPORTED-CALL", "note": "v4 name of v3 Effect.async" },
+    { "symbol": "effect/Effect#promise", "probe": "effect.Effect.promise", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#tryPromise", "probe": "effect.Effect.tryPromise", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#die", "probe": "effect.Effect.die", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "symbol": "effect/Effect#forkChild", "probe": "effect.Effect.forkChild", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#forkIn", "probe": "effect.Effect.forkIn", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#forkScoped", "probe": "effect.Effect.forkScoped", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#forkDetach", "probe": "effect.Effect.forkDetach", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#race", "probe": "effect.Effect.race", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#raceAll", "probe": "effect.Effect.raceAll", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#raceFirst", "probe": "effect.Effect.raceFirst", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#timeout", "probe": "effect.Effect.timeout", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#timeoutOption", "probe": "effect.Effect.timeoutOption", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#interrupt", "probe": "effect.Effect.interrupt", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#onInterrupt", "probe": "effect.Effect.onInterrupt", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#uninterruptible", "probe": "effect.Effect.uninterruptible", "code": "NORN-FLOW-CONCURRENCY" },
+    { "symbol": "effect/Effect#provide", "probe": "effect.Effect.provide", "code": "NORN-FLOW-CONTEXT" },
+    { "symbol": "effect/Effect#provideService", "probe": "effect.Effect.provideService", "code": "NORN-FLOW-CONTEXT" },
+    { "symbol": "effect/Effect#service", "probe": "effect.Effect.service", "code": "NORN-FLOW-CONTEXT" },
+    { "symbol": "effect/Effect#context", "probe": "effect.Effect.context", "code": "NORN-FLOW-CONTEXT" },
+    { "symbol": "effect/Effect#acquireRelease", "probe": "effect.Effect.acquireRelease", "code": "NORN-FLOW-RESOURCE" },
+    { "symbol": "effect/Effect#acquireUseRelease", "probe": "effect.Effect.acquireUseRelease", "code": "NORN-FLOW-RESOURCE" },
+    { "symbol": "effect/Effect#addFinalizer", "probe": "effect.Effect.addFinalizer", "code": "NORN-FLOW-RESOURCE" },
+    { "symbol": "effect/Effect#ensuring", "probe": "effect.Effect.ensuring", "code": "NORN-FLOW-RESOURCE" },
+    { "symbol": "effect/Effect#scoped", "probe": "effect.Effect.scoped", "code": "NORN-FLOW-RESOURCE" },
+    { "symbol": "effect/Effect#onExit", "probe": "effect.Effect.onExit", "code": "NORN-FLOW-RESOURCE" },
+    { "symbol": "effect/Effect#forever", "probe": "effect.Effect.forever", "code": "NORN-FLOW-UNBOUNDED" },
+    { "symbol": "effect/Effect#repeat", "probe": "effect.Effect.repeat", "code": "NORN-FLOW-UNBOUNDED" },
+    { "symbol": "effect/Effect#whileLoop", "probe": "effect.Effect.whileLoop", "code": "NORN-FLOW-UNBOUNDED" },
+    { "symbol": "effect/Effect#eventually", "probe": "effect.Effect.eventually", "code": "NORN-FLOW-UNBOUNDED" },
+    { "symbol": "effect/Effect#forEach", "probe": "effect.Effect.forEach", "code": "NORN-FLOW-UNBOUNDED" },
+    { "symbol": "effect/Effect#catchIf", "probe": "effect.Effect.catchIf", "code": "NORN-FLOW-EXPRESSION", "note": "arbitrary JS predicate" },
+    { "symbol": "effect/Effect#filterOrFail", "probe": "effect.Effect.filterOrFail", "code": "NORN-FLOW-EXPRESSION", "note": "arbitrary JS predicate" },
+    { "symbol": "effect/Effect#when", "probe": "effect.Effect.when", "code": "NORN-FLOW-EXPRESSION", "note": "arbitrary JS predicate" },
+    { "symbol": "effect/Effect#clockWith", "probe": "effect.Effect.clockWith", "code": "NORN-FLOW-AMBIENT" },
+    { "symbol": "effect/Schedule#forever", "probe": "effect.Schedule.forever", "code": "NORN-FLOW-UNBOUNDED" },
+    { "symbol": "effect/Schedule#jittered", "probe": "effect.Schedule.jittered", "code": "NORN-FLOW-UNBOUNDED" },
+    { "symbol": "effect/Schedule#while_", "probe": "effect.Schedule.while", "code": "NORN-FLOW-UNBOUNDED", "note": "schedule callback" },
+    { "symbol": "effect/Schema#check", "probe": "effect.Schema.check", "code": "NORN-FLOW-SCHEMA-PROJECTION" },
+    { "symbol": "effect/Schema#refine", "probe": "effect.Schema.refine", "code": "NORN-FLOW-SCHEMA-PROJECTION" },
+    { "symbol": "effect/Schema#decodeTo", "probe": "effect.Schema.decodeTo", "code": "NORN-FLOW-SCHEMA-PROJECTION" },
+    { "symbol": "effect/Schema#suspend", "probe": "effect.Schema.suspend", "code": "NORN-FLOW-SCHEMA-PROJECTION" },
+    { "symbol": "effect/Schema#declare", "probe": "effect.Schema.declare", "code": "NORN-FLOW-SCHEMA-PROJECTION" },
+    { "symbol": "effect/Schema#Date", "probe": "effect.Schema.Date", "code": "NORN-FLOW-SCHEMA-PROJECTION" },
+    { "symbol": "effect/Schema#Number", "probe": "effect.Schema.Number", "code": "NORN-FLOW-SCHEMA-PROJECTION", "note": "admits NaN/Infinity; use Int or Finite until T3-NUM-1 qualifies numeric wire types" },
+    { "symbol": "effect/Schema#BigInt", "probe": "effect.Schema.BigInt", "code": "NORN-FLOW-SCHEMA-PROJECTION" }
+  ],
+  "rejectedModules": [
+    { "module": "effect/Effect", "code": "NORN-FLOW-UNSUPPORTED-CALL" },
+    { "module": "effect/Schema", "code": "NORN-FLOW-SCHEMA-PROJECTION" },
+    { "module": "effect/Schedule", "code": "NORN-FLOW-UNBOUNDED" },
+    { "module": "effect/Layer", "code": "NORN-FLOW-CONTEXT" },
+    { "module": "effect/Context", "code": "NORN-FLOW-CONTEXT" },
+    { "module": "effect/ManagedRuntime", "code": "NORN-FLOW-CONTEXT" },
+    { "module": "effect/Runtime", "code": "NORN-FLOW-CONTEXT" },
+    { "module": "effect/References", "code": "NORN-FLOW-CONTEXT" },
+    { "module": "effect/Fiber", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/FiberHandle", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/FiberMap", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/FiberSet", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/Queue", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/PubSub", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/Ref", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/SynchronizedRef", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/SubscriptionRef", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/Deferred", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/Stream", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/Channel", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/Sink", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/Semaphore", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/Latch", "code": "NORN-FLOW-CONCURRENCY" },
+    { "module": "effect/Scope", "code": "NORN-FLOW-RESOURCE" },
+    { "module": "effect/Clock", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/Random", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/DateTime", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/FileSystem", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/Path", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/Crypto", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/Console", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/Config", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/ConfigProvider", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/Terminal", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/Stdio", "code": "NORN-FLOW-AMBIENT" },
+    { "module": "effect/unstable/workflow/", "code": "NORN-FLOW-UNSUPPORTED-CALL", "note": "no durable engine (ruling §6)" }
+  ],
+  "defaultCode": "NORN-FLOW-UNSUPPORTED-CALL",
+  "reservedIntrinsics": {
+    "Norn.relation": "T7-TS-2 (v1 declares links inline in Norn.type)",
+    "Norn.lifecycle": "T7-TS-2 (v1 declares lifecycles inline in Norn.type)",
+    "Norn.connector": "T7-TS-2",
+    "Norn.task": "T7-EFX-7"
+  },
+  "rejectedConstructs": [
+    { "construct": "JS try/catch/finally/throw", "code": "NORN-FLOW-TYPED-FAILURE-CATCH", "fixtures": ["reject/try-catch-around-yield.ts", "reject/throw.ts"] },
+    { "construct": "Layer, Context services, ambient context reads", "code": "NORN-FLOW-CONTEXT", "fixtures": ["reject/layer-context.ts"] },
+    { "construct": "interruption, fibers, fork/race, FiberRef, Queue, PubSub, Ref, Deferred, streams", "code": "NORN-FLOW-CONCURRENCY", "fixtures": ["reject/fork-race.ts", "reject/ref-queue.ts", "reject/concurrent-all.ts"] },
+    { "construct": "Effect.run*, sync, suspend, async, promise, tryPromise, await", "code": "NORN-FLOW-UNSUPPORTED-CALL", "fixtures": ["reject/effect-run-promise.ts", "reject/sync-promise-await.ts"] },
+    { "construct": "arbitrary closures, function-valued continuations, helper calls", "code": "NORN-FLOW-CAPTURE", "fixtures": ["reject/function-valued-flatmap.ts"] },
+    { "construct": "mutable captures, let/var", "code": "NORN-FLOW-CAPTURE", "fixtures": ["reject/mutable-capture.ts"] },
+    { "construct": "recursion and helper calls the compiler cannot see", "code": "NORN-FLOW-UNSUPPORTED-CALL", "fixtures": ["reject/helper-call.ts"] },
+    { "construct": "while / general loops", "code": "NORN-FLOW-LOOP", "fixtures": ["reject/while-loop.ts"] },
+    { "construct": "runtime template interpolation", "code": "NORN-FLOW-EXPRESSION", "fixtures": ["reject/template-interpolation.ts"] },
+    { "construct": "coercion, truthiness (proxy danger)", "code": "NORN-FLOW-EXPRESSION", "fixtures": ["reject/proxy-truthiness.ts"] },
+    { "construct": "object equality, dynamic indexing, arithmetic", "code": "NORN-FLOW-EXPRESSION", "fixtures": ["reject/object-equality-arithmetic.ts"] },
+    { "construct": "arbitrary JS predicates", "code": "NORN-FLOW-EXPRESSION", "fixtures": ["reject/arbitrary-predicate.ts"] },
+    { "construct": "Date/clock/entropy/network/filesystem", "code": "NORN-FLOW-AMBIENT", "fixtures": ["reject/ambient-date-random.ts"] },
+    { "construct": "acquireRelease/scoped/ensuring", "code": "NORN-FLOW-RESOURCE", "fixtures": ["reject/resource-finalizer.ts"] },
+    { "construct": "unbounded schedules, jitter, schedule callbacks", "code": "NORN-FLOW-UNBOUNDED", "fixtures": ["reject/unbounded-schedule.ts"] },
+    { "construct": "Schema refinements, transforms, lazy/suspend, declare", "code": "NORN-FLOW-SCHEMA-PROJECTION", "fixtures": ["reject/schema-projection.ts"] },
+    { "construct": "local binding named Effect (shadowing)", "code": "NORN-FLOW-SYMBOL", "fixtures": ["reject/shadowed-effect.ts"] },
+    { "construct": "hostile re-export / lookalike module", "code": "NORN-FLOW-SYMBOL", "fixtures": ["reject/hostile-reexport.ts"] },
+    { "construct": "generator escape (Effect.gen outside Norn.flow)", "code": "NORN-FLOW-UNSUPPORTED-SYNTAX", "fixtures": ["reject/generator-escape.ts"] },
+    { "construct": "switch fall-through / non-exhaustive route", "code": "NORN-FLOW-ROUTE", "fixtures": ["reject/switch-fallthrough.ts"] },
+    { "construct": "non-literal step id / duration / tag", "code": "NORN-FLOW-LITERAL", "fixtures": ["reject/non-literal-arguments.ts"] },
+    { "construct": "effect values used as data (returned, mapped, stored via pipe) and tagged errors outside Effect.fail", "code": "NORN-FLOW-UNSUPPORTED-SYNTAX", "fixtures": ["reject/effect-as-value.ts"] },
+    { "construct": "imported local module that fails the profile (e.g. an ambient const)", "code": "NORN-FLOW-IMPORT", "fixtures": ["reject/imported-ambient.ts"] },
+    { "construct": "imports outside the allowlist, declaration-only local modules, side-effect-only imports", "code": "NORN-FLOW-MODULE", "fixtures": ["reject/import-allowlist.ts"] },
+    { "construct": "top-level definition values (Schema, flow, fn handle, Tool, class) used as flow data", "code": "NORN-FLOW-VALUE", "fixtures": ["reject/definition-as-data.ts"] },
+    { "construct": "effects in data positions (perform input, succeed value, nested in objects)", "code": "NORN-FLOW-VALUE", "fixtures": ["reject/effect-in-data.ts", "reject/wrapped-effect-in-data.ts"] },
+    { "construct": "bare return yielding undefined in a flow generator", "code": "NORN-FLOW-RESULT", "fixtures": ["reject/bare-return.ts"] },
+    { "construct": "block-bodied Effect.map callback that can return undefined", "code": "NORN-FLOW-RESULT", "fixtures": ["reject/map-block-undefined.ts"] },
+    { "construct": "non-finite numeric literal, including negated (-1e400)", "code": "NORN-FLOW-EXPRESSION", "fixtures": ["reject/non-finite-negative.ts"] }
+  ]
+}

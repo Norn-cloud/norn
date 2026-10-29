@@ -1,0 +1,26 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.PurchaseRequest.entity",
+  "kind": "entity",
+  "namespace": "retail",
+  "name": "Purchase request",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/retail-purchase-request.entity.json"
+  },
+  "payload": {
+    "objectKind": "retail.PurchaseRequest",
+    "fields": {
+      "requestId": { "type": "text", "required": true },
+      "skuId": { "type": "text", "required": true },
+      "quantity": { "type": "integer", "required": true }
+    }
+  }
+}

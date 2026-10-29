@@ -1,0 +1,16 @@
+{
+  "attributes": [
+    {
+      "id": "gid://norn/ToyAttribute/1",
+      "name": "Sample finish",
+      "handle": "sample-finish",
+      "values": [
+        {
+          "id": "gid://norn/ToyValue/1",
+          "name": "Matte",
+          "handle": "matte"
+        }
+      ]
+    }
+  ]
+}

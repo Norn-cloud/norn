@@ -1,0 +1,33 @@
+{
+  "name": "geo.point",
+  "type": {
+    "kind": "record",
+    "members": [
+      {
+        "id": "latitude",
+        "type": {
+          "kind": "decimal",
+          "scale": 6
+        },
+        "constraints": {
+          "min": "-90",
+          "max": "90"
+        }
+      },
+      {
+        "id": "longitude",
+        "type": {
+          "kind": "decimal",
+          "scale": 6
+        },
+        "constraints": {
+          "min": "-180",
+          "max": "180"
+        }
+      }
+    ]
+  },
+  "constraints": {
+    "nullable": true
+  }
+}

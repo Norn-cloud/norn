@@ -1,0 +1,293 @@
+{
+  "description": "S5 temporal values survive graph output conversion as canonical strings; pure parsing, ordering and checked arithmetic preserve leap days and nanoseconds.",
+  "rule": {
+    "ruleId": "demo.rule.temporal",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "string"
+            },
+            "end": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end",
+            "at"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "demo.Order"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "half"
+                ]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "property",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string"
+              },
+              "start": {
+                "type": "string"
+              },
+              "next": {
+                "type": "string"
+              },
+              "ordered": {
+                "type": "boolean"
+              },
+              "days": {
+                "type": "number"
+              },
+              "instant": {
+                "type": "string"
+              },
+              "seconds": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "actionId",
+              "start",
+              "next",
+              "ordered",
+              "days",
+              "instant",
+              "seconds"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              },
+              "dueIn": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId",
+              "dueIn"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "x",
+          "name": "x",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "[{actionId: 'notify', start: date(slice.start), next: add_days(date(slice.start), 2), ordered: date(slice.end) >= date(slice.start), days: days_between(date(slice.start), date(slice.end)), instant: add_seconds(timestamp(slice.at), 1), seconds: seconds_between(timestamp(slice.at), add_seconds(timestamp(slice.at), 1))}]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "x",
+          "type": "edge"
+        },
+        {
+          "id": "e2",
+          "sourceId": "x",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "leap-day crossing",
+      "slice": {
+        "start": "2024-02-28",
+        "end": "2024-03-01",
+        "at": "2024-02-29T02:00:00.123456789+02:00"
+      },
+      "event": {
+        "kind": "submitted"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "actionId": "notify",
+            "start": "2024-02-28",
+            "next": "2024-03-01",
+            "ordered": true,
+            "days": 2,
+            "instant": "2024-02-29T00:00:01.123456789Z",
+            "seconds": 1
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "equal endpoints",
+      "slice": {
+        "start": "2024-02-28",
+        "end": "2024-02-28",
+        "at": "2024-02-29T02:00:00.123456789+02:00"
+      },
+      "event": {
+        "kind": "submitted"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "actionId": "notify",
+            "start": "2024-02-28",
+            "next": "2024-03-01",
+            "ordered": true,
+            "days": 0,
+            "instant": "2024-02-29T00:00:01.123456789Z",
+            "seconds": 1
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "reversed endpoints",
+      "slice": {
+        "start": "2024-02-28",
+        "end": "2024-02-27",
+        "at": "2024-02-29T02:00:00.123456789+02:00"
+      },
+      "event": {
+        "kind": "submitted"
+      },
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "actionId": "notify",
+            "start": "2024-02-28",
+            "next": "2024-03-01",
+            "ordered": false,
+            "days": -1,
+            "instant": "2024-02-29T00:00:01.123456789Z",
+            "seconds": 1
+          }
+        ],
+        "timers": []
+      }
+    }
+  ]
+}

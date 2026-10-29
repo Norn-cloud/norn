@@ -1,0 +1,1960 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EntityPayload",
+  "description": "The payload of an `entity` artifact: EntityIR v1 (`objectKind` and a\n`fields` map; no `entityVersion`) or EntityIR v2 (`entityVersion`\n\"2.0\" and exactly one definition: `objectType`, `interface`,\n`objectTypeExtension`, `propertyTypes`, or `markings`). V1 fields and\nV2 definitions can both declare default-empty marking lists.",
+  "anyOf": [
+    {
+      "description": "v2: one object type.",
+      "$ref": "#/$defs/EntityRootV2"
+    },
+    {
+      "description": "v2: one interface.",
+      "$ref": "#/$defs/EntityInterfaceRootV2"
+    },
+    {
+      "description": "v2: one extension of an object type another layer owns.",
+      "$ref": "#/$defs/EntityExtensionRootV2"
+    },
+    {
+      "description": "v2: a catalog of shared property types.",
+      "$ref": "#/$defs/PropertyTypeCatalogRootV2"
+    },
+    {
+      "description": "v2: a catalog of data markings.",
+      "$ref": "#/$defs/MarkingCatalogRootV2"
+    },
+    {
+      "description": "v1: the map-backed form.",
+      "$ref": "#/$defs/EntityRootV1"
+    }
+  ],
+  "$defs": {
+    "AccountingLegDeclaration": {
+      "description": "How an object type declares a stored exact GL leg and its journal identity.\n\n`journal_id_property` groups each committed leg into the journal identified\nby its journal identity; `leg_property` stores the complete\nexact [`AccountingLegIr`] value. The type-level declaration makes every\nwrite to that object type discoverable by the shared kernel commit check.",
+      "type": "object",
+      "properties": {
+        "journalIdProperty": {
+          "description": "Property whose non-empty text value is the posting's journal id.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "legProperty": {
+          "description": "Property whose JSON value is a serialized accounting leg.",
+          "$ref": "#/$defs/PropertyId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "journalIdProperty",
+        "legProperty"
+      ]
+    },
+    "CalendarDate": {
+      "description": "An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "ComponentNormalization": {
+      "description": "The normalization steps for one key component.",
+      "type": "object",
+      "properties": {
+        "property": {
+          "description": "A component of the enclosing key; its kind must be `text`.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "steps": {
+          "description": "Steps, applied in order; non-empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Normalization"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "steps"
+      ]
+    },
+    "ConstraintClass": {
+      "description": "How a declared invariant is applied at a write boundary.",
+      "oneOf": [
+        {
+          "description": "A command that would violate the invariant is refused atomically.\nObservations still record the external state and emit a finding.",
+          "type": "string",
+          "const": "integrity"
+        },
+        {
+          "description": "A violation does not refuse a command or observation. Observed\nviolations produce expectation findings.",
+          "type": "string",
+          "const": "quality"
+        }
+      ]
+    },
+    "DecimalLiteral": {
+      "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "DefaultValue": {
+      "description": "A literal default value of a property's type (any JSON except `null`).\n\nThe literal's shape per kind (checked by `norn-checker`): a string for\n`text`, `enum`, `date`, and `timestamp`; an exact decimal string for\n`integer` and `decimal`; a boolean for `boolean`; any JSON for `json-ext`.",
+      "$ref": "#/$defs/JsonValue",
+      "not": {
+        "type": "null"
+      }
+    },
+    "DimensionPath": {
+      "description": "A property reached by zero or more declared directional link roles.",
+      "type": "object",
+      "properties": {
+        "links": {
+          "description": "Forward or inverse roles, in traversal order; empty means the root object.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkId"
+          }
+        },
+        "property": {
+          "description": "The terminal property.",
+          "$ref": "#/$defs/PropertyId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property"
+      ]
+    },
+    "EntityAuthorityDomain": {
+      "description": "A hard-invariant domain that may own an entity type's mutations.",
+      "type": "string",
+      "enum": [
+        "inventory",
+        "accounting",
+        "compliance",
+        "settlement",
+        "tax"
+      ]
+    },
+    "EntityExtensionRootV2": {
+      "description": "EntityIR v2 payload of an `entity` artifact that carries one extension of\nan object type another layer owns. (`extensions` stays the reserved\nextension-slot map every payload root has.)",
+      "type": "object",
+      "properties": {
+        "entityVersion": {
+          "description": "The form selector; always [`ENTITY_IR_V2_VERSION`].",
+          "$ref": "#/$defs/EntityIrVersion"
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "objectTypeExtension": {
+          "description": "The extension.",
+          "$ref": "#/$defs/ObjectTypeExtension"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entityVersion",
+        "objectTypeExtension"
+      ]
+    },
+    "EntityFieldV1": {
+      "description": "One EntityIR v1 field definition, tagged by `type`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "markings": {
+              "description": "Classification markings declared on this field. Omitted when empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MarkingId"
+              }
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "markings": {
+              "description": "Classification markings declared on this field. Omitted when empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MarkingId"
+              }
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "markings": {
+              "description": "Classification markings declared on this field. Omitted when empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MarkingId"
+              }
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "integer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "markings": {
+              "description": "Classification markings declared on this field. Omitted when empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MarkingId"
+              }
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "number"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "markings": {
+              "description": "Classification markings declared on this field. Omitted when empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MarkingId"
+              }
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "markings": {
+              "description": "Classification markings declared on this field. Omitted when empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MarkingId"
+              }
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "object"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "markings": {
+              "description": "Classification markings declared on this field. Omitted when empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MarkingId"
+              }
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "array"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A closed set of string values: non-empty, unique, and each non-blank\n(checker rules).",
+          "type": "object",
+          "properties": {
+            "markings": {
+              "description": "Classification markings declared on this field. Omitted when empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MarkingId"
+              }
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "enum"
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "values"
+          ]
+        }
+      ]
+    },
+    "EntityInterfaceRootV2": {
+      "description": "EntityIR v2 payload of an `entity` artifact that carries one interface.",
+      "type": "object",
+      "properties": {
+        "entityVersion": {
+          "description": "The form selector; always [`ENTITY_IR_V2_VERSION`].",
+          "$ref": "#/$defs/EntityIrVersion"
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "interface": {
+          "description": "The interface.",
+          "$ref": "#/$defs/InterfaceDef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entityVersion",
+        "interface"
+      ]
+    },
+    "EntityIrVersion": {
+      "description": "The only `entityVersion` literal: EntityIR v2 ([`ENTITY_IR_V2_VERSION`]).",
+      "type": "string",
+      "enum": [
+        "2.0"
+      ]
+    },
+    "EntityMutationAuthority": {
+      "description": "Who may mutate objects of an entity type (the closed EntityIR authority\ndescriptor; the engine's final admission predicate is\n[`crate::entity_mutation_authority_admits`]).",
+      "oneOf": [
+        {
+          "description": "Ordinary generic actions (the default when omitted).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "generic_action"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Only commands of one hard-invariant domain engine.",
+          "type": "object",
+          "properties": {
+            "domain": {
+              "$ref": "#/$defs/EntityAuthorityDomain"
+            },
+            "kind": {
+              "type": "string",
+              "const": "domain_engine"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "domain"
+          ]
+        }
+      ]
+    },
+    "EntityRootV1": {
+      "description": "EntityIR v1 payload of an `entity` artifact (the map-backed form).",
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "fields": {
+          "description": "Field name → field definition. Names are non-empty (checker rule).",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/EntityFieldV1"
+          }
+        },
+        "markings": {
+          "description": "Classification markings inherited by every field. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingId"
+          }
+        },
+        "mutationAuthority": {
+          "description": "Who may mutate objects of this kind. Omitted: generic actions.",
+          "$ref": "#/$defs/EntityMutationAuthority"
+        },
+        "objectKind": {
+          "description": "The object kind: an exact identity without whitespace, control\ncharacters, or wildcards (checker rule).",
+          "type": "string"
+        },
+        "overlaySources": {
+          "description": "Customization artifact ids whose `add_field` overlays the engine\napplied, in application order. Each is a non-empty string (checker\nrule); the list may be empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectKind",
+        "fields"
+      ]
+    },
+    "EntityRootV2": {
+      "description": "EntityIR v2 payload of an `entity` artifact: one object type.",
+      "type": "object",
+      "properties": {
+        "entityVersion": {
+          "description": "The form selector; always [`ENTITY_IR_V2_VERSION`].",
+          "$ref": "#/$defs/EntityIrVersion"
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "mutationAuthority": {
+          "description": "Who may mutate objects of this type. Omitted: generic actions.",
+          "$ref": "#/$defs/EntityMutationAuthority"
+        },
+        "objectType": {
+          "description": "The object type. Its `name` is the artifact's object kind (v1\n`objectKind`), and its `links` are the type's relations.",
+          "$ref": "#/$defs/ObjectTypeDef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entityVersion",
+        "objectType"
+      ]
+    },
+    "EnumValue": {
+      "description": "One declared value of an `enum` property.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "value": {
+          "description": "The stored value; stable once published.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value"
+      ]
+    },
+    "ExtensionNamespace": {
+      "description": "The namespace a tenant (or a package) adds members under (`acme`).\nAllocated by the registry (T8-REG-4); unique per tenant.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*$"
+    },
+    "IdentityRule": {
+      "description": "A declared identity rule: normalization applied to key components before\ncomparison, and the entity-resolution policy that matches incoming records\nto existing objects (T8-ID-1 resolves the reference and runs the policy).",
+      "type": "object",
+      "properties": {
+        "matchPolicy": {
+          "description": "Name of the entity-resolution policy artifact (T8-ID-1). Omitted:\nrecords match only on equal normalized key values.",
+          "$ref": "#/$defs/ResolutionPolicyName"
+        },
+        "normalize": {
+          "description": "Per-component normalization, applied in step order. Omitted when\nempty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComponentNormalization"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "InterfaceDef": {
+      "description": "An interface: the properties and links every implementing object type\nhas, and the invariants every such object satisfies.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "invariants": {
+          "description": "Invariants every implementing object type satisfies, in addition to\nits own and inherited invariants. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Invariant"
+          }
+        },
+        "links": {
+          "description": "Required links, in presentation order; their ids are distinct from\nthe required property ids. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InterfaceLink"
+          }
+        },
+        "markings": {
+          "description": "Classification markings inherited by every implementing property.\nOmitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingId"
+          }
+        },
+        "name": {
+          "description": "Unique name, across interfaces and object types.",
+          "$ref": "#/$defs/InterfaceName"
+        },
+        "properties": {
+          "description": "Required properties, in presentation order. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InterfaceProperty"
+          }
+        },
+        "status": {
+          "description": "The definition's resource status. Omitted means `active`.",
+          "$ref": "#/$defs/ResourceStatus2"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "InterfaceLink": {
+      "description": "One required link of an interface: every implementing type has a link\nwith this id whose target and cardinality narrow the requirement's.\n\nA requirement names no inverse and no link properties: an interface is a\nread contract on the implementing type, and cannot add members to the\ntarget.",
+      "type": "object",
+      "properties": {
+        "cardinality": {
+          "description": "The widest cardinality an implementing link may have.",
+          "$ref": "#/$defs/LinkCardinality"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "description": "Unique id among the interface's requirements; never contains `__`.",
+          "$ref": "#/$defs/LinkId"
+        },
+        "target": {
+          "description": "The widest target an implementing link may have: an object type (or\na subtype of it) or an interface (or a type implementing it).",
+          "$ref": "#/$defs/ObjectTypeName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "target",
+        "cardinality"
+      ]
+    },
+    "InterfaceName": {
+      "description": "Qualified name of an interface: the object type name grammar\n([`OBJECT_TYPE_NAME_PATTERN`], `party.Party`). Interfaces and object types\nshare one name space.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "InterfaceProperty": {
+      "description": "One required property of an interface: an id, a type an implementing\nproperty must narrow, and constraints that apply to it.\n\nA requirement has no default and is never `computed`: an interface is a\nread contract, and an implementing type may satisfy it with a stored or a\ncomputed property.",
+      "type": "object",
+      "properties": {
+        "constraints": {
+          "description": "Constraints every implementing property is held to. Omitted when\nempty.",
+          "$ref": "#/$defs/PropertyConstraints"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "description": "Unique id within the interface; never contains `__`.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "markings": {
+          "description": "Classification markings required of every implementing property.\nImplementations may add markings but cannot remove these. Omitted when\nempty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingId"
+          }
+        },
+        "type": {
+          "description": "The widest type an implementing property may have.",
+          "$ref": "#/$defs/PropertyType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type"
+      ]
+    },
+    "Invariant": {
+      "description": "One declared invariant of an object type or interface.",
+      "type": "object",
+      "properties": {
+        "classification": {
+          "description": "Whether violations reject commands (`integrity`) or remain findings\n(`quality`). Omitted wire values mean `integrity` for compatibility.",
+          "$ref": "#/$defs/ConstraintClass"
+        },
+        "description": {
+          "type": "string"
+        },
+        "expression": {
+          "description": "A boolean ZEN Expression over the object's or interface's properties.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "description": "Unique id among the type's invariants, inherited ones included.",
+          "$ref": "#/$defs/InvariantId"
+        },
+        "message": {
+          "description": "What a commit that violates the invariant reports; non-blank.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "expression",
+        "message"
+      ]
+    },
+    "InvariantId": {
+      "description": "Id of an [`Invariant`], unique within its owner's effective invariant\ncontract. Same grammar as a property id ([`MEMBER_ID_PATTERN`]); invariants\nhave their own name space.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "KeyName": {
+      "description": "Name of a [`KeySpec`] within its object type (`primary`, `by_email`),\nunique there.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "KeySpec": {
+      "description": "One declared key: an ordered list of property ids.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Unique name within the object type.",
+          "$ref": "#/$defs/KeyName"
+        },
+        "namingSeries": {
+          "description": "Generates one stored text component of this key inside the atomic\ncreate commit. Omitted for caller-supplied keys.",
+          "$ref": "#/$defs/NamingSeriesIR"
+        },
+        "properties": {
+          "description": "The key's components, in tuple order: one id for a single key, several\nfor a composite key. Each names a stored, non-nullable property of an\nadmissible kind.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropertyId"
+          }
+        },
+        "rule": {
+          "description": "How key values are normalized and matched. Omitted: components compare\nexactly as stored.",
+          "$ref": "#/$defs/IdentityRule"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "properties"
+      ]
+    },
+    "Lifecycle": {
+      "description": "The declared state machine of one `enum` property of an object type.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "immutable": {
+          "description": "States in which non-lifecycle properties cannot be written. Declared\ntransitions may still leave these states. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "initial": {
+          "description": "The states a new object may be created in; non-empty. The property's\ndefault, if any, must be one of them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pathProperties": {
+          "description": "Structural ordering laws, checked over every declared transition path.\nGuards can remove paths but cannot introduce a path that avoids `via`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LifecyclePathProperty"
+          }
+        },
+        "property": {
+          "description": "The lifecycle property: a stored, non-nullable `enum` property of the\ntype (declared, inherited, or added by an extension). Its values are\nthe states.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "terminal": {
+          "description": "Absorbing states: no transition leaves them. Every other state has at\nleast one outgoing transition. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transitions": {
+          "description": "The allowed transitions, in presentation order. A write that changes\nthe property from `a` to `b` is allowed exactly when a transition has\n`a` in `from` and `to == b`. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Transition"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "initial"
+      ]
+    },
+    "LifecyclePathProperty": {
+      "description": "Every path from an initial state to `target` must visit `via`, including\nthe initial and target states. An unreachable target satisfies this law\nvacuously, but is independently rejected by the reachability check.",
+      "type": "object",
+      "properties": {
+        "target": {
+          "description": "Destination state.",
+          "type": "string"
+        },
+        "via": {
+          "description": "Required state on every path to the destination.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "via"
+      ]
+    },
+    "Link": {
+      "description": "One link of an object type (or of an extension of one).",
+      "type": "object",
+      "properties": {
+        "acyclic": {
+          "description": "Whether this forward role must be acyclic in the final cell graph.\nOmitted means false. Subtype overrides must preserve true.",
+          "type": "boolean"
+        },
+        "cardinality": {
+          "description": "Multiplicity of both ends, and whether the link is required.",
+          "$ref": "#/$defs/LinkCardinality"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "description": "The forward role: unique among the source type's members\n(properties, links, and inverse roles).",
+          "$ref": "#/$defs/LinkId"
+        },
+        "inverse": {
+          "description": "The inverse role: the member of the target (and of every subtype or\nimplementor of it) that traverses back to the source, with the\nmultiplicity `cardinality.from`. Omitted: the relation is traversed\nonly forward by name.",
+          "$ref": "#/$defs/LinkId"
+        },
+        "properties": {
+          "description": "Link properties: attributes of each link instance (a relationship\nobject), with the shape of object type properties. Omitted when\nempty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Property"
+          }
+        },
+        "target": {
+          "description": "The object type or interface linked to (they share one name space).\nA link to an interface admits every type that implements it.",
+          "$ref": "#/$defs/ObjectTypeName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "target",
+        "cardinality"
+      ]
+    },
+    "LinkCardinality": {
+      "description": "The cardinality of a link, declared on both ends.\n\n`to` and `from` together give the relation's shape: `one`/`one` is 1:1,\n`one`/`many` is N:1 from the source (1:N from the target), and\n`many`/`many` is N:M. `required` is Gel's `required`: every source object\nlinks to at least one target.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "How many source objects link to one target: the multiplicity of the\ninverse role.",
+          "$ref": "#/$defs/Multiplicity"
+        },
+        "required": {
+          "description": "Whether every source object links to at least one target. Defaults to\n`false`; the canonical form omits `false`.",
+          "type": "boolean"
+        },
+        "to": {
+          "description": "How many targets one source object links to.",
+          "$ref": "#/$defs/Multiplicity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "to",
+        "from"
+      ]
+    },
+    "LinkId": {
+      "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "MarkingCatalogRootV2": {
+      "description": "EntityIR v2 payload of an `entity` artifact that carries data marking\ndefinitions.",
+      "type": "object",
+      "properties": {
+        "entityVersion": {
+          "description": "The form selector; always [`ENTITY_IR_V2_VERSION`].",
+          "$ref": "#/$defs/EntityIrVersion"
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "markings": {
+          "description": "The marking definitions, in presentation order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingIr"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entityVersion",
+        "markings"
+      ]
+    },
+    "MarkingId": {
+      "description": "Stable identity of a data marking.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "MarkingIr": {
+      "description": "A declared classification and its read projection policy.",
+      "type": "object",
+      "properties": {
+        "category": {
+          "description": "Tenant-defined category path (for example `pii` or `confidential`).",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "id": {
+          "description": "Stable id used by definitions and `reveal` grants.",
+          "$ref": "#/$defs/MarkingId"
+        },
+        "label": {
+          "description": "Human-readable name.",
+          "type": "string"
+        },
+        "mask": {
+          "description": "Read projection used when the principal cannot reveal this marking.",
+          "$ref": "#/$defs/MaskPolicy"
+        },
+        "severity": {
+          "description": "Relative sensitivity of the data.",
+          "$ref": "#/$defs/MarkingSeverity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "severity",
+        "category",
+        "mask"
+      ]
+    },
+    "MarkingSeverity": {
+      "description": "Relative sensitivity of a marking.",
+      "oneOf": [
+        {
+          "description": "Lower-risk internal classification.",
+          "type": "string",
+          "const": "low"
+        },
+        {
+          "description": "Sensitive data that needs routine protection.",
+          "type": "string",
+          "const": "moderate"
+        },
+        {
+          "description": "High-impact data that should be tightly restricted.",
+          "type": "string",
+          "const": "high"
+        },
+        {
+          "description": "The strongest sensitivity level.",
+          "type": "string",
+          "const": "critical"
+        }
+      ]
+    },
+    "MaskPolicy": {
+      "description": "The projection applied when a principal lacks `reveal` for a marking.",
+      "oneOf": [
+        {
+          "description": "Replace the value with a redaction marker.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "redacted"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Keep only the final `count` characters.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "description": "Number of trailing characters to retain; must be greater than zero.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "last-n"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "count"
+          ]
+        },
+        {
+          "description": "Replace the value with JSON null.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "null"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "Multiplicity": {
+      "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
+      "oneOf": [
+        {
+          "description": "At most one.",
+          "type": "string",
+          "const": "one"
+        },
+        {
+          "description": "Any number.",
+          "type": "string",
+          "const": "many"
+        }
+      ]
+    },
+    "NamingGapPolicy": {
+      "description": "Whether allocations may leave gaps in the business numbering sequence.",
+      "oneOf": [
+        {
+          "description": "Counter advancement is committed only with the containing create\ntransaction, so a refused or aborted commit consumes no number.",
+          "type": "string",
+          "const": "gapless_within_commit"
+        },
+        {
+          "description": "The allocator may skip a candidate number already occupied by an\nimported or existing key while completing the same atomic create.",
+          "type": "string",
+          "const": "allow_gaps"
+        }
+      ]
+    },
+    "NamingResetPolicy": {
+      "description": "The local calendar boundary at which a naming-series counter resets.",
+      "oneOf": [
+        {
+          "description": "Keep one counter for all time, regardless of date tokens in the pattern.",
+          "type": "string",
+          "const": "never"
+        },
+        {
+          "description": "Start a new counter for each local calendar year.",
+          "type": "string",
+          "const": "year"
+        },
+        {
+          "description": "Start a new counter for each local calendar month.",
+          "type": "string",
+          "const": "month"
+        },
+        {
+          "description": "Start a new counter for each local calendar day.",
+          "type": "string",
+          "const": "day"
+        }
+      ]
+    },
+    "NamingSeriesIR": {
+      "description": "A naming-series declaration attached to one generated entity key.\n\n`pattern` is a sequence of literal text and brace tokens: `{YYYY}`, `{YY}`,\n`{MM}`, `{DD}`, `{#####}` (one to eighteen `#` characters), and\n`{property_id}` for every property in `scope_fields`. The checker validates\nthe grammar and cross-field constraints.",
+      "type": "object",
+      "properties": {
+        "gapPolicy": {
+          "description": "Whether committed counter allocations must be contiguous within one\ncommit or may leave gaps under the runtime policy.",
+          "$ref": "#/$defs/NamingGapPolicy"
+        },
+        "pattern": {
+          "description": "Literal text and supported placeholders for the generated key value.",
+          "type": "string"
+        },
+        "resetPolicy": {
+          "description": "Counter reset boundary. Reset periods are rendered in `timezone`.",
+          "$ref": "#/$defs/NamingResetPolicy"
+        },
+        "scopeFields": {
+          "description": "Required text properties substituted by matching `{property_id}`\ntokens. Omitted when the series has no scope fields.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropertyId"
+          }
+        },
+        "timezone": {
+          "description": "Explicit IANA timezone used to derive date tokens from the commit time.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern",
+        "timezone",
+        "resetPolicy",
+        "gapPolicy"
+      ]
+    },
+    "Normalization": {
+      "description": "A deterministic text normalization step.",
+      "oneOf": [
+        {
+          "description": "Remove leading and trailing Unicode whitespace.",
+          "type": "string",
+          "const": "trim"
+        },
+        {
+          "description": "Replace each run of Unicode whitespace with one space.",
+          "type": "string",
+          "const": "collapse-whitespace"
+        },
+        {
+          "description": "Unicode default lower-casing.",
+          "type": "string",
+          "const": "lowercase"
+        },
+        {
+          "description": "Unicode default upper-casing.",
+          "type": "string",
+          "const": "uppercase"
+        },
+        {
+          "description": "Unicode Normalization Form C.",
+          "type": "string",
+          "const": "nfc"
+        },
+        {
+          "description": "Unicode Normalization Form KC (compatibility composition).",
+          "type": "string",
+          "const": "nfkc"
+        }
+      ]
+    },
+    "ObjectTypeDef": {
+      "description": "An object type: its resource status, supertype, interfaces, properties,\nlinks, identity, invariants, and declared lifecycles.\n\nThe name's namespace is the type's domain namespace\n([`ObjectTypeName::domain`]); there is no separate `domain` member.\nProperties, links, and the inverse roles of links that target the type\nshare one member name space.",
+      "type": "object",
+      "properties": {
+        "accountingLeg": {
+          "description": "Marks this type's facts as GL legs for runtime balanced-posting checks.\nInherited by subtypes. Omitted for object types that are not GL legs.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccountingLegDeclaration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "extends": {
+          "description": "The single supertype. The subtype inherits every property, key, and\nimplemented interface, and may only narrow inherited properties.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "identity": {
+          "description": "Declared keys. Each is unique among the type's live objects within one\ntenant scope and world, enforced at commit. Omitted when empty: every\nobject always has its kernel-assigned object id, and a type need not\ndeclare a business key.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/KeySpec"
+          }
+        },
+        "implements": {
+          "description": "Interfaces the type implements, in addition to those its supertypes\nimplement. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InterfaceName"
+          }
+        },
+        "invariants": {
+          "description": "Declared invariants, in addition to every supertype's. Omitted when\nempty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Invariant"
+          }
+        },
+        "lifecycles": {
+          "description": "Declared lifecycles: the allowed transitions of `enum` properties, at\nmost one per property. New lifecycles, and narrowing redeclarations of\ninherited ones (same property). Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Lifecycle"
+          }
+        },
+        "links": {
+          "description": "Declared links, in presentation order: new links, and narrowing\noverrides of inherited ones (same id). Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Link"
+          }
+        },
+        "markings": {
+          "description": "Classification markings inherited by the type and its properties.\nOmitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingId"
+          }
+        },
+        "name": {
+          "description": "Unique name, across object types and interfaces, within the artifact\nset and against every installed base type.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "ownedCollections": {
+          "description": "Declared owned child collections. Each collection is backed by a\ndeclared many/from-one link and keeps membership and order as part of\nthe parent's transactional write boundary. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OwnedChildCollection"
+          }
+        },
+        "properties": {
+          "description": "Declared properties, in presentation order: new properties, and\nnarrowing overrides of inherited ones (same id). Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Property"
+          }
+        },
+        "status": {
+          "description": "The definition's resource status. Omitted means `active` (the\ncanonical form omits it).",
+          "$ref": "#/$defs/ResourceStatus"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "ObjectTypeExtension": {
+      "description": "Members one layer adds to an object type it does not own.\n\nThe members apply to the target and every subtype of it. An extension\ncannot remove, rename, or change a member of the target, and cannot add a\nkey or an invariant: identity and invariants belong to the type's owner.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "links": {
+          "description": "Added links; each id, and each inverse role, is\n`<namespace>__<name>`. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Link"
+          }
+        },
+        "namespace": {
+          "description": "The namespace every added member id is prefixed with.",
+          "$ref": "#/$defs/ExtensionNamespace"
+        },
+        "properties": {
+          "description": "Added properties; each id is `<namespace>__<name>`. Omitted when\nempty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Property"
+          }
+        },
+        "target": {
+          "description": "The extended object type.",
+          "$ref": "#/$defs/ObjectTypeName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "target"
+      ]
+    },
+    "ObjectTypeName": {
+      "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "OwnedChildCollection": {
+      "description": "A declared, parent-owned ordered collection of child objects.",
+      "type": "object",
+      "properties": {
+        "cascadeOnParentDelete": {
+          "description": "Whether parent deletion cascades through these rows.",
+          "type": "boolean"
+        },
+        "childType": {
+          "description": "Exact child object type accepted by the owning link.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "id": {
+          "description": "The parent-to-child link that owns the collection.",
+          "$ref": "#/$defs/LinkId"
+        },
+        "maxRows": {
+          "description": "Maximum live rows (bounded by the platform limit of 100).",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "orderingKey": {
+          "description": "Stored exact-integer property holding dense 1-based row order.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "rowIdProperty": {
+          "description": "Stable child property equal to the child fact key.",
+          "$ref": "#/$defs/PropertyId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "childType",
+        "rowIdProperty",
+        "orderingKey",
+        "cascadeOnParentDelete",
+        "maxRows"
+      ]
+    },
+    "Property": {
+      "description": "One property of an object type.",
+      "type": "object",
+      "properties": {
+        "computed": {
+          "description": "A ZEN Expression over the object's other properties. A computed\nproperty is derived and read-only: no action writes it, and it has no\ndefault. It reads the object through `self` (`self.quantity`); the\nchecker parses it (T1-ONT-2) and types it (T1-EXPR-5).",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "constraints": {
+          "description": "Constraints on this property's values, in addition to those of a\n`ref`'d shared type. Omitted when empty.",
+          "$ref": "#/$defs/PropertyConstraints"
+        },
+        "default": {
+          "description": "The value a new object takes when its creator supplies none.",
+          "$ref": "#/$defs/DefaultValue"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "description": "Unique id within the object type.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "markings": {
+          "description": "Classification markings declared on this property. Markings from\nproperty types, interfaces, supertypes, and computed inputs are unioned\nby the checker and cannot be removed by narrowing. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingId"
+          }
+        },
+        "type": {
+          "description": "The value kind: inline, or a shared property type through `ref`.",
+          "$ref": "#/$defs/PropertyType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type"
+      ]
+    },
+    "PropertyConstraints": {
+      "description": "Constraints on the values of a property type.\n\nApplicability (checked by `norn-checker`): `min`/`max` apply to `integer`\nand `decimal`; `minLength`/`maxLength`/`pattern` apply to `text`;\n`nullable` applies to every kind. Through a `ref` they apply to the\nreferenced type's kind.",
+      "type": "object",
+      "properties": {
+        "max": {
+          "description": "Inclusive upper bound.",
+          "$ref": "#/$defs/DecimalLiteral"
+        },
+        "maxLength": {
+          "description": "Maximum length in Unicode scalar values.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "min": {
+          "description": "Inclusive lower bound.",
+          "$ref": "#/$defs/DecimalLiteral"
+        },
+        "minLength": {
+          "description": "Minimum length in Unicode scalar values.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "nullable": {
+          "description": "Whether a value may be absent (`null`). Defaults to `false`; the\ncanonical form omits `false`.",
+          "type": "boolean"
+        },
+        "pattern": {
+          "description": "A regular expression the value must contain a match for (JSON Schema\n`pattern` semantics: unanchored; write `^…$` for a full match). The\ndialect is `regex-lite`, the ZEN Expression pure profile's engine.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PropertyId": {
+      "description": "Id of a property within its object type (`sku_code`), unique there.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "PropertyType": {
+      "description": "The value kind of a property, tagged by `kind`.",
+      "oneOf": [
+        {
+          "description": "A Unicode string, optionally in a well-known [`TextFormat`].",
+          "type": "object",
+          "properties": {
+            "format": {
+              "$ref": "#/$defs/TextFormat"
+            },
+            "kind": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A signed 64-bit integer.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "integer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An exact decimal with a fixed number of fraction digits, optionally a\nquantity in a declared unit.",
+          "type": "object",
+          "properties": {
+            "currencySource": {
+              "description": "Authoritative currency path relative to the object holding this amount.\nMonetary decimals declare this instead of a quantity unit. Metrics\nmust verify this source; descriptions and names carry no semantics.",
+              "$ref": "#/$defs/DimensionPath"
+            },
+            "kind": {
+              "type": "string",
+              "const": "decimal"
+            },
+            "scale": {
+              "description": "Fraction digits every value is held at (`2` for cents). At most 28,\nthe exact range of ZEN Expression's decimal (checked by\n`norn-checker`).",
+              "$ref": "#/$defs/WholeNumber"
+            },
+            "unit": {
+              "$ref": "#/$defs/UnitRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "scale"
+          ]
+        },
+        {
+          "description": "`true` or `false`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An instant in time with an explicit timezone policy.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "timestamp"
+            },
+            "timezone": {
+              "description": "How the offset is held. Required: there is no ambient timezone.",
+              "$ref": "#/$defs/TimezonePolicy"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "timezone"
+          ]
+        },
+        {
+          "description": "An ISO 8601 calendar date (`YYYY-MM-DD`) with no time and no zone.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "date"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An exact elapsed duration (fixed-length units only; calendar periods\nsuch as months are not durations).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "duration"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "One of a closed set of string values.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "enum"
+            },
+            "values": {
+              "description": "Declared values, in presentation order; unique and non-empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/EnumValue"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "values"
+          ]
+        },
+        {
+          "description": "A closed structured value. Every member is present; nullability of\nthe containing property applies to the whole record.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "record"
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RecordMember"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "members"
+          ]
+        },
+        {
+          "description": "Opaque JSON (an extension payload), optionally described by a JSON\nSchema document the checker does not interpret.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "json-ext"
+            },
+            "schema": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The shared property type (local or registry) with this name.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ref"
+            },
+            "name": {
+              "description": "The referenced [`PropertyTypeDef`] name.",
+              "$ref": "#/$defs/PropertyTypeName"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name"
+          ]
+        }
+      ]
+    },
+    "PropertyTypeCatalogRootV2": {
+      "description": "EntityIR v2 payload of an `entity` artifact that carries a catalog of\nshared property types (non-empty; checker rule).",
+      "type": "object",
+      "properties": {
+        "entityVersion": {
+          "description": "The form selector; always [`ENTITY_IR_V2_VERSION`].",
+          "$ref": "#/$defs/EntityIrVersion"
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "propertyTypes": {
+          "description": "The shared property types, in presentation order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropertyTypeDef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entityVersion",
+        "propertyTypes"
+      ]
+    },
+    "PropertyTypeDef": {
+      "description": "A reusable, named property type: the unit of reuse across object types\n(Foundry \"shared property type\", LinkML `type`).",
+      "type": "object",
+      "properties": {
+        "constraints": {
+          "description": "Constraints on values of this type. Omitted when empty.",
+          "$ref": "#/$defs/PropertyConstraints"
+        },
+        "description": {
+          "type": "string"
+        },
+        "markings": {
+          "description": "Classification markings applied to every property using this type.\nOmitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingId"
+          }
+        },
+        "name": {
+          "description": "Unique name within the artifact set (and against registry names).",
+          "$ref": "#/$defs/PropertyTypeName"
+        },
+        "type": {
+          "description": "The value kind.",
+          "$ref": "#/$defs/PropertyType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "PropertyTypeName": {
+      "description": "Dotted, lower-case name of a shared property type, for example\n`commerce.sku_code` or the registry value type `iso4217.currency_code`.\n\nGrammar (checked by `norn-checker`): one or more `.`-separated segments,\neach `[a-z][a-z0-9_]*`.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "RecordMember": {
+      "description": "One required member of a closed record. A nullable member must still be\npresent, with an explicit null when it has no value.",
+      "type": "object",
+      "properties": {
+        "constraints": {
+          "description": "Constraints on this required member, including its nullability.",
+          "$ref": "#/$defs/PropertyConstraints"
+        },
+        "id": {
+          "description": "Unique member name, using the property id grammar.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "type": {
+          "description": "Inline member kind or a reference to a shared property type.",
+          "$ref": "#/$defs/PropertyType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type"
+      ]
+    },
+    "ResolutionPolicyName": {
+      "description": "Dotted, lower-case name of an entity-resolution policy artifact\n(`party.email_exact`); same grammar as a property type name\n([`super::property::PROPERTY_TYPE_NAME_PATTERN`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "ResourceStatus": {
+      "description": "The resource status of a definition named by `N` (an object type or an\ninterface), tagged by `state`.",
+      "oneOf": [
+        {
+          "description": "Published for trial; its shape may still change incompatibly.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "experimental"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "description": "Stable: changes follow the compatibility rules of its package.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "active"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "description": "Still valid, but new use is discouraged.",
+          "type": "object",
+          "properties": {
+            "replacedBy": {
+              "description": "The definition that replaces it, of the same kind.",
+              "$ref": "#/$defs/ObjectTypeName"
+            },
+            "since": {
+              "description": "The date the definition was deprecated.",
+              "$ref": "#/$defs/CalendarDate"
+            },
+            "state": {
+              "type": "string",
+              "const": "deprecated"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "since"
+          ]
+        }
+      ]
+    },
+    "ResourceStatus2": {
+      "description": "The resource status of a definition named by `N` (an object type or an\ninterface), tagged by `state`.",
+      "oneOf": [
+        {
+          "description": "Published for trial; its shape may still change incompatibly.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "experimental"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "description": "Stable: changes follow the compatibility rules of its package.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "active"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "description": "Still valid, but new use is discouraged.",
+          "type": "object",
+          "properties": {
+            "replacedBy": {
+              "description": "The definition that replaces it, of the same kind.",
+              "$ref": "#/$defs/InterfaceName"
+            },
+            "since": {
+              "description": "The date the definition was deprecated.",
+              "$ref": "#/$defs/CalendarDate"
+            },
+            "state": {
+              "type": "string",
+              "const": "deprecated"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "since"
+          ]
+        }
+      ]
+    },
+    "TextFormat": {
+      "description": "Well-known string formats of a `text` property.",
+      "oneOf": [
+        {
+          "description": "An RFC 5322 address (`addr-spec`).",
+          "type": "string",
+          "const": "email"
+        },
+        {
+          "description": "An RFC 3986 URI.",
+          "type": "string",
+          "const": "uri"
+        },
+        {
+          "description": "An RFC 9562 UUID in its hyphenated text form.",
+          "type": "string",
+          "const": "uuid"
+        }
+      ]
+    },
+    "TimezonePolicy": {
+      "description": "A timestamp's declared source-offset policy. Both policies require an\nRFC 3339 date-time with an explicit offset; neither admits a local\ndate-time. Runtime storage canonicalizes both to UTC (#3112); raw source\nobservations retain the original offset as source evidence.",
+      "oneOf": [
+        {
+          "description": "An instant normalized to UTC (`Z`); the source offset is not kept.",
+          "type": "string",
+          "const": "utc"
+        },
+        {
+          "description": "Source data supplies an offset. The runtime stores the instant in UTC;\nthe original source representation belongs to raw observations.",
+          "type": "string",
+          "const": "offset"
+        }
+      ]
+    },
+    "Transition": {
+      "description": "One named, allowed change of the lifecycle property.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "from": {
+          "description": "The source states, non-empty and distinct; none is `to`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "guards": {
+          "description": "Boolean ZEN Expressions over the object's properties, evaluated on\nthe state before the change; the transition may be taken only when\nevery one holds (their conjunction). A subtype that redeclares the\ntransition restates every inherited guard verbatim and may append its\nown, so the declaration it carries is the full effective guard set;\ndropping or replacing an inherited guard is a checker error. A guard\nreads the object through `self`; the checker parses it (T1-ONT-2)\nand types it (T1-EXPR-5, #2523); enforcement at commit is the\nkernel's. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ZenExpression"
+          }
+        },
+        "id": {
+          "description": "Unique id within the lifecycle (`submit`, `cancel`).",
+          "$ref": "#/$defs/TransitionId"
+        },
+        "to": {
+          "description": "The target state.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from",
+        "to"
+      ]
+    },
+    "TransitionId": {
+      "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "UnitRef": {
+      "description": "A reference to a unit of measure in a standard unit vocabulary (ruling\n2026-09-25 §27). The code is not interpreted here; resolving it against the\nvocabulary is registry work (T8-STD-1).",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "The unit's code in `system` (UCUM `kg`, `m/s`; QUDT `unit:KiloGM`).",
+          "type": "string"
+        },
+        "system": {
+          "$ref": "#/$defs/UnitSystem"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "code"
+      ]
+    },
+    "UnitSystem": {
+      "description": "A standard unit vocabulary.",
+      "oneOf": [
+        {
+          "description": "The Unified Code for Units of Measure (case-sensitive codes).",
+          "type": "string",
+          "const": "ucum"
+        },
+        {
+          "description": "A QUDT unit (`unit:` local name).",
+          "type": "string",
+          "const": "qudt"
+        }
+      ]
+    },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    },
+    "ZenExpression": {
+      "description": "Source text of one ZEN Expression (the IR's single expression language,\nruling 2026-09-25 §3): a decision-table cell, switch condition, expression\nassignment, or action precondition.\n\nStored verbatim; parsing and type checking belong to `norn-expr` and\n`norn-checker`.",
+      "type": "string"
+    }
+  }
+}

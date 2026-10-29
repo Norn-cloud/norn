@@ -1,0 +1,66 @@
+{
+  "objectTypes": [
+    {
+      "name": "test.UnpaidOrder",
+      "properties": [
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "paid"
+              },
+              {
+                "value": "shipped"
+              }
+            ]
+          }
+        }
+      ],
+      "lifecycles": [
+        {
+          "property": "status",
+          "initial": [
+            "draft"
+          ],
+          "terminal": [
+            "shipped"
+          ],
+          "transitions": [
+            {
+              "id": "pay",
+              "from": [
+                "draft"
+              ],
+              "to": "paid"
+            },
+            {
+              "id": "ship",
+              "from": [
+                "paid"
+              ],
+              "to": "shipped"
+            },
+            {
+              "id": "ship_unpaid",
+              "from": [
+                "draft"
+              ],
+              "to": "shipped"
+            }
+          ],
+          "pathProperties": [
+            {
+              "target": "shipped",
+              "via": "paid"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

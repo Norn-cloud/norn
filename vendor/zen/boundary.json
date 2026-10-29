@@ -1,0 +1,39 @@
+{
+  "crates": [
+    {
+      "name": "zen-engine",
+      "ring": "Vendored",
+      "allowed_norn": [],
+      "dev_only_norn": [],
+      "third_party": []
+    },
+    {
+      "name": "zen-expression",
+      "ring": "Vendored",
+      "allowed_norn": [],
+      "dev_only_norn": [],
+      "third_party": []
+    },
+    {
+      "name": "zen-macros",
+      "ring": "Vendored",
+      "allowed_norn": [],
+      "dev_only_norn": [],
+      "third_party": []
+    },
+    {
+      "name": "zen-tmpl",
+      "ring": "Vendored",
+      "allowed_norn": [],
+      "dev_only_norn": [],
+      "third_party": []
+    },
+    {
+      "name": "zen-types",
+      "ring": "Vendored",
+      "allowed_norn": [],
+      "dev_only_norn": [],
+      "third_party": []
+    }
+  ]
+}

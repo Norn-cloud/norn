@@ -1,0 +1,23 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "11:9",
+      "end": "11:16",
+      "construct": "a === b"
+    },
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "15:18",
+      "end": "15:32",
+      "construct": "a[key as \"id\"]"
+    },
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "16:19",
+      "end": "16:37",
+      "construct": "a.status == \"open\""
+    }
+  ]
+}

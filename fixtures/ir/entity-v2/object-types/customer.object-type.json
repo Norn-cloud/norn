@@ -1,0 +1,16 @@
+{
+  "name": "crm.Customer",
+  "description": "A party that buys. Implements party.Party with a narrower display name and a formatted email.",
+  "implements": ["party.Party"],
+  "properties": [
+    { "id": "customer_number", "type": { "kind": "text" }, "constraints": { "pattern": "^C-[0-9]{6}$" } },
+    { "id": "display_name", "type": { "kind": "text" }, "constraints": { "maxLength": 120 } },
+    { "id": "email", "type": { "kind": "text", "format": "email" }, "constraints": { "nullable": true } },
+    {
+      "id": "tier",
+      "type": { "kind": "enum", "values": [{ "value": "standard" }, { "value": "gold" }, { "value": "platinum" }] },
+      "default": "standard"
+    }
+  ],
+  "identity": [{ "name": "primary", "properties": ["customer_number"] }]
+}

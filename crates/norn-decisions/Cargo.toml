@@ -1,0 +1,30 @@
+[package]
+name = "norn-decisions"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "zen-engine JDM evaluator; decide(slice,event) output (ring 0; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# RuleIR v2 (the JDM graph, its contract and closed schemas) and the canonical
+# JSON value the kernel's exact-number wire uses.
+norn-ir = { path = "../norn-ir" }
+# Norn-owned exact values (`Value`, `Number`) and the evaluation budget.
+norn-expr = { path = "../norn-expr" }
+# The vendored zen crate set (vendor/zen, #3404) has no features: the Norn
+# profile (regex-lite, strict errors, ordered maps, pure temporal values,
+# metering, bounded strings) is its only behaviour.
+zen-engine = { workspace = true }
+# Decoding validated fact items into the canonical `norn_ir::FactChange`.
+serde = "1.0.228"
+thiserror = "2.0.20"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json = "1.0.150"

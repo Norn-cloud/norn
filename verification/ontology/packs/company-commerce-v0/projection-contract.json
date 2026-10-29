@@ -1,0 +1,109 @@
+{
+  "contractVersion": "0.1",
+  "packId": "norn.ontology-pack.company-commerce",
+  "packVersion": "0.1",
+  "canonicalArtifact": "pack.json",
+  "canonicalArtifactSha256": "6be7cc762b7d16ba695b933070e8d191c2da4ffdbcda89d23f531706d189694f",
+  "canonicalAuthority": "norn_ir_closed_world_checker",
+  "projectionMethod": "reviewed_static_v0",
+  "reproductionChecker": "verification/ontology/scripts/validate.py",
+  "semanticDifferential": {
+    "checker": "verification/ontology/scripts/semantic_check.py",
+    "fixture": "verification/ontology/fixtures/registry-conformance-v0.json",
+    "toolLock": "verification/ontology/tools/requirements.lock",
+    "owlProfile": "OWL 2 RL via owlrl 7.6.2",
+    "shaclProfile": "SHACL 1.0 via pyshacl 0.40.1 with data inference disabled"
+  },
+  "owlProjection": {
+    "path": "ontology.owl.ttl",
+    "sha256": "0c8141598ee00b54b539258bc44d06cc1e9d26b825c74d5810e7bab152e636ff",
+    "profile": "OWL 2 RL",
+    "role": "offline_semantic_inference_only",
+    "remoteImportsAllowed": false
+  },
+  "shaclProjection": {
+    "path": "shapes.shacl.ttl",
+    "sha256": "22a5a3b87e813d2c9b4d8eab1a0b87d37e03a8ada7266776c2f09f9a57492d99",
+    "version": "SHACL 1.0 Recommendation",
+    "role": "offline_differential_oracle_only",
+    "promotionAuthority": false
+  },
+  "identityMappings": [
+    {
+      "termId": "norn.company.party",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/Party",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/PartyShape"
+    },
+    {
+      "termId": "norn.company.legal-entity",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/LegalEntity",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/LegalEntityShape"
+    },
+    {
+      "termId": "norn.company.organization",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/Organization",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/OrganizationShape"
+    },
+    {
+      "termId": "norn.company.person",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/Person",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/PersonShape"
+    },
+    {
+      "termId": "norn.company.postal-address",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/PostalAddress",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/PostalAddressShape"
+    },
+    {
+      "termId": "norn.commerce.product",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/Product",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/ProductShape"
+    },
+    {
+      "termId": "norn.commerce.product-variant",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/ProductVariant",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/ProductVariantShape"
+    },
+    {
+      "termId": "norn.commerce.offer",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/Offer",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/OfferShape"
+    },
+    {
+      "termId": "norn.commerce.order",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/Order",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/OrderShape"
+    },
+    {
+      "termId": "norn.commerce.order-item",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/OrderItem",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/OrderItemShape"
+    },
+    {
+      "termId": "norn.logistics.trade-item",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/TradeItem",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/TradeItemShape"
+    },
+    {
+      "termId": "norn.taxonomy.category",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/Category",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/CategoryShape"
+    },
+    {
+      "termId": "norn.identity.external-identifier",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/ExternalIdentifier",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/ExternalIdentifierShape"
+    },
+    {
+      "termId": "norn.evidence.provenance-record",
+      "owlIri": "https://norn.dev/ontology/company-commerce/0.1/ProvenanceRecord",
+      "shapeIri": "https://norn.dev/ontology/company-commerce/0.1/ProvenanceRecordShape"
+    }
+  ],
+  "forbiddenUses": [
+    "capability_grant",
+    "authorization_decision",
+    "transition_guard",
+    "authoritative_state_mutation"
+  ]
+}

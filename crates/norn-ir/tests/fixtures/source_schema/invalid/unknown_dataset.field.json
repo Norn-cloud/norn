@@ -1,0 +1,286 @@
+{
+  "format": "norn.source-schema/1",
+  "source": {
+    "system": "ERPNext",
+    "instance": "erp.example.test",
+    "version": "15.38.0"
+  },
+  "observedAt": "2026-09-30T10:00:00Z",
+  "adapter": {
+    "name": "norn.importers.frappe",
+    "version": "0.1.0"
+  },
+  "rawMetadata": {
+    "uri": "evidence://frappe/erp.example.test/meta/2026-09-30.json",
+    "sha256": "91442427d8192f8908dc1d972b02508709de5bd3b700cb4faa76eeda0a3d5c7b"
+  },
+  "datasets": [
+    {
+      "id": "Customer",
+      "nativeName": "Customer",
+      "namespace": "Selling",
+      "kind": "document",
+      "description": "A party the business sells to."
+    },
+    {
+      "id": "Sales Order",
+      "nativeName": "Sales Order",
+      "namespace": "Selling",
+      "kind": "document"
+    },
+    {
+      "id": "Sales Order Item",
+      "nativeName": "Sales Order Item",
+      "namespace": "Selling",
+      "kind": "child_document"
+    }
+  ],
+  "fields": [
+    {
+      "dataset": "Customer",
+      "name": "name",
+      "ordinal": 0,
+      "nativeType": "Data",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "declared"
+      },
+      "required": true,
+      "description": "Document name (primary key)"
+    },
+    {
+      "dataset": "Supplier",
+      "name": "customer_name",
+      "ordinal": 1,
+      "nativeType": "Data",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "declared"
+      },
+      "required": true,
+      "description": "Customer Name"
+    },
+    {
+      "dataset": "Customer",
+      "name": "customer_type",
+      "ordinal": 2,
+      "nativeType": "Select",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "declared"
+      },
+      "required": true,
+      "description": "Customer Type"
+    },
+    {
+      "dataset": "Customer",
+      "name": "custom_loyalty_tier",
+      "ordinal": 3,
+      "nativeType": "Select",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "declared"
+      },
+      "description": "Loyalty Tier (custom field)"
+    },
+    {
+      "dataset": "Sales Order",
+      "name": "name",
+      "ordinal": 0,
+      "nativeType": "Data",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "declared"
+      },
+      "required": true
+    },
+    {
+      "dataset": "Sales Order",
+      "name": "customer",
+      "ordinal": 1,
+      "nativeType": "Link",
+      "typeCandidate": {
+        "type": "reference",
+        "origin": "declared"
+      },
+      "required": true,
+      "description": "Customer"
+    },
+    {
+      "dataset": "Sales Order",
+      "name": "transaction_date",
+      "ordinal": 2,
+      "nativeType": "Date",
+      "typeCandidate": {
+        "type": "date",
+        "origin": "declared"
+      },
+      "required": true,
+      "description": "Date"
+    },
+    {
+      "dataset": "Sales Order",
+      "name": "grand_total",
+      "ordinal": 3,
+      "nativeType": "Currency",
+      "typeCandidate": {
+        "type": "decimal",
+        "origin": "declared"
+      },
+      "description": "Grand Total"
+    },
+    {
+      "dataset": "Sales Order",
+      "name": "items",
+      "ordinal": 4,
+      "nativeType": "Table",
+      "typeCandidate": {
+        "type": "json",
+        "origin": "declared"
+      },
+      "required": true,
+      "description": "Items"
+    },
+    {
+      "dataset": "Sales Order Item",
+      "name": "name",
+      "ordinal": 0,
+      "nativeType": "Data",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "declared"
+      },
+      "required": true
+    },
+    {
+      "dataset": "Sales Order Item",
+      "name": "parent",
+      "ordinal": 1,
+      "nativeType": "Data",
+      "typeCandidate": {
+        "type": "reference",
+        "origin": "declared"
+      },
+      "required": true
+    },
+    {
+      "dataset": "Sales Order Item",
+      "name": "item_code",
+      "ordinal": 2,
+      "nativeType": "Link",
+      "typeCandidate": {
+        "type": "reference",
+        "origin": "declared"
+      },
+      "required": true,
+      "description": "Item Code"
+    },
+    {
+      "dataset": "Sales Order Item",
+      "name": "qty",
+      "ordinal": 3,
+      "nativeType": "Float",
+      "typeCandidate": {
+        "type": "decimal",
+        "origin": "declared"
+      },
+      "required": true,
+      "description": "Quantity"
+    }
+  ],
+  "constraints": [
+    {
+      "id": "Customer.name",
+      "kind": "primary_key",
+      "dataset": "Customer",
+      "fields": [
+        "name"
+      ],
+      "origin": "declared"
+    },
+    {
+      "id": "Sales Order.name",
+      "kind": "primary_key",
+      "dataset": "Sales Order",
+      "fields": [
+        "name"
+      ],
+      "origin": "declared"
+    },
+    {
+      "id": "Sales Order.customer",
+      "kind": "logical_reference",
+      "dataset": "Sales Order",
+      "fields": [
+        "customer"
+      ],
+      "target": {
+        "dataset": "Customer",
+        "fields": [
+          "name"
+        ]
+      },
+      "origin": "declared"
+    },
+    {
+      "id": "Sales Order Item.name",
+      "kind": "primary_key",
+      "dataset": "Sales Order Item",
+      "fields": [
+        "name"
+      ],
+      "origin": "declared"
+    },
+    {
+      "id": "Sales Order.items",
+      "kind": "parent_child",
+      "dataset": "Sales Order Item",
+      "fields": [
+        "parent"
+      ],
+      "target": {
+        "dataset": "Sales Order",
+        "fields": [
+          "name"
+        ]
+      },
+      "origin": "declared"
+    }
+  ],
+  "codeSets": [
+    {
+      "id": "Customer.customer_type",
+      "dataset": "Customer",
+      "field": "customer_type",
+      "origin": "declared",
+      "values": [
+        {
+          "value": "Company"
+        },
+        {
+          "value": "Individual"
+        },
+        {
+          "value": "Partnership"
+        }
+      ]
+    },
+    {
+      "id": "Customer.custom_loyalty_tier",
+      "dataset": "Customer",
+      "field": "custom_loyalty_tier",
+      "origin": "declared",
+      "values": [
+        {
+          "value": "Bronze"
+        },
+        {
+          "value": "Gold"
+        },
+        {
+          "value": "Silver"
+        }
+      ]
+    }
+  ]
+}

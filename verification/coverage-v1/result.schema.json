@@ -1,0 +1,498 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://norn.local/schemas/verification-result-v2.json",
+  "title": "Norn verification execution result v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "result",
+    "generatedAt",
+    "git",
+    "claimPolicy",
+    "statusDefinitions",
+    "coverageManifest",
+    "gateManifest",
+    "tools",
+    "claims",
+    "executedGates",
+    "evidence",
+    "evidenceRootSha256",
+    "gateLogRootSha256"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "norn.verification.result.v2"
+    },
+    "result": {
+      "const": "pass"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "commitTree",
+        "workspaceDirty",
+        "workspaceStatePolicy",
+        "workspaceStateSha256"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "commitTree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "workspaceDirty": {
+          "type": "boolean"
+        },
+        "workspaceStatePolicy": {
+          "const": "git-tracked-and-untracked-nonignored-v1"
+        },
+        "workspaceStateSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "claimPolicy": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statusDefinitions": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "coverageManifest": {
+      "$ref": "#/$defs/hashedPath"
+    },
+    "gateManifest": {
+      "$ref": "#/$defs/hashedPath"
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rustc",
+        "cargo",
+        "bun",
+        "python",
+        "jsonschema",
+        "lean",
+        "quint",
+        "quintBinarySha256",
+        "apalache",
+        "apalacheJarSha256",
+        "kani",
+        "z3",
+        "java",
+        "javaBinarySha256",
+        "owlrl",
+        "pyshacl",
+        "rdflib",
+        "fstar",
+        "cargoHax",
+        "haxSourceCommit",
+        "haxSourceTree",
+        "haxRustc",
+        "opamSwitchState",
+        "opamRepository"
+      ],
+      "properties": {
+        "rustc": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cargo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bun": {
+          "type": "string",
+          "minLength": 1
+        },
+        "python": {
+          "type": "string",
+          "minLength": 1
+        },
+        "jsonschema": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lean": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quintBinarySha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "apalache": {
+          "type": "string",
+          "minLength": 1
+        },
+        "apalacheJarSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "kani": {
+          "type": "string",
+          "minLength": 1
+        },
+        "z3": {
+          "type": "string",
+          "minLength": 1
+        },
+        "java": {
+          "type": "string",
+          "minLength": 1
+        },
+        "javaBinarySha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "owlrl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pyshacl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rdflib": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fstar": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cargoHax": {
+          "type": "string",
+          "minLength": 1
+        },
+        "haxSourceCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "haxSourceTree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "haxRustc": {
+          "type": "string",
+          "minLength": 1
+        },
+        "opamSwitchState": {
+          "type": "string",
+          "minLength": 1
+        },
+        "opamRepository": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "subsystem",
+          "runtime",
+          "model",
+          "proof",
+          "productionCorrespondence",
+          "obligations",
+          "limitations"
+        ],
+        "properties": {
+          "subsystem": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtime": {
+            "type": "string",
+            "minLength": 1
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "proof": {
+            "type": "string",
+            "minLength": 1
+          },
+          "productionCorrespondence": {
+            "type": "boolean"
+          },
+          "obligations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "runtime",
+                "model",
+                "proof",
+                "residual",
+                "evidence"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "runtime": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "proof": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "residual": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "runtime",
+                    "model",
+                    "proof"
+                  ],
+                  "properties": {
+                    "runtime": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/obligationEvidence"
+                      }
+                    },
+                    "model": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/obligationEvidence"
+                      }
+                    },
+                    "proof": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/obligationEvidence"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "limitations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "executedGates": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "command",
+          "executedCommand",
+          "evidenceKind",
+          "role",
+          "classifications",
+          "resultArtifacts",
+          "generatedArtifacts",
+          "observedTestCount",
+          "result",
+          "log",
+          "logSha256"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1
+          },
+          "executedCommand": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidenceKind": {
+            "enum": [
+              "command",
+              "rust-tests",
+              "bun-tests"
+            ]
+          },
+          "role": {
+            "enum": [
+              "claim-evidence",
+              "supporting-check",
+              "typecheck",
+              "manifest-validation",
+              "toolchain-integrity",
+              "evidence-integrity",
+              "compatibility"
+            ]
+          },
+          "classifications": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "subsystem",
+                "layer"
+              ],
+              "properties": {
+                "subsystem": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "layer": {
+                  "enum": [
+                    "runtime",
+                    "model",
+                    "proof"
+                  ]
+                }
+              }
+            }
+          },
+          "resultArtifacts": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^target/verification-results/.+\\.json$"
+            }
+          },
+          "generatedArtifacts": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^target/verification-results/"
+            }
+          },
+          "observedTestCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "result": {
+            "const": "pass"
+          },
+          "log": {
+            "type": "string",
+            "pattern": "^target/verification-results/logs/[a-z0-9][a-z0-9-]*\\.log$"
+          },
+          "logSha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/hashedPath"
+      }
+    },
+    "evidenceRootSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "gateLogRootSha256": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashedPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "obligationEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "command",
+        "selectors"
+      ],
+      "properties": {
+        "artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selectors": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

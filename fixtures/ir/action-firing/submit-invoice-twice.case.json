@@ -1,0 +1,21 @@
+{
+  "description": "A repeated submit_invoice on an invoiced order is refused: a transition never leaves its own target state.",
+  "artifacts": [
+    "ir/entity-v2/artifact-set/commerce-sales-order.entity.json",
+    "ir/commerce-sales-order-submit-invoice.action.json"
+  ],
+  "action": "commerce.sales_order.submit_invoice.action",
+  "object": {
+    "entityArtifactId": "commerce.SalesOrder.entity",
+    "values": {
+      "so_number": "SO-0001",
+      "status": "invoiced"
+    }
+  },
+  "expect": [
+    [
+      "lifecycle.validation.undeclared_write",
+      "/payload/effectProgram/transition"
+    ]
+  ]
+}

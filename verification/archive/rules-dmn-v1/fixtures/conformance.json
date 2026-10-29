@@ -1,0 +1,100 @@
+{
+  "fixtureVersion": "0.1",
+  "artifact": {
+    "irVersion": "0.1",
+    "artifactId": "verification.rule.purchase_review",
+    "kind": "rule",
+    "namespace": "verification",
+    "name": "Purchase review",
+    "version": "1.0.0",
+    "lifecycle": "active",
+    "scope": {
+      "orgId": "org_verified",
+      "environmentId": "test"
+    },
+    "dependencies": [],
+    "provenance": {
+      "source": "system",
+      "sourcePath": "verification/rules-dmn-v1/fixtures/conformance.json",
+      "actorId": "verification",
+      "createdAt": "2026-08-23T00:00:00Z"
+    },
+    "payload": {
+      "ruleVersion": "0.1",
+      "ruleId": "verification.rule.purchase_review",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "amount": { "type": "integer" },
+          "vip": { "type": "boolean" }
+        },
+        "required": ["amount", "vip"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "route": { "type": "string" },
+          "reviewRequired": { "type": "boolean" },
+          "matched": { "type": "boolean" }
+        },
+        "required": ["route", "reviewRequired", "matched"],
+        "additionalProperties": false
+      },
+      "scopeRequired": ["orgId", "environmentId"],
+      "decision": {
+        "kind": "decision_table",
+        "hitPolicy": "first",
+        "inputs": [
+          { "field": "amount", "type": "number" },
+          { "field": "vip", "type": "boolean" }
+        ],
+        "rows": [
+          {
+            "rowId": "vip_large",
+            "when": [
+              { "field": "vip", "op": "eq", "value": true },
+              { "field": "amount", "op": "gte", "value": 1000 }
+            ],
+            "output": { "route": "vip_review", "reviewRequired": true, "matched": true }
+          },
+          {
+            "rowId": "large",
+            "when": [
+              { "field": "amount", "op": "gte", "value": 1000 }
+            ],
+            "output": { "route": "standard_review", "reviewRequired": true, "matched": true }
+          },
+          {
+            "rowId": "default",
+            "when": [],
+            "output": { "route": "automatic", "reviewRequired": false, "matched": false }
+          }
+        ]
+      }
+    }
+  },
+  "evaluations": [
+    {
+      "caseId": "first-policy-prefers-earliest-overlap",
+      "facts": { "amount": 1500, "vip": true },
+      "scope": { "orgId": "org_verified", "environmentId": "test" },
+      "expectedRowIds": ["vip_large"],
+      "expectedOutput": { "route": "vip_review", "reviewRequired": true, "matched": true }
+    },
+    {
+      "caseId": "later-row-selected",
+      "facts": { "vip": false, "amount": 1500 },
+      "scope": { "environmentId": "test", "orgId": "org_verified" },
+      "expectedRowIds": ["large"],
+      "expectedOutput": { "reviewRequired": true, "route": "standard_review", "matched": true }
+    },
+    {
+      "caseId": "unconditional-final-row",
+      "facts": { "amount": 50, "vip": false },
+      "scope": { "orgId": "org_verified", "environmentId": "test" },
+      "expectedRowIds": ["default"],
+      "expectedOutput": { "route": "automatic", "reviewRequired": false, "matched": false }
+    }
+  ]
+}

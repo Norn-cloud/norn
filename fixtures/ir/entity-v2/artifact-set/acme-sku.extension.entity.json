@@ -1,0 +1,38 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "acme.retail.Sku.extension.v2",
+  "kind": "entity",
+  "namespace": "acme",
+  "name": "SKU extension",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "tenantId": "tenant_acme",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/entity-v2/artifact-set/acme-sku.extension.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectTypeExtension": {
+      "namespace": "acme",
+      "target": "retail.Sku",
+      "description": "Tenant acme's shelf label on the installed retail.Sku.",
+      "properties": [
+        {
+          "id": "acme__shelf_label",
+          "type": {
+            "kind": "text"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        }
+      ]
+    }
+  }
+}

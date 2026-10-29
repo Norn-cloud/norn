@@ -1,0 +1,9 @@
+{
+  "name": "commerce.channel_metadata",
+  "description": "Channel-specific attributes kept verbatim.",
+  "type": {
+    "kind": "json-ext",
+    "schema": { "type": "object", "additionalProperties": { "type": "string" } }
+  },
+  "constraints": { "nullable": true }
+}

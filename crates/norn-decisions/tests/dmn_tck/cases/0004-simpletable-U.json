@@ -1,0 +1,301 @@
+{
+  "description": "DMN TCK 0004-simpletable-U: UNIQUE -> JDM first (row).",
+  "rule": {
+    "ruleId": "dmn_tck.0004-simpletable-U",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "Age": {
+              "type": "number"
+            },
+            "RiskCategory": {
+              "type": "string"
+            },
+            "isAffordable": {
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "decision",
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [],
+    "graph": {
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "table",
+          "name": "Approval Status",
+          "type": "decisionTableNode",
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [
+              {
+                "id": "i0",
+                "name": "Age",
+                "field": "slice.Age"
+              },
+              {
+                "id": "i1",
+                "name": "RiskCategory",
+                "field": "slice.RiskCategory"
+              },
+              {
+                "id": "i2",
+                "name": "isAffordable",
+                "field": "slice.isAffordable"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "o0",
+                "name": "v",
+                "field": "v"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "r1",
+                "i0": ">=18",
+                "i1": "\"Medium\", \"Low\"",
+                "i2": "true",
+                "o0": "\"Approved\""
+              },
+              {
+                "_id": "r2",
+                "i0": "<18",
+                "i1": "\"Medium\", \"Low\"",
+                "i2": "true",
+                "o0": "\"Declined\""
+              },
+              {
+                "_id": "r3",
+                "i0": "",
+                "i1": "\"High\"",
+                "i2": "true",
+                "o0": "\"Declined\""
+              },
+              {
+                "_id": "r4",
+                "i0": "",
+                "i1": "",
+                "i2": "false",
+                "o0": "\"Declined\""
+              }
+            ],
+            "outputPath": "hit",
+            "passThrough": true
+          }
+        },
+        {
+          "id": "shape",
+          "name": "shape",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_result",
+                "key": "result",
+                "value": "hit == null or len(keys(hit)) == 0 ? null : hit.v"
+              }
+            ]
+          }
+        },
+        {
+          "id": "emit",
+          "name": "emit",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "result == null ? [] : [{decision: \"Approval Status\", result: result}]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "table"
+        },
+        {
+          "id": "e2",
+          "sourceId": "table",
+          "targetId": "shape"
+        },
+        {
+          "id": "e3",
+          "sourceId": "shape",
+          "targetId": "emit"
+        },
+        {
+          "id": "e4",
+          "sourceId": "emit",
+          "targetId": "out"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "0004-simpletable-U-test-01#001",
+      "slice": {
+        "Age": 18,
+        "RiskCategory": "Medium",
+        "isAffordable": true
+      },
+      "event": {},
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "decision": "Approval Status",
+            "result": "Approved"
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "0004-simpletable-U-test-01#002",
+      "slice": {
+        "Age": 17,
+        "RiskCategory": "Medium",
+        "isAffordable": true
+      },
+      "event": {},
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "decision": "Approval Status",
+            "result": "Declined"
+          }
+        ],
+        "timers": []
+      }
+    },
+    {
+      "name": "0004-simpletable-U-test-01#003",
+      "slice": {
+        "Age": 18,
+        "RiskCategory": "High",
+        "isAffordable": true
+      },
+      "event": {},
+      "expect": {
+        "facts": [],
+        "commands": [
+          {
+            "decision": "Approval Status",
+            "result": "Declined"
+          }
+        ],
+        "timers": []
+      }
+    }
+  ]
+}

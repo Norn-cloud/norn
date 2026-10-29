@@ -1,0 +1,29 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-MODULE",
+      "start": "4:1",
+      "end": "4:31",
+      "construct": "import \"../support/billing.ts\""
+    },
+    {
+      "code": "NORN-FLOW-MODULE",
+      "start": "5:25",
+      "end": "5:37",
+      "construct": "\"typescript\""
+    },
+    {
+      "code": "NORN-FLOW-MODULE",
+      "start": "6:24",
+      "end": "6:50",
+      "construct": "\"../support/declared-only\""
+    },
+    {
+      "code": "NORN-FLOW-MODULE",
+      "start": "7:27",
+      "end": "7:39",
+      "construct": "\"typescript\""
+    }
+  ]
+}

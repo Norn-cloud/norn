@@ -1,0 +1,32 @@
+{
+  "wasm": {
+    "manifest": "sha256:f9f8e1ac8453880449e6b897bb9b90071df0c977e81e255b26aa20e788353004",
+    "executionProfile": "sha256:7a5f4b351f86d8d2a6706a9f1153426556690848ff59a161da9338070c3d42e4",
+    "invocation": "sha256:526f1d18a3ba9021411ae400447367a2b3aea58ba4c6e05c550695aec9b24a5d",
+    "inputIdentity": "sha256:869d938624bc68bab69059b321ad975db9801ec5178d60816202c8574e4cdad1",
+    "dependencyToken": "sha256:94c121802445ebc0ce6e6d2ed1de32fc077696e6ac50b200de0fc2928cd3e524",
+    "actionKey": "sha256:b1637f6c4067933d1f5646520a8641a5c79693ca740c0e29d1359e5a816dbbd8",
+    "receipt": "sha256:bcd7259c0a7ddca16582b6e357bd9c613444409bdc41cc8aa08fb4848b2e97bf",
+    "resultIdentity": "sha256:730a630b2a1e3e192bd2c3ab4ea6d273aecafe1230c899184837af0687b292a6"
+  },
+  "container": {
+    "manifest": "sha256:e9b48ba309ef6a6f1805325774365daf06d3d30a32d4e4bbba4b845599541cb2",
+    "executionProfile": "sha256:17272cf4d1ef9e0a459e8e8c41e22173501732684ecf0eb38266b5c16f2a3c42",
+    "invocation": "sha256:84a2837a1580544fd6e6e75d44236a4218c5ff2a7deef2605619b063bc3cce0f",
+    "inputIdentity": "sha256:5a5c2c5faeb65a998831f90b156c17bde829704e82e596e75ef85a8f86979176",
+    "dependencyToken": "sha256:942f508c0e6bde5982e0c6bab4c8572df706436ecfb768a22e8262172a9d9670",
+    "actionKey": "sha256:a05b3bd7e8683c2f720f973a82a32654e03256de5dbde2813e8579c380872ed6",
+    "receipt": "sha256:05347f897f7dbbd5f83ea8ffabe9f2949bd20a0e5d119a734184c6d09bb54dc7",
+    "resultIdentity": "sha256:52bd90998685d280f7df69ea30e7de0a3634a9da9deee6ed871cec66dd0c5550"
+  },
+  "effectful": {
+    "manifest": "sha256:18693410f9182d055f7066172fabcab25f796bc8ff3dfdc13ac4f505b3c85be3",
+    "executionProfile": "sha256:5d8a2bc3e3943f42fec51adbbf7c825241943ec1256e4220851d9a9bfefb787a",
+    "invocation": "sha256:8d7c939ce5c2307554d77580ab74a15b0907ea3f668a3493e5309b3d4c78e572",
+    "inputIdentity": "sha256:869d938624bc68bab69059b321ad975db9801ec5178d60816202c8574e4cdad1",
+    "dependencyToken": "sha256:942f508c0e6bde5982e0c6bab4c8572df706436ecfb768a22e8262172a9d9670",
+    "actionKey": "sha256:9d4ba851323d550e65b9d88f53dd4c4fb7347f9d06d1df9cdbf8cf297e7bd234",
+    "receipt": "sha256:afcf8ce30159a64da9db380977da3d447767badaba9876f17464b66590c6d42c",
+    "resultIdentity": "sha256:1a0853ede58d2454ea828a7d98f0bfe5421781946595245f6678cb9749dc9afd"
+  }
+}

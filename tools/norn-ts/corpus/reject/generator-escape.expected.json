@@ -1,0 +1,23 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
+      "start": "7:21",
+      "end": "7:31",
+      "construct": "Effect.gen"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
+      "start": "15:18",
+      "end": "15:75",
+      "construct": "Norn.perform(\"load\", loadInvoice, { invoiceId: \"inv-1\" })"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
+      "start": "21:58",
+      "end": "21:62",
+      "construct": "body"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [],
+  "uses": [
+    "9:16 @norn/authoring#Norn.flow",
+    "11:3 effect/Effect#gen",
+    "12:25 effect/Effect#all",
+    "13:7 @norn/authoring#Norn.perform",
+    "14:7 @norn/authoring#Norn.perform",
+    "23:21 effect/Effect#fail",
+    "25:24 effect/Function#pipe",
+    "26:7 effect/Effect#succeed",
+    "27:7 effect/Effect#flatMap",
+    "27:32 effect/Effect#succeed"
+  ]
+}

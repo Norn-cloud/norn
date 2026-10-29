@@ -1,0 +1,35 @@
+{
+  "objectTypes": [
+    {
+      "name": "test.Thing",
+      "properties": [
+        {
+          "id": "name",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "lifecycles": [
+        {
+          "property": "stage",
+          "initial": [
+            "open"
+          ],
+          "terminal": [
+            "closed"
+          ],
+          "transitions": [
+            {
+              "id": "close",
+              "from": [
+                "open"
+              ],
+              "to": "closed"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

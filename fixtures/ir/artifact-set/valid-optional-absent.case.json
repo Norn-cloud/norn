@@ -1,0 +1,20 @@
+{
+  "description": "An optional dependency that is absent resolves.",
+  "base": [],
+  "artifacts": [
+    {
+      "fixture": "ir/retail-low-stock.derived.json",
+      "patch": {
+        "dependencies": [
+          {
+            "artifactId": "retail.Sku.entity",
+            "kind": "entity",
+            "version": "0.1.0",
+            "required": false
+          }
+        ]
+      }
+    }
+  ],
+  "expect": []
+}

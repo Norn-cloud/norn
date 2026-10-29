@@ -1,0 +1,172 @@
+{
+  "format": "norn-checker/invalid-fixtures@1",
+  "base": [
+    "object-types/purchase-order.object-type.json"
+  ],
+  "fixtures": [
+    {
+      "file": "unknown-property.model.json",
+      "reason": "the lifecycle names a property the type does not have",
+      "error_at": "/objectTypes/0/lifecycles/0/property",
+      "code": "lifecycle.validation.unknown_property"
+    },
+    {
+      "file": "property-not-enum.model.json",
+      "reason": "a lifecycle property must be an enum: its values are the states",
+      "error_at": "/objectTypes/0/lifecycles/0/property",
+      "code": "lifecycle.validation.property_not_enum"
+    },
+    {
+      "file": "property-nullable.model.json",
+      "reason": "every object is in a state, so the lifecycle property is not nullable",
+      "error_at": "/objectTypes/0/lifecycles/0/property",
+      "code": "lifecycle.validation.property_nullable"
+    },
+    {
+      "file": "property-computed.model.json",
+      "reason": "a computed property is read-only; no rule writes it",
+      "error_at": "/objectTypes/0/lifecycles/0/property",
+      "code": "lifecycle.validation.property_computed"
+    },
+    {
+      "file": "duplicate-lifecycle.model.json",
+      "reason": "one lifecycle per property",
+      "error_at": "/objectTypes/0/lifecycles/1/property",
+      "code": "lifecycle.validation.duplicate_lifecycle"
+    },
+    {
+      "file": "unknown-state.model.json",
+      "reason": "a transition enters a name that is not an enum value",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/0/to",
+      "code": "lifecycle.validation.unknown_state"
+    },
+    {
+      "file": "duplicate-state.model.json",
+      "reason": "a state is listed twice",
+      "error_at": "/objectTypes/0/lifecycles/0/initial/1",
+      "code": "lifecycle.validation.duplicate_state"
+    },
+    {
+      "file": "empty-initial.model.json",
+      "reason": "no object could be created",
+      "error_at": "/objectTypes/0/lifecycles/0/initial",
+      "code": "lifecycle.validation.empty_initial"
+    },
+    {
+      "file": "invalid-transition-id.model.json",
+      "reason": "transition ids follow the member grammar",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/0/id",
+      "code": "lifecycle.validation.invalid_transition_id"
+    },
+    {
+      "file": "duplicate-transition-id.model.json",
+      "reason": "transition ids are unique within a lifecycle; one transition may list several sources instead",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/2/id",
+      "code": "lifecycle.validation.duplicate_transition_id"
+    },
+    {
+      "file": "empty-transition-source.model.json",
+      "reason": "a transition leaves at least one state",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/1/from",
+      "code": "lifecycle.validation.empty_transition_source"
+    },
+    {
+      "file": "self-transition.model.json",
+      "reason": "a transition changes the state",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/1/from/0",
+      "code": "lifecycle.validation.self_transition"
+    },
+    {
+      "file": "duplicate-transition.model.json",
+      "reason": "a from -> to pair is declared once",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/1/from/0",
+      "code": "lifecycle.validation.duplicate_transition"
+    },
+    {
+      "file": "terminal-has-transition.model.json",
+      "reason": "terminal states are absorbing",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/1/from/0",
+      "code": "lifecycle.validation.terminal_has_transition"
+    },
+    {
+      "file": "unreachable-state.model.json",
+      "reason": "no path from an initial state reaches limbo",
+      "error_at": "/objectTypes/0/lifecycles/0",
+      "code": "lifecycle.validation.unreachable_state"
+    },
+    {
+      "file": "dead-end-state.model.json",
+      "reason": "held is a sink but not declared terminal",
+      "error_at": "/objectTypes/0/lifecycles/0",
+      "code": "lifecycle.validation.dead_end_state"
+    },
+    {
+      "file": "default-not-initial.model.json",
+      "reason": "a new object takes the default, so it must be an initial state",
+      "error_at": "/objectTypes/0/lifecycles/0/initial",
+      "code": "lifecycle.validation.default_not_initial"
+    },
+    {
+      "file": "empty-guard.model.json",
+      "reason": "a guard is a non-blank ZEN Expression",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/0/guards/0",
+      "code": "lifecycle.validation.empty_guard"
+    },
+    {
+      "file": "invalid-guard.model.json",
+      "reason": "a guard is a boolean ZEN Expression and must parse",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/0/guards/0",
+      "code": "lifecycle.validation.invalid_guard"
+    },
+    {
+      "file": "subtype-widens-transition.model.json",
+      "reason": "a subtype may only drop inherited transitions, never add one",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/6/id",
+      "code": "lifecycle.validation.widens_transition"
+    },
+    {
+      "file": "subtype-widens-initial.model.json",
+      "reason": "a subtype may only drop inherited initial states",
+      "error_at": "/objectTypes/0/lifecycles/0/initial/1",
+      "code": "lifecycle.validation.widens_initial"
+    },
+    {
+      "file": "tenant-widens-transition.model.json",
+      "reason": "a tenant extends a base lifecycle only through a subtype that narrows it, never widens it (ruling 2026-09-25 section 27)",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/1/from/0",
+      "code": "lifecycle.validation.widens_transition",
+      "tenant": "acme"
+    },
+    {
+      "file": "subtype-narrowing-strands-state.model.json",
+      "reason": "narrowing the enum drops approved, so the inherited lifecycle no longer reaches received",
+      "error_at": "/objectTypes/0/properties/0",
+      "code": "lifecycle.validation.unreachable_state"
+    },
+    {
+      "file": "subtype-narrowing-drops-initial.model.json",
+      "reason": "narrowing the enum drops every inherited initial state",
+      "error_at": "/objectTypes/0/properties/0",
+      "code": "lifecycle.validation.empty_initial"
+    },
+    {
+      "file": "subtype-drops-guard.model.json",
+      "reason": "a subtype redeclares submit without the inherited guard; guards conjoin, so an inherited guard is restated, never dropped",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/0/id",
+      "code": "lifecycle.validation.drops_guard"
+    },
+    {
+      "file": "tenant-replaces-guard.model.json",
+      "reason": "a tenant subtype replaces the inherited guard of submit instead of appending to it",
+      "error_at": "/objectTypes/0/lifecycles/0/transitions/0/id",
+      "code": "lifecycle.validation.drops_guard",
+      "tenant": "acme"
+    },
+    {
+      "file": "path-property-violated.model.json",
+      "reason": "shipping is reachable without payment approval",
+      "error_at": "/objectTypes/0/lifecycles/0",
+      "code": "lifecycle.validation.path_property_violated"
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "std.value_types.entity",
+  "kind": "entity",
+  "namespace": "std",
+  "name": "Standard identifier value types",
+  "version": "0.1.0",
+  "lifecycle": "active",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/std.value_types.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "propertyTypes": [
+      {
+        "name": "iso8601.date",
+        "description": "An ISO 8601 calendar date (YYYY-MM-DD), no time and no zone.",
+        "type": {
+          "kind": "date"
+        }
+      },
+      {
+        "name": "iso8601.timestamp",
+        "description": "An ISO 8601 / RFC 3339 instant normalized to UTC.",
+        "type": {
+          "kind": "timestamp",
+          "timezone": "utc"
+        }
+      },
+      {
+        "name": "iso8601.duration",
+        "description": "An exact elapsed duration (ISO 8601 duration with fixed-length units).",
+        "type": {
+          "kind": "duration"
+        }
+      },
+      {
+        "name": "ucum.unit_code",
+        "description": "A unit of measure in the Unified Code for Units of Measure, case-sensitive form (kg, m/s, {each}).",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[!-~]+$"
+        }
+      },
+      {
+        "name": "qudt.unit_id",
+        "description": "A QUDT unit, as its `unit:` local name (unit:KiloGM).",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "maxLength": 128,
+          "pattern": "^unit:[A-Za-z0-9_-]+$"
+        }
+      },
+      {
+        "name": "gs1.gtin",
+        "description": "A GS1 Global Trade Item Number: GTIN-8, -12, -13, or -14, digits only (check digit not verified here).",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "pattern": "^([0-9]{8}|[0-9]{12,14})$"
+        }
+      },
+      {
+        "name": "gs1.gln",
+        "description": "A GS1 Global Location Number: 13 digits (check digit not verified here).",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "pattern": "^[0-9]{13}$"
+        }
+      },
+      {
+        "name": "lei.lei",
+        "description": "An ISO 17442 Legal Entity Identifier: 18 alphanumerics and 2 check digits (checksum not verified here).",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "pattern": "^[A-Z0-9]{18}[0-9]{2}$"
+        }
+      },
+      {
+        "name": "unlocode.location_code",
+        "description": "A UN/LOCODE: ISO 3166-1 alpha-2 country code and a 3-character location code.",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "pattern": "^[A-Z]{2}[A-Z2-9]{3}$"
+        }
+      },
+      {
+        "name": "isco08.occupation_code",
+        "description": "An ISCO-08 occupation group code (major to unit group, 1 to 4 digits).",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "pattern": "^[0-9]{1,4}$"
+        }
+      },
+      {
+        "name": "esco.occupation_uri",
+        "description": "An ESCO occupation concept URI.",
+        "type": {
+          "kind": "text",
+          "format": "uri"
+        },
+        "constraints": {
+          "pattern": "^http://data\\.europa\\.eu/esco/occupation/[0-9a-f-]+$"
+        }
+      }
+    ]
+  }
+}

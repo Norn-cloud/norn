@@ -1,0 +1,138 @@
+{
+  "flow": "billing.retry_timer",
+  "flowAt": {
+    "file": "fixtures/flows/retry-timer.builder.ts",
+    "line": 8
+  },
+  "format": "norn-flow-sourcemap/1",
+  "note": "non-executable: maps generated ids to the definition sites that produced them",
+  "rows": {
+    "awaiting_retry_charge_attempt_1/failure/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_1/failure/2": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_1/result/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 14
+    },
+    "awaiting_retry_charge_attempt_2/failure/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_2/failure/2": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_2/result/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 14
+    },
+    "awaiting_retry_charge_attempt_3/failure/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_3/failure/2": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_3/result/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 14
+    },
+    "awaiting_retry_charge_attempt_4/failure/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_4/failure/2": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_4/result/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 14
+    },
+    "retrying_charge_attempt_2/timer/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "retrying_charge_attempt_3/timer/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "retrying_charge_attempt_4/timer/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "sleeping_settle/timer/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "started/start/1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 9
+    }
+  },
+  "sourcePath": "tools/norn-ts/fixtures/flows/retry-timer.flow.ts",
+  "states": {
+    "awaiting_retry_charge_attempt_1": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_2": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_3": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "awaiting_retry_charge_attempt_4": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "completed": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 14
+    },
+    "failed_card_expired": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "failed_payment_declined": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "retrying_charge_attempt_2": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "retrying_charge_attempt_3": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "retrying_charge_attempt_4": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "sleeping_settle": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 9
+    },
+    "started": null
+  },
+  "steps": {
+    "charge": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 10
+    },
+    "settle": {
+      "file": "fixtures/flows/retry-timer.builder.ts",
+      "line": 9
+    }
+  },
+  "version": "1.0.0"
+}

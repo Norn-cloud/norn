@@ -1,0 +1,214 @@
+[
+  {
+    "map": "customer",
+    "objectType": "party.Customer",
+    "key": "CUST-0001",
+    "invocations": [
+      {
+        "actionId": "erpnext.norn_core.customer.observe",
+        "input": {
+          "customer_code": "CUST-0001",
+          "customer_type": "company",
+          "display_name": "Acme Trading",
+          "loyalty_tier": null,
+          "objectId": "CUST-0001"
+        }
+      }
+    ],
+    "propertyProvenance": {
+      "customer_code": {
+        "source": {
+          "system": "ERPNext",
+          "record": "Customer/CUST-0001"
+        },
+        "mappingVersion": "erpnext.norn_core@0.1.0",
+        "transform": "customer.customer_code",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name"
+        ]
+      },
+      "customer_type": {
+        "source": {
+          "system": "ERPNext",
+          "record": "Customer/CUST-0001"
+        },
+        "mappingVersion": "erpnext.norn_core@0.1.0",
+        "transform": "customer.customer_type",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "customer_type"
+        ]
+      },
+      "display_name": {
+        "source": {
+          "system": "ERPNext",
+          "record": "Customer/CUST-0001"
+        },
+        "mappingVersion": "erpnext.norn_core@0.1.0",
+        "transform": "customer.display_name",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "customer_name"
+        ]
+      },
+      "loyalty_tier": {
+        "source": {
+          "system": "ERPNext",
+          "record": "Customer/CUST-0001"
+        },
+        "mappingVersion": "erpnext.norn_core@0.1.0",
+        "transform": "customer.loyalty_tier",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "custom_loyalty_tier"
+        ]
+      }
+    },
+    "provenance": {
+      "source": {
+        "system": "ERPNext",
+        "record": "Customer/CUST-0001"
+      },
+      "mappingVersion": "erpnext.norn_core@0.1.0",
+      "transform": "customer.subject",
+      "observedAt": "2026-09-30T09:00:00Z",
+      "recordedAt": "2026-10-01T00:00:00Z",
+      "sourceFields": [
+        "name"
+      ]
+    }
+  },
+  {
+    "map": "sales_order",
+    "objectType": "commerce.SalesOrder",
+    "key": "SAL-ORD-0001",
+    "invocations": [
+      {
+        "actionId": "erpnext.norn_core.sales_order.observe",
+        "input": {
+          "objectId": "SAL-ORD-0001",
+          "order_date": "2026-09-29",
+          "order_number": "SAL-ORD-0001",
+          "total_amount": 1250.5
+        }
+      }
+    ],
+    "lifecycleSnapshots": [
+      {
+        "property": "status",
+        "state": "submitted",
+        "provenance": {
+          "source": {
+            "system": "ERPNext",
+            "record": "Sales Order/SAL-ORD-0001"
+          },
+          "mappingVersion": "erpnext.norn_core@0.1.0",
+          "transform": "sales_order.status",
+          "observedAt": "2026-09-30T09:00:00Z",
+          "recordedAt": "2026-10-01T00:00:00Z",
+          "sourceFields": [
+            "name",
+            "docstatus"
+          ]
+        }
+      }
+    ],
+    "links": [
+      {
+        "objectType": "commerce.SalesOrder",
+        "key": "SAL-ORD-0001",
+        "link": "counterparty",
+        "targetType": "party.Customer",
+        "targetKey": "CUST-0001",
+        "provenance": {
+          "source": {
+            "system": "ERPNext",
+            "record": "Sales Order/SAL-ORD-0001"
+          },
+          "mappingVersion": "erpnext.norn_core@0.1.0",
+          "transform": "sales_order.counterparty",
+          "observedAt": "2026-09-30T09:00:00Z",
+          "recordedAt": "2026-10-01T00:00:00Z"
+        }
+      }
+    ],
+    "propertyProvenance": {
+      "order_date": {
+        "source": {
+          "system": "ERPNext",
+          "record": "Sales Order/SAL-ORD-0001"
+        },
+        "mappingVersion": "erpnext.norn_core@0.1.0",
+        "transform": "sales_order.order_date",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "transaction_date"
+        ]
+      },
+      "order_number": {
+        "source": {
+          "system": "ERPNext",
+          "record": "Sales Order/SAL-ORD-0001"
+        },
+        "mappingVersion": "erpnext.norn_core@0.1.0",
+        "transform": "sales_order.order_number",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name"
+        ]
+      },
+      "status": {
+        "source": {
+          "system": "ERPNext",
+          "record": "Sales Order/SAL-ORD-0001"
+        },
+        "mappingVersion": "erpnext.norn_core@0.1.0",
+        "transform": "sales_order.status",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "docstatus"
+        ]
+      },
+      "total_amount": {
+        "source": {
+          "system": "ERPNext",
+          "record": "Sales Order/SAL-ORD-0001"
+        },
+        "mappingVersion": "erpnext.norn_core@0.1.0",
+        "transform": "sales_order.total_amount",
+        "observedAt": "2026-09-30T09:00:00Z",
+        "recordedAt": "2026-10-01T00:00:00Z",
+        "sourceFields": [
+          "name",
+          "grand_total"
+        ]
+      }
+    },
+    "provenance": {
+      "source": {
+        "system": "ERPNext",
+        "record": "Sales Order/SAL-ORD-0001"
+      },
+      "mappingVersion": "erpnext.norn_core@0.1.0",
+      "transform": "sales_order.subject",
+      "observedAt": "2026-09-30T09:00:00Z",
+      "recordedAt": "2026-10-01T00:00:00Z",
+      "sourceFields": [
+        "name"
+      ]
+    }
+  }
+]

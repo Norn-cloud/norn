@@ -1,0 +1,164 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "commerce.SalesOrder.entity",
+  "kind": "entity",
+  "namespace": "commerce",
+  "name": "Sales order",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/dev/sales-order/commerce-sales-order.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "commerce.SalesOrder",
+      "description": "A sales order that is invoiced only after approval (T3-LIFE-3), and put on credit hold by the credit-hold rule when its total and the customer's exposure exceed the credit limit (#2952).",
+      "implements": [
+        "commerce.Order"
+      ],
+      "properties": [
+        {
+          "id": "so_number",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "customer",
+          "type": {
+            "kind": "text"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "total",
+          "type": {
+            "kind": "integer"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        },
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "submitted"
+              },
+              {
+                "value": "on_hold"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "invoiced"
+              },
+              {
+                "value": "cancelled"
+              }
+            ]
+          },
+          "default": "draft"
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "so_number"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "property": "status",
+          "description": "Submission, an optional credit hold, approval, then invoicing.",
+          "initial": [
+            "draft"
+          ],
+          "terminal": [
+            "invoiced",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "id": "submit",
+              "from": [
+                "draft"
+              ],
+              "to": "submitted"
+            },
+            {
+              "id": "hold",
+              "description": "Credit hold: the order total and the customer's exposure exceed the credit limit (the credit-hold rule).",
+              "from": [
+                "submitted"
+              ],
+              "to": "on_hold"
+            },
+            {
+              "id": "release",
+              "description": "Release a credit hold back to submitted.",
+              "from": [
+                "on_hold"
+              ],
+              "to": "submitted"
+            },
+            {
+              "id": "approve",
+              "description": "Approval; a manager's approval also lifts a credit hold.",
+              "from": [
+                "draft",
+                "submitted",
+                "on_hold"
+              ],
+              "to": "approved"
+            },
+            {
+              "id": "invoice",
+              "description": "Submit the sales invoice for an approved order.",
+              "from": [
+                "approved"
+              ],
+              "to": "invoiced"
+            },
+            {
+              "id": "cancel",
+              "from": [
+                "draft",
+                "approved",
+                "submitted",
+                "on_hold"
+              ],
+              "to": "cancelled"
+            },
+            {
+              "id": "manual_hold",
+              "description": "Put the order on hold.",
+              "from": [
+                "draft",
+                "approved"
+              ],
+              "to": "on_hold"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

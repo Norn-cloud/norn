@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Norn-cloud/norn-platform/main/crates/norn-projections/schemas/openlineage-norn-facets.json",
+  "$defs": {
+    "NornCommitRunFacet": {
+      "description": "The Norn ledger commit an OpenLineage run is (norn-projections interop export): the cell-scoped stable ids of the commit and of the decision that produced it.",
+      "type": "object",
+      "properties": {
+        "_producer": { "type": "string", "format": "uri" },
+        "_schemaURL": { "type": "string", "format": "uri" },
+        "commit": {
+          "description": "The commit's cell-scoped stable lineage id (commit:{cellDigest}:{world}/{seq}).",
+          "type": "string",
+          "pattern": "^commit:"
+        },
+        "decision": {
+          "description": "The deciding artifact's cell-scoped stable lineage id (decision:{cellDigest}:{artifactId}@{version}).",
+          "type": "string",
+          "pattern": "^decision:"
+        }
+      },
+      "required": ["_producer", "_schemaURL", "commit"],
+      "additionalProperties": false
+    }
+  }
+}

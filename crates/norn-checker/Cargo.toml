@@ -1,0 +1,36 @@
+[package]
+name = "norn-checker"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "shared contract/lifecycle diagnostics (ring 0; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Unicode NFC/NFKC for identity-key normalization (#2848); the edge is in
+# SKELETON.md (`norn-checker ← ir, expr, canonical`).
+norn-canonical = { path = "../norn-canonical" }
+norn-expr = { path = "../norn-expr" }
+# Metered conservative law closure (#3332); admitted graph edge in SKELETON 2026-10-13.
+norn-graph = { path = "../norn-graph" }
+norn-ir = { path = "../norn-ir" }
+# The ZEN Expression pure/wasm32 profile's regex engine (norn-expr pins
+# zen-expression to `regex-lite`), so `pattern` constraints are checked in the
+# dialect rules and runtime evaluate them in (SKELETON.md 2026-09-27 amendment).
+regex-lite = "0.1.9"
+serde_json = "1.0.150"
+# Exact import-field paths; already locked, no-std/alloc, synchronous and sans-IO.
+serde_path_to_error = "=0.1.20"
+sha2 = "0.10.9"
+
+[dev-dependencies]
+# Pinned OSI-schema round-trip validation only; reuses workspace 0.47.0.
+jsonschema = { version = "=0.47.0", default-features = false }
+proptest = "1.11.0"
+serde = { version = "1.0.228", features = ["derive"] }
+
+[lints]
+workspace = true

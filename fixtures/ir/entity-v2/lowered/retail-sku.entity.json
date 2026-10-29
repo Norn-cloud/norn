@@ -1,0 +1,14 @@
+{
+  "entityVersion": "2.0",
+  "objectType": {
+    "name": "retail.Sku",
+    "properties": [
+      {
+        "id": "skuId",
+        "type": {
+          "kind": "text"
+        }
+      }
+    ]
+  }
+}

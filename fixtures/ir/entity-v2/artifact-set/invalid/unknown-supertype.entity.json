@@ -1,0 +1,33 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.SeasonalSku.entity.v2",
+  "kind": "entity",
+  "namespace": "retail",
+  "name": "Seasonal SKU",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/entity-v2/artifact-set/invalid/unknown-supertype.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "retail.SeasonalSku",
+      "extends": "retail.Product",
+      "properties": [
+        {
+          "id": "season",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  }
+}

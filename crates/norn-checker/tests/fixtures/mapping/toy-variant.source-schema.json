@@ -1,0 +1,155 @@
+{
+  "adapter": {
+    "name": "authored-test",
+    "version": "1.0.0"
+  },
+  "constraints": [
+    {
+      "dataset": "Item",
+      "fields": [
+        "name"
+      ],
+      "id": "parent_key",
+      "kind": "primary_key",
+      "origin": "declared"
+    },
+    {
+      "collection": "attributes",
+      "dataset": "Item Variant Attribute",
+      "fields": [
+        "parent"
+      ],
+      "id": "children",
+      "kind": "parent_child",
+      "origin": "declared",
+      "target": {
+        "dataset": "Item",
+        "fields": [
+          "name"
+        ]
+      }
+    }
+  ],
+  "datasets": [
+    {
+      "id": "Item",
+      "kind": "document",
+      "nativeName": "Toy parent"
+    },
+    {
+      "id": "Item Variant Attribute",
+      "kind": "child_document",
+      "nativeName": "Toy child"
+    }
+  ],
+  "fields": [
+    {
+      "dataset": "Item",
+      "name": "name",
+      "nativeType": "Text",
+      "ordinal": 0,
+      "required": true,
+      "typeCandidate": {
+        "origin": "declared",
+        "type": "string"
+      }
+    },
+    {
+      "dataset": "Item",
+      "name": "item_code",
+      "nativeType": "Text",
+      "ordinal": 1,
+      "required": true,
+      "typeCandidate": {
+        "origin": "declared",
+        "type": "string"
+      }
+    },
+    {
+      "dataset": "Item",
+      "name": "item_name",
+      "nativeType": "Text",
+      "ordinal": 2,
+      "required": true,
+      "typeCandidate": {
+        "origin": "declared",
+        "type": "string"
+      }
+    },
+    {
+      "dataset": "Item",
+      "name": "variant_of",
+      "nativeType": "Reference",
+      "ordinal": 3,
+      "typeCandidate": {
+        "origin": "declared",
+        "type": "reference"
+      }
+    },
+    {
+      "dataset": "Item",
+      "name": "attributes",
+      "nativeType": "Array",
+      "ordinal": 4,
+      "typeCandidate": {
+        "origin": "declared",
+        "type": "json"
+      }
+    },
+    {
+      "dataset": "Item Variant Attribute",
+      "name": "name",
+      "nativeType": "Text",
+      "ordinal": 0,
+      "required": true,
+      "typeCandidate": {
+        "origin": "declared",
+        "type": "string"
+      }
+    },
+    {
+      "dataset": "Item Variant Attribute",
+      "name": "parent",
+      "nativeType": "Reference",
+      "ordinal": 1,
+      "required": true,
+      "typeCandidate": {
+        "origin": "declared",
+        "type": "reference"
+      }
+    },
+    {
+      "dataset": "Item Variant Attribute",
+      "name": "attribute",
+      "nativeType": "Text",
+      "ordinal": 2,
+      "required": true,
+      "typeCandidate": {
+        "origin": "declared",
+        "type": "string"
+      }
+    },
+    {
+      "dataset": "Item Variant Attribute",
+      "name": "attribute_value",
+      "nativeType": "Text",
+      "ordinal": 3,
+      "required": true,
+      "typeCandidate": {
+        "origin": "declared",
+        "type": "string"
+      }
+    }
+  ],
+  "format": "norn.source-schema/1",
+  "observedAt": "2026-10-28T00:00:00Z",
+  "rawMetadata": {
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "uri": "synthetic://toy-nested-variant-test"
+  },
+  "source": {
+    "instance": "synthetic-pivot-test",
+    "system": "ToyVariants",
+    "version": "1.0.0"
+  }
+}

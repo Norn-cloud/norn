@@ -1,0 +1,12 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [],
+  "uses": [
+    "10:16 @norn/authoring#Norn.flow",
+    "12:3 effect/Effect#gen",
+    "13:28 @norn/authoring#Norn.perform",
+    "14:25 effect/Effect#succeed",
+    "15:24 effect/Effect#map",
+    "15:37 effect/Effect#succeed"
+  ]
+}

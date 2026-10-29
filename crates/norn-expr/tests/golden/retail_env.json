@@ -1,0 +1,683 @@
+{
+  "id": "norn.expr.env",
+  "maxLinkDepth": 3,
+  "records": {
+    "commerce.Item": {
+      "fields": {
+        "name": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "order_lines": {
+          "source": {
+            "kind": "inverse",
+            "link": "commerce.OrderLine.item"
+          },
+          "type": {
+            "item": {
+              "kind": "record",
+              "name": "commerce.OrderLine"
+            },
+            "kind": "list"
+          }
+        },
+        "sku_code": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "text"
+          }
+        }
+      },
+      "kind": "interface"
+    },
+    "commerce.OrderLine": {
+      "fields": {
+        "amount": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "decimal",
+            "scale": 2
+          }
+        },
+        "item": {
+          "source": {
+            "kind": "link",
+            "required": true
+          },
+          "type": {
+            "kind": "record",
+            "name": "commerce.Item"
+          }
+        },
+        "order": {
+          "source": {
+            "kind": "inverse",
+            "link": "commerce.SalesOrder.lines"
+          },
+          "type": {
+            "item": {
+              "kind": "record",
+              "name": "commerce.SalesOrder"
+            },
+            "kind": "optional"
+          }
+        },
+        "quantity": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "integer"
+          }
+        }
+      },
+      "kind": "object"
+    },
+    "commerce.SalesOrder": {
+      "fields": {
+        "customer": {
+          "source": {
+            "kind": "link",
+            "required": true
+          },
+          "type": {
+            "kind": "record",
+            "name": "crm.Customer"
+          }
+        },
+        "lines": {
+          "source": {
+            "kind": "link",
+            "required": false
+          },
+          "type": {
+            "item": {
+              "kind": "record",
+              "name": "commerce.OrderLine"
+            },
+            "kind": "list"
+          }
+        },
+        "number": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "placed_at": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "timestamp",
+            "timezone": "offset"
+          }
+        },
+        "total": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "decimal",
+            "scale": 2
+          }
+        }
+      },
+      "kind": "object"
+    },
+    "crm.Customer": {
+      "fields": {
+        "acme__loyalty_points": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "integer"
+          }
+        },
+        "acme__referrals": {
+          "source": {
+            "kind": "inverse",
+            "link": "crm.Customer.acme__referrer"
+          },
+          "type": {
+            "item": {
+              "kind": "record",
+              "name": "crm.Customer"
+            },
+            "kind": "list"
+          }
+        },
+        "acme__referrer": {
+          "source": {
+            "kind": "link",
+            "required": false
+          },
+          "type": {
+            "item": {
+              "kind": "record",
+              "name": "crm.Customer"
+            },
+            "kind": "optional"
+          }
+        },
+        "email": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "format": "email",
+            "kind": "text"
+          }
+        },
+        "note": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "item": {
+              "kind": "text"
+            },
+            "kind": "optional"
+          }
+        },
+        "orders": {
+          "source": {
+            "kind": "inverse",
+            "link": "commerce.SalesOrder.customer"
+          },
+          "type": {
+            "item": {
+              "kind": "record",
+              "name": "commerce.SalesOrder"
+            },
+            "kind": "list"
+          }
+        },
+        "tier": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "enum",
+            "values": [
+              "gold",
+              "silver",
+              "standard"
+            ]
+          }
+        }
+      },
+      "kind": "object"
+    },
+    "norn:Actor": {
+      "fields": {
+        "actorKind": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "kind": "enum",
+            "values": [
+              "agent",
+              "service",
+              "system",
+              "user"
+            ]
+          }
+        },
+        "agentSessionId": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "item": {
+              "kind": "text"
+            },
+            "kind": "optional"
+          }
+        },
+        "authMethod": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "capability": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "roles": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "item": {
+              "kind": "text"
+            },
+            "kind": "list"
+          }
+        },
+        "scope": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "kind": "record",
+            "name": "norn:ActorScope"
+          }
+        },
+        "subjectId": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "kind": "text"
+          }
+        }
+      },
+      "kind": "builtin"
+    },
+    "norn:ActorScope": {
+      "fields": {
+        "businessUnitId": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "item": {
+              "kind": "text"
+            },
+            "kind": "optional"
+          }
+        },
+        "environmentId": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "item": {
+              "kind": "text"
+            },
+            "kind": "optional"
+          }
+        },
+        "orgId": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "tenantId": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "item": {
+              "kind": "text"
+            },
+            "kind": "optional"
+          }
+        },
+        "workspaceId": {
+          "source": {
+            "kind": "builtin"
+          },
+          "type": {
+            "item": {
+              "kind": "text"
+            },
+            "kind": "optional"
+          }
+        }
+      },
+      "kind": "builtin"
+    },
+    "retail.BundleSku": {
+      "fields": {
+        "attributes": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "json"
+          }
+        },
+        "component_count": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "integer"
+          }
+        },
+        "components": {
+          "source": {
+            "kind": "link",
+            "required": false
+          },
+          "type": {
+            "item": {
+              "kind": "record",
+              "name": "retail.Sku"
+            },
+            "kind": "list"
+          }
+        },
+        "display_name": {
+          "source": {
+            "kind": "property",
+            "readOnly": true
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "is_taxable": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "bool"
+          }
+        },
+        "launch_date": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "item": {
+              "kind": "date"
+            },
+            "kind": "optional"
+          }
+        },
+        "launched_at": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        "name": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "order_lines": {
+          "source": {
+            "kind": "inverse",
+            "link": "commerce.OrderLine.item"
+          },
+          "type": {
+            "item": {
+              "kind": "record",
+              "name": "commerce.OrderLine"
+            },
+            "kind": "list"
+          }
+        },
+        "price": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "decimal",
+            "scale": 2
+          }
+        },
+        "shelf_life": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "duration"
+          }
+        },
+        "sku_code": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "status": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "enum",
+            "values": [
+              "active",
+              "discontinued",
+              "draft"
+            ]
+          }
+        },
+        "stock": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "integer"
+          }
+        },
+        "weight": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "item": {
+              "kind": "decimal",
+              "scale": 3,
+              "unit": {
+                "code": "kg",
+                "system": "ucum"
+              }
+            },
+            "kind": "optional"
+          }
+        }
+      },
+      "kind": "object"
+    },
+    "retail.Sku": {
+      "fields": {
+        "attributes": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "json"
+          }
+        },
+        "display_name": {
+          "source": {
+            "kind": "property",
+            "readOnly": true
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "is_taxable": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "bool"
+          }
+        },
+        "launch_date": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "item": {
+              "kind": "date"
+            },
+            "kind": "optional"
+          }
+        },
+        "launched_at": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        "name": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "order_lines": {
+          "source": {
+            "kind": "inverse",
+            "link": "commerce.OrderLine.item"
+          },
+          "type": {
+            "item": {
+              "kind": "record",
+              "name": "commerce.OrderLine"
+            },
+            "kind": "list"
+          }
+        },
+        "price": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "decimal",
+            "scale": 2
+          }
+        },
+        "shelf_life": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "duration"
+          }
+        },
+        "sku_code": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "text"
+          }
+        },
+        "status": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "enum",
+            "values": [
+              "active",
+              "discontinued",
+              "draft"
+            ]
+          }
+        },
+        "stock": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "kind": "integer"
+          }
+        },
+        "weight": {
+          "source": {
+            "kind": "property",
+            "readOnly": false
+          },
+          "type": {
+            "item": {
+              "kind": "decimal",
+              "scale": 3,
+              "unit": {
+                "code": "kg",
+                "system": "ucum"
+              }
+            },
+            "kind": "optional"
+          }
+        }
+      },
+      "kind": "object"
+    }
+  },
+  "variables": {
+    "actor": {
+      "kind": "record",
+      "name": "norn:Actor"
+    }
+  },
+  "version": 1
+}

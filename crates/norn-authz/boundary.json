@@ -1,0 +1,12 @@
+{
+  "name": "norn-authz",
+  "ring": "Zero",
+  "allowed_norn": [
+    "norn-ir",
+    "norn-projections"
+  ],
+  "dev_only_norn": [],
+  "third_party": [
+    "cedar-policy"
+  ]
+}

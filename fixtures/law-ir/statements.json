@@ -1,0 +1,77 @@
+[
+  {
+    "metadata": {
+      "id": "erpnext.no_unpaid_ship",
+      "lawVersion": "0.1",
+      "owner": "erpnext.controls",
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/law-ir/laws.source.ts"
+      },
+      "rationale": "No order ships unpaid.",
+      "severity": "error"
+    },
+    "sentence": "In {\"objectTypes\":[\"erpnext.SalesOrder\"],\"root\":{\"id\":\"erpnext\",\"kind\":\"app\"}}, \"erpnext.SalesOrder\" shall never satisfy \"self.status == 'shipped' and self.paid == false\"",
+    "statementVersion": "0.1"
+  },
+  {
+    "metadata": {
+      "id": "erpnext.approved_amount",
+      "lawVersion": "0.1",
+      "owner": "erpnext.controls",
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/law-ir/laws.source.ts"
+      },
+      "rationale": "Approved PO amount never changes from the exact approval snapshot.",
+      "severity": "error"
+    },
+    "sentence": "In {\"objectTypes\":[\"erpnext.PurchaseOrder\"],\"root\":{\"id\":\"erpnext\",\"kind\":\"app\"}}, When \"self.status == 'approved'\", \"erpnext.PurchaseOrder\" shall never satisfy \"self.amount != self.approved_amount\"",
+    "statementVersion": "0.1"
+  },
+  {
+    "metadata": {
+      "id": "erpnext.request_terminal",
+      "lawVersion": "0.1",
+      "owner": "erpnext.controls",
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/law-ir/laws.source.ts"
+      },
+      "rationale": "Every request eventually reaches a terminal state within 30 days.",
+      "severity": "error"
+    },
+    "sentence": "In {\"commitments\":[\"erpnext.Request\"],\"objectTypes\":[\"erpnext.Request\"],\"root\":{\"id\":\"erpnext\",\"kind\":\"app\"}}, \"erpnext.Request\" shall eventually satisfy \"self.status == 'accepted' or self.status == 'rejected'\" within \"2592000000\" ms",
+    "statementVersion": "0.1"
+  },
+  {
+    "metadata": {
+      "id": "erpnext.open_until_paid",
+      "lawVersion": "0.1",
+      "owner": "erpnext.controls",
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/law-ir/laws.source.ts"
+      },
+      "rationale": "An order stays open until paid (strong until).",
+      "severity": "error"
+    },
+    "sentence": "In {\"objectTypes\":[\"erpnext.SalesOrder\"],\"root\":{\"id\":\"erpnext\",\"kind\":\"app\"}}, \"erpnext.SalesOrder\" shall until \"self.paid == true\" satisfy \"self.status == 'open'\"",
+    "statementVersion": "0.1"
+  },
+  {
+    "metadata": {
+      "id": "erpnext.invariant_identity",
+      "lawVersion": "0.1",
+      "owner": "erpnext.controls",
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/law-ir/laws.source.ts"
+      },
+      "rationale": "Reuse the PO invariant by identity.",
+      "severity": "error"
+    },
+    "sentence": "In {\"objectTypes\":[\"erpnext.PurchaseOrder\"],\"root\":{\"id\":\"erpnext\",\"kind\":\"app\"}}, \"erpnext.PurchaseOrder\" shall always satisfy invariant {\"invariantId\":\"amount_frozen\",\"objectType\":\"erpnext.PurchaseOrder\"}",
+    "statementVersion": "0.1"
+  }
+]

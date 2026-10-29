@@ -1,0 +1,173 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "commerce.PurchaseOrder.entity.v2",
+  "kind": "entity",
+  "namespace": "commerce",
+  "name": "PurchaseOrder",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "crates/norn-checker-wasm/tests/fixtures/purchase-order.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "commerce.PurchaseOrder",
+      "description": "A purchase order with two declared lifecycles (T3-LIFE-1): the approval and receipt status, and the orthogonal payment status.",
+      "properties": [
+        {
+          "id": "po_number",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "submitted"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "rejected"
+              },
+              {
+                "value": "received"
+              },
+              {
+                "value": "cancelled"
+              }
+            ]
+          },
+          "default": "draft"
+        },
+        {
+          "id": "payment_status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "unpaid"
+              },
+              {
+                "value": "paid"
+              },
+              {
+                "value": "refunded"
+              }
+            ]
+          }
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "po_number"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "property": "status",
+          "description": "Approval and receipt.",
+          "initial": [
+            "draft"
+          ],
+          "terminal": [
+            "received",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "id": "submit",
+              "from": [
+                "draft"
+              ],
+              "to": "submitted",
+              "guards": [
+                "self.po_number != \"\""
+              ]
+            },
+            {
+              "id": "approve",
+              "from": [
+                "submitted"
+              ],
+              "to": "approved"
+            },
+            {
+              "id": "reject",
+              "description": "Sent back for revision.",
+              "from": [
+                "submitted"
+              ],
+              "to": "rejected"
+            },
+            {
+              "id": "revise",
+              "from": [
+                "rejected"
+              ],
+              "to": "draft"
+            },
+            {
+              "id": "receive",
+              "from": [
+                "approved"
+              ],
+              "to": "received"
+            },
+            {
+              "id": "cancel",
+              "from": [
+                "draft",
+                "submitted",
+                "approved"
+              ],
+              "to": "cancelled"
+            }
+          ]
+        },
+        {
+          "property": "payment_status",
+          "initial": [
+            "unpaid"
+          ],
+          "terminal": [
+            "refunded"
+          ],
+          "transitions": [
+            {
+              "id": "pay",
+              "from": [
+                "unpaid"
+              ],
+              "to": "paid"
+            },
+            {
+              "id": "refund",
+              "from": [
+                "paid"
+              ],
+              "to": "refunded"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

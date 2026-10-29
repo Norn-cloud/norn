@@ -1,0 +1,27 @@
+{
+  "description": "An entity may reference only entities, not actions.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-reorder.action.json",
+    {
+      "fixture": "ir/retail-sku.entity.json",
+      "patch": {
+        "dependencies": [
+          {
+            "artifactId": "retail.reorder.action",
+            "kind": "action",
+            "version": "0.1.0",
+            "required": true
+          }
+        ]
+      }
+    }
+  ],
+  "expect": [
+    [
+      "retail.Sku.entity",
+      "artifact_set.resolution.kind_incompatible",
+      "/dependencies/0/kind"
+    ]
+  ]
+}

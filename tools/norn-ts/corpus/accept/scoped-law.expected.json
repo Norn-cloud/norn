@@ -1,0 +1,7 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [],
+  "uses": [
+    "3:20 @norn/authoring#Norn.law"
+  ]
+}

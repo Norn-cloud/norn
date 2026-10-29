@@ -1,0 +1,310 @@
+{
+  "artifacts": [
+    {
+      "irVersion": "0.1",
+      "artifactId": "erp.Item.entity",
+      "kind": "entity",
+      "namespace": "erp",
+      "name": "Item",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "erp.Item",
+          "properties": [
+            {
+              "id": "field_01",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_02",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_03",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_04",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_05",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_06",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_07",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_08",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_09",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_10",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_11",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_12",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_13",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_14",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_15",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_16",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_17",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_18",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_19",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_20",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_21",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_22",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_23",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_24",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_25",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_26",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_27",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_28",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_29",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_30",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_31",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_32",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_33",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_34",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_35",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_36",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_37",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_38",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "id": "field_39",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ],
+          "links": [
+            {
+              "id": "brand",
+              "target": "erp.Brand",
+              "cardinality": {
+                "to": "one",
+                "from": "many"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "irVersion": "0.1",
+      "artifactId": "erp.Brand.entity",
+      "kind": "entity",
+      "namespace": "erp",
+      "name": "Brand",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {
+        "orgId": "org_demo",
+        "environmentId": "dev"
+      },
+      "dependencies": [],
+      "provenance": {
+        "source": "authoring_sdk",
+        "sourcePath": "fixtures/ir/lint",
+        "actorId": "user_fixture",
+        "createdAt": "2026-10-01T00:00:00Z"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "erp.Brand",
+          "properties": [
+            {
+              "id": "label",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

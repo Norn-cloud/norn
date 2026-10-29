@@ -1,0 +1,16 @@
+[package]
+name = "norn-graph"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Bounded deterministic graph algorithms (pure ring-0 library)"
+
+[dependencies]
+rust_decimal = { version = "1.43.0", default-features = false }
+
+[dev-dependencies]
+proptest = "1.11.0"
+
+[lints]
+workspace = true

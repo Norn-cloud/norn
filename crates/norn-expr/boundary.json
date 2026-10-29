@@ -1,0 +1,13 @@
+{
+  "name": "norn-expr",
+  "ring": "Zero",
+  "allowed_norn": [
+    "norn-ir"
+  ],
+  "dev_only_norn": [],
+  "third_party": [
+    "zen-expression",
+    "chrono",
+    "chrono-tz"
+  ]
+}

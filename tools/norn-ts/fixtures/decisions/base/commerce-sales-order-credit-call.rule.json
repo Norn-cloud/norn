@@ -1,0 +1,288 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "commerce.sales_order.credit_call.rule",
+  "kind": "rule",
+  "namespace": "commerce",
+  "name": "Sales order credit call task",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/dev/sales-order/commerce-sales-order-credit-call.rule.json"
+  },
+  "payload": {
+    "ruleId": "commerce.rule.sales_order_credit_call",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "triggers": [
+      {
+        "on": "transitioned",
+        "objectType": "commerce.SalesOrder",
+        "transition": "hold"
+      }
+    ],
+    "slice": [
+      {
+        "name": "order",
+        "objectType": "commerce.SalesOrder",
+        "key": "triggerObject"
+      }
+    ],
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "order": {
+              "type": "object",
+              "properties": {
+                "so_number": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "customer": {
+                  "type": "string"
+                },
+                "total": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "so_number",
+                "status",
+                "customer",
+                "total"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "order"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string"
+            },
+            "key": {
+              "type": "object",
+              "properties": {
+                "objectType": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "objectType",
+                "key"
+              ],
+              "additionalProperties": false
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "transition": {
+              "type": "string"
+            },
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "key",
+            "lifecycle",
+            "transition",
+            "from",
+            "to"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "create"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "work.Task"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "values": {
+                "type": "object",
+                "properties": {
+                  "task_id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "task_id",
+                  "kind",
+                  "subject",
+                  "state"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "afterMillis": {
+                "type": "integer"
+              },
+              "timerId": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "order": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "afterMillis",
+              "timerId",
+              "kind",
+              "order"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "slice and event",
+          "type": "inputNode"
+        },
+        {
+          "id": "decide",
+          "name": "Sales order credit call task",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "[{op: 'create', objectType: 'work.Task', key: 'credit-call/' + slice.order.so_number, values: {task_id: 'credit-call/' + slice.order.so_number, kind: 'call_customer', subject: slice.order.so_number, state: 'open'}}]"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "[]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "decision",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e_in",
+          "sourceId": "in",
+          "targetId": "decide",
+          "type": "edge"
+        },
+        {
+          "id": "e_out",
+          "sourceId": "decide",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  }
+}

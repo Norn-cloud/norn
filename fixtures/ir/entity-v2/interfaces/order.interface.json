@@ -1,0 +1,13 @@
+{
+  "name": "commerce.Order",
+  "description": "What every order has: a number, and exactly one party that placed it. Norn Core interface with a required link.",
+  "properties": [{ "id": "order_number", "type": { "kind": "text" }, "constraints": { "minLength": 1 } }],
+  "links": [
+    {
+      "id": "customer",
+      "description": "The party that placed the order.",
+      "target": "party.Party",
+      "cardinality": { "to": "one", "from": "many", "required": true }
+    }
+  ]
+}

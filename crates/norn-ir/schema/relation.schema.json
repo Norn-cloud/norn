@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RelationPayload",
+  "type": "object",
+  "properties": {
+    "cardinality": {
+      "$ref": "#/$defs/RelationCardinalityV1"
+    },
+    "extensions": {
+      "description": "Reserved extension slots keyed by `<name>/<semver>`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "from": {
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "from",
+    "to"
+  ],
+  "$defs": {
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "RelationCardinalityV1": {
+      "description": "RelationIR v1 cardinality, read from `from` to `to`.",
+      "type": "string",
+      "enum": [
+        "one_to_one",
+        "one_to_many",
+        "many_to_one",
+        "many_to_many"
+      ]
+    }
+  }
+}

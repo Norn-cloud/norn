@@ -1,0 +1,9 @@
+{
+  "description": "The agent-facing submit_invoice action fires the declared invoice transition of a sales order's status lifecycle: the target resolves in scope, the lifecycle and transition are declared, the input carries no status, and the write set is exactly (commerce.SalesOrder, modified).",
+  "base": [],
+  "artifacts": [
+    "ir/entity-v2/artifact-set/commerce-sales-order.entity.json",
+    "ir/commerce-sales-order-submit-invoice.action.json"
+  ],
+  "expect": []
+}

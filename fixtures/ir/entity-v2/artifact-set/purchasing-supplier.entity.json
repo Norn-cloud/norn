@@ -1,0 +1,54 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "purchasing.Supplier.entity.v2",
+  "kind": "entity",
+  "namespace": "purchasing",
+  "name": "Supplier",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "purchasing.Supplier",
+      "description": "A party the business buys from.",
+      "implements": [
+        "party.Party"
+      ],
+      "properties": [
+        {
+          "id": "supplier_code",
+          "type": {
+            "kind": "text"
+          },
+          "constraints": {
+            "pattern": "^S-[0-9]{6}$"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "party.display_name"
+          }
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "supplier_code"
+          ]
+        }
+      ]
+    }
+  }
+}

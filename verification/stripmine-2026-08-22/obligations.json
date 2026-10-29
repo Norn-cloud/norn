@@ -1,0 +1,1379 @@
+{
+  "registry_version": "norn.verification.obligations.v1",
+  "obligations": [
+    {
+      "id": "INV-AUTH-ATOMIC-COMMIT",
+      "domain": "authority",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "An accepted transition's canonical event, state changes, owner-version increment, idempotency result, and correctness-critical projection changes commit atomically or none becomes authoritative.",
+      "owner": "transition-kernel/store boundary",
+      "assumptions": [
+        "The store supplies atomic transactions for one consistency owner.",
+        "External effects are represented as outbox records rather than executed inside commit."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-DURABLE-FUNCTIONS-PAPER",
+          "ref": "DF-64 through DF-69 in the Norn UPE audit",
+          "claim": "state and outbound messages commit at a quiescent boundary"
+        },
+        {
+          "source_id": "SRC-CALA-LATEST",
+          "ref": "cala-ledger/tests/transaction_batch.rs:a_rejected_posting_rolls_back_the_whole_batch",
+          "claim": "a rejected member posting rolls back its batch"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "runtime",
+          "artifact": "crates/norn-engine/src/storage.rs and crates/norn-engine/src/turso.rs versioned_action_effect tests",
+          "acceptance": "injected persistence failure and stale multi-owner rejection leave state, event, action, receipt, and versions unchanged"
+        },
+        {
+          "lane": "quint",
+          "artifact": "models/authority-commit.qnt",
+          "acceptance": "atomic effect/event/result/version accounting is invariant through depth eight"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/OwnerVersionCas.lean",
+          "acceptance": "an accepted abstract transition increments owner, effect, and event exactly once while preserving balanced accounting"
+        }
+      ],
+      "counterexamples": [
+        "event durable but owner version unchanged",
+        "state durable but idempotency result missing",
+        "external call succeeds before local commit"
+      ],
+      "implementation_bindings": [
+        "RuntimeStore transaction",
+        "CanonicalEvent",
+        "idempotency result table"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "INV-AUTH-STALE-REJECT",
+      "domain": "authority",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "A transition prepared against owner version v cannot commit from any authoritative version other than v, and rejection cannot produce domain effects.",
+      "owner": "transition kernel",
+      "assumptions": [
+        "Every mutable consistency owner has one monotonically increasing version."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-DURABLE-FUNCTIONS-PAPER",
+          "ref": "DF-64",
+          "claim": "commit compares the pre-state/CAS token"
+        },
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "src/state_machine.zig",
+          "claim": "authoritative checks and effects execute in one ordered state-machine step"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "verus",
+          "artifact": "proofs/verus/TransitionVersion.rs",
+          "acceptance": "accepted implies expected_version equals pre.version and post.version equals pre.version + 1"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/OwnerVersionCas.lean",
+          "acceptance": "stale expected versions reject and accepted transitions increment exactly once"
+        },
+        {
+          "lane": "quint",
+          "artifact": "models/authority-commit.qnt",
+          "acceptance": "stale owner-version rejection preserves every modeled canonical field through depth eight"
+        },
+        {
+          "lane": "runtime",
+          "artifact": "crates/norn-engine/src/storage.rs versioned_action_effect_rejects_stale_writer_without_partial_effects",
+          "acceptance": "two proposals with one base version yield exactly one accepted commit and no partial loser records"
+        }
+      ],
+      "counterexamples": [
+        "two browser tabs both commit from version 42",
+        "stale proposal is silently rebased by storage"
+      ],
+      "implementation_bindings": [
+        "TransitionEnvelope.expected_versions",
+        "Store.commit compare-and-swap"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "INV-AUTH-IDEMPOTENT-RESULT",
+      "domain": "authority",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "For one scope and transition identity, every retry returns the same logical terminal result and the transition's domain effects occur at most once.",
+      "owner": "runtime gateway and transition store",
+      "assumptions": [
+        "Idempotency identity is stable across network retry, worker retry, and failover."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "src/state_machine_tests.zig create-transfers duplicate-id cases",
+          "claim": "existing identifiers resolve before other validation and cannot manufacture a second transfer"
+        },
+        {
+          "source_id": "SRC-CALA-LATEST",
+          "ref": "cala-ledger/tests/transaction_batch.rs:duplicate_transaction_ids_within_a_batch_are_rejected",
+          "claim": "duplicate transaction identities are rejected atomically"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "quint",
+          "artifact": "models/authority-commit.qnt",
+          "acceptance": "application count per transition identity never exceeds one and retries preserve canonical state through depth eight"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/OwnerVersionCas.lean",
+          "acceptance": "a stored receipt prevents a second abstract commit; exact replay preserves state; conflicting replay rejects"
+        },
+        {
+          "lane": "runtime",
+          "artifact": "InMemory/Turso versioned_action_effect conformance tests",
+          "acceptance": "reply loss and restart preserve the original result without an owner-version bump"
+        }
+      ],
+      "counterexamples": [
+        "same transition ID with changed payload commits twice",
+        "reply is lost and retry creates a second event"
+      ],
+      "implementation_bindings": [
+        "TransitionEnvelope.transition_id",
+        "input_hash",
+        "stable CommitResult"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "INV-AUTH-CLOSED-CUSTOM-EFFECT",
+      "domain": "authority",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "A custom authority-bearing program executes only from one exact Active artifact in a closed deterministic language, derives effects server-side, and publishes them only through owner-version CAS and commit-time ontology/domain checks.",
+      "owner": "ActionIR interpreter and transition kernel",
+      "assumptions": [
+        "Unknown program constructs and undeclared fields fail closed.",
+        "External code and ontology inference cannot construct a sealed authority commit directly."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "closed policy AST and production differential testing",
+          "claim": "untrusted policy authors target a closed checked semantics rather than arbitrary host callbacks"
+        },
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "deterministic state-machine commit boundary",
+          "claim": "prepared inputs are revalidated before deterministic authoritative effects are published"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "quint",
+          "artifact": "models/closed-action-effect.qnt",
+          "acceptance": "exact Active definition pins, closed validation predicates, one effect/event/version, stable replay, and rejection no-ops remain invariant through depth eight"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/ClosedActionEffect.lean",
+          "acceptance": "the compact closed-program semantics requires exact pins and owner version, derives one effect, and rejects stale or missing owner state"
+        }
+      ],
+      "counterexamples": [
+        "untrusted authoring obtains a raw privileged update path",
+        "an Action artifact invents an undeclared operation",
+        "a reconstructed retry substitutes a different object payload under the same identity"
+      ],
+      "implementation_bindings": [
+        "ActionExecutionArtifactPayload.effectProgram",
+        "VersionedActionEffectCommit",
+        "validate_versioned_ontology_bindings"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-AUTH-HARD-INVARIANT-OWNERSHIP",
+      "domain": "authority",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "Generic ActionIR cannot mutate an EntityIR owned by a hard-invariant domain engine, and a typed domain command is admitted only through the exact declared domain owner.",
+      "owner": "EntityIR mutation-authority boundary",
+      "assumptions": [
+        "The closed EntityIR descriptor parser derives the generic/domain authority fact and exact domain equality correctly.",
+        "Every authoritative generic object mutation calls the shared boundary before the atomic publish point."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "deterministic state-machine validation before canonical mutation",
+          "claim": "privileged effects are derived and validated at the authoritative commit boundary rather than accepted as arbitrary caller-supplied state"
+        },
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "closed policy semantics and production correspondence discipline",
+          "claim": "a checked decision kernel must remain distinct from untrusted authored policy and its surrounding adapters"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "runtime",
+          "artifact": "crates/norn-engine/src/domain_authority.rs",
+          "acceptance": "all 36 generic/domain authority and source pairs agree with the shared production predicate; malformed descriptors and generic bypasses reject"
+        },
+        {
+          "lane": "quint",
+          "artifact": "models/domain-engine-boundary.qnt",
+          "acceptance": "generic/domain separation, exact owner matching, and rejection no-op remain invariant through the declared finite bound"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/DomainEngineBoundary.lean",
+          "acceptance": "the independent reference semantics proves generic separation and exact-domain ownership without admitted holes"
+        },
+        {
+          "lane": "hax-probe",
+          "artifact": "proofs/fstar/DomainAuthorityProof.fst",
+          "acceptance": "CI extracts the exact Boolean predicate used by the engine from production Rust and F* proves generic bypass and mismatched-domain rejection"
+        }
+      ],
+      "counterexamples": [
+        "generic ActionIR commits a record pinned to a domain-engine-owned EntityIR",
+        "an accounting command mutates inventory-owned state",
+        "a parser or write path bypasses the extracted final predicate"
+      ],
+      "implementation_bindings": [
+        "norn_ir::entity_mutation_authority_admits",
+        "EntityMutationAuthority::admits",
+        "ensure_entity_mutation_source",
+        "validate_versioned_ontology_bindings"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "INV-AUTH-DOMAIN-ADMISSION-PREDICATE",
+      "domain": "authority",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "For the exact representation-free production admission predicate, generic authority admits only generic sources and domain authority admits only a typed domain source with the identical domain identifier.",
+      "owner": "norn_ir::entity_mutation_authority_admits",
+      "assumptions": [
+        "The three Boolean inputs are the exact values passed to the extracted Rust function; parsing, mapping, routing, and persistence are separate obligations."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "deterministic validation before canonical mutation",
+          "claim": "keep the final authority decision small, deterministic, and reviewable"
+        },
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "production/reference correspondence discipline",
+          "claim": "state exact correspondence boundaries instead of extending a proof to unverified adapters"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "runtime",
+          "artifact": "crates/norn-engine/src/domain_authority.rs",
+          "acceptance": "all 36 values of the current closed authority/source enums agree with the shared production predicate"
+        },
+        {
+          "lane": "quint",
+          "artifact": "models/domain-engine-boundary.qnt",
+          "acceptance": "the finite transition model preserves generic/domain separation and exact matching"
+        },
+        {
+          "lane": "hax-probe",
+          "artifact": "proofs/fstar/DomainAuthorityProof.fst",
+          "acceptance": "pinned hax extracts the exact Rust predicate and F* proves generic bypass and mismatched-domain rejection"
+        }
+      ],
+      "counterexamples": [
+        "the exact predicate admits a generic source for a domain owner",
+        "the exact predicate admits a mismatched typed domain source",
+        "the proof checks a handwritten surrogate instead of the hax-extracted function"
+      ],
+      "implementation_bindings": [
+        "norn_ir::entity_mutation_authority_admits",
+        "EntityMutationAuthority::admits",
+        "scripts/verify-domain-authority-extraction.sh"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "INV-AUTH-CAPABILITY-NOW",
+      "domain": "authorization",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "The capability that authorizes a transition is resolved and checked against current authoritative policy/state in the same commit decision; a preflight or UI check is never sufficient.",
+      "owner": "capability checker",
+      "assumptions": [
+        "Policy/schema versions used by the decision are explicit commit inputs."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "cedar-lean/Cedar/Spec.lean and DRT authorizer targets",
+          "claim": "authorization decisions have a formal reference semantics and production differential lane"
+        },
+        {
+          "source_id": "SRC-NORN-BC-CORPUS",
+          "ref": "scope and posting permission cases",
+          "claim": "business posting authority is state- and period-sensitive"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "quint",
+          "artifact": "models/authority-commit.qnt",
+          "acceptance": "revocation increments the modeled policy version and any stale or unauthorized proposal is a canonical no-op through depth eight"
+        },
+        {
+          "lane": "differential-test",
+          "artifact": "Norn authorization reference model versus production evaluator",
+          "acceptance": "decisions and diagnostics match for generated valid and invalid requests"
+        },
+        {
+          "lane": "runtime",
+          "artifact": "TOCTOU revocation test",
+          "acceptance": "revocation between proposal and commit causes rejection with zero effects"
+        }
+      ],
+      "counterexamples": [
+        "permission revoked after form open but stale submit succeeds",
+        "policy lookup uses unversioned cache"
+      ],
+      "implementation_bindings": [
+        "CapabilityContext",
+        "TransitionEnvelope.actor",
+        "policy_version"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-AUTH-SCOPE-CLOSED",
+      "domain": "authorization",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "Every authoritative read and mutation carries an explicit canonical scope, and a missing, ambiguous, or mismatched scope fails closed before data access or mutation.",
+      "owner": "runtime boundary and store adapter",
+      "assumptions": [
+        "Scope is part of every primary/unique identity that can collide across tenants."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CALA-LATEST",
+          "ref": "CALA repository has no tenant isolation",
+          "claim": "CALA is a negative reference: tenancy must be supplied by Norn"
+        },
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "request/entity validation DRT targets",
+          "claim": "schema-invalid authorization inputs fail rather than defaulting"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "runtime",
+          "artifact": "cross-scope negative corpus",
+          "acceptance": "every cross-scope identifier substitution is rejected before any row is returned or changed"
+        },
+        {
+          "lane": "db-constraint",
+          "artifact": "scoped unique/index/foreign-key audit",
+          "acceptance": "no authoritative identity silently drops its scope dimensions"
+        }
+      ],
+      "counterexamples": [
+        "tenant omitted and global row returned",
+        "idempotency key collides across organizations"
+      ],
+      "implementation_bindings": [
+        "CanonicalScope",
+        "scope_key",
+        "all store trait boundaries"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-ART-AUTHORITY-PROMOTION",
+      "domain": "artifact-governance",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "Every artifact kind becomes Approved/Active catalog authority only through a governed plan that validates and approves the exact artifact content applied; a direct catalog write cannot grant runtime or read-projection authority, and one separate scoped pointer plus a matching trusted-checker receipt selects exactly one executable version while immutable envelopes and historical receipts remain audit evidence.",
+      "owner": "business artifact controller and retained engine store",
+      "assumptions": [
+        "The catalog apply transaction persists the exact artifact embedded in the stored plan.",
+        "SHA-256 collision resistance holds for stable artifact and evidence identities; the lifecycle guard itself does not depend on a hash assumption.",
+        "A checker receipt proves only that the fixed deterministic validator accepted the exact artifact and declared claim set, not that arbitrary business semantics are correct."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "formal semantics plus production differential testing architecture",
+          "claim": "untrusted authored policy obtains authority only after validation by the trusted implementation boundary"
+        },
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "state-machine request validation before canonical mutation",
+          "claim": "privileged effects are derived by the authoritative state machine rather than supplied as final state"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "runtime",
+          "artifact": "crates/norn-engine/src/storage.rs",
+          "acceptance": "a replacement atomically selects v2 with a deterministic successful checker receipt; missing, failed, wrong-hash/version/checker, claim-list, or evidence binding rejects; exact v1 execution rejects, v1 history remains, and a competing plan from v1 conflicts"
+        },
+        {
+          "lane": "quint",
+          "artifact": "models/artifact-promotion.qnt",
+          "acceptance": "catalog authority always retains exact validation and approval binding through depth eight, including tamper and direct-write attempts"
+        },
+        {
+          "lane": "quint",
+          "artifact": "models/active-artifact-authority.qnt",
+          "acceptance": "through depth eight, the sole active pointer always references an immutable envelope and competing plans from v1 cannot both publish v2/v3"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/ArtifactPromotion.lean",
+          "acceptance": "the reference lifecycle guard rejects every Approved/Active authority-bearing kind without proof holes"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/ActiveArtifactAuthority.lean",
+          "acceptance": "the reference pointer transition selects only v2, preserves v1 history, rejects exact v1 execution, and makes a stale competing replacement a no-op without proof holes"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/ArtifactVerificationReceipt.lean",
+          "acceptance": "the compact reference rule requires an exact successful receipt and proves missing receipts, wrong hashes, and wrong checker versions fail closed without proof holes"
+        }
+      ],
+      "counterexamples": [
+        "caller writes an Active action directly and executes it",
+        "artifact changes after approval but before apply",
+        "review approves one version while catalog applies another",
+        "v1 remains explicitly executable after v2 is published",
+        "a pointer update commits without its immutable envelope, trusted checker receipt, or applied-plan history",
+        "a caller supplies a self-asserted successful receipt",
+        "a receipt for a different scope, artifact hash, version, checker, claim set, or failed result authorizes execution",
+        "a pre-v7 receipt-less artifact executes without governed revalidation"
+      ],
+      "implementation_bindings": [
+        "BusinessArtifactStore::apply_artifact_plan",
+        "ArtifactCatalogStore::get_executable_artifact",
+        "ArtifactVerificationReceipt",
+        "validate_artifact_verification_receipt",
+        "InMemoryRuntimeStore::active_artifact_versions",
+        "InMemoryRuntimeStore::artifact_verification_receipts"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-ART-DIRECT-WRITE-PREDICATE",
+      "domain": "artifact-governance",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "For every current production ArtifactKind and ArtifactLifecycle value, the direct catalog-write predicate rejects exactly Approved and Active lifecycles and admits the other five lifecycle values.",
+      "owner": "canonical ArtifactIR lifecycle admission predicate",
+      "assumptions": [
+        "The hax translation preserves the selected Rust function and closed enum representations.",
+        "The pinned F* typechecker and SMT solver are sound.",
+        "This obligation does not assert that all privileged callsites invoke the predicate."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "small production policy decision functions with differential/formal checking",
+          "claim": "a narrow pure admission predicate is a tractable implementation-correspondence boundary"
+        },
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "deterministic state-machine admission before mutation",
+          "claim": "authoritative admission logic should be explicit, closed, and checked before effects"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "runtime",
+          "artifact": "crates/norn-ir/tests/artifact_governance.rs",
+          "acceptance": "the production function returns the expected result for the current finite 11 ArtifactKind by 7 ArtifactLifecycle table"
+        },
+        {
+          "lane": "hax-probe",
+          "artifact": "proofs/fstar/ArtifactPromotionProof.fst",
+          "acceptance": "a total F* theorem over the hax-extracted production definition and closed enum types proves the exact lifecycle truth table without a precondition or proof hole"
+        }
+      ],
+      "counterexamples": [
+        "an Approved or Active current artifact kind is directly writable",
+        "a Draft, Proposed, Deprecated, Superseded, or Rejected current artifact kind is rejected by the pure predicate",
+        "a newly added enum variant bypasses re-extraction and theorem checking"
+      ],
+      "implementation_bindings": [
+        "norn_ir::direct_artifact_write_allowed",
+        "ArtifactKind",
+        "ArtifactLifecycle"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "INV-QL-CONSERVATION",
+      "domain": "quantity-ledger",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "For every admitted posting template and every legal parameter valuation, the exact signed sum of legs is zero independently for each conserved unit and balance layer.",
+      "owner": "ledger pack sealer and quantity-ledger kernel",
+      "assumptions": [
+        "All amounts use exact scaled integers.",
+        "Each leg has one explicit unit and layer.",
+        "Conversions are represented as separate balanced postings or evidence, never implicit cross-unit arithmetic."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-NORN-BC-CORPUS",
+          "ref": "bc-a1-finance-gl-part2-posting-engine.md",
+          "claim": "posting validates balance before becoming authoritative"
+        },
+        {
+          "source_id": "SRC-EN16931",
+          "ref": "BR-CO-10 through BR-CO-17",
+          "claim": "authoritative invoice arithmetic is expressed as exact named equations with declared rounding"
+        },
+        {
+          "source_id": "SRC-CALA-LATEST",
+          "ref": "cala-ledger/tests/transaction_batch.rs",
+          "claim": "CALA provides atomic posting mechanics but not this conservation proof"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/QuantityLedger.lean",
+          "acceptance": "the exact reference semantics proves balanced construction and reversal lemmas with no sorry/admit/axiom"
+        },
+        {
+          "lane": "property-test",
+          "artifact": "fixtures/quantity-ledger.json plus generated parameter valuations",
+          "acceptance": "the Rust checker and reference evaluator agree and reject every unbalanced mutation"
+        }
+      ],
+      "counterexamples": [
+        "debit 100 kg and credit 100 USD treated as balanced",
+        "rounding one leg independently leaves a residual",
+        "template is balanced only for the sample inputs"
+      ],
+      "implementation_bindings": [
+        "LedgerPackIR templates",
+        "seal_ledger_pack",
+        "QuantityLedgerPort.post"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-QL-CERTIFICATE-POSTING-BINDING",
+      "domain": "quantity-ledger",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "A conservation certificate can authorize preparation only for the exact versioned checker output, pack hash, template, unit/layer/precision partition, runtime input and evaluation; the resulting posting identity deterministically binds scope, transition, expected owner version, idempotency lookup, and outbox identity.",
+      "owner": "ledger pack sealer and QuantityLedgerPort boundary",
+      "assumptions": [
+        "SHA-256 collision resistance holds for the domain-separated boundary identities.",
+        "A deserialized commitment is recomputed from the installed opaque seal and original intent before authority use.",
+        "The pack hash binds the pack-local unit registry and account-to-unit permissions; external ontology and dimension provenance remains a separate open binding."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-DURABLE-FUNCTIONS-PAPER",
+          "ref": "quiescent commit identity properties DF-64 through DF-69 in the Norn UPE audit",
+          "claim": "durable state and outbound work require an explicit identity-bound commit boundary"
+        },
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "request identity and idempotency result behavior",
+          "claim": "retry identity must bind one logical input and stable result"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "rust-types",
+          "artifact": "crates/norn-checker/src/quantity_ledger/boundary.rs",
+          "acceptance": "seal and posting preparation recompute versioned pack/certificate/input/evaluation identities and exact certificate coverage"
+        },
+        {
+          "lane": "property-test",
+          "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+          "acceptance": "pack/unit/layer/checker tampering, self-rehashed forged claims, changed runtime input, cross-scope replay, every bounded partial-record state, and cross-wired outbox records reject; golden hashes remain stable"
+        }
+      ],
+      "counterexamples": [
+        "certificate from pack A activates an identically named template in pack B",
+        "unit or layer is changed after checking while the old certificate is retained",
+        "same idempotency key commits a different posting input",
+        "posting is durable but its stable result or deterministic outbox record is absent"
+      ],
+      "implementation_bindings": [
+        "LedgerPackSeal",
+        "ConservationCertificate.certificate_sha256",
+        "QuantityPostingCommitment.posting_input_sha256",
+        "QuantityAuthorityCommitObservation"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-QL-UNIT-DIMENSION",
+      "domain": "quantity-ledger",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "Every unit resolves to one pinned unit definition and quantity dimension; addition, conservation, limits, and account balances reject dimensionally incompatible operands.",
+      "owner": "unit registry and ledger pack sealer",
+      "assumptions": [
+        "External QUDT/UCUM identifiers are mappings to canonical Norn unit IDs rather than mutable runtime lookups."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-QUDT",
+          "ref": "v3.4.0 OWL and SHACL distributions",
+          "claim": "quantity kinds, units, and dimensions have versioned machine-readable definitions"
+        },
+        {
+          "source_id": "SRC-UCUM",
+          "ref": "2.2 syntax section 7",
+          "claim": "unit expressions and canonical codes have an authoritative reference; UCUM content remains reference-only under its terms"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "shacl",
+          "artifact": "pinned unit-registry import shapes",
+          "acceptance": "unknown, deprecated, ambiguous, and dimensionless-as-dimensional mappings fail promotion"
+        },
+        {
+          "lane": "rust-types",
+          "artifact": "UnitId and DimensionId typed arithmetic",
+          "acceptance": "cross-dimension addition has no unchecked executable path"
+        }
+      ],
+      "counterexamples": [
+        "hours added to kilograms",
+        "display alias changes semantic unit",
+        "floating latest QUDT changes an installed pack"
+      ],
+      "implementation_bindings": [
+        "UnitDefinitionIR",
+        "QuantityKindId",
+        "DimensionVector"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-QL-EXACT-ARITHMETIC",
+      "domain": "quantity-ledger",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "An admitted ledger program has one exact scaled-integer semantics; all input scales and bounds are checked, every intermediate is proved in range, and no implicit rounding or overflow can alter a posting.",
+      "owner": "ledger expression compiler and evaluator",
+      "assumptions": [
+        "The admitted arithmetic subset is linear unless a stronger proof is supplied."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "src/state_machine_tests.zig overflow result cases",
+          "claim": "every pending/posted aggregate overflow is explicitly rejected"
+        },
+        {
+          "source_id": "SRC-EN16931",
+          "ref": "UBL BR-CO equations",
+          "claim": "rounding sites are explicit parts of the rule, not database-decimal accidents"
+        },
+        {
+          "source_id": "SRC-CEL-SPEC",
+          "ref": "language numeric semantics",
+          "claim": "expression behavior requires cross-implementation conformance"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "kani",
+          "artifact": "scaled-integer evaluator overflow harness",
+          "acceptance": "all admitted bounds avoid overflow; out-of-bound values reject before evaluation"
+        },
+        {
+          "lane": "differential-test",
+          "artifact": "symbolic checker versus Rust evaluator",
+          "acceptance": "identical results over generated boundary values"
+        }
+      ],
+      "counterexamples": [
+        "decimal multiplication silently rescales",
+        "negative scale is normalized differently by two evaluators",
+        "i128 intermediate overflows before final value returns in range"
+      ],
+      "implementation_bindings": [
+        "ExactAmount",
+        "ParamBounds",
+        "ledger expression evaluator"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-QL-PENDING-RESOLUTION",
+      "domain": "quantity-ledger",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "A pending transfer reserves its amount immediately and has at most one terminal resolution: posted, voided, or expired; every terminal state has zero reserved remainder, and the v0 post transition requires full resolution rather than silently accepting a partial amount.",
+      "owner": "quantity-ledger transition kernel",
+      "assumptions": [
+        "Logical expiry time is supplied as a deterministic transition input.",
+        "The v0 transition model rejects partial post; a future partial-resolution policy requires a separately modeled remainder or release transition."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "docs/coding/two-phase-transfers.md and state_machine_tests.zig",
+          "claim": "pending, partial/full post, void, expiry, mismatch, and double-resolution behavior"
+        },
+        {
+          "source_id": "SRC-CALA-LATEST",
+          "ref": "cala-ledger/tests/velocity.rs",
+          "claim": "posting-time floors/ceilings reject atomically"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "quint",
+          "artifact": "models/quantity-ledger.qnt",
+          "acceptance": "full post consumes the complete reservation, every terminal state has zero reserved remainder, and terminal-resolution exclusivity holds for all bounded traces"
+        },
+        {
+          "lane": "property-test",
+          "artifact": "two-phase transition corpus",
+          "acceptance": "duplicate, reordered, partial, expiry, and mismatched resolutions match the reference model"
+        }
+      ],
+      "counterexamples": [
+        "post then void succeeds",
+        "reservation ignores account floor",
+        "partial post leaves an untracked remainder"
+      ],
+      "implementation_bindings": [
+        "PendingTransfer",
+        "Reserve",
+        "PostPending",
+        "VoidPending",
+        "ExpirePending"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-QL-BATCH-ATOMIC",
+      "domain": "quantity-ledger",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "A posting batch is all-or-nothing, and executing a conflict-free batch yields the same canonical ledger state as executing its postings sequentially in declared order.",
+      "owner": "quantity-ledger store port",
+      "assumptions": [
+        "Batch order is explicit and stable."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CALA-LATEST",
+          "ref": "cala-ledger/tests/transaction_batch.rs",
+          "claim": "rollback, duplicate ID, overlap, concurrency, and sequential-equivalence cases"
+        },
+        {
+          "source_id": "SRC-TIGERBEETLE",
+          "ref": "linked-event chain tests",
+          "claim": "one failed linked event rejects the remainder and rolls back preceding linked events"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "lean",
+          "artifact": "verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+          "acceptance": "the reference applies explicit balanced source/destination deltas in declared order; rejection publishes the original state, acceptance publishes the exact sequential result, conserves the total, and advances once per posting"
+        },
+        {
+          "lane": "differential-test",
+          "artifact": "batch versus sequential reference execution",
+          "acceptance": "results and canonical hashes agree for every generated admissible batch"
+        },
+        {
+          "lane": "runtime",
+          "artifact": "Turso transactional batch crash suite",
+          "acceptance": "failure at each statement boundary leaves no prefix authoritative"
+        }
+      ],
+      "counterexamples": [
+        "leg three fails but legs one and two remain",
+        "batch and sequential execution produce different balance layers"
+      ],
+      "implementation_bindings": [
+        "PostingBatch",
+        "QuantityLedgerStore.commit_batch"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-QL-AUTHORITY-BRIDGE-ATOMIC",
+      "domain": "quantity-ledger",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "A quantity posting, its balance heads and append-only events, the Norn owner version and business effects, action/evidence record, checkpoint, and stable idempotency result commit through one authority transaction or none becomes authoritative.",
+      "owner": "QuantityLedgerPort and authority transaction boundary",
+      "assumptions": [
+        "The quantity repository accepts the caller-owned Turso transaction handle and cannot commit independently.",
+        "The core posting path uses one scope-owned database file; no second database, connection-owned transaction, delayed outbox, or external effect participates."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CALA-FORK-BASE",
+          "ref": "cala-ledger repository boundary at 0.25.0",
+          "claim": "the fork source is Postgres-transaction-shaped and must be redesigned to join Norn authority rather than allowed to commit independently"
+        },
+        {
+          "source_id": "SRC-DURABLE-FUNCTIONS-PAPER",
+          "ref": "quiescent commit properties DF-64 through DF-69 in the Norn UPE audit",
+          "claim": "durable state and emitted work require one explicit atomic commit boundary"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "runtime",
+          "artifact": "Turso ledger-authority crash matrix",
+          "acceptance": "failure injection before and after every quantity, balance, event, business-effect, owner-version, checkpoint, and idempotency write observes only the complete pre-state or complete post-state after reopen"
+        },
+        {
+          "lane": "differential-test",
+          "artifact": "single-transaction reference store versus QuantityLedgerPort",
+          "acceptance": "accepted/rejected results, canonical events, balance heads, owner versions, and idempotency results agree for every generated batch and injected failure"
+        },
+        {
+          "lane": "quint",
+          "artifact": "models/quantity-authority.qnt",
+          "acceptance": "depth-eight traces preserve conservation and aligned owner-version/transaction/event/outbox/receipt counts while retries and rejections are authority no-ops"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/QuantityAuthority.lean",
+          "acceptance": "the mathematical reference proves posting conservation, exact reversal, representable signed-i128 negation after excluding the minimum, record alignment, stable retry, conflict, and stale rejection without sorry/admit/axiom"
+        },
+        {
+          "lane": "runtime",
+          "artifact": "crates/norn-cell/src/quantity.rs and crates/norn-cell/tests/quantity_reservations.rs",
+          "acceptance": "the normalized cell quantity path passes generated partial-resolution differential, failure-before-commit, lost-reply, reopen, exact-retry, balance-CAS, tenant-scope, precision-pinning, expiry and reversal cases"
+        }
+      ],
+      "counterexamples": [
+        "CALA posting commits on an internally acquired connection and Norn evidence then fails",
+        "Norn owner version commits before the quantity constraint rejects",
+        "posting commits but a lost reply finds no stable idempotency result"
+      ],
+      "implementation_bindings": [
+        "norn_kernel::quantity::prepare_quantity",
+        "CellStore::commit_guarded_inner",
+        "same-file typed quantity receipt and event bridge",
+        "SqliteCell::commit_quantity",
+        "QuantityOperation::Reverse"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-QL-APPEND-REVERSAL",
+      "domain": "quantity-ledger",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "Posted ledger facts are never updated or deleted; correction is a new linked reversing posting whose exact legs negate the original, followed by an optional replacement posting.",
+      "owner": "quantity-ledger transition kernel",
+      "assumptions": [
+        "Administrative retention never deletes canonical posting facts inside the legal/audit horizon."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-ODOO-COMMUNITY",
+          "ref": "addons/account/tests/test_audit_trail.py and test_account_move_entry.py reversal cases",
+          "claim": "posted entries resist deletion and corrections create reversals"
+        },
+        {
+          "source_id": "SRC-ERPNEXT",
+          "ref": "journal_entry reverse and disallow reversal-of-reversal tests",
+          "claim": "reversal is a distinct guarded operation"
+        },
+        {
+          "source_id": "SRC-NORN-BC-CORPUS",
+          "ref": "finance posting edge cases",
+          "claim": "posted correction is ledgered rather than destructive"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/QuantityLedger.lean reversal theorem",
+          "acceptance": "original plus generated reversal is balanced and nets to zero per unit/layer"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/QuantityAuthority.lean exact_reversal_restores_prior_balances",
+          "acceptance": "the reference authority reversal restores the prior mathematical balance"
+        },
+        {
+          "lane": "quint",
+          "artifact": "models/quantity-authority.qnt reversalRestoresBalances",
+          "acceptance": "every bounded reversed state contains two aligned commits and restored balances"
+        },
+        {
+          "lane": "runtime",
+          "artifact": "QuantityOperation::Reverse adversarial tests",
+          "acceptance": "the posting boundary rejects i128::MIN before authority; reversal appends exact negated entries, retains the original, survives reopen, replays exactly, rejects double reversal, and publishes no partial mutation on rejection"
+        },
+        {
+          "lane": "db-constraint",
+          "artifact": "append-only mutation guard",
+          "acceptance": "future normalized production role cannot update/delete canonical posting rows"
+        }
+      ],
+      "counterexamples": [
+        "posted amount edited in place",
+        "reversal uses current exchange rate and fails to negate original exact legs",
+        "canonical row is hard-deleted"
+      ],
+      "implementation_bindings": [
+        "ReversePosting",
+        "reverses_event_id",
+        "append-only ledger table"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-ONT-MAPPING-PROVENANCE",
+      "domain": "ontology",
+      "priority": "P0",
+      "kind": "governance",
+      "statement": "Every external ontology/taxonomy mapping records source identifier, source version, canonical Norn concept, mapping relation, evidence, confidence/reviewer, and supersession; external identifiers never become mutable storage topology or authority identities.",
+      "owner": "ontology pack importer",
+      "assumptions": [
+        "Canonical Norn identities remain stable across external vocabulary releases."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-SCHEMAORG",
+          "ref": "version 30.0 release",
+          "claim": "broad web vocabulary evolves through named releases"
+        },
+        {
+          "source_id": "SRC-GS1-VOC",
+          "ref": "1.18.0 archive",
+          "claim": "GS1 vocabulary publishes versioned machine-readable archives"
+        },
+        {
+          "source_id": "SRC-SHOPIFY-TAXONOMY",
+          "ref": "v2026-05-patch-1 data and integrations",
+          "claim": "categories, attributes, and mappings evolve through CalVer releases"
+        },
+        {
+          "source_id": "SRC-PROVO",
+          "ref": "Entity/Activity/Agent and qualified relations",
+          "claim": "provenance relations have a standard interchange vocabulary"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "runtime",
+          "artifact": "closed Rust and TypeScript external mapping validators",
+          "acceptance": "unversioned, source-less, missing-review, out-of-range confidence, unresolved/self/cross-identity/chained supersession mappings fail promotion, while one direct same-term/same-source replacement is admitted"
+        },
+        {
+          "lane": "runtime",
+          "artifact": "pinned mapping provenance fixtures and static registry checker",
+          "acceptance": "installed mapping provenance and direct replacement resolution validate without network access"
+        }
+      ],
+      "counterexamples": [
+        "mapping points to unversioned latest",
+        "Shopify category ID replaces canonical product type ID",
+        "physical shard key encoded in ontology IRI"
+      ],
+      "implementation_bindings": [
+        "norn_checker::validate_ontology_pack",
+        "validateOntologyPackPayload",
+        "verification/ontology/scripts/validate.py"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "INV-ONT-OPEN-CLOSED-SEPARATION",
+      "domain": "ontology",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "OWL entailment may classify or infer candidate semantic facts, but only a closed validator and typed transition kernel may establish completeness, legality, current authority, or an authoritative mutation.",
+      "owner": "ontology reasoning boundary",
+      "assumptions": [
+        "Inferred facts retain their derivation and do not overwrite asserted authority facts."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-OWL2",
+          "ref": "OWL 2 semantics and profiles",
+          "claim": "ontology semantics are open-world class/property entailment"
+        },
+        {
+          "source_id": "SRC-SHACL",
+          "ref": "SHACL validation report semantics",
+          "claim": "shapes evaluate closed constraints over a selected data graph"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "owl-reasoner",
+          "artifact": "ontology entailment lane",
+          "acceptance": "expected classifications and inconsistency signals hold for pinned imports"
+        },
+        {
+          "lane": "shacl",
+          "artifact": "promotion validation lane",
+          "acceptance": "required cardinality, datatype, closed-property, and identifier constraints pass before artifact sealing"
+        },
+        {
+          "lane": "runtime",
+          "artifact": "authority-boundary test",
+          "acceptance": "no inferred triple can invoke a privileged mutation without a typed transition"
+        }
+      ],
+      "counterexamples": [
+        "absence of an OWL fact is treated as false",
+        "reasoner inference grants a capability",
+        "SHACL-valid graph bypasses transition guard"
+      ],
+      "implementation_bindings": [
+        "OntologyProjection",
+        "ShapeValidationReport",
+        "TransitionProposal"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-ONT-RELATION-AUTHORITY",
+      "domain": "ontology",
+      "priority": "P1",
+      "kind": "safety",
+      "statement": "Every authoritative relation kind is its exact active Relation artifact identity; endpoint objects match RelationIR from/to through exact active Entity pins; and declared endpoint cardinality holds over persisted plus same-commit candidate relations without double-counting an update to the same immutable relation id.",
+      "owner": "versioned ontology authority commit",
+      "assumptions": [
+        "Omitted RelationIR cardinality means many_to_many.",
+        "One authority writer serializes the candidate-set check until a relation-kind/index consistency owner replaces that bootstrap topology."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-NORN-BC-CORPUS",
+          "ref": "canonical RelationIR v0 and versioned authority transition corpus",
+          "claim": "relation identity, endpoint kinds, active versions, candidate-set cardinality, and immutable update behavior are Norn-owned authority semantics"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "runtime",
+          "artifact": "InMemory/Turso relation authority adversarial tests",
+          "acceptance": "wrong kind, wrong endpoint, persisted and same-commit cardinality conflicts, superseded pins, and partial Turso publication reject while immutable relation updates succeed"
+        },
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/OntologyAuthority.lean",
+          "acceptance": "Lean checks exact-active rejection, endpoint/kind rejection, cardinality directionality, many-to-many freedom, and same-identity exclusion without sorry, admit, or axioms"
+        }
+      ],
+      "counterexamples": [
+        "relationKind alias points at a different pinned Relation artifact",
+        "relation connects an endpoint object whose active Entity objectKind differs from RelationIR from/to",
+        "two relations in one commit independently pass against old state but conflict together",
+        "an immutable relation payload update is counted as a second edge"
+      ],
+      "implementation_bindings": [
+        "InMemoryRuntimeStore::validate_versioned_ontology_bindings",
+        "RelationRecord",
+        "ArtifactCatalogStore::get_executable_artifact",
+        "TursoRuntimeStore::commit_versioned_action_effect"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-QL-REFERENCE-BALANCE-ALGEBRA",
+      "domain": "quantity-ledger",
+      "priority": "P1",
+      "kind": "refinement",
+      "statement": "In the mathematical integer-list reference semantics, every pair [amount, -amount] is balanced, reversal negates the net and preserves balance, and appending two balanced lists preserves balance.",
+      "owner": "quantity-ledger reference proof",
+      "assumptions": [
+        "Amounts are mathematical integers rather than checked i128 values.",
+        "The reference list has no unit, layer, account, storage, or authority semantics."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-NORN-BC-CORPUS",
+          "ref": "double-entry conservation and reversal obligations",
+          "claim": "the narrow algebraic core is separated from production append-only and typed-unit obligations"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "lean",
+          "artifact": "proofs/lean/QuantityLedger.lean",
+          "acceptance": "Lean checks balanced_pair, net_append, net_reverse, balanced_reverse, and balanced_append without sorry, admit, or axioms"
+        }
+      ],
+      "counterexamples": [
+        "the theorem is credited to checked i128 arithmetic",
+        "the theorem is credited to keyed unit/layer conservation",
+        "the theorem is credited to production append-only persistence"
+      ],
+      "implementation_bindings": [
+        "mathematical reference only"
+      ],
+      "status": "proved"
+    },
+    {
+      "id": "INV-RULE-CLOSED-DETERMINISTIC-EVALUATION",
+      "domain": "rules-policy",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "An authoritative rule evaluation accepts only the declared closed scalar/schema/condition subset, binds exact active artifact version and explicit scope, and returns deterministic content-addressed evidence without I/O, time, randomness, callbacks, or approximate numeric comparison.",
+      "owner": "closed RuleIR evaluator",
+      "assumptions": [
+        "Rule number values are JSON-safe integers and nested values are outside the admitted subset.",
+        "The artifact store returns the exact scoped artifact ID and version requested."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "cedar-spec and cedar-drt",
+          "claim": "a small deterministic policy semantics can be checked independently against production evaluation"
+        },
+        {
+          "source_id": "SRC-CEL-SPEC",
+          "ref": "typed semantics and cross-implementation test corpus",
+          "claim": "rule inputs and operators require explicit types and shared conformance cases across implementations"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "runtime",
+          "artifact": "crates/norn-engine/tests/rules_dmn.rs",
+          "acceptance": "closed-schema, scope, exact-number, version, evidence, and malformed-input cases pass"
+        },
+        {
+          "lane": "differential-test",
+          "artifact": "verification/archive/rules-dmn-v1/fixtures/conformance.json",
+          "acceptance": "Rust authority and TypeScript preview agree on every reviewed finite case"
+        }
+      ],
+      "counterexamples": [
+        "an undeclared input or condition field influences output",
+        "fractional or unsafe JSON numbers are rounded or epsilon-compared",
+        "the same semantic facts produce different evidence because object key insertion order differs",
+        "a draft, wrong-version, or cross-scope rule executes"
+      ],
+      "implementation_bindings": [
+        "compile_active_rule",
+        "ClosedRule::evaluate",
+        "POST /v1/rules/evaluate"
+      ],
+      "status": "blocked"
+    },
+    {
+      "id": "INV-RULE-HIT-POLICY-SAFETY",
+      "domain": "rules-policy",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "First-hit tables select the earliest matching row in declaration order, while unique-hit tables return a result exactly when one row matches and fail closed on overlap.",
+      "owner": "closed RuleIR evaluator",
+      "assumptions": [
+        "Row condition evaluation is total and deterministic over the admitted scalar subset."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "cedar-lean theorem organization",
+          "claim": "small policy-decision semantics and production behavior must remain separately stated and checked"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "lean",
+          "artifact": "verification/archive/rules-dmn-v1/proofs/RulesDmn.lean",
+          "acceptance": "first-hit and unique classification theorems compile with no admitted holes"
+        },
+        {
+          "lane": "runtime",
+          "artifact": "crates/norn-engine/tests/rules_dmn.rs",
+          "acceptance": "ordered overlap and unique ambiguity fixtures have the declared result"
+        }
+      ],
+      "counterexamples": [
+        "FIRST selects a later overlapping row",
+        "UNIQUE silently selects one of several matching rows",
+        "UNIQUE treats ambiguity as a successful no-match"
+      ],
+      "implementation_bindings": [
+        "evaluate_table",
+        "HitPolicy"
+      ],
+      "status": "blocked"
+    },
+    {
+      "id": "INV-RULE-HIT-POLICY-ADMISSION-PREDICATE",
+      "domain": "rules-policy",
+      "priority": "P0",
+      "kind": "refinement",
+      "statement": "The production Rust hit-policy admission predicate accepts exactly a nonempty FIRST result or a uniquely matching UNIQUE result; the hax-extracted executable predicate and its F* theorems have the same Boolean boundary.",
+      "owner": "closed RuleIR evaluator admission boundary",
+      "assumptions": [
+        "The caller has already evaluated every rule row into an exact Boolean match result.",
+        "This predicate does not claim correspondence for JSON decoding, condition evaluation, row ordering, output construction, or UPE routing."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-HAX",
+          "ref": "F* extraction backend and admitted functional Rust subset",
+          "claim": "a small production Rust predicate can be translated and checked instead of merely compared with a handwritten reference"
+        },
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "production/reference correspondence discipline",
+          "claim": "implementation correspondence must be attached to the exact checked boundary rather than generalized to the surrounding evaluator"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "property-test",
+          "artifact": "crates/norn-ir/tests/rule_hit_policy.rs",
+          "acceptance": "all eight Boolean inputs agree with the declared FIRST/UNIQUE admission truth table"
+        },
+        {
+          "lane": "hax-probe",
+          "artifact": "scripts/verify-rule-hit-policy-extraction.sh and proofs/fstar/RuleHitPolicyProof.fst",
+          "acceptance": "the exact production Rust predicate extracts through pinned hax and F* proves nonempty admission, UNIQUE overlap rejection, FIRST nonempty acceptance, and UNIQUE single-match acceptance without admitted holes"
+        }
+      ],
+      "counterexamples": [
+        "FIRST rejects a nonempty match set",
+        "UNIQUE accepts overlapping matches",
+        "either hit policy admits an empty match set",
+        "the proof is attached to a handwritten predicate that production Rust does not call"
+      ],
+      "implementation_bindings": [
+        "norn_ir::rule_hit_policy_admits_match",
+        "ClosedRule::evaluate hit-policy admission",
+        "target/verification-results/rule-hit-policy-hax/Norn_ir.fst"
+      ],
+      "status": "blocked"
+    },
+    {
+      "id": "INV-VER-DIFFERENTIAL-REFINEMENT",
+      "domain": "verification-meta",
+      "priority": "P0",
+      "kind": "refinement",
+      "statement": "For every proof-bearing executable component, generated valid and invalid inputs run against an executable reference semantics and the production implementation; any decision, result, normalized state, or diagnostic disagreement blocks promotion.",
+      "owner": "verification harness",
+      "assumptions": [
+        "The generator covers syntax-valid, semantically valid, boundary, and malformed classes and persists minimized counterexamples."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "cedar-drt and cedar-policy-generators",
+          "claim": "formal Lean semantics and production Rust are continuously differential-fuzzed"
+        },
+        {
+          "source_id": "SRC-DUROXIDE",
+          "ref": "provider-validation and replay corpora",
+          "claim": "one conformance corpus can be run across storage implementations"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "differential-test",
+          "artifact": "reference/production differential harness",
+          "acceptance": "zero unexplained differences and every minimized regression is retained"
+        }
+      ],
+      "counterexamples": [
+        "proof models rational arithmetic while production rounds decimal",
+        "Rust rejects overflow but reference wraps",
+        "diagnostic class changes and retry policy diverges"
+      ],
+      "implementation_bindings": [
+        "VerificationPack",
+        "Generator",
+        "ReferenceEvaluator",
+        "ProductionAdapter"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-VER-NO-PROOF-HOLES",
+      "domain": "verification-meta",
+      "priority": "P0",
+      "kind": "governance",
+      "statement": "A proof artifact promoted as trusted declares every axiom, admitted theorem, external model, unsafe boundary, and tool version; production gates reject sorry/admit placeholders or unreviewed assumptions in the trusted proof path.",
+      "owner": "proof build and artifact sealer",
+      "assumptions": [
+        "The trusted proof path is much smaller than the application implementation."
+      ],
+      "sources": [
+        {
+          "source_id": "SRC-CEDAR-SPEC",
+          "ref": "cedar-lean theorem tree and DRT",
+          "claim": "proof structure, assumptions, and executable parity are separate auditable artifacts"
+        },
+        {
+          "source_id": "SRC-AENEAS",
+          "ref": "external-definition model templates",
+          "claim": "Rust extraction requires explicit hand-written models for unsupported dependencies"
+        },
+        {
+          "source_id": "SRC-HAX",
+          "ref": "supported backend and Rust-subset documentation",
+          "claim": "translation coverage and backend maturity must be measured"
+        }
+      ],
+      "checkers": [
+        {
+          "lane": "lean",
+          "artifact": "proof source scan and Lean build",
+          "acceptance": "build succeeds with no sorry/admit/axiom outside a ratified allowlist"
+        },
+        {
+          "lane": "human-ratification",
+          "artifact": "trusted-assumption manifest",
+          "acceptance": "each remaining assumption has an owner, justification, blast radius, and falsification test"
+        }
+      ],
+      "counterexamples": [
+        "agent calls a scaffold a proof",
+        "generated Lean uses an axiom for database behavior",
+        "tool upgrade silently changes extraction semantics"
+      ],
+      "implementation_bindings": [
+        "ProofArtifactManifest",
+        "AssumptionRecord",
+        "seal gate"
+      ],
+      "status": "specified"
+    }
+  ]
+}

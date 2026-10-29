@@ -1,0 +1,32 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.procurement.policy",
+  "kind": "policy",
+  "namespace": "retail",
+  "name": "Procurement Access Policy",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/retail-procurement.policy.json"
+  },
+  "payload": {
+    "policyVersion": "0.1",
+    "policyId": "retail.procurement.policy",
+    "scopeRequired": ["orgId", "environmentId"],
+    "obligations": [
+      {
+        "obligationId": "purchase_request_review",
+        "appliesTo": "retail.sku.reorder",
+        "evidenceRequired": ["stock_position", "supplier_quote"],
+        "reviewRoles": ["procurement_manager"],
+        "description": "Purchase requests above the auto-approve threshold need a manager review."
+      }
+    ]
+  }
+}

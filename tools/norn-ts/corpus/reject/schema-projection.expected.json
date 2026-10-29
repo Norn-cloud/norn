@@ -1,0 +1,35 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-SCHEMA-PROJECTION",
+      "start": "4:25",
+      "end": "4:44",
+      "construct": "Schema.Finite.check"
+    },
+    {
+      "code": "NORN-FLOW-SCHEMA-PROJECTION",
+      "start": "5:24",
+      "end": "5:35",
+      "construct": "Schema.Date"
+    },
+    {
+      "code": "NORN-FLOW-SCHEMA-PROJECTION",
+      "start": "6:23",
+      "end": "6:36",
+      "construct": "Schema.Number"
+    },
+    {
+      "code": "NORN-FLOW-SCHEMA-PROJECTION",
+      "start": "7:23",
+      "end": "7:46",
+      "construct": "Schema.NumberFromString"
+    },
+    {
+      "code": "NORN-FLOW-SCHEMA-PROJECTION",
+      "start": "12:26",
+      "end": "12:40",
+      "construct": "Schema.suspend"
+    }
+  ]
+}

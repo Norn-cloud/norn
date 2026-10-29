@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-CONCURRENCY",
+      "start": "14:7",
+      "end": "14:35",
+      "construct": "{ concurrency: \"unbounded\" }"
+    },
+    {
+      "code": "NORN-FLOW-UNBOUNDED",
+      "start": "16:36",
+      "end": "16:105",
+      "construct": "ids.map((id) => Norn.perform(\"each\", loadInvoice, { invoiceId: id }))"
+    }
+  ]
+}

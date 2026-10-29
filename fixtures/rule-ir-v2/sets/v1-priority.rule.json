@@ -1,0 +1,122 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.reorder_priority.rule",
+  "kind": "rule",
+  "namespace": "retail",
+  "name": "Reorder priority (RuleIR v1)",
+  "version": "0.1.0",
+  "lifecycle": "active",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/rule-ir-v2/sets/v1-priority.rule.json"
+  },
+  "payload": {
+    "ruleVersion": "0.1",
+    "ruleId": "retail.rule.reorder_priority",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "amount": {
+          "type": "integer"
+        },
+        "vip": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "amount",
+        "vip"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "type": "string"
+        },
+        "reviewRequired": {
+          "type": "boolean"
+        },
+        "matched": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "route",
+        "reviewRequired",
+        "matched"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "decision": {
+      "kind": "decision_table",
+      "hitPolicy": "first",
+      "inputs": [
+        {
+          "field": "amount",
+          "type": "number"
+        },
+        {
+          "field": "vip",
+          "type": "boolean"
+        }
+      ],
+      "rows": [
+        {
+          "rowId": "vip_large",
+          "when": [
+            {
+              "field": "vip",
+              "op": "eq",
+              "value": true
+            },
+            {
+              "field": "amount",
+              "op": "gte",
+              "value": 1000
+            }
+          ],
+          "output": {
+            "route": "vip_review",
+            "reviewRequired": true,
+            "matched": true
+          }
+        },
+        {
+          "rowId": "large",
+          "when": [
+            {
+              "field": "amount",
+              "op": "gte",
+              "value": 1000
+            }
+          ],
+          "output": {
+            "route": "standard_review",
+            "reviewRequired": true,
+            "matched": true
+          }
+        },
+        {
+          "rowId": "default",
+          "when": [],
+          "output": {
+            "route": "automatic",
+            "reviewRequired": false,
+            "matched": false
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,266 @@
+{
+  "format": "norn.source-schema/1",
+  "source": {
+    "system": "XLSX",
+    "instance": "uploads/price-list-2026-09.xlsx"
+  },
+  "observedAt": "2026-09-29T14:30:00+03:00",
+  "adapter": {
+    "name": "norn.pool.file-profiler",
+    "version": "0.1.0"
+  },
+  "rawMetadata": {
+    "uri": "evidence://files/price-list-2026-09.xlsx",
+    "sha256": "e86f0a67c4b7a0ad3257b35c41298e36083ee3dadb620578a584fbcca4acfe91"
+  },
+  "datasets": [
+    {
+      "id": "Products",
+      "nativeName": "Products",
+      "namespace": "price-list-2026-09.xlsx",
+      "kind": "sheet"
+    },
+    {
+      "id": "Prices",
+      "nativeName": "Prices",
+      "namespace": "price-list-2026-09.xlsx",
+      "kind": "sheet"
+    },
+    {
+      "id": "suppliers.csv",
+      "nativeName": "suppliers.csv",
+      "kind": "file"
+    }
+  ],
+  "fields": [
+    {
+      "dataset": "Products",
+      "name": "SKU",
+      "ordinal": 0,
+      "nativeType": "string",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "inferred"
+      }
+    },
+    {
+      "dataset": "Products",
+      "name": "Name",
+      "ordinal": 1,
+      "nativeType": "string",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "inferred"
+      }
+    },
+    {
+      "dataset": "Products",
+      "name": "Category",
+      "ordinal": 2,
+      "nativeType": "string",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "inferred"
+      }
+    },
+    {
+      "dataset": "Prices",
+      "name": "SKU",
+      "ordinal": 0,
+      "nativeType": "string",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "inferred"
+      }
+    },
+    {
+      "dataset": "Prices",
+      "name": "Price",
+      "ordinal": 1,
+      "nativeType": "number",
+      "typeCandidate": {
+        "type": "decimal",
+        "origin": "inferred"
+      }
+    },
+    {
+      "dataset": "Prices",
+      "name": "Valid From",
+      "ordinal": 2,
+      "nativeType": "date",
+      "typeCandidate": {
+        "type": "date",
+        "origin": "inferred"
+      }
+    },
+    {
+      "dataset": "suppliers.csv",
+      "name": "supplier_id",
+      "ordinal": 0,
+      "nativeType": "integer",
+      "typeCandidate": {
+        "type": "integer",
+        "origin": "inferred"
+      }
+    },
+    {
+      "dataset": "suppliers.csv",
+      "name": "contact_email",
+      "ordinal": 1,
+      "nativeType": "string",
+      "typeCandidate": {
+        "type": "string",
+        "origin": "inferred"
+      }
+    }
+  ],
+  "constraints": [
+    {
+      "id": "candidate-key:Products.SKU",
+      "kind": "unique",
+      "dataset": "Products",
+      "fields": [
+        "SKU"
+      ],
+      "origin": "inferred",
+      "evidence": [
+        {
+          "uri": "evidence://files/price-list/profile/Products.SKU.json",
+          "sha256": "d5a85501e8c8cc7be2663c70125c6ac122eb658eb53b4af226eceb3e499425bd"
+        }
+      ]
+    },
+    {
+      "id": "overlap:Prices.SKU->Products.SKU",
+      "kind": "logical_reference",
+      "dataset": "Prices",
+      "fields": [
+        "SKU"
+      ],
+      "target": {
+        "dataset": "Products",
+        "fields": [
+          "SKU"
+        ]
+      },
+      "origin": "inferred",
+      "evidence": [
+        {
+          "uri": "evidence://files/price-list/profile/overlap.Prices.SKU.json",
+          "sha256": "c9291a799bf25db20800bbcb913c654a8ea2903910bacaf49b7759d00c68fb6c"
+        }
+      ]
+    },
+    {
+      "id": "frictionless:suppliers.primaryKey",
+      "kind": "primary_key",
+      "dataset": "suppliers.csv",
+      "fields": [
+        "supplier_id"
+      ],
+      "origin": "declared"
+    }
+  ],
+  "profiles": [
+    {
+      "dataset": "Products",
+      "asOf": "2026-09-29T14:30:05+03:00",
+      "method": "full_scan",
+      "rowsSeen": 312
+    },
+    {
+      "dataset": "Products",
+      "field": "SKU",
+      "asOf": "2026-09-29T14:30:05+03:00",
+      "method": "full_scan",
+      "rowsSeen": 312,
+      "nullCount": 0,
+      "distinctCount": 312,
+      "distinctPrecision": "exact"
+    },
+    {
+      "dataset": "Products",
+      "field": "Category",
+      "asOf": "2026-09-29T14:30:05+03:00",
+      "method": "full_scan",
+      "rowsSeen": 312,
+      "nullCount": 3,
+      "distinctCount": 5,
+      "distinctPrecision": "exact",
+      "samples": {
+        "policy": {
+          "maxValues": 5,
+          "redaction": "none"
+        },
+        "values": [
+          "Beverages",
+          "Dairy",
+          "Frozen",
+          "Produce",
+          "Snacks"
+        ]
+      }
+    },
+    {
+      "dataset": "suppliers.csv",
+      "field": "contact_email",
+      "asOf": "2026-09-29T14:30:07+03:00",
+      "method": "sample",
+      "rowsSeen": 40,
+      "nullCount": 2,
+      "samples": {
+        "policy": {
+          "maxValues": 3,
+          "redaction": "hashed"
+        },
+        "values": [
+          "h:4f1c09",
+          "h:9a77e2",
+          "h:c03b51"
+        ]
+      }
+    },
+    {
+      "dataset": "Prices",
+      "field": "Price",
+      "asOf": "2026-09-29T14:30:06+03:00",
+      "method": "sample",
+      "rowsSeen": 100,
+      "nullCount": 0,
+      "samples": {
+        "policy": {
+          "maxValues": 10,
+          "redaction": "withheld"
+        },
+        "values": [
+          "19.99"
+        ]
+      }
+    }
+  ],
+  "codeSets": [
+    {
+      "id": "observed:Products.Category",
+      "dataset": "Products",
+      "field": "Category",
+      "origin": "observed_candidate",
+      "values": [
+        {
+          "value": "Beverages"
+        },
+        {
+          "value": "Dairy"
+        },
+        {
+          "value": "Frozen"
+        },
+        {
+          "value": "Produce"
+        },
+        {
+          "value": "Snacks"
+        }
+      ]
+    }
+  ]
+}

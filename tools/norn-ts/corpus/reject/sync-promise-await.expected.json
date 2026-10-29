@@ -1,0 +1,35 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-CALL",
+      "start": "8:22",
+      "end": "8:33",
+      "construct": "Effect.sync"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-CALL",
+      "start": "9:22",
+      "end": "9:36",
+      "construct": "Effect.promise"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-CALL",
+      "start": "10:22",
+      "end": "10:39",
+      "construct": "Effect.tryPromise"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-CALL",
+      "start": "11:22",
+      "end": "11:36",
+      "construct": "Effect.suspend"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-CALL",
+      "start": "12:52",
+      "end": "12:89",
+      "construct": "async (v) => await Promise.resolve(v)"
+    }
+  ]
+}

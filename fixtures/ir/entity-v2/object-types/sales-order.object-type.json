@@ -1,0 +1,32 @@
+{
+  "name": "commerce.SalesOrder",
+  "description": "An order placed by a customer. 1:N link to crm.Customer with the inverse role `orders`; implements commerce.Order by narrowing the required link's target from party.Party to crm.Customer; backed by warehouse tables in the technical view.",
+  "implements": ["commerce.Order"],
+  "properties": [
+    { "id": "order_number", "type": { "kind": "text" }, "constraints": { "pattern": "^SO-[0-9]{8}$" } },
+    { "id": "total", "type": { "kind": "decimal", "scale": 2 } },
+    { "id": "currency", "type": { "kind": "ref", "name": "commerce.price_currency" } }
+  ],
+  "links": [
+    {
+      "id": "customer",
+      "target": "crm.Customer",
+      "cardinality": { "to": "one", "from": "many", "required": true },
+      "inverse": "orders"
+    },
+    {
+      "id": "backed_by",
+      "description": "Technical view (ruling 2026-09-25 section 18): the tables this business type is materialized from.",
+      "target": "meta.Table",
+      "cardinality": { "to": "many", "from": "many" }
+    }
+  ],
+  "identity": [{ "name": "primary", "properties": ["order_number"] }],
+  "invariants": [
+    {
+      "id": "non_negative_total",
+      "expression": "self.total >= 0",
+      "message": "An order total cannot be negative."
+    }
+  ]
+}

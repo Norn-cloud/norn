@@ -1,0 +1,28 @@
+# Clippy configuration for the norn Rust workspace.
+# Lint levels live in the root Cargo.toml [workspace.lints]; this file only
+# tunes lint behavior. See docs/platform/rust-safety-baseline.md.
+
+# Test code may unwrap/expect/panic/index freely — the deny tier targets
+# production paths only.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+
+# Activated by crate-root denies in norn-kernel, norn-canonical, norn-checker, and norn-graph.
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "core iteration must be deterministic; use BTreeMap or IndexMap" },
+  { path = "std::collections::HashSet", reason = "core iteration must be deterministic; use BTreeSet or IndexSet" },
+]
+
+disallowed-methods = [
+  { path = "std::process::exit", reason = "abrupt exit skips destructors and the execution ledger; return an error up to main instead" },
+  { path = "std::mem::forget", reason = "leaking values hides resource bugs; use ManuallyDrop with justification if truly needed" },
+  { path = "std::env::set_var", reason = "mutating process env is racy and non-deterministic; thread config through explicit context" },
+  # Capability discipline preview (see docs/platform/rust-safety-baseline.md):
+  # ambient authority must flow through capability impls, not be grabbed inline.
+  { path = "std::process::Command::new", reason = "spawning processes is a capability; use a capability wrapper once norn-caps lands" },
+  { path = "std::time::SystemTime::now", reason = "ambient wall-clock reads break replay/determinism; inject a Clock capability" },
+]

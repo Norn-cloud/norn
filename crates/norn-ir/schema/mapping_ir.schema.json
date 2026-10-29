@@ -1,0 +1,858 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MappingIr",
+  "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
+  "type": "object",
+  "properties": {
+    "entitlements": {
+      "description": "Declarative permission-row maps. These emit ordinary upsert actions\nfor `core.Entitlement`; joins are applied only from a caller-declared\ncomplete snapshot of every `requiredSnapshot` dataset.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EntitlementMap"
+      }
+    },
+    "extensions": {
+      "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "format": {
+      "description": "The format tag.",
+      "$ref": "#/$defs/MappingFormat"
+    },
+    "identityBindings": {
+      "description": "Explicit exact bindings from external account ids to canonical\nprincipals. This is a reviewed mapping configuration table, separate\nfrom source metadata; an empty table refuses principal resolution.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/IdentityBinding"
+      }
+    },
+    "interfaces": {
+      "description": "Artifact ids of the `entity` artifacts defining the interfaces the\nmapping covers: every map targets one of them.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "maps": {
+      "description": "The object maps, in evaluation order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ObjectMap"
+      }
+    },
+    "source": {
+      "description": "The one `source_schema` artifact the mapping reads, pinned by\ncontent hash.",
+      "$ref": "#/$defs/SourceBinding"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "source",
+    "interfaces",
+    "maps"
+  ],
+  "$defs": {
+    "EntitlementActionMap": {
+      "description": "A recognized source action and the checked predicate that admits it.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Exact Norn action id.",
+          "type": "string"
+        },
+        "when": {
+          "description": "Boolean predicate over the joined source row.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "when"
+      ]
+    },
+    "EntitlementConditionMap": {
+      "description": "A typed canonical entitlement condition whose dynamic key is sourced from\none joined row.",
+      "oneOf": [
+        {
+          "description": "No additional relationship condition.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "none"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The target's named link must point to the acting principal.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ownerOnly"
+            },
+            "link": {
+              "description": "Target-side owner link, checked against the target type.",
+              "$ref": "#/$defs/LinkId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "link"
+          ]
+        },
+        {
+          "description": "The target's named link must point to this exact canonical object.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "linkedRecord"
+            },
+            "link": {
+              "description": "Target-side link, checked against the target type.",
+              "$ref": "#/$defs/LinkId"
+            },
+            "targetKey": {
+              "description": "Source field path holding the linked Norn object's key.",
+              "$ref": "#/$defs/EntitlementFieldPath"
+            },
+            "targetType": {
+              "description": "Exact type of the linked record.",
+              "$ref": "#/$defs/ObjectTypeName"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "link",
+            "targetType",
+            "targetKey"
+          ]
+        }
+      ]
+    },
+    "EntitlementCoverage": {
+      "description": "Generic mapping coverage category.",
+      "type": "object",
+      "properties": {
+        "reason": {
+          "description": "Human-readable reason, including unsupported source constructs.",
+          "type": "string"
+        },
+        "status": {
+          "description": "Whether this rule is exact, narrowed, or missing relative to its\ndeclared source feature family.",
+          "$ref": "#/$defs/EntitlementCoverageStatus"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reason"
+      ]
+    },
+    "EntitlementCoverageStatus": {
+      "description": "Coverage category for imported permission features.",
+      "oneOf": [
+        {
+          "description": "Every declared source case represented by this rule has a proven\nequivalent Norn entitlement.",
+          "type": "string",
+          "const": "exact"
+        },
+        {
+          "description": "This rule represents only a conservative subset of the source cases.",
+          "type": "string",
+          "const": "narrowed"
+        },
+        {
+          "description": "No Norn entitlement is emitted for this source feature.",
+          "type": "string",
+          "const": "missing"
+        }
+      ]
+    },
+    "EntitlementFieldPath": {
+      "description": "A field path in a permission row join. In ZEN expressions, its equivalent\ninput member is `input.<alias>_<field>`; the compiler checks that member's\nsource type before accepting the expression.",
+      "type": "object",
+      "properties": {
+        "alias": {
+          "description": "The primary alias or an earlier inner-join alias.",
+          "type": "string"
+        },
+        "field": {
+          "description": "Source field name.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "alias",
+        "field"
+      ]
+    },
+    "EntitlementGranteeKind": {
+      "description": "Grantee variant emitted by a declarative permission map.",
+      "oneOf": [
+        {
+          "description": "A role entity.",
+          "type": "string",
+          "const": "role"
+        },
+        {
+          "description": "A group entity.",
+          "type": "string",
+          "const": "group"
+        },
+        {
+          "description": "A canonical principal entity, resolved through `identityBindings`.",
+          "type": "string",
+          "const": "principal"
+        }
+      ]
+    },
+    "EntitlementGranteeMap": {
+      "description": "The typed grantee rule for a mapped entitlement.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Source field path containing the grantee key.",
+          "$ref": "#/$defs/EntitlementFieldPath"
+        },
+        "kind": {
+          "description": "The canonical grantee variant.",
+          "$ref": "#/$defs/EntitlementGranteeKind"
+        },
+        "objectType": {
+          "description": "Canonical Norn object type (`identity.Role`, `identity.Group`, or\n`party.Person`).",
+          "$ref": "#/$defs/ObjectTypeName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "objectType",
+        "key"
+      ]
+    },
+    "EntitlementJoin": {
+      "description": "One exact equality join to another source dataset.",
+      "type": "object",
+      "properties": {
+        "alias": {
+          "description": "Flattened expression alias for an inner join, or a stable id for an\nanti-join.",
+          "type": "string"
+        },
+        "cardinality": {
+          "description": "Optional cardinality guard. `atMostOne` suppresses the candidate when\nmore than one record matches; a matching inner join is therefore\nexactly one. It is useful when the destination condition can encode\nonly one source restriction.",
+          "$ref": "#/$defs/EntitlementJoinCardinality",
+          "default": "many"
+        },
+        "dataset": {
+          "description": "Dataset to join.",
+          "type": "string"
+        },
+        "mode": {
+          "description": "`inner` produces one candidate per matching row; `anti` suppresses\ncandidates when a matching row exists.",
+          "$ref": "#/$defs/EntitlementJoinMode"
+        },
+        "on": {
+          "description": "Equality predicates between previously bound aliases and fields in\nthis dataset. All predicates must match.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EntitlementJoinKey"
+          }
+        },
+        "recordId": {
+          "description": "Record id and version fields, required for an inner join so generated\nentitlement identity and provenance cover every contributing row.",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "alias",
+        "dataset",
+        "mode",
+        "on"
+      ]
+    },
+    "EntitlementJoinCardinality": {
+      "description": "Cardinality guard on a source join.",
+      "oneOf": [
+        {
+          "description": "Keep all matching rows.",
+          "type": "string",
+          "const": "many"
+        },
+        {
+          "description": "Keep a candidate only when at most one joined row matches.",
+          "type": "string",
+          "const": "atMostOne"
+        }
+      ]
+    },
+    "EntitlementJoinKey": {
+      "description": "One equality between a bound flattened alias field and a field in the\ndataset being joined.",
+      "type": "object",
+      "properties": {
+        "left": {
+          "description": "The already-bound alias and field (`source.role`, for example).",
+          "$ref": "#/$defs/EntitlementFieldPath"
+        },
+        "right": {
+          "description": "Field in the joined dataset.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "left",
+        "right"
+      ]
+    },
+    "EntitlementJoinMode": {
+      "description": "Join direction; deliberately limited to matching rows or exclusion.",
+      "oneOf": [
+        {
+          "description": "Emit candidates for every matching row.",
+          "type": "string",
+          "const": "inner"
+        },
+        {
+          "description": "Emit no candidate when any matching row exists.",
+          "type": "string",
+          "const": "anti"
+        }
+      ]
+    },
+    "EntitlementMap": {
+      "description": "A checked, declarative projection of source permission rows into the\ncanonical entitlement record. It contains no source-specific Rust logic:\nthe source's joins, supported action meanings, identity bindings, and\nunsupported-row coverage are all data.",
+      "type": "object",
+      "properties": {
+        "actions": {
+          "description": "A closed list of recognized action meanings and their source guards.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EntitlementActionMap"
+          }
+        },
+        "condition": {
+          "description": "The one relationship condition expressible by this source row.",
+          "$ref": "#/$defs/EntitlementConditionMap"
+        },
+        "coverage": {
+          "description": "Static coverage classification for this rule family.",
+          "$ref": "#/$defs/EntitlementCoverage"
+        },
+        "eligibility": {
+          "description": "All predicates that must hold for this source row to be representable.\nFalse predicates produce no entitlement, never a widened one.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ZenExpression"
+          }
+        },
+        "grantee": {
+          "description": "Principal, role, or group expression. Principal keys are resolved\nonly through the explicit identity binding table below.",
+          "$ref": "#/$defs/EntitlementGranteeMap"
+        },
+        "id": {
+          "description": "Unique id of this map within the mapping.",
+          "type": "string"
+        },
+        "joins": {
+          "description": "Other datasets joined by exact scalar equality. `anti` joins suppress\na candidate when any matching record exists.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EntitlementJoin"
+          }
+        },
+        "requiredSnapshot": {
+          "description": "Dataset ids which must be explicitly marked complete before this map\ncan emit any entitlement. This prevents a paginated/delta prefix from\nbeing interpreted as a complete authorization snapshot.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scopeAttributes": {
+          "description": "Exact scalar resource attributes. Each value is a checked expression\nover the joined row; an empty map means no additional scope constraint.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ZenExpression"
+          }
+        },
+        "source": {
+          "description": "Primary permission dataset.",
+          "$ref": "#/$defs/LogicalSource"
+        },
+        "sourceAlias": {
+          "description": "Alias used for the primary source dataset in expressions and field paths.",
+          "type": "string"
+        },
+        "sourceRecord": {
+          "description": "Source record id and version fields from the primary row. Joined row\nids and versions are included in the generated stable identity and\nprovenance when the joins are inner joins.",
+          "type": "string"
+        },
+        "sourceVersion": {
+          "description": "Source version field on the primary row.",
+          "type": "string"
+        },
+        "status": {
+          "description": "Imported entitlements are usually shadow until promoted after review.",
+          "$ref": "#/$defs/EntitlementStatus"
+        },
+        "targetType": {
+          "description": "Target business Norn type, checked against the mapped entity catalog.",
+          "$ref": "#/$defs/ObjectTypeName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sourceAlias",
+        "source",
+        "requiredSnapshot",
+        "targetType",
+        "grantee",
+        "condition",
+        "sourceRecord",
+        "sourceVersion",
+        "coverage",
+        "status"
+      ]
+    },
+    "EntitlementStatus": {
+      "description": "Whether an entitlement participates in production authorization.",
+      "oneOf": [
+        {
+          "description": "Explain-only import candidate.",
+          "type": "string",
+          "const": "shadow"
+        },
+        {
+          "description": "May grant access when all entitlement predicates match.",
+          "type": "string",
+          "const": "enforced"
+        }
+      ]
+    },
+    "GapReason": {
+      "description": "Why a target member is not mapped.",
+      "oneOf": [
+        {
+          "description": "The source has no data for it.",
+          "type": "string",
+          "const": "not_in_source"
+        },
+        {
+          "description": "The member takes its declared default.",
+          "type": "string",
+          "const": "defaulted"
+        },
+        {
+          "description": "Mapping it is deferred to a later version.",
+          "type": "string",
+          "const": "deferred"
+        },
+        {
+          "description": "Another map or a computation supplies it.",
+          "type": "string",
+          "const": "derived_elsewhere"
+        }
+      ]
+    },
+    "IdentityBinding": {
+      "description": "One reviewer-approved mapping from a source principal key to a canonical\nNorn object reference. No email or username inference is permitted.",
+      "type": "object",
+      "properties": {
+        "evidence": {
+          "description": "Review evidence for this binding.",
+          "type": "string"
+        },
+        "key": {
+          "description": "Canonical object key from the trusted identity snapshot.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "Canonical Norn reference type.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "sourceKey": {
+          "description": "Exact source key, compared without normalization or inference.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sourceKey",
+        "objectType",
+        "key",
+        "evidence"
+      ]
+    },
+    "IgnoredField": {
+      "description": "A source field an [`ObjectMap`] deliberately does not read.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "description": "The source field name.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why it is not read.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "reason"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "LifecycleMap": {
+      "description": "One lifecycle observation rule of a lifecycle property.\n\nExactly one of `state` and `transition` is required. `state` names the\nobserved target state directly. `transition` is the legacy form: the\ndeclared transition id is resolved to its destination state before the\nsnapshot is handed to the kernel.",
+      "type": "object",
+      "properties": {
+        "onDelete": {
+          "description": "The terminal state a source delete of the record means (`cancelled`),\nreached by observed transitions when the lifecycle declares a unique\nshortest path to it; otherwise the deleted object is tombstoned\n(#3013). Omitted when the mapping declares none.",
+          "type": "string"
+        },
+        "property": {
+          "description": "The lifecycle property.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "state": {
+          "description": "The observed target state: a nullable expression over `input` whose\nnon-null values are states of the property's lifecycle.",
+          "type": "string"
+        },
+        "transition": {
+          "description": "Legacy form naming the observed declared transition. Its destination\nstate becomes the lifecycle snapshot. `null` means no observation.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property"
+      ]
+    },
+    "LinkId": {
+      "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "LinkMap": {
+      "description": "One link rule: the produced object links to the object another map\nproduces with this key (an RML referencing object map with its join).",
+      "type": "object",
+      "properties": {
+        "identityBinding": {
+          "description": "Resolve the `key` expression through the MappingIR `identityBindings`\ntable instead of treating it as a Norn object key.",
+          "type": "boolean"
+        },
+        "key": {
+          "description": "The linked object's key: a nullable text expression over `input`\n(`null`: no link). Reviewed reference evidence may bind several\ndisjoint nullable chunks for one link. They resolve once per record;\nmultiple non-null chunks refuse rather than emitting duplicate effects.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "link": {
+          "description": "The target link.",
+          "$ref": "#/$defs/LinkId"
+        },
+        "targetMap": {
+          "description": "The id of the map producing the linked objects; its object type must\nbe admitted by the link's target.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "link",
+        "key"
+      ]
+    },
+    "LogicalSource": {
+      "description": "The records an [`ObjectMap`] reads.",
+      "type": "object",
+      "properties": {
+        "dataset": {
+          "description": "The `SourceSchemaIR` dataset id whose records are read.",
+          "type": "string"
+        },
+        "nestedIn": {
+          "description": "When the records are a child table nested in a parent document (the\nRML iterator): the parent dataset and its field holding the rows.\nOmitted: the dataset's records are read directly.",
+          "$ref": "#/$defs/NestedSource"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dataset"
+      ]
+    },
+    "MapTarget": {
+      "description": "The object type an [`ObjectMap`] produces, and the scoped interface it\nimplements.",
+      "type": "object",
+      "properties": {
+        "entity": {
+          "description": "Artifact id of the `entity` artifact defining the object type of the\nproduced objects.",
+          "type": "string"
+        },
+        "interface": {
+          "description": "Artifact id of the `entity` artifact defining the interface (of the\nmapping's scope) the object type implements.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entity",
+        "interface"
+      ]
+    },
+    "MappingFormat": {
+      "description": "The format tag of a [`MappingIr`] document.",
+      "oneOf": [
+        {
+          "description": "`norn.mapping/1`.",
+          "type": "string",
+          "const": "norn.mapping/1"
+        }
+      ]
+    },
+    "MappingGap": {
+      "description": "A target member deliberately left unmapped.",
+      "type": "object",
+      "properties": {
+        "member": {
+          "description": "The target property or link id.",
+          "type": "string"
+        },
+        "note": {
+          "description": "A reviewer's note.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why.",
+          "$ref": "#/$defs/GapReason"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "member",
+        "reason"
+      ]
+    },
+    "NestedPropertySource": {
+      "description": "A source-schema-declared child collection whose unique matching row\nsupplies one parent property value.",
+      "type": "object",
+      "properties": {
+        "dataset": {
+          "description": "The child dataset id.",
+          "type": "string"
+        },
+        "field": {
+          "description": "The parent dataset field holding rows of `dataset`.",
+          "type": "string"
+        },
+        "where": {
+          "description": "A non-null boolean expression over a child row's `input`.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dataset",
+        "field",
+        "where"
+      ]
+    },
+    "NestedSource": {
+      "description": "A parent document field holding a child dataset's rows.",
+      "type": "object",
+      "properties": {
+        "dataset": {
+          "description": "The parent dataset id.",
+          "type": "string"
+        },
+        "field": {
+          "description": "The parent's field holding the rows (a Frappe `Table` field).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dataset",
+        "field"
+      ]
+    },
+    "ObjectMap": {
+      "description": "How one dataset's records become objects of one object type (an RML\ntriples map).",
+      "type": "object",
+      "properties": {
+        "gaps": {
+          "description": "Target members deliberately left unmapped, with a reason. Omitted\nwhen empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MappingGap"
+          }
+        },
+        "id": {
+          "description": "Unique id of the map within the mapping, in the member id grammar\n(`sales_order`); the prefix of its transform ids.",
+          "type": "string"
+        },
+        "ignoredFields": {
+          "description": "Source fields deliberately not read, with a reason. Omitted when\nempty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IgnoredField"
+          }
+        },
+        "lifecycles": {
+          "description": "Observed lifecycle snapshots. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LifecycleMap"
+          }
+        },
+        "links": {
+          "description": "Link maps. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkMap"
+          }
+        },
+        "properties": {
+          "description": "Property maps. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropertyMap"
+          }
+        },
+        "source": {
+          "description": "Where the records come from.",
+          "$ref": "#/$defs/LogicalSource"
+        },
+        "sourceRecord": {
+          "description": "The source record's identity in the source system (`input.name`): a\ntext expression over `input`, recorded as provenance. Several source\nidentities may resolve to one object; this is never a key property.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "subject": {
+          "description": "The object's key: a text expression over `input` (the subject rule).",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "target": {
+          "description": "What the records become.",
+          "$ref": "#/$defs/MapTarget"
+        },
+        "when": {
+          "description": "Whether this map applies to the source record. A false result skips\nthe record before evaluating its subject or source identity. Omitted\nwhen the map applies to every record.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "target",
+        "subject",
+        "sourceRecord"
+      ]
+    },
+    "ObjectTypeName": {
+      "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+    },
+    "PropertyId": {
+      "description": "Id of a property within its object type (`sku_code`), unique there.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "PropertyMap": {
+      "description": "One property rule.",
+      "type": "object",
+      "properties": {
+        "nested": {
+          "description": "The parent collection and child-row predicate for a nested pivot.\nExactly one matching row supplies `value`; more than one is refused.\nOmitted for a direct property expression.",
+          "$ref": "#/$defs/NestedPropertySource"
+        },
+        "property": {
+          "description": "The target property (stored, never computed or a lifecycle property).",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "value": {
+          "description": "The value: an expression over the parent `input`, or over each\nmatching child row's `input` when `nested` is present.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "value"
+      ]
+    },
+    "SourceBinding": {
+      "description": "The `source_schema` artifact a mapping binds to.",
+      "type": "object",
+      "properties": {
+        "schemaId": {
+          "description": "The source schema's `artifactId`.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lower-case hex SHA-256 of the source schema artifact (the Norn1\ncanonical envelope hash `norn-checker` records in check receipts).",
+          "type": "string"
+        },
+        "version": {
+          "description": "The source schema's artifact `version`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schemaId",
+        "version",
+        "sha256"
+      ]
+    },
+    "ZenExpression": {
+      "description": "Source text of one ZEN Expression (the IR's single expression language,\nruling 2026-09-25 §3): a decision-table cell, switch condition, expression\nassignment, or action precondition.\n\nStored verbatim; parsing and type checking belong to `norn-expr` and\n`norn-checker`.",
+      "type": "string"
+    }
+  }
+}

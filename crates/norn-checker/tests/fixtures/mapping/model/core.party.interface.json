@@ -1,0 +1,33 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "core.Party.interface",
+  "kind": "entity",
+  "namespace": "core",
+  "name": "Party",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "crates/norn-checker/tests/fixtures/mapping/model/core.party.interface.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "core.Party",
+      "description": "A person or organization (test slice of Norn Core).",
+      "properties": [
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  }
+}

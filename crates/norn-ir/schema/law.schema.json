@@ -1,0 +1,478 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LawPayload",
+  "description": "The payload of a `law` artifact, strictly projected from LawIR.",
+  "type": "object",
+  "properties": {
+    "condition": {
+      "description": "Optional pointwise activation predicate (not an edge trigger).",
+      "$ref": "#/$defs/ZenExpression"
+    },
+    "id": {
+      "description": "Stable identity, preserved by all authoring faces.",
+      "type": "string"
+    },
+    "lawVersion": {
+      "description": "Wire format version.",
+      "$ref": "#/$defs/IrVersion01"
+    },
+    "modality": {
+      "description": "Admitted temporal wrapper.",
+      "$ref": "#/$defs/LawModality"
+    },
+    "owner": {
+      "description": "Principal or registry owner of changes to this law.",
+      "type": "string"
+    },
+    "provenance": {
+      "description": "Source and interpretation provenance.",
+      "$ref": "#/$defs/LawProvenance"
+    },
+    "rationale": {
+      "description": "Reviewed explanation.",
+      "type": "string"
+    },
+    "response": {
+      "description": "Predicate or exact ontology-bound behavior/invariant identity.",
+      "$ref": "#/$defs/LawResponse"
+    },
+    "scope": {
+      "description": "Applicability, independent of the artifact's authorization scope.",
+      "$ref": "#/$defs/LawScope"
+    },
+    "severity": {
+      "description": "Reporting severity, independent of proof status.",
+      "$ref": "#/$defs/LawSeverity"
+    },
+    "subject": {
+      "description": "Exact ontology object type whose record is bound as `self`.",
+      "type": "string"
+    },
+    "timing": {
+      "description": "Optional progress bound.",
+      "$ref": "#/$defs/LawTiming"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "lawVersion",
+    "id",
+    "owner",
+    "severity",
+    "rationale",
+    "provenance",
+    "scope",
+    "subject",
+    "modality",
+    "response"
+  ],
+  "$defs": {
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "LawModality": {
+      "description": "Scoped temporal vocabulary; nested temporal operators have no wire representation.",
+      "oneOf": [
+        {
+          "description": "Response holds at every applicable point.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "always"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Response holds at no applicable point.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "never"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Response must occur in the future; fairness belongs to a later verifier.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "eventually"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Strong until: response holds until the Boolean stop predicate occurs.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "until"
+            },
+            "predicate": {
+              "description": "Ordinary ZEN stop predicate.",
+              "$ref": "#/$defs/ZenExpression"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "predicate"
+          ]
+        }
+      ]
+    },
+    "LawProvenance": {
+      "description": "Reviewed law provenance; optional members are absent rather than synthesized nulls.",
+      "type": "object",
+      "properties": {
+        "actorId": {
+          "description": "Reviewing/authoring principal.",
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "Source timestamp, never read from a clock by this library.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Existing source taxonomy.",
+          "$ref": "#/$defs/ProvenanceSource"
+        },
+        "sourcePath": {
+          "description": "Original source path or reviewed source document.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source"
+      ]
+    },
+    "LawResponse": {
+      "description": "Response slots resolve to existing ontology definitions.",
+      "oneOf": [
+        {
+          "description": "Boolean state predicate.",
+          "type": "object",
+          "properties": {
+            "expression": {
+              "description": "Ordinary ZEN text.",
+              "$ref": "#/$defs/ZenExpression"
+            },
+            "kind": {
+              "type": "string",
+              "const": "predicate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "expression"
+          ]
+        },
+        {
+          "description": "Existing invariant, never a second expression copy.",
+          "type": "object",
+          "properties": {
+            "invariantId": {
+              "description": "Stable invariant member id.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "invariant"
+            },
+            "objectType": {
+              "description": "Effective owner object type.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType",
+            "invariantId"
+          ]
+        },
+        {
+          "description": "Exact ActionIR artifact identity.",
+          "type": "object",
+          "properties": {
+            "artifactId": {
+              "description": "Artifact id, resolved through a pinned dependency.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "action"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "artifactId"
+          ]
+        },
+        {
+          "description": "Existing lifecycle transition.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transition"
+            },
+            "objectType": {
+              "description": "Exact object type.",
+              "type": "string"
+            },
+            "property": {
+              "description": "Lifecycle property.",
+              "type": "string"
+            },
+            "transitionId": {
+              "description": "Transition member id.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType",
+            "property",
+            "transitionId"
+          ]
+        }
+      ]
+    },
+    "LawRoot": {
+      "description": "Named application boundary; authorization still comes from the envelope.",
+      "oneOf": [
+        {
+          "description": "Organization/company boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "company"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "description": "Application boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "app"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "description": "Cell ownership root.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "cell"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "description": "Exact entity type boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "entity"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
+      ]
+    },
+    "LawScope": {
+      "description": "Applicability of a law. All filters are conjunctive; type lists denote a union.",
+      "type": "object",
+      "properties": {
+        "commitments": {
+          "description": "Commitment registry object types, not a new process primitive.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lifecycleStates": {
+          "description": "Optional lifecycle-state filter.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LawStateScope"
+          }
+        },
+        "objectTypes": {
+          "description": "Nonempty exact type names, including the subject or its ancestors.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "root": {
+          "description": "Company/app/cell/entity scope identity; no implicit global default.",
+          "$ref": "#/$defs/LawRoot"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "objectTypes"
+      ]
+    },
+    "LawSeverity": {
+      "description": "User-facing reporting severity.",
+      "oneOf": [
+        {
+          "description": "Violations require attention.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "Advisory law.",
+          "type": "string",
+          "const": "warning"
+        }
+      ]
+    },
+    "LawStateScope": {
+      "description": "One lifecycle-state selector.",
+      "type": "object",
+      "properties": {
+        "objectType": {
+          "description": "Exact object type name.",
+          "type": "string"
+        },
+        "property": {
+          "description": "Lifecycle property identity.",
+          "type": "string"
+        },
+        "states": {
+          "description": "Nonempty admitted state names.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "property",
+        "states"
+      ]
+    },
+    "LawTiming": {
+      "description": "Progress timing. Exact milliseconds are decimal text, avoiding JS number rounding.",
+      "oneOf": [
+        {
+          "description": "Relative elapsed duration from activation.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "within"
+            },
+            "millis": {
+              "description": "Positive canonical unsigned milliseconds, bounded by u64.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "millis"
+          ]
+        },
+        {
+          "description": "Absolute deadline stored on the subject record.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "before_deadline"
+            },
+            "property": {
+              "description": "Exact timestamp property identity.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property"
+          ]
+        }
+      ]
+    },
+    "ProvenanceSource": {
+      "type": "string",
+      "enum": [
+        "authoring_sdk",
+        "agent",
+        "migration",
+        "import",
+        "system"
+      ]
+    },
+    "ZenExpression": {
+      "description": "Source text of one ZEN Expression (the IR's single expression language,\nruling 2026-09-25 §3): a decision-table cell, switch condition, expression\nassignment, or action precondition.\n\nStored verbatim; parsing and type checking belong to `norn-expr` and\n`norn-checker`.",
+      "type": "string"
+    }
+  }
+}

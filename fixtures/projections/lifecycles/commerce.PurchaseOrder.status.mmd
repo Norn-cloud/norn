@@ -1,0 +1,21 @@
+---
+title: commerce.PurchaseOrder status lifecycle
+---
+stateDiagram-v2
+    state "draft" as s0
+    state "submitted" as s1
+    state "approved" as s2
+    state "rejected" as s3
+    state "received" as s4
+    state "cancelled" as s5
+    [*] --> s0
+    s0 --> s1 : submit
+    s1 --> s2 : approve
+    s1 --> s3 : reject
+    s3 --> s0 : revise
+    s2 --> s4 : receive
+    s0 --> s5 : cancel
+    s1 --> s5 : cancel
+    s2 --> s5 : cancel
+    s4 --> [*]
+    s5 --> [*]

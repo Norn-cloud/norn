@@ -1,0 +1,16 @@
+{
+  "name": "meta.Table",
+  "description": "Technical view (ruling 2026-09-25 section 18): a table in a dataset. Lineage is an ordinary self-link: `derived_from`, with the inverse role `derivations`.",
+  "properties": [
+    { "id": "qualified_name", "type": { "kind": "text" } }
+  ],
+  "links": [
+    {
+      "id": "derived_from",
+      "target": "meta.Table",
+      "cardinality": { "to": "many", "from": "many" },
+      "inverse": "derivations"
+    }
+  ],
+  "identity": [{ "name": "primary", "properties": ["qualified_name"] }]
+}

@@ -1,0 +1,23 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "9:37",
+      "end": "9:83",
+      "construct": "(Effect.succeed(1)).pipe(Effect.map((x) => x))"
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "10:37",
+      "end": "10:84",
+      "construct": "pipe((Effect.succeed(1)), Effect.map((x) => x))"
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "11:37",
+      "end": "11:115",
+      "construct": "(Effect.succeed(1) satisfies Effect.Effect<number>).pipe(Effect.map((x) => x))"
+    }
+  ]
+}

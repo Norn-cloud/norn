@@ -1,0 +1,17 @@
+{
+  "description": "A composition pack whose pinned member is not in the set.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-core.business_pack.json",
+    "ir/retail-sku.entity.json",
+    "ir/retail-reorder.action.json",
+    "ir/retail-procurement.policy.json"
+  ],
+  "expect": [
+    [
+      "retail.pack.core",
+      "artifact_set.resolution.missing_dependency",
+      "/payload/artifacts/3"
+    ]
+  ]
+}

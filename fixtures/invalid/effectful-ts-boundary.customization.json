@@ -1,0 +1,82 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.sku.reprice.effectful_ts.customization",
+  "kind": "customization",
+  "namespace": "retail",
+  "name": "SKU Reprice Hook",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [
+    {
+      "artifactId": "retail.Sku.entity",
+      "kind": "entity",
+      "version": "0.1.0",
+      "required": true
+    }
+  ],
+  "provenance": {
+    "source": "agent",
+    "sourcePath": "fixtures/invalid/effectful-ts-boundary.customization.json"
+  },
+  "payload": {
+    "customizationVersion": "0.1",
+    "customizationId": "retail.sku.reprice_effectful_ts",
+    "intent": {
+      "summary": "Reprice SKUs through an inline custom hook.",
+      "requestedBy": "agent"
+    },
+    "targetArtifact": {
+      "artifactId": "retail.Sku.entity",
+      "kind": "entity",
+      "version": "0.1.0"
+    },
+    "overlay": {
+      "kind": "validation",
+      "operations": [
+        {
+          "op": "custom_hook",
+          "hookId": "reprice"
+        }
+      ]
+    },
+    "approval": {
+      "state": "proposed",
+      "required": true
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "executable": {
+      "boundary": "effectful_ts",
+      "inputSchema": {
+        "type": "object"
+      },
+      "outputSchema": {
+        "type": "object"
+      },
+      "errorSchema": {
+        "type": "object"
+      },
+      "scopeCapabilities": [
+        "retail.sku.read"
+      ],
+      "requiredServices": [
+        "retail.pricing"
+      ],
+      "resourceLimits": {
+        "maxWallTimeMs": 1000,
+        "maxMemoryMb": 64,
+        "maxNetworkCalls": 0,
+        "maxStorageBytes": 0
+      },
+      "ambientCredentials": false,
+      "directDatabaseAccess": false,
+      "sourceRef": "registry:retail.sku.reprice/run"
+    }
+  }
+}

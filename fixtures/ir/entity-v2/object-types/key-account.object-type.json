@@ -1,0 +1,14 @@
+{
+  "name": "crm.KeyAccount",
+  "description": "A customer with a named account manager. Inherits the key and party.Party from crm.Customer and narrows tier.",
+  "status": { "state": "deprecated", "since": "2026-09-30", "replacedBy": "crm.Customer" },
+  "extends": "crm.Customer",
+  "properties": [
+    {
+      "id": "tier",
+      "type": { "kind": "enum", "values": [{ "value": "gold" }, { "value": "platinum" }] },
+      "default": "gold"
+    },
+    { "id": "account_manager", "type": { "kind": "text" } }
+  ]
+}

@@ -1,0 +1,404 @@
+[
+  {
+    "name": "technical.Domain",
+    "description": "A business or data domain that groups datasets (OpenMetadata Domain).",
+    "properties": [
+      {
+        "id": "domain_id",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "name",
+        "type": {
+          "kind": "text"
+        }
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "domain_id"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "technical.Owner",
+    "description": "A person or team accountable for a source or dataset (OpenMetadata Owner).",
+    "properties": [
+      {
+        "id": "owner_id",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "name",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "email",
+        "type": {
+          "kind": "text"
+        },
+        "constraints": {
+          "nullable": true
+        }
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "owner_id"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "technical.Source",
+    "description": "A system of record facts are observed from (ERPNext, Shopify, a file drop). Its key is the `system` of a provenance source record.",
+    "properties": [
+      {
+        "id": "source_id",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "name",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "kind",
+        "type": {
+          "kind": "enum",
+          "values": [
+            {
+              "value": "erp"
+            },
+            {
+              "value": "saas"
+            },
+            {
+              "value": "database"
+            },
+            {
+              "value": "file"
+            },
+            {
+              "value": "api"
+            }
+          ]
+        }
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "source_id"
+        ]
+      }
+    ],
+    "links": [
+      {
+        "id": "owner",
+        "target": "technical.Owner",
+        "cardinality": {
+          "to": "one",
+          "from": "many"
+        },
+        "inverse": "owned_sources"
+      },
+      {
+        "id": "domain",
+        "target": "technical.Domain",
+        "cardinality": {
+          "to": "one",
+          "from": "many"
+        },
+        "inverse": "sources"
+      }
+    ]
+  },
+  {
+    "name": "technical.Dataset",
+    "description": "A named collection of tables in one source (a database, an API resource group).",
+    "properties": [
+      {
+        "id": "dataset_id",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "name",
+        "type": {
+          "kind": "text"
+        }
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "dataset_id"
+        ]
+      }
+    ],
+    "links": [
+      {
+        "id": "source",
+        "target": "technical.Source",
+        "cardinality": {
+          "to": "one",
+          "from": "many",
+          "required": true
+        },
+        "inverse": "datasets"
+      },
+      {
+        "id": "owner",
+        "target": "technical.Owner",
+        "cardinality": {
+          "to": "one",
+          "from": "many"
+        },
+        "inverse": "owned_datasets"
+      },
+      {
+        "id": "domain",
+        "target": "technical.Domain",
+        "cardinality": {
+          "to": "one",
+          "from": "many"
+        },
+        "inverse": "datasets"
+      }
+    ]
+  },
+  {
+    "name": "technical.Table",
+    "description": "One table, DocType, or resource of a dataset.",
+    "properties": [
+      {
+        "id": "table_id",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "name",
+        "type": {
+          "kind": "text"
+        }
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "table_id"
+        ]
+      }
+    ],
+    "links": [
+      {
+        "id": "dataset",
+        "target": "technical.Dataset",
+        "cardinality": {
+          "to": "one",
+          "from": "many",
+          "required": true
+        },
+        "inverse": "tables"
+      }
+    ]
+  },
+  {
+    "name": "technical.Column",
+    "description": "One column or field of a table.",
+    "properties": [
+      {
+        "id": "column_id",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "name",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "data_type",
+        "type": {
+          "kind": "text"
+        }
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "column_id"
+        ]
+      }
+    ],
+    "links": [
+      {
+        "id": "table",
+        "target": "technical.Table",
+        "cardinality": {
+          "to": "one",
+          "from": "many",
+          "required": true
+        },
+        "inverse": "columns"
+      }
+    ]
+  },
+  {
+    "name": "technical.Mapping",
+    "description": "One version of a mapping (MappingIR) from source columns to ontology facts. Its key is the `mappingVersion` of a provenance record.",
+    "properties": [
+      {
+        "id": "mapping_id",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "name",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "version",
+        "type": {
+          "kind": "integer"
+        },
+        "constraints": {
+          "min": "1"
+        }
+      },
+      {
+        "id": "target_type",
+        "type": {
+          "kind": "text"
+        }
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "mapping_id"
+        ]
+      }
+    ],
+    "links": [
+      {
+        "id": "derived_from",
+        "description": "derivedFrom: the source columns the mapping reads.",
+        "target": "technical.Column",
+        "cardinality": {
+          "to": "many",
+          "from": "many"
+        },
+        "inverse": "mappings"
+      }
+    ]
+  },
+  {
+    "name": "technical.Pipeline",
+    "description": "A job that replays mappings over raw observations.",
+    "properties": [
+      {
+        "id": "pipeline_id",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "name",
+        "type": {
+          "kind": "text"
+        }
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "pipeline_id"
+        ]
+      }
+    ],
+    "links": [
+      {
+        "id": "runs",
+        "target": "technical.Mapping",
+        "cardinality": {
+          "to": "many",
+          "from": "many"
+        },
+        "inverse": "pipelines"
+      }
+    ]
+  },
+  {
+    "name": "technical.QualityCheck",
+    "description": "A declared data-quality expectation on one column.",
+    "properties": [
+      {
+        "id": "check_id",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "name",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "id": "expectation",
+        "type": {
+          "kind": "text"
+        }
+      }
+    ],
+    "identity": [
+      {
+        "name": "primary",
+        "properties": [
+          "check_id"
+        ]
+      }
+    ],
+    "links": [
+      {
+        "id": "checks",
+        "target": "technical.Column",
+        "cardinality": {
+          "to": "one",
+          "from": "many",
+          "required": true
+        },
+        "inverse": "quality_checks"
+      }
+    ]
+  }
+]

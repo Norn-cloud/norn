@@ -1,0 +1,14 @@
+{
+  "description": "A dangling required dependency.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-low-stock.derived.json"
+  ],
+  "expect": [
+    [
+      "retail.low_stock.view",
+      "artifact_set.resolution.missing_dependency",
+      "/dependencies/0"
+    ]
+  ]
+}

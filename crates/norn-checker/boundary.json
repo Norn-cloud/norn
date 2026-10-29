@@ -1,0 +1,17 @@
+{
+  "name": "norn-checker",
+  "ring": "Zero",
+  "allowed_norn": [
+    "norn-ir",
+    "norn-expr",
+    "norn-canonical",
+    "norn-graph"
+  ],
+  "dev_only_norn": [],
+  "third_party": [
+    "serde_json",
+    "sha2",
+    "regex-lite",
+    "serde_path_to_error"
+  ]
+}

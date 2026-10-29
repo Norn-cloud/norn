@@ -1,0 +1,70 @@
+{
+  "objectTypes": [
+    {
+      "name": "test.ImportedOrder",
+      "extends": "commerce.PurchaseOrder",
+      "lifecycles": [
+        {
+          "property": "status",
+          "initial": [
+            "draft",
+            "submitted"
+          ],
+          "terminal": [
+            "received",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "id": "submit",
+              "from": [
+                "draft"
+              ],
+              "to": "submitted",
+              "guards": [
+                "self.po_number != \"\""
+              ]
+            },
+            {
+              "id": "approve",
+              "from": [
+                "submitted"
+              ],
+              "to": "approved"
+            },
+            {
+              "id": "reject",
+              "from": [
+                "submitted"
+              ],
+              "to": "rejected"
+            },
+            {
+              "id": "revise",
+              "from": [
+                "rejected"
+              ],
+              "to": "draft"
+            },
+            {
+              "id": "receive",
+              "from": [
+                "approved"
+              ],
+              "to": "received"
+            },
+            {
+              "id": "cancel",
+              "from": [
+                "draft",
+                "submitted",
+                "approved"
+              ],
+              "to": "cancelled"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

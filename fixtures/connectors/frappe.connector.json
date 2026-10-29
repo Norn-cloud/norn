@@ -1,0 +1,1448 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "erpnext.connector.norn_core",
+  "kind": "connector",
+  "namespace": "erpnext",
+  "name": "norn_core",
+  "version": "0.8.0",
+  "lifecycle": "active",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/erpnext-norn-core/artifacts/erpnext.connector.norn_core.json"
+  },
+  "payload": {
+    "connectorVersion": "0.1",
+    "auth": {
+      "kind": "api_key",
+      "authId": "erpnext_site",
+      "placement": "header",
+      "name": "Authorization",
+      "secretRef": "secrets.erpnext.authorization_header",
+      "prefix": "token ",
+      "format": {
+        "kind": "pair",
+        "separator": ":"
+      }
+    },
+    "resources": [
+      {
+        "kind": "delta",
+        "resourceId": "purchase_order_item",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "doctype": "Purchase Order Item",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "purchase_order",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "doctype": "Purchase Order",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "supplier",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "doctype": "Supplier",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "customer",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "doctype": "Customer",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "item",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "doctype": "Item",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "sales_order",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "doctype": "Sales Order",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "sales_order_item",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "doctype": "Sales Order Item",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "sales_invoice",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "doctype": "Sales Invoice",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "sales_invoice_item",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "doctype": "Sales Invoice Item",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "payment_entry",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "doctype": "Payment Entry",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "doctype_metadata",
+        "endpoint": "/api/v2/doctype/{doctype}/meta",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/data"
+      },
+      {
+        "kind": "delta",
+        "resourceId": "deleted_document",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/resource/{doctype}",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "itemsPath": "/data",
+        "queryParams": {
+          "filters": "[[\"deleted_doctype\",\"=\",\"{sourceDoctype}\"]]"
+        },
+        "doctype": "Deleted Document",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "deleted_doctype",
+            "deleted_name",
+            "data",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "paginated",
+        "resourceId": "sales_order_document",
+        "endpoint": "/api/resource/{doctype}/{name}",
+        "method": "GET",
+        "pageParam": "limit_start",
+        "pageSizeParam": "limit_page_length",
+        "itemsPath": "/data",
+        "doctype": "Sales Order",
+        "role": "document"
+      },
+      {
+        "kind": "paginated",
+        "resourceId": "purchase_order_document",
+        "endpoint": "/api/resource/{doctype}/{name}",
+        "method": "GET",
+        "pageParam": "limit_start",
+        "pageSizeParam": "limit_page_length",
+        "itemsPath": "/data",
+        "doctype": "Purchase Order",
+        "role": "document"
+      },
+      {
+        "kind": "paginated",
+        "resourceId": "payment_entry_document",
+        "endpoint": "/api/resource/{doctype}/{name}",
+        "method": "GET",
+        "pageParam": "limit_start",
+        "pageSizeParam": "limit_page_length",
+        "itemsPath": "/data",
+        "doctype": "Payment Entry",
+        "role": "document"
+      },
+      {
+        "kind": "paginated",
+        "resourceId": "item_document",
+        "endpoint": "/api/resource/{doctype}/{name}",
+        "method": "GET",
+        "pageParam": "limit_start",
+        "pageSizeParam": "limit_page_length",
+        "itemsPath": "/data",
+        "doctype": "Item",
+        "role": "document"
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "sales_order_hydration",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/method/frappe.client.get",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/message",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "doctype": "Sales Order",
+        "role": "hydration"
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "payment_entry_hydration",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/method/frappe.client.get",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/message",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "doctype": "Payment Entry",
+        "role": "hydration"
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "customer_hydration",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/method/frappe.client.get",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/message",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "doctype": "Customer",
+        "role": "hydration"
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "item_hydration",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/method/frappe.client.get",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/message",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "doctype": "Item",
+        "role": "hydration"
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "sales_order_item_hydration",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/method/frappe.client.get",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/message",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "doctype": "Sales Order Item",
+        "role": "hydration"
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "sales_invoice_hydration",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/method/frappe.client.get",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/message",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "doctype": "Sales Invoice",
+        "role": "hydration"
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "sales_invoice_item_hydration",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/method/frappe.client.get",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/message",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "doctype": "Sales Invoice Item",
+        "role": "hydration"
+      },
+      {
+        "kind": "delta",
+        "resourceId": "docperm_snapshot",
+        "endpoint": "/api/resource/DocPerm",
+        "itemsPath": "/data",
+        "doctype": "DocPerm",
+        "role": "permission_snapshot",
+        "queryParams": {
+          "parent": "DocType",
+          "filters": "[[\"parenttype\",\"=\",\"DocType\"]]"
+        },
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "parent",
+            "parenttype",
+            "role",
+            "permlevel",
+            "if_owner",
+            "read",
+            "write",
+            "create",
+            "submit",
+            "cancel",
+            "amend",
+            "delete",
+            "report",
+            "export",
+            "import",
+            "print",
+            "email",
+            "share",
+            "select",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "custom_docperm_snapshot",
+        "endpoint": "/api/resource/Custom%20DocPerm",
+        "itemsPath": "/data",
+        "doctype": "Custom DocPerm",
+        "role": "permission_snapshot",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "parent",
+            "role",
+            "permlevel",
+            "if_owner",
+            "read",
+            "write",
+            "create",
+            "submit",
+            "cancel",
+            "amend",
+            "delete",
+            "report",
+            "export",
+            "import",
+            "print",
+            "email",
+            "share",
+            "select",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "user_permission_snapshot",
+        "endpoint": "/api/resource/User%20Permission",
+        "itemsPath": "/data",
+        "doctype": "User Permission",
+        "role": "permission_snapshot",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "user",
+            "allow",
+            "for_value",
+            "apply_to_all_doctypes",
+            "is_default",
+            "applicable_for",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "role_profile_snapshot",
+        "endpoint": "/api/resource/Role%20Profile",
+        "itemsPath": "/data",
+        "doctype": "Role Profile",
+        "role": "permission_snapshot",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "has_role_snapshot",
+        "endpoint": "/api/resource/Has%20Role",
+        "itemsPath": "/data",
+        "doctype": "Has Role",
+        "role": "permission_snapshot",
+        "queryParams": {
+          "parent": "User",
+          "filters": "[[\"parenttype\",\"=\",\"User\"]]"
+        },
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "parent",
+            "parenttype",
+            "role",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "user_identity_snapshot",
+        "endpoint": "/api/resource/User",
+        "itemsPath": "/data",
+        "doctype": "User",
+        "role": "permission_snapshot",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "role_profile_name",
+            "enabled",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "delta",
+        "resourceId": "role_snapshot",
+        "endpoint": "/api/resource/Role",
+        "itemsPath": "/data",
+        "doctype": "Role",
+        "role": "permission_snapshot",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified",
+        "keyset": {
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "fieldsParam": "fields",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "sizeParam": "limit_page_length",
+          "watermarkField": "modified",
+          "tieBreakerField": "name",
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "pageSize": 100
+        }
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "purchase_order_hydration",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/method/frappe.client.get",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/message",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "doctype": "Purchase Order",
+        "role": "hydration"
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "purchase_order_item_hydration",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/method/frappe.client.get",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/message",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "doctype": "Purchase Order Item",
+        "role": "hydration"
+      },
+      {
+        "kind": "cursor",
+        "resourceId": "supplier_hydration",
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "endpoint": "/api/method/frappe.client.get",
+        "cursorParam": "modified_after",
+        "nextCursorPath": "/next",
+        "itemsPath": "/message",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "doctype": "Supplier",
+        "role": "hydration"
+      },
+      {
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "doctype": "Company",
+        "endpoint": "/api/resource/{doctype}",
+        "itemsPath": "/data",
+        "keyset": {
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "fieldsParam": "fields",
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "pageSize": 100,
+          "sizeParam": "limit_page_length",
+          "tieBreakerField": "name",
+          "watermarkField": "modified"
+        },
+        "kind": "delta",
+        "resourceId": "company",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified"
+      },
+      {
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "cursorParam": "modified_after",
+        "doctype": "Company",
+        "endpoint": "/api/method/frappe.client.get",
+        "itemsPath": "/message",
+        "kind": "cursor",
+        "nextCursorPath": "/next",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "resourceId": "company_hydration",
+        "role": "hydration"
+      },
+      {
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "doctype": "Branch",
+        "endpoint": "/api/resource/{doctype}",
+        "itemsPath": "/data",
+        "keyset": {
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "fieldsParam": "fields",
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "pageSize": 100,
+          "sizeParam": "limit_page_length",
+          "tieBreakerField": "name",
+          "watermarkField": "modified"
+        },
+        "kind": "delta",
+        "resourceId": "branch",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified"
+      },
+      {
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "cursorParam": "modified_after",
+        "doctype": "Branch",
+        "endpoint": "/api/method/frappe.client.get",
+        "itemsPath": "/message",
+        "kind": "cursor",
+        "nextCursorPath": "/next",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "resourceId": "branch_hydration",
+        "role": "hydration"
+      },
+      {
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "doctype": "Warehouse",
+        "endpoint": "/api/resource/{doctype}",
+        "itemsPath": "/data",
+        "keyset": {
+          "fields": [
+            "name",
+            "modified"
+          ],
+          "fieldsParam": "fields",
+          "filtersParam": "filters",
+          "orFilterParam": "or_filters",
+          "orderParam": "order_by",
+          "pageParam": "limit_start",
+          "pageSize": 100,
+          "sizeParam": "limit_page_length",
+          "tieBreakerField": "name",
+          "watermarkField": "modified"
+        },
+        "kind": "delta",
+        "resourceId": "warehouse",
+        "sinceParam": "filters",
+        "updatedAtPath": "/modified"
+      },
+      {
+        "commandKeyHeader": "X-Norn-Idempotency-Key",
+        "cursorParam": "modified_after",
+        "doctype": "Warehouse",
+        "endpoint": "/api/method/frappe.client.get",
+        "itemsPath": "/message",
+        "kind": "cursor",
+        "nextCursorPath": "/next",
+        "queryParams": {
+          "doctype": "{doctype}",
+          "name": "{name}"
+        },
+        "resourceId": "warehouse_hydration",
+        "role": "hydration"
+      }
+    ],
+    "commands": [
+      {
+        "operation": "create",
+        "doctypes": [
+          "Sales Order",
+          "Purchase Order",
+          "Payment Entry"
+        ],
+        "endpoint": "/api/resource/{doctype}",
+        "method": "POST",
+        "bodyFields": [
+          "*"
+        ],
+        "idempotency": {
+          "keyField": "norn_idempotency_key",
+          "headerName": "X-Norn-Idempotency-Key",
+          "receipt": {
+            "doctype": "Norn Command Receipt",
+            "tableField": "norn_command_receipts",
+            "identityField": "name",
+            "keyField": "idempotency_key",
+            "operationField": "operation",
+            "parentField": "parent",
+            "parentTypeField": "parenttype",
+            "parentTableField": "parentfield",
+            "timestampField": "at"
+          },
+          "createLookup": {
+            "endpoint": "/api/resource/{doctype}",
+            "itemsPath": "/data",
+            "fields": [
+              "name",
+              "docstatus",
+              "modified"
+            ],
+            "filtersParam": "filters",
+            "fieldsParam": "fields",
+            "limitParam": "limit_page_length",
+            "maxResults": 2,
+            "filters": [
+              {
+                "field": "norn_idempotency_key",
+                "operator": "=",
+                "value": "idempotency_key"
+              }
+            ]
+          },
+          "receiptLookup": {
+            "endpoint": "/api/resource/{doctype}",
+            "itemsPath": "/data",
+            "fields": [
+              "name",
+              "docstatus",
+              "modified"
+            ],
+            "filtersParam": "filters",
+            "fieldsParam": "fields",
+            "limitParam": "limit_page_length",
+            "maxResults": 2,
+            "filters": [
+              {
+                "entity": "Norn Command Receipt",
+                "field": "idempotency_key",
+                "operator": "=",
+                "value": "idempotency_key"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parenttype",
+                "operator": "=",
+                "value": "parent_type"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parentfield",
+                "operator": "=",
+                "value": "parent_field"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parent",
+                "operator": "=",
+                "value": "target_name"
+              }
+            ]
+          }
+        },
+        "lifecycle": {
+          "documentPath": "/data",
+          "identityField": "name",
+          "versionField": "modified",
+          "statusField": "docstatus",
+          "initialStatus": 0,
+          "submittedStatus": 1,
+          "cancelledStatus": 2
+        },
+        "conflicts": [
+          {
+            "status": 409,
+            "errorType": "DuplicateEntryError",
+            "category": "duplicate"
+          },
+          {
+            "status": 417,
+            "errorType": "UniqueValidationError",
+            "category": "unique"
+          },
+          {
+            "status": 417,
+            "errorType": "TimestampMismatchError",
+            "category": "version"
+          }
+        ]
+      },
+      {
+        "operation": "update",
+        "doctypes": [
+          "Sales Order",
+          "Purchase Order",
+          "Payment Entry",
+          "Item"
+        ],
+        "endpoint": "/api/resource/{doctype}/{name}",
+        "method": "PUT",
+        "bodyFields": [
+          "*"
+        ],
+        "idempotency": {
+          "keyField": "norn_idempotency_key",
+          "headerName": "X-Norn-Idempotency-Key",
+          "receipt": {
+            "doctype": "Norn Command Receipt",
+            "tableField": "norn_command_receipts",
+            "identityField": "name",
+            "keyField": "idempotency_key",
+            "operationField": "operation",
+            "parentField": "parent",
+            "parentTypeField": "parenttype",
+            "parentTableField": "parentfield",
+            "timestampField": "at"
+          },
+          "createLookup": {
+            "endpoint": "/api/resource/{doctype}",
+            "itemsPath": "/data",
+            "fields": [
+              "name",
+              "docstatus",
+              "modified"
+            ],
+            "filtersParam": "filters",
+            "fieldsParam": "fields",
+            "limitParam": "limit_page_length",
+            "maxResults": 2,
+            "filters": [
+              {
+                "field": "norn_idempotency_key",
+                "operator": "=",
+                "value": "idempotency_key"
+              }
+            ]
+          },
+          "receiptLookup": {
+            "endpoint": "/api/resource/{doctype}",
+            "itemsPath": "/data",
+            "fields": [
+              "name",
+              "docstatus",
+              "modified"
+            ],
+            "filtersParam": "filters",
+            "fieldsParam": "fields",
+            "limitParam": "limit_page_length",
+            "maxResults": 2,
+            "filters": [
+              {
+                "entity": "Norn Command Receipt",
+                "field": "idempotency_key",
+                "operator": "=",
+                "value": "idempotency_key"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parenttype",
+                "operator": "=",
+                "value": "parent_type"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parentfield",
+                "operator": "=",
+                "value": "parent_field"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parent",
+                "operator": "=",
+                "value": "target_name"
+              }
+            ]
+          }
+        },
+        "lifecycle": {
+          "documentPath": "/data",
+          "identityField": "name",
+          "versionField": "modified",
+          "statusField": "docstatus",
+          "initialStatus": 0,
+          "submittedStatus": 1,
+          "cancelledStatus": 2
+        },
+        "conflicts": [
+          {
+            "status": 409,
+            "errorType": "DuplicateEntryError",
+            "category": "duplicate"
+          },
+          {
+            "status": 417,
+            "errorType": "TimestampMismatchError",
+            "category": "version"
+          }
+        ],
+        "mergeProfiles": [
+          {
+            "field": "items",
+            "ownershipField": "norn_source_owner",
+            "rowKeyField": "norn_source_line_key",
+            "conflictKeyFields": [
+              "item_code"
+            ]
+          }
+        ]
+      },
+      {
+        "operation": "submit",
+        "doctypes": [
+          "Sales Order",
+          "Purchase Order",
+          "Payment Entry"
+        ],
+        "endpoint": "/api/resource/{doctype}/{name}",
+        "method": "PUT",
+        "bodyFields": [
+          "*"
+        ],
+        "fixedBody": {
+          "docstatus": 1
+        },
+        "idempotency": {
+          "keyField": "norn_idempotency_key",
+          "headerName": "X-Norn-Idempotency-Key",
+          "receipt": {
+            "doctype": "Norn Command Receipt",
+            "tableField": "norn_command_receipts",
+            "identityField": "name",
+            "keyField": "idempotency_key",
+            "operationField": "operation",
+            "parentField": "parent",
+            "parentTypeField": "parenttype",
+            "parentTableField": "parentfield",
+            "timestampField": "at"
+          },
+          "createLookup": {
+            "endpoint": "/api/resource/{doctype}",
+            "itemsPath": "/data",
+            "fields": [
+              "name",
+              "docstatus",
+              "modified"
+            ],
+            "filtersParam": "filters",
+            "fieldsParam": "fields",
+            "limitParam": "limit_page_length",
+            "maxResults": 2,
+            "filters": [
+              {
+                "field": "norn_idempotency_key",
+                "operator": "=",
+                "value": "idempotency_key"
+              }
+            ]
+          },
+          "receiptLookup": {
+            "endpoint": "/api/resource/{doctype}",
+            "itemsPath": "/data",
+            "fields": [
+              "name",
+              "docstatus",
+              "modified"
+            ],
+            "filtersParam": "filters",
+            "fieldsParam": "fields",
+            "limitParam": "limit_page_length",
+            "maxResults": 2,
+            "filters": [
+              {
+                "entity": "Norn Command Receipt",
+                "field": "idempotency_key",
+                "operator": "=",
+                "value": "idempotency_key"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parenttype",
+                "operator": "=",
+                "value": "parent_type"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parentfield",
+                "operator": "=",
+                "value": "parent_field"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parent",
+                "operator": "=",
+                "value": "target_name"
+              }
+            ]
+          }
+        },
+        "lifecycle": {
+          "documentPath": "/data",
+          "identityField": "name",
+          "versionField": "modified",
+          "statusField": "docstatus",
+          "initialStatus": 0,
+          "submittedStatus": 1,
+          "cancelledStatus": 2
+        },
+        "conflicts": [
+          {
+            "status": 409,
+            "errorType": "DuplicateEntryError",
+            "category": "duplicate"
+          },
+          {
+            "status": 417,
+            "errorType": "TimestampMismatchError",
+            "category": "version"
+          }
+        ]
+      },
+      {
+        "operation": "cancel",
+        "doctypes": [
+          "Sales Order",
+          "Purchase Order",
+          "Payment Entry"
+        ],
+        "endpoint": "/api/resource/{doctype}/{name}",
+        "method": "PUT",
+        "bodyFields": [
+          "*"
+        ],
+        "fixedBody": {
+          "docstatus": 2
+        },
+        "idempotency": {
+          "keyField": "norn_idempotency_key",
+          "headerName": "X-Norn-Idempotency-Key",
+          "receipt": {
+            "doctype": "Norn Command Receipt",
+            "tableField": "norn_command_receipts",
+            "identityField": "name",
+            "keyField": "idempotency_key",
+            "operationField": "operation",
+            "parentField": "parent",
+            "parentTypeField": "parenttype",
+            "parentTableField": "parentfield",
+            "timestampField": "at"
+          },
+          "createLookup": {
+            "endpoint": "/api/resource/{doctype}",
+            "itemsPath": "/data",
+            "fields": [
+              "name",
+              "docstatus",
+              "modified"
+            ],
+            "filtersParam": "filters",
+            "fieldsParam": "fields",
+            "limitParam": "limit_page_length",
+            "maxResults": 2,
+            "filters": [
+              {
+                "field": "norn_idempotency_key",
+                "operator": "=",
+                "value": "idempotency_key"
+              }
+            ]
+          },
+          "receiptLookup": {
+            "endpoint": "/api/resource/{doctype}",
+            "itemsPath": "/data",
+            "fields": [
+              "name",
+              "docstatus",
+              "modified"
+            ],
+            "filtersParam": "filters",
+            "fieldsParam": "fields",
+            "limitParam": "limit_page_length",
+            "maxResults": 2,
+            "filters": [
+              {
+                "entity": "Norn Command Receipt",
+                "field": "idempotency_key",
+                "operator": "=",
+                "value": "idempotency_key"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parenttype",
+                "operator": "=",
+                "value": "parent_type"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parentfield",
+                "operator": "=",
+                "value": "parent_field"
+              },
+              {
+                "entity": "Norn Command Receipt",
+                "field": "parent",
+                "operator": "=",
+                "value": "target_name"
+              }
+            ]
+          }
+        },
+        "lifecycle": {
+          "documentPath": "/data",
+          "identityField": "name",
+          "versionField": "modified",
+          "statusField": "docstatus",
+          "initialStatus": 0,
+          "submittedStatus": 1,
+          "cancelledStatus": 2
+        },
+        "conflicts": [
+          {
+            "status": 409,
+            "errorType": "DuplicateEntryError",
+            "category": "duplicate"
+          },
+          {
+            "status": 417,
+            "errorType": "TimestampMismatchError",
+            "category": "version"
+          }
+        ]
+      }
+    ],
+    "mappings": [
+      {
+        "kind": "external_id",
+        "resourceId": "customer",
+        "sourcePath": "$.name",
+        "targetObjectKind": "erpnext.Customer",
+        "externalSource": "ERPNext",
+        "status": "stub"
+      },
+      {
+        "kind": "field",
+        "resourceId": "doctype_metadata",
+        "sourcePath": "$.name",
+        "targetObjectKind": "technical.Table",
+        "targetField": "name",
+        "dataset": "frappe_doctype",
+        "status": "stub"
+      }
+    ],
+    "cursor": {
+      "cursorId": "erpnext_modified",
+      "resourceId": "sales_order",
+      "storageKey": "erpnext.frappe.modified",
+      "initialValue": {
+        "modified": "1970-01-01 00:00:00.000000",
+        "doctype": "",
+        "name": ""
+      }
+    },
+    "deadLetterPolicy": {
+      "maxFailures": 3,
+      "route": "ledger"
+    },
+    "extensions": {
+      "norn.poll/1": {
+        "feeds": [
+          {
+            "resourceId": "docperm_snapshot",
+            "recordKeyPath": "/name"
+          },
+          {
+            "resourceId": "custom_docperm_snapshot",
+            "recordKeyPath": "/name"
+          },
+          {
+            "resourceId": "user_permission_snapshot",
+            "recordKeyPath": "/name"
+          },
+          {
+            "resourceId": "role_profile_snapshot",
+            "recordKeyPath": "/name"
+          },
+          {
+            "resourceId": "has_role_snapshot",
+            "recordKeyPath": "/name"
+          },
+          {
+            "resourceId": "user_identity_snapshot",
+            "recordKeyPath": "/name"
+          },
+          {
+            "resourceId": "role_snapshot",
+            "recordKeyPath": "/name"
+          }
+        ]
+      },
+      "norn.dlt-el-profile/0.1.0": {
+        "profileId": "erpnext.frappe_el",
+        "extract": {
+          "nestingDepth": 0,
+          "cursorField": "modified"
+        },
+        "load": {
+          "payloadEncoding": "json",
+          "payloadColumnType": "VARIANT",
+          "destinations": [
+            "filesystem",
+            "iceberg"
+          ],
+          "selectedDestination": "iceberg"
+        },
+        "transforms": [],
+        "normalization": false,
+        "cursorStateStub": {
+          "format": "norn.erpnext.frappe-cursor-state/1",
+          "status": "stub",
+          "implemented": false,
+          "cursorId": "erpnext_modified",
+          "resourceId": "sales_order",
+          "stateSchema": {
+            "modified": "timestamp_text",
+            "doctype": "string",
+            "name": "string"
+          },
+          "example": {
+            "doctype": "Sales Order",
+            "modified": "2026-10-01 09:30:00.100000",
+            "name": "SO-0001"
+          }
+        },
+        "format": "norn.dlt-el-profile/1",
+        "status": "stub",
+        "implemented": false
+      }
+    },
+    "supportedVersions": {
+      "endpoint": "/api/method/frappe.utils.change_log.get_versions",
+      "responsePath": "/message",
+      "components": [
+        {
+          "app": "frappe",
+          "majors": [
+            15,
+            16
+          ]
+        },
+        {
+          "app": "erpnext",
+          "majors": [
+            15,
+            16
+          ]
+        }
+      ],
+      "requireMatchingMajors": true
+    }
+  }
+}

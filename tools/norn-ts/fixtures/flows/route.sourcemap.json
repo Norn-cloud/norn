@@ -1,0 +1,62 @@
+{
+  "flow": "billing.route",
+  "flowAt": {
+    "file": "fixtures/flows/route.builder.ts",
+    "line": 6
+  },
+  "format": "norn-flow-sourcemap/1",
+  "note": "non-executable: maps generated ids to the definition sites that produced them",
+  "rows": {
+    "awaiting_perform_load/result/1": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 9
+    },
+    "awaiting_perform_load/result/2": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 10
+    },
+    "awaiting_perform_load/result/3": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 16
+    },
+    "awaiting_perform_load/result/4": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 20
+    },
+    "awaiting_perform_remind/result/1": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 20
+    },
+    "started/start/1": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 7
+    }
+  },
+  "sourcePath": "tools/norn-ts/fixtures/flows/route.flow.ts",
+  "states": {
+    "awaiting_perform_load": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 7
+    },
+    "awaiting_perform_remind": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 16
+    },
+    "completed": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 9
+    },
+    "started": null
+  },
+  "steps": {
+    "load": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 7
+    },
+    "remind": {
+      "file": "fixtures/flows/route.builder.ts",
+      "line": 16
+    }
+  },
+  "version": "1.0.0"
+}

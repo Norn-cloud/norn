@@ -1,0 +1,143 @@
+{
+  "format": "norn-checker/invalid-fixtures@1",
+  "fixtures": [
+    {
+      "file": "function-node.rule.json",
+      "reason": "JDM functionNode (JavaScript) is outside the Norn profile (ruling 2026-09-25 §3)",
+      "error_at": "/payload/graph/nodes/1/type",
+      "code": "rule.validation.jdm_function_node_rejected"
+    },
+    {
+      "file": "custom-node.rule.json",
+      "reason": "a JDM customNode, including its zen-tmpl template fields, is rejected (D33 decided v1)",
+      "error_at": "/payload/graph/nodes/1/type",
+      "code": "rule.validation.jdm_custom_node_rejected"
+    },
+    {
+      "file": "unknown-node-type.rule.json",
+      "reason": "httpNode is not a JDM node type",
+      "error_at": "/payload/graph/nodes/1/type",
+      "code": "rule.validation.jdm_unknown_node_type"
+    },
+    {
+      "file": "hit-policy-unique.rule.json",
+      "reason": "the DMN unique hit policy has no JDM form; only first and collect are admitted",
+      "error_at": "/payload/graph/nodes/4/content/hitPolicy",
+      "code": "rule.validation.jdm_hit_policy_rejected"
+    },
+    {
+      "file": "duplicate-node-id.rule.json",
+      "reason": "two nodes share the id 'approval'",
+      "error_at": "/payload/graph/nodes/5/id",
+      "code": "rule.validation.jdm_duplicate_id"
+    },
+    {
+      "file": "two-output-nodes.rule.json",
+      "reason": "a decision graph has exactly one output node",
+      "error_at": "/payload/graph/nodes/7/type",
+      "code": "rule.validation.jdm_io_node_count"
+    },
+    {
+      "file": "dangling-edge.rule.json",
+      "reason": "an edge targets a node the graph does not have",
+      "error_at": "/payload/graph/edges/6/targetId",
+      "code": "rule.validation.jdm_dangling_edge"
+    },
+    {
+      "file": "handle-on-table-edge.rule.json",
+      "reason": "only edges leaving a switch node carry a sourceHandle",
+      "error_at": "/payload/graph/edges/5/sourceHandle",
+      "code": "rule.validation.jdm_invalid_edge"
+    },
+    {
+      "file": "cycle.rule.json",
+      "reason": "totals -> priority -> route -> approval -> totals is a cycle",
+      "error_at": "/payload/graph/nodes/1/id",
+      "code": "rule.validation.jdm_cycle"
+    },
+    {
+      "file": "unreachable-node.rule.json",
+      "reason": "a node that the input node does not reach",
+      "error_at": "/payload/graph/nodes/7/id",
+      "code": "rule.validation.jdm_unreachable_node"
+    },
+    {
+      "file": "switch-without-default.rule.json",
+      "reason": "a switch without a default branch can route an event nowhere, so decide is not total",
+      "error_at": "/payload/graph/nodes/3/content/statements",
+      "code": "rule.validation.jdm_switch_default"
+    },
+    {
+      "file": "switch-unconnected-branch.rule.json",
+      "reason": "a switch branch with no outgoing edge",
+      "error_at": "/payload/graph/nodes/3/content/statements/1/id",
+      "code": "rule.validation.jdm_switch_unconnected_branch"
+    },
+    {
+      "file": "unknown-column.rule.json",
+      "reason": "a row cell keyed by an undeclared column",
+      "error_at": "/payload/graph/nodes/4/content/rules/0/c_vip",
+      "code": "rule.validation.jdm_unknown_column"
+    },
+    {
+      "file": "invalid-expression.rule.json",
+      "reason": "an expression cell that is not ZEN Expression",
+      "error_at": "/payload/graph/nodes/1/content/expressions/0/value",
+      "code": "rule.validation.jdm_invalid_expression"
+    },
+    {
+      "file": "invalid-unary-test.rule.json",
+      "reason": "a decision-table input cell that is not a ZEN unary test",
+      "error_at": "/payload/graph/nodes/4/content/rules/0/c_total",
+      "code": "rule.validation.jdm_invalid_expression"
+    },
+    {
+      "file": "unresolved-import.rule.json",
+      "reason": "graph imports do not resolve under the Norn profile",
+      "error_at": "/payload/graph/imports/0",
+      "code": "rule.validation.jdm_unresolved_import"
+    },
+    {
+      "file": "undeclared-sub-decision.rule.json",
+      "reason": "a sub-decision key that is not a declared rule dependency",
+      "error_at": "/payload/graph/nodes/2/content/key",
+      "code": "rule.validation.jdm_unresolved_sub_decision"
+    },
+    {
+      "file": "recursive-sub-decision.rule.json",
+      "reason": "a sub-decision that calls its own rule",
+      "error_at": "/payload/graph/nodes/2/content/key",
+      "code": "rule.validation.jdm_recursive_sub_decision"
+    },
+    {
+      "file": "decide-output-not-contract.rule.json",
+      "reason": "a decide graph outputs exactly facts, commands, and timers",
+      "error_at": "/payload/outputSchema/properties/route",
+      "code": "rule.validation.invalid_decision_contract"
+    },
+    {
+      "file": "open-input-schema.rule.json",
+      "reason": "RuleIR v2 schemas are closed",
+      "error_at": "/payload/inputSchema/properties/event/additionalProperties",
+      "code": "rule.validation.invalid_schema"
+    },
+    {
+      "file": "missing-contract.rule.json",
+      "reason": "a RuleIR v2 rule declares the contract it implements",
+      "error_at": "/payload/contract",
+      "code": "rule.validation.invalid_payload"
+    },
+    {
+      "file": "scalar-sub-decision-output.rule.json",
+      "reason": "a sub_decision graph's output is a closed record, not a scalar",
+      "error_at": "/payload/outputSchema/type",
+      "code": "rule.validation.invalid_schema"
+    },
+    {
+      "file": "fact-change-op-not-enum.rule.json",
+      "reason": "a fact change's op enumerates the ops the decision emits, so the checker knows statically which writes it can make",
+      "error_at": "/payload/outputSchema/properties/facts/items/properties/op",
+      "code": "rule.validation.invalid_fact_change"
+    }
+  ]
+}

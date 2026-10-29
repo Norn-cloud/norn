@@ -1,0 +1,58 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.low_stock.view",
+  "kind": "derived",
+  "namespace": "retail",
+  "name": "Low Stock Positions",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [
+    {
+      "artifactId": "retail.Sku.entity",
+      "kind": "entity",
+      "version": "0.1.0",
+      "required": true
+    }
+  ],
+  "provenance": {
+    "source": "authoring_sdk"
+  },
+  "payload": {
+    "viewVersion": "0.1",
+    "viewId": "retail.view.low_stock",
+    "inputs": [
+      {
+        "artifactId": "retail.Sku.entity",
+        "kind": "entity",
+        "version": "0.1.0",
+        "alias": "sku"
+      }
+    ],
+    "calc": {
+      "kind": "field_projection",
+      "fields": [
+        "id",
+        "onHand",
+        "reorderPoint"
+      ]
+    },
+    "outputSchema": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "maintenance": "incremental",
+    "temporalScope": {
+      "mode": "current"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ]
+  }
+}

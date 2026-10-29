@@ -1,0 +1,9 @@
+{
+  "name": "norn-graph",
+  "ring": "Zero",
+  "allowed_norn": [],
+  "dev_only_norn": [],
+  "third_party": [
+    "rust_decimal"
+  ]
+}

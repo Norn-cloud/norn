@@ -1,0 +1,73 @@
+{
+  "status": "semantic-checked",
+  "checks": [
+    {
+      "name": "closed_registry_validator",
+      "status": "passed"
+    },
+    {
+      "name": "closed_pack_structure",
+      "status": "passed",
+      "details": {
+        "terms": 14,
+        "mappings": 61,
+        "shapes": 14,
+        "requiredClasses": [
+          "norn.commerce.offer",
+          "norn.commerce.order",
+          "norn.commerce.order-item",
+          "norn.commerce.product",
+          "norn.company.organization",
+          "norn.company.person",
+          "norn.company.postal-address"
+        ],
+        "orderItemCardinality": {
+          "minCount": 1,
+          "maxCount": 100
+        },
+        "derivedBytes": {
+          "categories": 3173684,
+          "attributes": 143853
+        }
+      }
+    },
+    {
+      "name": "shacl_conformance",
+      "status": "passed",
+      "details": {
+        "positiveInstances": 14,
+        "negativeOrderLineItems": "rejected"
+      }
+    },
+    {
+      "name": "owl_consistency_disjointness",
+      "status": "passed",
+      "details": {
+        "disjointPairs": 21,
+        "owlNothingInstances": 0
+      }
+    }
+  ],
+  "sourceVersions": {
+    "schema.org": {
+      "release": "30.0",
+      "retrievedAt": "2026-08-25",
+      "sha256": "0f0c97a4f666b2f8563573fe48453782fd51b87a504523cf0c9aff6a71c3eec4"
+    },
+    "shopifyProductTaxonomy": {
+      "release": "toy-1",
+      "retrievedAt": "2026-08-25",
+      "contentSha256": "48469cc22dd9318ca5f323a191c8de88fd980686c7f71b847fe759b173275df0"
+    },
+    "derived": {
+      "categories": {
+        "bytes": 3173684,
+        "sha256": "2c1b2a1097ca8db52819ec6f7312b2391c40d7ac8d6ee220bb0b1f2a19128ac0"
+      },
+      "attributes": {
+        "bytes": 143853,
+        "sha256": "bfdb790c6f0a965bdcc4c2ded37b11335ad27388ca81dc5ee857cc4d7bf912c7"
+      }
+    }
+  }
+}

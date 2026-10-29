@@ -1,0 +1,142 @@
+# Environment and credentials
+.env
+.env.*
+.env.local
+.env.personal
+
+# Allow specific safe env files
+!.env.example
+!.env.production.example
+frontend/.env
+
+# Allow personal .env but keep it secure
+.env.personal
+.env.bitwarden
+bitwarden-import.json
+bitwarden-template.json
+bitwarden.env.map
+bitwarden.local.json
+service-account-key.json
+credentials.json
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.venv*/
+venv/
+
+# Node / frontend build artifacts
+node_modules/
+.next/
+.output/
+dist/
+build/
+output/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+scripts/serve_studio.py
+
+# Rust artifacts
+target/
+_apalache-out/
+
+# Logs and runtime artifacts
+*.log
+logs/
+*.sqlite3
+/.norn/showcase/
+/.norn/showcase.sqlite*
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Test and tooling caches
+.pytest_cache/
+coverage/
+.coverage
+.mypy_cache/
+.turbo/
+.tools/
+.terraform/
+*.tsbuildinfo
+.playwright-cli/
+test-results/
+
+# Personal docs
+docs/**
+!docs/index.md
+!docs/index.html
+!docs/privacy.html
+!docs/terms.html
+!docs/agent/
+!docs/agent/**
+!docs/domain-extraction/
+!docs/domain-extraction/**
+!docs/platform/
+!docs/platform/**
+!docs/showcase/
+!docs/showcase/**
+!docs/reference/
+!docs/reference/index.md
+legacy/docs/platform-docs-archive-2026-06-01/local-ignored/
+!openspec/docs/
+!openspec/docs/**/*.md
+/planning/
+!apps/erp/src/modules/planning/
+
+
+
+# OpenCode session data (sensitive)
+.opencode/
+~/.local/share/opencode/
+
+# Dev container OpenCode data (sensitive)
+.devcontainer/.opencode-data/
+!.devcontainer/.opencode-data/.gitkeep
+.devcontainer/.local-share-opencode/
+!.devcontainer/.local-share-opencode/.gitkeep
+.devcontainer/.ssh/
+!.devcontainer/.ssh/.gitkeep
+.devcontainer/.docker/
+!.devcontainer/.docker/.gitkeep
+.devcontainer/.npm-global/
+!.devcontainer/.npm-global/.gitkeep
+.devcontainer/.tailscale/
+!.devcontainer/.tailscale/.gitkeep
+.devcontainer/.infisical/
+!.devcontainer/.infisical/.gitkeep
+.env.phase
+
+# Turborepo cache
+.turbo/
+
+# Local worktree scratch (not source)
+.worktrees/
+
+# SurrealDB CLI history files
+**/history.txt
+
+# local research clone (do not commit)
+
+# Research clone/code snapshots (keep written summaries, ignore raw cloned repos)
+
+# Claude Code local tool state (agent worktrees, local settings)
+.claude/*
+!.claude/skills/
+
+# Codegraph tool artifacts
+.codegraph/
+
+# atlas — briefs are regenerable; pins and generated map prose are committed
+.atlas/briefs/
+.atlas/tailwind.generated.ts
+
+# Python interpreter output
+__pycache__/
+*.py[cod]

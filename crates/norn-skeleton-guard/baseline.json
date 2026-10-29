@@ -1,0 +1,23 @@
+{
+  "_comment": "Frozen known-violation baseline for norn-skeleton-guard. Entries may only be removed, never added (CI: scripts/baseline-shrink-only.sh). See src/lib.rs.",
+  "norn_edges": [],
+  "third_party": [
+    [
+      "norn-canonical",
+      "serde"
+    ],
+    [
+      "norn-canonical",
+      "serde_json"
+    ],
+    [
+      "norn-canonical",
+      "sha2"
+    ],
+    [
+      "norn-canonical",
+      "unicode-normalization"
+    ]
+  ],
+  "norn_ir_validators": []
+}

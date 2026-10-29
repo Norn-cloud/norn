@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.sku.reprice.effectful_ts.customization",
+      "code": "customization.validation.retired_boundary",
+      "message": "executable boundary \"effectful_ts\" is retired: inline custom execution is not admitted; move the code into a pool Function invoked through perform",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/executable/boundary",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

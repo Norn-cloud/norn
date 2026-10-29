@@ -1,0 +1,2503 @@
+{
+  "schemaVersion": "norn.verification.coverage.v1",
+  "promotedGateManifest": "verification/coverage-v1/promoted-gates.json",
+  "leanCompositeGates": {},
+  "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
+  "statusVocabulary": [
+    "missing",
+    "partial",
+    "tested",
+    "tested-under-simulation",
+    "executable_reference",
+    "exhaustive_bounded",
+    "bounded_model_checked",
+    "bounded_static_checked",
+    "reference_proved",
+    "implementation_proved",
+    "deferred"
+  ],
+  "statusDefinitions": {
+    "missing": "No current evidence supports this layer of the exact obligation.",
+    "partial": "Current evidence supports only a proper subset, abstraction, or unlinked reference for the exact obligation; the residual names the uncovered part.",
+    "tested": "A production-bound executable path is exercised by one or more passing tests targeting the obligation; this never implies exhaustive state-space coverage or a theorem.",
+    "tested-under-simulation": "A production-bound executable path is exercised through an explicitly bounded deterministic simulation at named adapter boundaries; it does not claim filesystem, OS, network, or scheduler semantics outside those boundaries.",
+    "executable_reference": "A deterministic executable reference checks the stated behavior, but no production correspondence is claimed.",
+    "exhaustive_bounded": "Every case in the explicitly declared finite input/state bound is enumerated; nothing outside that bound is claimed.",
+    "bounded_model_checked": "An abstract transition model satisfies the stated invariant within the explicitly declared checker bound; neither unbounded validity nor implementation correspondence is claimed.",
+    "bounded_static_checked": "Every artifact in an explicitly declared finite static corpus is checked; no claim is made outside that corpus.",
+    "reference_proved": "A machine-checked theorem discharges the exact named obligation over the declared reference semantics without admitted proof holes; production correspondence is not claimed.",
+    "implementation_proved": "A machine-checked correspondence argument binds the exact production implementation and representation to the proved semantics under declared assumptions.",
+    "deferred": "This layer is deliberately outside the current verification profile and carries no positive assurance claim."
+  },
+  "evidenceRoots": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/norn-checker",
+    "crates/norn-ir",
+    ".github/ci",
+    "verification/ontology",
+    "verification/stripmine-2026-08-22",
+    "crates/norn-skeleton-guard/README.md",
+    "verification/stripmine-2026-08-22/proofs/lean/ArtifactVerificationReceipt.lean",
+    "verification/coverage-v1",
+    "scripts/bootstrap-rust-extraction-tools.sh",
+    "scripts/bootstrap-verification-tools.sh",
+    "scripts/check-ontology-semantics.sh",
+    "scripts/check-rust-extraction-tools.sh",
+    "scripts/check-proof-holes.py",
+    "scripts/check-verification-tools.sh",
+    "scripts/validate-executed-test-selectors.py",
+    "scripts/verification_attestation.py",
+    "scripts/quint_apalache.py",
+    "scripts/verify-artifact-governance-extraction.sh",
+    "scripts/verify-promoted-subsystems.sh",
+    "scripts/write-verification-result.py",
+    "verification/kernel-v2",
+    "scripts/proof_enrollment.py",
+    "scripts/test_proof_enrollment.py",
+    ".github/workflows/ci-policy.yml",
+    "scripts/ci/core.sh"
+  ],
+  "subsystems": [
+    {
+      "id": "transition-authority",
+      "obligations": [
+        "INV-AUTH-ATOMIC-COMMIT",
+        "INV-AUTH-STALE-REJECT",
+        "INV-AUTH-IDEMPOTENT-RESULT",
+        "INV-AUTH-CLOSED-CUSTOM-EFFECT",
+        "INV-AUTH-HARD-INVARIANT-OWNERSHIP",
+        "INV-AUTH-DOMAIN-ADMISSION-PREDICATE"
+      ],
+      "obligationClaims": [
+        {
+          "id": "INV-AUTH-ATOMIC-COMMIT",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "partial",
+          "residual": "Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in #2764 (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, #2583), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+                "selectors": [
+                  "invariant:atomicCommit"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+                "selectors": [
+                  "theorem:accepted_commit_keeps_effect_event_atomic"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-AUTH-STALE-REJECT",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
+          "residual": "The retained InMemory store exercises a general owner-version compare-and-swap envelope, stale-writer rejection, no-partial-effect behavior, and stable replay receipts. The canonical Turso adapter's persistence-failure rollback and reopen tests were removed in #2764 (not currently covered). Legacy callers still use the unversioned compatibility method, Postgres parity and a transport TransitionEnvelope remain open, and the Verus reference has no extracted correspondence proof. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+                "selectors": [
+                  "invariant:noOpPreservesCanonical"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+                "selectors": [
+                  "theorem:stale_commit_rejects"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-AUTH-IDEMPOTENT-RESULT",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
+          "residual": "Lean proves exact replay is state-preserving, conflicting replay rejects, and a stored receipt blocks a second abstract commit. Retained InMemory receipts bind both the semantic input hash and a canonical authority-effect digest; request-local correlation IDs are normalized out while deterministic action/ledger IDs make lost-reply reconstruction stable. Turso-persisted receipt and reopen evidence was removed in #2764 (not currently covered). The correspondence is not machine-proved, pre-v3 receipts fail closed on replay, and legacy unversioned callers remain. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+                "selectors": [
+                  "invariant:idempotentAtMostOnce"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+                "selectors": [
+                  "theorem:exact_replay_is_state_preserving",
+                  "theorem:conflicting_input_replay_rejects",
+                  "theorem:conflicting_effect_replay_rejects"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-AUTH-CLOSED-CUSTOM-EFFECT",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "partial",
+          "residual": "The retained IR validator admits a closed upsert_input_object declaration and rejects unknown payload/schema fields, open object schemas, and contradictory idempotent/ledgered declarations. Quint and Lean check independent bounded/reference semantics for exact active-definition pins, schema/ontology guards, one effect/event, stale/no-op behavior, and stable replay. No HTTP executor or custom ActionIR runtime is retained. Relation effects, deletes, field templates, arithmetic, domain-specific invariant programs, task-result coupling, extraction/refinement, and arbitrary custom ActionIR remain open.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/closed-action-effect.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/closed-action-effect.qnt --backend apalache --invariants typeOk oneClosedEffectPerCommit acceptedBoundExactDefinitions acceptedPassedClosedChecks noOpPreservesAuthority --max-steps 8",
+                "selectors": [
+                  "invariant:oneClosedEffectPerCommit",
+                  "invariant:acceptedBoundExactDefinitions",
+                  "invariant:acceptedPassedClosedChecks"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+                "selectors": [
+                  "theorem:accepted_execution_has_one_derived_effect",
+                  "theorem:derived_effect_cannot_change_declared_pins"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-AUTH-HARD-INVARIANT-OWNERSHIP",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "partial",
+          "residual": "Rust rejects open or unsupported EntityIR mutationAuthority descriptors and noncanonical semantic objectKind identities containing whitespace, control characters, or wildcards. Both the versioned ActionIR path and the legacy generic store path reject domain-owned objects before publication. Every legacy mutation is checked against the scoped Active semantic owner before fresh publication or idempotent-result return, including unpinned, unresolved-pinned, and resolved Draft, Proposed, or historical aliases; a resolved pin must additionally match its exact declared objectKind and admit the generic source. The legacy runtime independently revalidates canonical object-kind syntax. Governed catalog transition checks prevent owner/objectKind changes, duplicate semantic owners, or untyped retirement, and the typed authority/source mapping is exhaustively tested across all 36 current pairs. Quint checks generic/domain separation and Lean proves independent reference semantics, but descriptor parsing, active-artifact lookup, whole-store write-path completeness, storage atomicity, and domain-internal invariants are not implementation-proved. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt --backend apalache --invariants typeOk genericNeverCommitsDomainOwned domainNeverCommitsGenericOwned domainCommitMatchesExactOwner rejectionIsNoOp --max-steps 8",
+                "selectors": [
+                  "invariant:genericNeverCommitsDomainOwned",
+                  "invariant:domainCommitMatchesExactOwner"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+                "selectors": [
+                  "theorem:generic_action_cannot_mutate_domain_owned_state",
+                  "theorem:accepted_domain_commit_has_exact_owner"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-AUTH-DOMAIN-ADMISSION-PREDICATE",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "missing",
+          "residual": "Two pinned extraction lanes start from the exact production norn_ir::entity_mutation_authority_admits symbol: hax emits F* and Aeneas/Charon emits Lean, and both prove the complete representation-free Boolean truth table used by EntityMutationAuthority::admits. The Aeneas theorem reports no axioms and the gate checks four negative canaries, but the translator/compiler/prover toolchains remain trusted. This claim excludes descriptor parsing, enum-to-Boolean mapping, active-artifact lookup, call-site completeness, persistence, and every domain engine's internal invariants. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt --backend apalache --invariants typeOk genericNeverCommitsDomainOwned domainNeverCommitsGenericOwned domainCommitMatchesExactOwner rejectionIsNoOp --max-steps 8",
+                "selectors": [
+                  "invariant:genericNeverCommitsDomainOwned",
+                  "invariant:domainNeverCommitsGenericOwned",
+                  "invariant:domainCommitMatchesExactOwner"
+                ]
+              }
+            ],
+            "proof": []
+          }
+        }
+      ],
+      "runtime": {
+        "status": "missing",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "bounded_model_checked",
+        "bound": "Apalache depth 8 over one consistency owner, one transition identity, two payloads, one versioned capability policy, active Action/Entity pins in versions 1..3, Boolean closed input/output/ontology checks, and the six finite generic/domain owner/source tags",
+        "artifacts": [
+          "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+          "verification/stripmine-2026-08-22/models/closed-action-effect.qnt",
+          "verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt"
+        ],
+        "resultArtifacts": [
+          "target/verification-results/authority-commit-quint.json",
+          "target/verification-results/closed-action-effect-quint.json",
+          "target/verification-results/domain-engine-boundary-quint.json"
+        ],
+        "commands": [
+          "quint typecheck verification/stripmine-2026-08-22/models/authority-commit.qnt",
+          "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+          "quint typecheck verification/stripmine-2026-08-22/models/closed-action-effect.qnt",
+          "quint verify verification/stripmine-2026-08-22/models/closed-action-effect.qnt --backend apalache --invariants typeOk oneClosedEffectPerCommit acceptedBoundExactDefinitions acceptedPassedClosedChecks noOpPreservesAuthority --max-steps 8",
+          "quint typecheck verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
+          "quint verify verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt --backend apalache --invariants typeOk genericNeverCommitsDomainOwned domainNeverCommitsGenericOwned domainCommitMatchesExactOwner rejectionIsNoOp --max-steps 8"
+        ],
+        "generatedArtifacts": []
+      },
+      "proof": {
+        "status": "partial",
+        "artifacts": [
+          "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+          "verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+          "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean"
+        ],
+        "commands": [
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "A general expected-owner-version compare-and-swap path exists in the retained in-memory store, but legacy unversioned callers remain and no transport TransitionEnvelope routes custom state effects through it.",
+        "The authority model is bounded to one owner and transition identity, abstracts persistence as one atomic assignment, and omits crashes, replication, multi-owner coordination, and liveness.",
+        "The closed-action model bounds artifact versions to 1..3 and validation outcomes to Boolean predicates; it does not model arbitrary JSON schema or ontology semantics.",
+        "The Verus function is not linked to the retained store implementation by extraction or a proved refinement.",
+        "The closed custom ActionIR subset currently contains only upsert_input_object; it is evidence for the authority pattern, not a general verified action language.",
+        "Only the final representation-free hard-invariant ownership Boolean predicate has extracted production correspondence. Descriptor parsing, enum mapping, artifact activation/lookup, store-path completeness, and atomic persistence remain outside that proof.",
+        "No normalized durable production profile is retained in this workspace."
+      ],
+      "sourceFiles": [
+        "Cargo.toml",
+        "crates/norn-api/Cargo.toml",
+        "crates/norn-api/src/contracts.rs",
+        "crates/norn-api/src/lib.rs",
+        "crates/norn-api/src/openapi.rs",
+        "crates/norn-canonical/Cargo.toml",
+        "crates/norn-canonical/src/lib.rs",
+        "crates/norn-canonical/src/number.rs",
+        "crates/norn-cell/Cargo.toml",
+        "crates/norn-cell/src/codec.rs",
+        "crates/norn-cell/src/engine.rs",
+        "crates/norn-cell/src/error.rs",
+        "crates/norn-cell/src/export.rs",
+        "crates/norn-cell/src/export_journal.rs",
+        "crates/norn-cell/src/history.rs",
+        "crates/norn-cell/src/host.rs",
+        "crates/norn-cell/src/lib.rs",
+        "crates/norn-cell/src/migration.rs",
+        "crates/norn-cell/src/model.rs",
+        "crates/norn-cell/src/reactive.rs",
+        "crates/norn-cell/src/reactive_read.rs",
+        "crates/norn-cell/src/read.rs",
+        "crates/norn-cell/src/restore.rs",
+        "crates/norn-cell/src/store.rs",
+        "crates/norn-cell/src/system.rs",
+        "crates/norn-cell/src/write.rs",
+        "crates/norn-checker-wasm/Cargo.toml",
+        "crates/norn-checker/Cargo.toml",
+        "crates/norn-cli/Cargo.toml",
+        "crates/norn-cli/src/main.rs",
+        "crates/norn-graph/Cargo.toml",
+        "crates/norn-graph/src/algorithms.rs",
+        "crates/norn-graph/src/graph.rs",
+        "crates/norn-graph/src/lib.rs",
+        "crates/norn-ir/Cargo.toml",
+        "crates/norn-ir/src/access.rs",
+        "crates/norn-ir/src/action.rs",
+        "crates/norn-ir/src/business_pack.rs",
+        "crates/norn-ir/src/connector.rs",
+        "crates/norn-ir/src/customization.rs",
+        "crates/norn-ir/src/data_quality.rs",
+        "crates/norn-ir/src/decision_output.rs",
+        "crates/norn-ir/src/entitlement.rs",
+        "crates/norn-ir/src/entity.rs",
+        "crates/norn-ir/src/entity_v2.rs",
+        "crates/norn-ir/src/entity_v2/extension.rs",
+        "crates/norn-ir/src/entity_v2/interface.rs",
+        "crates/norn-ir/src/entity_v2/invariant.rs",
+        "crates/norn-ir/src/entity_v2/lifecycle.rs",
+        "crates/norn-ir/src/entity_v2/link.rs",
+        "crates/norn-ir/src/entity_v2/naming_series.rs",
+        "crates/norn-ir/src/entity_v2/object.rs",
+        "crates/norn-ir/src/entity_v2/property.rs",
+        "crates/norn-ir/src/entity_v2/status.rs",
+        "crates/norn-ir/src/fact_change.rs",
+        "crates/norn-ir/src/flow_source_map.rs",
+        "crates/norn-ir/src/function.rs",
+        "crates/norn-ir/src/identifier_limits.rs",
+        "crates/norn-ir/src/jdm.rs",
+        "crates/norn-ir/src/layout.rs",
+        "crates/norn-ir/src/lib.rs",
+        "crates/norn-ir/src/limit_profile.rs",
+        "crates/norn-ir/src/lineage.rs",
+        "crates/norn-ir/src/marking.rs",
+        "crates/norn-ir/src/members.rs",
+        "crates/norn-ir/src/metric.rs",
+        "crates/norn-ir/src/osi.rs",
+        "crates/norn-ir/src/provenance.rs",
+        "crates/norn-ir/src/rule.rs",
+        "crates/norn-ir/src/runtime.rs",
+        "crates/norn-ir/src/sealing.rs",
+        "crates/norn-ir/src/setting.rs",
+        "crates/norn-ir/src/source_schema.rs",
+        "crates/norn-ir/src/technical_view.rs",
+        "crates/norn-ir/src/verification.rs",
+        "crates/norn-ir/src/view.rs",
+        "crates/norn-ir/src/widget.rs",
+        "crates/norn-ir/src/widget_ux.rs",
+        "crates/norn-kernel/Cargo.toml",
+        "crates/norn-kernel/src/action.rs",
+        "crates/norn-kernel/src/action_commit.rs",
+        "crates/norn-kernel/src/cell_host.rs",
+        "crates/norn-kernel/src/commit_check.rs",
+        "crates/norn-kernel/src/decider.rs",
+        "crates/norn-kernel/src/decision_commit.rs",
+        "crates/norn-kernel/src/effect.rs",
+        "crates/norn-kernel/src/envelope.rs",
+        "crates/norn-kernel/src/limits.rs",
+        "crates/norn-kernel/src/naming_series.rs",
+        "crates/norn-kernel/src/observations.rs",
+        "crates/norn-kernel/src/refusal.rs",
+        "crates/norn-kernel/src/result_reconciliation.rs",
+        "crates/norn-kernel/src/snapshot_observe.rs",
+        "crates/norn-skeleton-guard/Cargo.toml",
+        "crates/norn-testkit/Cargo.toml",
+        "fixtures/connectors/frappe.connector.json",
+        "fixtures/connectors/google-directory.connector.json",
+        "fixtures/dev/catalog-sync/definitions/shopify_demo.connector.json",
+        "fixtures/invalid/blank-namespace.entity.json",
+        "fixtures/invalid/effectful-ts-boundary.customization.json",
+        "fixtures/invalid/incremental-maintenance.derived.json",
+        "fixtures/invalid/null-member.entity-v2.json",
+        "fixtures/invalid/retired-kind.process.json",
+        "fixtures/invalid/two-definitions.entity-v2.json",
+        "fixtures/invalid/unknown-kind.json",
+        "fixtures/invalid/unknown-resource.connector.json",
+        "fixtures/invalid/unsafe-action-binding.widget.json",
+        "fixtures/invalid/unsupported-ir-version.entity.json",
+        "fixtures/invalid/v1-member-in-v2.entity.json",
+        "fixtures/invalid/v2-form.relation.json",
+        "fixtures/invalid/wasm-boundary.customization.json",
+        "fixtures/ir/artifact-set/action-invalid-write-mode.action.json",
+        "fixtures/ir/commerce-sales-order-submit-invoice.action.json",
+        "fixtures/ir/entity-v2/artifact-set/acme-sku.extension.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/commerce-purchase-order.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/commerce-sales-order.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/invalid/conflicting-inverse.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/invalid/unknown-link-target.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/invalid/unknown-supertype.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+        "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json",
+        "fixtures/ir/retail-core.business_pack.json",
+        "fixtures/ir/retail-inventory.connector.json",
+        "fixtures/ir/retail-low-stock.derived.json",
+        "fixtures/ir/retail-procurement.policy.json",
+        "fixtures/ir/retail-purchase-request.entity.json",
+        "fixtures/ir/retail-reorder-routing.rule.json",
+        "fixtures/ir/retail-reorder-threshold.setting.json",
+        "fixtures/ir/retail-reorder.action.json",
+        "fixtures/ir/retail-replenishment.widget.json",
+        "fixtures/ir/retail-sku-reorder-point.customization.json",
+        "fixtures/ir/retail-sku-supplier.relation.json",
+        "fixtures/ir/retail-sku-v2.entity.json",
+        "fixtures/ir/retail-sku.entity.json",
+        "fixtures/ir/ux-orders-customer.widget.json",
+        "fixtures/law-ir/laws.source.ts",
+        "packages/norn-sdk/src/generated/norn-api.ts",
+        "packages/norn-sdk/src/index.ts",
+        "tools/norn-ts/corpus/accept/aliased-imports.ts",
+        "tools/norn-ts/corpus/accept/data-and-results.ts",
+        "tools/norn-ts/corpus/accept/reexported-effect.ts",
+        "tools/norn-ts/corpus/accept/scoped-law.ts",
+        "tools/norn-ts/corpus/accept/sequential-all-flatmap.ts",
+        "tools/norn-ts/corpus/accept/sequential-perform.ts",
+        "tools/norn-ts/corpus/reject/ambient-date-random.ts",
+        "tools/norn-ts/corpus/reject/arbitrary-predicate.ts",
+        "tools/norn-ts/corpus/reject/bare-return.ts",
+        "tools/norn-ts/corpus/reject/concurrent-all.ts",
+        "tools/norn-ts/corpus/reject/definition-as-data.ts",
+        "tools/norn-ts/corpus/reject/effect-as-value.ts",
+        "tools/norn-ts/corpus/reject/effect-in-data.ts",
+        "tools/norn-ts/corpus/reject/effect-run-promise.ts",
+        "tools/norn-ts/corpus/reject/fork-race.ts",
+        "tools/norn-ts/corpus/reject/function-valued-flatmap.ts",
+        "tools/norn-ts/corpus/reject/generator-escape.ts",
+        "tools/norn-ts/corpus/reject/helper-call.ts",
+        "tools/norn-ts/corpus/reject/hostile-reexport.ts",
+        "tools/norn-ts/corpus/reject/import-allowlist.ts",
+        "tools/norn-ts/corpus/reject/imported-ambient.ts",
+        "tools/norn-ts/corpus/reject/layer-context.ts",
+        "tools/norn-ts/corpus/reject/map-block-undefined.ts",
+        "tools/norn-ts/corpus/reject/mutable-capture.ts",
+        "tools/norn-ts/corpus/reject/non-finite-negative.ts",
+        "tools/norn-ts/corpus/reject/non-literal-arguments.ts",
+        "tools/norn-ts/corpus/reject/object-equality-arithmetic.ts",
+        "tools/norn-ts/corpus/reject/proxy-truthiness.ts",
+        "tools/norn-ts/corpus/reject/ref-queue.ts",
+        "tools/norn-ts/corpus/reject/resource-finalizer.ts",
+        "tools/norn-ts/corpus/reject/shadowed-effect.ts",
+        "tools/norn-ts/corpus/reject/switch-fallthrough.ts",
+        "tools/norn-ts/corpus/reject/sync-promise-await.ts",
+        "tools/norn-ts/corpus/reject/template-interpolation.ts",
+        "tools/norn-ts/corpus/reject/throw.ts",
+        "tools/norn-ts/corpus/reject/try-catch-around-yield.ts",
+        "tools/norn-ts/corpus/reject/unbounded-schedule.ts",
+        "tools/norn-ts/corpus/reject/while-loop.ts",
+        "tools/norn-ts/corpus/reject/wrapped-effect-in-data.ts",
+        "tools/norn-ts/corpus/support/ambient-const.ts",
+        "tools/norn-ts/corpus/support/billing.ts",
+        "tools/norn-ts/corpus/support/declared-only.d.ts",
+        "tools/norn-ts/corpus/support/definitions.ts",
+        "tools/norn-ts/corpus/support/hostile-effect.ts",
+        "tools/norn-ts/corpus/support/reexport-effect.ts",
+        "tools/norn-ts/fixtures/definitions/access-principal-attribute.source.ts",
+        "tools/norn-ts/fixtures/definitions/action-preconditions.source.ts",
+        "tools/norn-ts/fixtures/definitions/acyclic.source.ts",
+        "tools/norn-ts/fixtures/definitions/connector.source.ts",
+        "tools/norn-ts/fixtures/definitions/create-linked.source.ts",
+        "tools/norn-ts/fixtures/definitions/crm.source.ts",
+        "tools/norn-ts/fixtures/definitions/interface-invariant.source.ts",
+        "tools/norn-ts/fixtures/definitions/invalid/connector-aliased-secret.ts",
+        "tools/norn-ts/fixtures/definitions/invalid/connector-secret.ts",
+        "tools/norn-ts/fixtures/definitions/invalid/connector-write.ts",
+        "tools/norn-ts/fixtures/definitions/invalid/implements-type.ts",
+        "tools/norn-ts/fixtures/definitions/invalid/invariant-classification.ts",
+        "tools/norn-ts/fixtures/definitions/invalid/privacy-aliased-field.ts",
+        "tools/norn-ts/fixtures/definitions/invalid/proto-condition.ts",
+        "tools/norn-ts/fixtures/definitions/privacy.source.ts",
+        "tools/norn-ts/fixtures/flows/invalid/duplicate-step.builder.ts",
+        "tools/norn-ts/fixtures/flows/invalid/no-result.builder.ts",
+        "tools/norn-ts/fixtures/flows/invalid/over-bound-retry.builder.ts",
+        "tools/norn-ts/fixtures/flows/invalid/reused-step-object.builder.ts",
+        "tools/norn-ts/fixtures/flows/invalid/unbounded-retry.builder.ts",
+        "tools/norn-ts/fixtures/flows/invalid/undeclared-read.builder.ts",
+        "tools/norn-ts/fixtures/flows/invalid/undeclared-tag.builder.ts",
+        "tools/norn-ts/fixtures/flows/invalid/wrong-input.builder.ts",
+        "tools/norn-ts/fixtures/flows/retry-timer.builder.ts",
+        "tools/norn-ts/fixtures/flows/retry-timer.source.ts",
+        "tools/norn-ts/fixtures/flows/route.builder.ts",
+        "tools/norn-ts/fixtures/flows/route.source.ts",
+        "tools/norn-ts/fixtures/flows/sequence.builder.ts",
+        "tools/norn-ts/fixtures/flows/sequence.source.ts",
+        "tools/norn-ts/fixtures/flows/support/billing.builder.ts",
+        "tools/norn-ts/fixtures/flows/support/billing.source.ts",
+        "tools/norn-ts/fixtures/flows/terminal-fact.builder.ts",
+        "tools/norn-ts/fixtures/flows/terminal-fact.source.ts",
+        "tools/norn-ts/fixtures/flows/typed-failure.builder.ts",
+        "tools/norn-ts/fixtures/flows/typed-failure.source.ts",
+        "tools/norn-ts/fixtures/packs/billing/retry-timer.ts",
+        "tools/norn-ts/fixtures/packs/billing/sequence.ts",
+        "tools/norn-ts/fixtures/vertical/invalid/arbitrary-callback.ts",
+        "tools/norn-ts/fixtures/vertical/invalid/proxy-truthiness.ts",
+        "tools/norn-ts/fixtures/vertical/route-message.builder.ts",
+        "tools/norn-ts/fixtures/vertical/route-message.source.ts",
+        "tools/norn-ts/fixtures/vertical/support/classifier.builder.ts",
+        "tools/norn-ts/fixtures/vertical/support/classifier.source.ts",
+        "tools/norn-ts/package.json",
+        "tools/norn-ts/profile/norn-authoring.d.ts"
+      ]
+    },
+    {
+      "id": "artifact-governance",
+      "obligations": [
+        "INV-ART-AUTHORITY-PROMOTION",
+        "INV-ART-DIRECT-WRITE-PREDICATE"
+      ],
+      "obligationClaims": [
+        {
+          "id": "INV-ART-AUTHORITY-PROMOTION",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "partial",
+          "residual": "The retained in-memory store and BAC plan/apply path test direct-write rejection, exact active-version selection, trusted-checker receipt binding, and stale competing-plan rejection. No HTTP, Turso, or Postgres adapter is retained. Lean and Quint provide independent references, not Rust refinement or proof that the validator establishes arbitrary semantics. hax/F* prove only the direct-write lifecycle predicate; a proof of complete BAC/storage behavior remains open. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/artifact-promotion.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/artifact-promotion.qnt --backend apalache --invariants typeOk authorityRequiresExactAppliedPlan --max-steps 8",
+                "selectors": [
+                  "invariant:authorityRequiresExactAppliedPlan"
+                ]
+              },
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/active-artifact-authority.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/active-artifact-authority.qnt --backend apalache --invariants typeOk activePointerReferencesEnvelope immutableV1History exactlyOneExecutable competingV1PlansCannotBothPublish --max-steps 8",
+                "selectors": [
+                  "invariant:activePointerReferencesEnvelope",
+                  "invariant:immutableV1History",
+                  "invariant:exactlyOneExecutable",
+                  "invariant:competingV1PlansCannotBothPublish"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "target/verification-results/artifact-governance-hax/Norn_ir.fst",
+                "command": "scripts/verify-artifact-governance-extraction.sh",
+                "selectors": [
+                  "predicate:Norn_ir.direct_artifact_write_allowed"
+                ]
+              },
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst",
+                "command": "scripts/verify-artifact-governance-extraction.sh",
+                "selectors": [
+                  "theorem:active_authority_bearing_rejected",
+                  "theorem:approved_authority_bearing_rejected"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-ART-DIRECT-WRITE-PREDICATE",
+          "runtime": "exhaustive_bounded",
+          "model": "missing",
+          "proof": "implementation_proved",
+          "residual": "The promoted Rust table enumerates the current 11 ArtifactKind by 7 ArtifactLifecycle values and the F* theorem is total over the hax-extracted closed production representations. This proves only the pure predicate. API/store callsite completeness, faithful kind/lifecycle derivation, BAC review, trusted-checker receipts, active-pointer publication, persistence, authentication, authorization, concurrency, and any future enum variant before re-extraction remain outside the claim.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-ir/tests/artifact_governance.rs",
+                "command": "cargo test --locked -p norn-ir --test artifact_governance",
+                "selectors": [
+                  "test:every_authority_bearing_kind_requires_governed_approval_and_activation",
+                  "test:non_authoritative_lifecycles_remain_directly_writable"
+                ]
+              }
+            ],
+            "model": [],
+            "proof": [
+              {
+                "artifact": "target/verification-results/artifact-governance-hax/Norn_ir.fst",
+                "command": "scripts/verify-artifact-governance-extraction.sh",
+                "selectors": [
+                  "predicate:Norn_ir.direct_artifact_write_allowed"
+                ]
+              },
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst",
+                "command": "scripts/verify-artifact-governance-extraction.sh",
+                "selectors": [
+                  "theorem:direct_artifact_write_truth_table"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "runtime": {
+        "status": "partial",
+        "bound": "Exhaustive current finite predicate table covers all 11 ArtifactKind variants by all 7 ArtifactLifecycle variants (77 calls); surrounding promotion/runtime obligations remain tested rather than exhaustive.",
+        "artifacts": [
+          "crates/norn-ir/src/lib.rs",
+          "crates/norn-ir/tests/artifact_governance.rs"
+        ],
+        "commands": [
+          "cargo test --locked -p norn-ir --test artifact_governance"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "partial",
+        "bound": "Apalache depth 8 over two abstract artifact hashes plus one immutable v1 envelope, two competing v2/v3 plans, one active pointer, proposal/validation/approval binding, tampering, and rejected direct activation",
+        "artifacts": [
+          "verification/stripmine-2026-08-22/models/artifact-promotion.qnt",
+          "verification/stripmine-2026-08-22/models/active-artifact-authority.qnt"
+        ],
+        "resultArtifacts": [
+          "target/verification-results/active-artifact-authority-quint.json",
+          "target/verification-results/artifact-promotion-quint.json"
+        ],
+        "commands": [
+          "quint typecheck verification/stripmine-2026-08-22/models/artifact-promotion.qnt",
+          "quint verify verification/stripmine-2026-08-22/models/artifact-promotion.qnt --backend apalache --invariants typeOk authorityRequiresExactAppliedPlan --max-steps 8",
+          "quint typecheck verification/stripmine-2026-08-22/models/active-artifact-authority.qnt",
+          "quint verify verification/stripmine-2026-08-22/models/active-artifact-authority.qnt --backend apalache --invariants typeOk activePointerReferencesEnvelope immutableV1History exactlyOneExecutable competingV1PlansCannotBothPublish --max-steps 8"
+        ],
+        "generatedArtifacts": []
+      },
+      "proof": {
+        "status": "partial",
+        "scope": "exact extracted predicate plus independent reference",
+        "correspondenceArtifact": "crates/norn-ir/README.md",
+        "artifacts": [
+          "crates/norn-ir/src/lib.rs",
+          "verification/stripmine-2026-08-22/proofs/lean/ArtifactPromotion.lean",
+          "verification/stripmine-2026-08-22/proofs/lean/ActiveArtifactAuthority.lean",
+          "verification/stripmine-2026-08-22/proofs/lean/ArtifactVerificationReceipt.lean",
+          "verification/stripmine-2026-08-22/proofs/fstar/FStar.Mul.fst",
+          "verification/stripmine-2026-08-22/proofs/fstar/Core_models.fst",
+          "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst",
+          "crates/norn-ir/README.md",
+          "scripts/verify-artifact-governance-extraction.sh"
+        ],
+        "commands": [
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ArtifactPromotion.lean",
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ActiveArtifactAuthority.lean",
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ArtifactVerificationReceipt.lean",
+          "scripts/verify-artifact-governance-extraction.sh"
+        ],
+        "generatedArtifacts": [
+          "target/verification-results/artifact-governance-hax/Norn_ir.fst"
+        ],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "The exact direct lifecycle predicate is extracted from production Rust and proved in F*, but this does not prove the surrounding HTTP/BAC/storage composition; the Lean active-pointer and checker-receipt theorems remain independent references.",
+        "The models abstract artifact content as two collision-free integer hashes and active versions as v1/v2/v3; they do not model persistence crashes, arbitrary concurrent plan mutation, or multi-artifact dependency graphs.",
+        "The persisted checker receipt attests only that a fixed deterministic validator accepted exact bytes and declared claims; it is not a proof of arbitrary artifact semantics, and no Rust-to-Lean refinement is claimed.",
+        "The Turso snapshot store, its pre-v7 receipt-less snapshot decoding path, and HTTP transport authentication were removed in PR #2764; no persisted-snapshot migration or transport-authentication claim is retained. Only the in-memory legacy-artifact case (visible for migration, not executable) remains tested."
+      ],
+      "sourceFiles": [
+        "crates/norn-checker/src/artifact_set.rs",
+        "crates/norn-checker/src/entity_artifacts.rs",
+        "fixtures/rule-ir-v2/invalid/open-input-schema.rule.json",
+        "packages/norn-sdk/package.json",
+        "registry/core/artifacts/commerce.SalesOrder.entity.json",
+        "registry/core/artifacts/core.Entitlement.entity.json",
+        "registry/core/artifacts/core.Order.interface.json",
+        "registry/core/artifacts/core.value_types.entity.json",
+        "registry/core/artifacts/identity.BusinessUnit.entity.json",
+        "registry/core/artifacts/location.Region.entity.json",
+        "registry/core/artifacts/location.Space.entity.json",
+        "registry/core/artifacts/party.Brand.entity.json",
+        "registry/core/artifacts/std.value_types.entity.json",
+        "scripts/verify-artifact-governance-extraction.sh",
+        "tools/norn-ts/corpus/accept/schema-tool-toolkit.ts",
+        "tools/norn-ts/corpus/reject/schema-projection.ts",
+        "tools/norn-ts/fixtures/schema/closed.source.ts",
+        "tools/norn-ts/fixtures/schema/invalid-closed/decimal.ts",
+        "tools/norn-ts/fixtures/schema/invalid-closed/exponential.ts",
+        "tools/norn-ts/fixtures/schema/invalid-closed/many-aliases.ts",
+        "tools/norn-ts/fixtures/schema/invalid-closed/null-or.ts",
+        "tools/norn-ts/fixtures/schema/invalid/acyclic-null.source.ts",
+        "tools/norn-ts/fixtures/schema/invalid/acyclic-number.source.ts",
+        "tools/norn-ts/fixtures/schema/invalid/acyclic-string.source.ts",
+        "tools/norn-ts/fixtures/schema/invalid/array-property.ts",
+        "tools/norn-ts/fixtures/schema/invalid/date-property.ts",
+        "tools/norn-ts/fixtures/schema/invalid/decimal-scale.ts",
+        "tools/norn-ts/fixtures/schema/invalid/exponent-default.ts",
+        "tools/norn-ts/fixtures/schema/invalid/finite-property.ts",
+        "tools/norn-ts/fixtures/schema/invalid/mixed-union-property.ts",
+        "tools/norn-ts/fixtures/schema/invalid/nested-struct-property.ts",
+        "tools/norn-ts/fixtures/schema/invalid/null-default.ts",
+        "tools/norn-ts/fixtures/schema/invalid/number-property.ts",
+        "tools/norn-ts/fixtures/schema/invalid/numeric-literal-property.ts",
+        "tools/norn-ts/fixtures/schema/invalid/optional-key-property.ts",
+        "tools/norn-ts/fixtures/schema/invalid/refinement-property.ts",
+        "tools/norn-ts/fixtures/schema/invalid/tagged-union-property.ts",
+        "tools/norn-ts/fixtures/schema/invalid/unknown-member.ts",
+        "tools/norn-ts/fixtures/schema/invoice.builder.ts",
+        "tools/norn-ts/fixtures/schema/invoice.source.ts",
+        "tools/norn-ts/fixtures/schema/precision.source.ts",
+        "tools/norn-ts/fixtures/vertical/invalid/non-projectable-schema.ts",
+        "vendor/zen/core/expression/src/functions/registry.rs",
+        "verification/stripmine-2026-08-22/models/active-artifact-authority.qnt",
+        "verification/stripmine-2026-08-22/models/artifact-promotion.qnt"
+      ]
+    },
+    {
+      "id": "authorization",
+      "obligations": [
+        "INV-AUTH-CAPABILITY-NOW",
+        "INV-AUTH-SCOPE-CLOSED"
+      ],
+      "obligationClaims": [
+        {
+          "id": "INV-AUTH-CAPABILITY-NOW",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "partial",
+          "residual": "The retained production-bound InMemory ActionIR method loads the exact current verified ActionIR artifact, persisted policy, grant, resource, authorization epoch, replacement receipt, and monotonic trusted logical-time watermark inside one candidate-state commit, runs the deterministic checker, and atomically publishes the action effect plus authorization-bound receipt. Exact replay is mutation-inert but rechecks current artifact/authority and retry time before result disclosure; fresh-commit and post-commit exact-retry revocation races both deny with no duplicate business effect or prior-result disclosure. Tests also cover valid exact and lost-reply replay, revocation/expiry, stale or substituted bindings, owner CAS, and artifact/provenance/receipt tampering. The authenticated HTTP ActionIR route (server-side expectations and trusted logical time) and the Turso injected-persistence-failure and reopen tests were removed in #2764 (not currently covered); trusted logical time is supplied by the test caller. Other mutation families still use narrower authorization boundaries; governed network provisioning, strong-receipt projection in aggregate evidence, effect-program-to-proposed-effect correspondence, and Rust-to-Lean/Quint refinement are not claimed. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt --backend apalache --invariants typeOk atMostOnce acceptedOnlyWithExactBindings acceptedOnlyWithFreshVersions acceptedOnlyWithinValidityWindow rejectionPreservesCommitAuthority --max-steps 8",
+                "selectors": [
+                  "invariant:acceptedOnlyWithFreshVersions",
+                  "invariant:acceptedOnlyWithinValidityWindow"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+                "selectors": [
+                  "theorem:allow_uses_current_policy_and_authorization_epoch",
+                  "theorem:revoked_grant_denies"
+                ]
+              },
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/AuthorizationAuthorityCommit.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationAuthorityCommit.lean",
+                "selectors": [
+                  "theorem:accepted_fresh_commit_uses_current_authority",
+                  "theorem:replay_or_collision_is_inert",
+                  "theorem:successful_fresh_commit_is_atomic"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-AUTH-SCOPE-CLOSED",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "partial",
+          "residual": "The retained authorization checker and engine store require explicit scope and reject missing, wildcard, or cross-organization bindings. Optional dimensions, including agent session, require exact presence or absence; blank/wildcard values are rejected. ScopeKey constructors and retained store boundaries revalidate components, and authorization evidence binds exact actor kind. No HTTP, UPE mutation, or legacy fixture/migration path is retained. Lean proves compact exact option semantics and Quint exhausts None/Some(A)/Some(B) combinations for five optional dimensions. The Aeneas lane starts at the concrete interned Rust grant-vector decision and proves its traversal, exact tuple comparisons, and capability membership. Its generated vector loops use `partial_fixpoint`, so the theorem dependency closure is restricted to Lean core `propext`, `Classical.choice`, and `Quot.sound`, never `sorryAx` or a custom axiom. It does not prove String-to-u64 interning, deserialization/validation, commit-evidence construction, or every call-site route. The broad production obligation still needs a whole-store scoped-key audit, authentication/provisioning proof, a general storage-key injectivity proof, read-path lifecycle enforcement, and full implementation correspondence. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/authz-v1/models/authorization-scope-exactness.qnt",
+                "command": "quint verify verification/authz-v1/models/authorization-scope-exactness.qnt --backend apalache --invariants typeOk allowIffExact omittedGrantTenantRejectsPresentRequest omittedGrantSessionRejectsPresentRequest --max-steps 4",
+                "selectors": [
+                  "invariant:allowIffExact",
+                  "invariant:omittedGrantTenantRejectsPresentRequest",
+                  "invariant:omittedGrantSessionRejectsPresentRequest"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+                "selectors": [
+                  "theorem:allow_is_scope_closed",
+                  "theorem:allow_binds_identity"
+                ]
+              },
+              {
+                "artifact": "verification/authz-v1/AuthorizationScopeExactness.lean",
+                "command": "lean -DwarningAsError=true verification/authz-v1/AuthorizationScopeExactness.lean",
+                "selectors": [
+                  "theorem:omitted_tenant_is_not_wildcard",
+                  "theorem:omitted_workspace_is_not_wildcard",
+                  "theorem:omitted_environment_is_not_wildcard",
+                  "theorem:omitted_business_unit_is_not_wildcard",
+                  "theorem:omitted_agent_session_is_not_wildcard",
+                  "theorem:exact_scope_allow_implies_every_dimension_equal"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "runtime": {
+        "status": "missing",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "bounded_model_checked",
+        "bound": "Apalache depth 8 over the general one-principal capability/owner transition model plus a dedicated commit-authorization model with Boolean exact-binding groups, policy/resource versions 1..4, authorization epochs 1..4, logical time 1..4, revocation/policy/resource changes, optional expiry, and at most one logical commit; plus exhaustive per-step None/Some(A)/Some(B) combinations for tenant, workspace, environment, business unit, and agent session to depth 4",
+        "artifacts": [
+          "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+          "verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt",
+          "verification/authz-v1/models/authorization-scope-exactness.qnt"
+        ],
+        "resultArtifacts": [
+          "target/verification-results/authority-commit-quint.json",
+          "target/verification-results/authorization-commit-boundary-quint.json",
+          "target/verification-results/authorization-scope-exactness-quint.json"
+        ],
+        "commands": [
+          "quint typecheck verification/stripmine-2026-08-22/models/authority-commit.qnt",
+          "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+          "quint typecheck verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt",
+          "quint verify verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt --backend apalache --invariants typeOk atMostOnce acceptedOnlyWithExactBindings acceptedOnlyWithFreshVersions acceptedOnlyWithinValidityWindow rejectionPreservesCommitAuthority --max-steps 8",
+          "quint typecheck verification/authz-v1/models/authorization-scope-exactness.qnt",
+          "quint verify verification/authz-v1/models/authorization-scope-exactness.qnt --backend apalache --invariants typeOk allowIffExact omittedGrantTenantRejectsPresentRequest omittedGrantSessionRejectsPresentRequest --max-steps 4"
+        ],
+        "generatedArtifacts": []
+      },
+      "proof": {
+        "status": "partial",
+        "scope": "mixed concrete extracted decision and independent references",
+        "artifacts": [
+          "verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+          "verification/stripmine-2026-08-22/proofs/lean/AuthorizationAuthorityCommit.lean",
+          "verification/authz-v1/AuthorizationScopeExactness.lean"
+        ],
+        "commands": [
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationAuthorityCommit.lean",
+          "lean -DwarningAsError=true verification/authz-v1/AuthorizationScopeExactness.lean"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "The retained in-memory store method couples the exact current verified ActionIR artifact, persisted policy/grant/resource/epoch/replacement receipt/time watermark, deterministic authorization, owner CAS, business effects, and an authorization-bound receipt in one candidate commit. No HTTP route or durable database adapter is retained. INV-AUTH-CAPABILITY-NOW remains partial because other authoritative mutation families, network authority provisioning, and strong-receipt evidence projection remain outside this slice; the kernel also does not derive the proposed effect from the artifact's optional closed effect program.",
+        "INV-AUTH-SCOPE-CLOSED remains partial until every authoritative store trait, primary/unique identity, and lookup path passes a scoped-key audit; the public ScopeKey/scope registry alias checks and cell tenant-binding regression are only closed slices.",
+        "The bounded models cover capability freshness, abstract exact-binding groups, and the concrete five optional scope/session dimensions over a three-value option encoding, but not grant hierarchy, policy language, identity authentication, storage snapshots, or production evaluator correspondence.",
+        "Except for the concrete interned decision graph extracted by the Aeneas lane, the Lean authorization theorems are independent reference semantics over compact exact identity/scope/operation/policy/resource/version/epoch/time, atomic publication values, and exact optional dimensions\u2014not an end-to-end Rust implementation proof, identity/evaluator proof, storage-key injectivity proof, or whole-store scope audit.",
+        "Cedar's formal reference semantics are source evidence. No runtime differential-refinement harness is retained, and no checked correspondence theorem relates the Rust authorization implementation to the references."
+      ],
+      "sourceFiles": [
+        "crates/norn-authz/Cargo.toml",
+        "crates/norn-authz/src/admit.rs",
+        "crates/norn-authz/src/base.rs",
+        "crates/norn-authz/src/diag.rs",
+        "crates/norn-authz/src/entitlement.rs",
+        "crates/norn-authz/src/grants.rs",
+        "crates/norn-authz/src/lib.rs",
+        "crates/norn-authz/src/lower.rs",
+        "crates/norn-authz/src/pdp.rs",
+        "crates/norn-authz/src/projected_tests.rs",
+        "crates/norn-authz/src/request.rs",
+        "crates/norn-authz/src/tests.rs",
+        "crates/norn-authz/tests/goldens/order_access.cedar",
+        "crates/norn-kernel/src/authz.rs",
+        "crates/norn-kernel/src/authz_action.rs",
+        "verification/authz-v1/AuthorizationScopeExactness.lean",
+        "verification/authz-v1/models/authorization-scope-exactness.qnt"
+      ]
+    },
+    {
+      "id": "quantity-ledger",
+      "obligations": [
+        "INV-QL-CONSERVATION",
+        "INV-QL-UNIT-DIMENSION",
+        "INV-QL-EXACT-ARITHMETIC",
+        "INV-QL-PENDING-RESOLUTION",
+        "INV-QL-BATCH-ATOMIC",
+        "INV-QL-APPEND-REVERSAL",
+        "INV-QL-REFERENCE-BALANCE-ALGEBRA"
+      ],
+      "obligationClaims": [
+        {
+          "id": "INV-QL-CONSERVATION",
+          "runtime": "tested",
+          "model": "partial",
+          "proof": "partial",
+          "residual": "The Rust checker targets the full admitted linear-template contract, but the Quint model constructs one balanced debit/credit pair and the Lean/Kani artifacts prove narrower independent algebraic references; no theorem covers every admitted template valuation or production correspondence.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+                "selectors": [
+                  "test:generated_balanced_packs_match_independent_oracle",
+                  "test:coefficient_constant_unit_and_layer_mutations_fail_closed"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/quantity-authority.qnt --backend apalache --invariants typeOk perUnitLayerConserved atomicAuthorityRecords phaseMatchesCommitCount reversalRestoresBalances noOpPreservesAuthority --max-steps 8",
+                "selectors": [
+                  "invariant:perUnitLayerConserved"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+                "selectors": [
+                  "theorem:balanced_pair",
+                  "theorem:balanced_append"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-QL-UNIT-DIMENSION",
+          "runtime": "tested",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
+          "residual": "Whole checker-admitted packs pin exact ontology, unit/dimension terms and precision in immutable Define receipts on the normalized cell path. Legacy authority/profile state was removed in quantity v2. Formal artifacts remain references; #3303 must establish v2 refinement.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-checker/tests/quantity_ledger.rs",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+                "selectors": [
+                  "test:account_registry_binds_every_leg_to_an_allowed_unit",
+                  "test:ontology_artifact_and_unit_dimension_bindings_fail_closed",
+                  "test:different_dimensions_cannot_balance_or_substitute_after_sealing"
+                ]
+              },
+              {
+                "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+                "selectors": [
+                  "test:ontology_dimension_substitution_never_preserves_pack_or_certificate_identity"
+                ]
+              },
+              {
+                "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+                "selectors": [
+                  "test:boundary_hashes_are_versioned_golden_vectors",
+                  "test:recomputing_a_tampered_certificate_hash_does_not_forge_checker_agreement"
+                ]
+              },
+              {
+                "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+                "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+                "selectors": [
+                  "test:pack_identity_corruption_cannot_reinterpret_existing_quantities"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
+                "command": "quint verify verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt --backend apalache --invariants typeOk certificateRemainsPinned acceptedPostingHasExactBinding differentDimensionCannotSubstitute differentDimensionsCannotBalance --max-steps 8",
+                "selectors": [
+                  "invariant:certificateRemainsPinned",
+                  "invariant:acceptedPostingHasExactBinding",
+                  "invariant:differentDimensionCannotSubstitute",
+                  "invariant:differentDimensionsCannotBalance"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+                "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+                "selectors": [
+                  "harness:partitions_by_unit_and_layer",
+                  "harness:equal_values_in_different_units_are_not_balanced"
+                ]
+              },
+              {
+                "artifact": "verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+                "command": "lean -DwarningAsError=true verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+                "selectors": [
+                  "theorem:different_dimensions_cannot_balance",
+                  "theorem:different_units_cannot_balance_without_explicit_identity",
+                  "theorem:admitted_substitution_is_exact",
+                  "theorem:changing_dimension_rejects_substitution"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-QL-EXACT-ARITHMETIC",
+          "runtime": "tested",
+          "model": "missing",
+          "proof": "partial",
+          "residual": "The production checker and differential/property cases exercise exact checked i128 arithmetic, while Kani proves only one fixed intermediate-overflow vector and a bounded pair domain; no proof covers every admitted bound or production evaluator path.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+                "selectors": [
+                  "test:balanced_symbolic_expression_with_unsafe_bounds_is_rejected_by_both_checkers",
+                  "test:cross_leg_prefix_overflow_is_rejected_by_production_and_independent_oracle"
+                ]
+              }
+            ],
+            "model": [],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+                "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+                "selectors": [
+                  "harness:overflow_is_rejected_not_wrapped",
+                  "harness:rejects_intermediate_overflow"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-QL-PENDING-RESOLUTION",
+          "runtime": "tested",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
+          "residual": "Quantity v2 admits any conserving signed subset and funds the remaining vector under explicit policies. Runtime timer expiry and cell clock use the shared commit path. The full-only reference models are not refinement evidence for partial resolution, balance CAS or host scheduling (#3303).",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+                "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+                "selectors": [
+                  "test:conserving_partial_post_and_void_preserve_identity_deadline_and_retry",
+                  "test:partial_resolution_interleaved_lots_conserve_independent_scalar_fold",
+                  "test:lazy_deadline_refuses_post_and_scheduled_expiry_consumes_timer_atomically"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt --backend apalache --invariants typeOk conserved recordsAligned terminalResolvedOnce noTerminalReservation pendingHasOneCreate noOpPreservesAuthority --max-steps 8",
+                "selectors": [
+                  "invariant:terminalResolvedOnce",
+                  "invariant:noTerminalReservation",
+                  "invariant:pendingHasOneCreate"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+                "selectors": [
+                  "theorem:every_resolution_releases_the_full_reservation",
+                  "theorem:a_terminal_result_rejects_every_second_resolution",
+                  "theorem:expiry_before_due_is_rejected"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-QL-BATCH-ATOMIC",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
+          "residual": "The unused engine multi-posting batch protocol was deleted by owner direction in quantity v2. Current multi-leg templates and ordinary effects are atomic in one cell transaction, but do not implement that protocol's ordered child transaction identities. Legacy Quint/Lean batch models remain reference mathematics; no current batch runtime claim or v2 refinement is credited.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+                "command": "quint verify verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt --backend apalache --invariants typeOk sequentialVersions batchAllOrNone stableReceipt --max-steps 8",
+                "selectors": [
+                  "invariant:sequentialVersions",
+                  "invariant:batchAllOrNone",
+                  "invariant:stableReceipt"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+                "command": "lean -DwarningAsError=true verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+                "selectors": [
+                  "theorem:accepted_posting_applies_deltas_and_conserves",
+                  "theorem:rejected_batch_is_noop",
+                  "theorem:accepted_batch_matches_sequential_execution",
+                  "theorem:accepted_batch_conserves_total",
+                  "theorem:accepted_batch_advances_exactly"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-QL-APPEND-REVERSAL",
+          "runtime": "tested",
+          "model": "bounded_model_checked",
+          "proof": "partial",
+          "residual": "The normalized cell path appends linked exact negations, checks immutable reversal evidence and reconstructs projections at open. Formal quantity authority models remain reference mathematics; no Rust/SQL refinement proof is claimed (#3303).",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+                "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+                "selectors": [
+                  "test:linked_reversal_is_append_only_and_cannot_repeat_or_reverse_a_reversal",
+                  "test:reversal_projection_damage_refuses_reopen_replay_and_second_reversal",
+                  "test:reversal_refuses_a_balanced_but_corrupted_original_vector"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+                "command": "quint verify verification/stripmine-2026-08-22/models/quantity-authority.qnt --backend apalache --invariants typeOk perUnitLayerConserved atomicAuthorityRecords phaseMatchesCommitCount reversalRestoresBalances noOpPreservesAuthority --max-steps 8",
+                "selectors": [
+                  "invariant:reversalRestoresBalances"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
+                "selectors": [
+                  "theorem:exact_reversal_restores_prior_balances",
+                  "theorem:admitted_i128_amount_has_representable_negation"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-QL-REFERENCE-BALANCE-ALGEBRA",
+          "runtime": "missing",
+          "model": "missing",
+          "proof": "reference_proved",
+          "residual": "The theorem is intentionally limited to mathematical integer-list semantics; it does not claim keyed unit/layer semantics, checked i128 arithmetic, persistence, or production Rust correspondence.",
+          "evidence": {
+            "runtime": [],
+            "model": [],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+                "selectors": [
+                  "theorem:balanced_pair",
+                  "theorem:net_reverse",
+                  "theorem:balanced_reverse",
+                  "theorem:balanced_append"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "runtime": {
+        "status": "partial",
+        "artifacts": [
+          "crates/norn-checker/src/quantity_ledger.rs",
+          "crates/norn-checker/src/quantity_ledger/boundary.rs",
+          "crates/norn-checker/tests/quantity_ledger.rs",
+          "crates/norn-checker/tests/quantity_ledger_properties.rs",
+          "crates/norn-checker/tests/quantity_ledger_expression.rs",
+          "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+          "crates/norn-cell/src/quantity.rs",
+          "verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+          "verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
+          "crates/norn-cell/tests/quantity_reservations.rs",
+          "crates/norn-kernel/src/quantity.rs",
+          "crates/norn-kernel/tests/accounting_commit.rs",
+          "crates/norn-checker/src/posting.rs",
+          "crates/norn-ir/src/posting.rs"
+        ],
+        "commands": [
+          "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+          "cargo test --locked -p norn-kernel --test accounting_commit",
+          "cargo test --locked -p norn-cell --test quantity_reservations"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "partial",
+        "bound": "Apalache depth 8 over quantity lifecycle amounts 1..3, one authority posting/reversal with identities and amounts 1..3, abstract atomic batches of one through three postings, and exact/substituted bindings over two units and two dimensions",
+        "artifacts": [
+          "verification/stripmine-2026-08-22/models/quantity-ledger.qnt",
+          "verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+          "verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+          "verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+          "verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt"
+        ],
+        "resultArtifacts": [
+          "target/verification-results/quantity-authority-quint.json",
+          "target/verification-results/quantity-batch-atomicity-quint.json",
+          "target/verification-results/quantity-ledger-quint.json",
+          "target/verification-results/quantity-reservation-authority-quint.json",
+          "target/verification-results/quantity-unit-dimension-quint.json"
+        ],
+        "commands": [
+          "quint typecheck verification/stripmine-2026-08-22/models/quantity-ledger.qnt",
+          "quint verify verification/stripmine-2026-08-22/models/quantity-ledger.qnt --backend apalache --invariants typeOk conserved terminalResolvedOnce noTerminalReservation --max-steps 8",
+          "quint typecheck verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+          "quint verify verification/stripmine-2026-08-22/models/quantity-authority.qnt --backend apalache --invariants typeOk perUnitLayerConserved atomicAuthorityRecords phaseMatchesCommitCount reversalRestoresBalances noOpPreservesAuthority --max-steps 8",
+          "quint typecheck verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+          "quint verify verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt --backend apalache --invariants typeOk conserved recordsAligned terminalResolvedOnce noTerminalReservation pendingHasOneCreate noOpPreservesAuthority --max-steps 8",
+          "quint typecheck verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+          "quint verify verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt --backend apalache --invariants typeOk sequentialVersions batchAllOrNone stableReceipt --max-steps 8",
+          "quint typecheck verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
+          "quint verify verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt --backend apalache --invariants typeOk certificateRemainsPinned acceptedPostingHasExactBinding differentDimensionCannotSubstitute differentDimensionsCannotBalance --max-steps 8"
+        ],
+        "generatedArtifacts": []
+      },
+      "proof": {
+        "status": "partial",
+        "scope": "reference",
+        "artifacts": [
+          "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+          "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
+          "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+          "verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+          "verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+          "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs"
+        ],
+        "commands": [
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+          "lean -DwarningAsError=true verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+          "lean -DwarningAsError=true verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+          "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "The retained pure checker and in-memory quantity authority are executable, including a deliberately full-resolution-only pending reservation slice and an ordered same-owner batch of at most 64 postings, but governed pack activation, partial pending resolution, automatic deadline enforcement, inventory capacity, account graphs, normalized tables, and a same-transaction CALA/general-action bridge are not production-bound.",
+        "Lean and Kani currently prove independent reference functions, not production Rust correspondence; the quantity-unit/dimension lane also assumes ontology-artifact authenticity and SHA-256 collision resistance.",
+        "The Quint lifecycle model omits storage, owner versions, idempotency maps, account floors, and partial-post policy; the separate authority model adds bounded owner/retry/record-count behavior but still abstracts storage as atomic assignments and treats authorization of the seal as a Boolean."
+      ],
+      "sourceFiles": [
+        "crates/norn-cell/src/quantity/replay.rs",
+        "crates/norn-checker/src/posting.rs",
+        "crates/norn-checker/src/quantity_ledger.rs",
+        "crates/norn-checker/src/quantity_ledger/boundary.rs",
+        "crates/norn-checker/src/quantity_ledger/expression.rs",
+        "crates/norn-graph/src/quantity.rs",
+        "crates/norn-ir/src/posting.rs",
+        "crates/norn-ir/src/quantity_ledger.rs",
+        "crates/norn-ir/src/quantity_ledger/boundary.rs",
+        "crates/norn-ir/src/quantity_ledger/cell.rs",
+        "crates/norn-ir/src/quantity_ledger/expression.rs",
+        "crates/norn-kernel/src/action_quantity.rs",
+        "crates/norn-kernel/src/quantity.rs",
+        "crates/norn-kernel/tests/accounting_commit.rs",
+        "verification/kernel-v2/models/quantity-ledger.qnt",
+        "verification/ontology/packs/quantity-units-v0/pack.json",
+        "verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+        "verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+        "verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
+        "verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+        "verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+        "verification/stripmine-2026-08-22/models/quantity-ledger.qnt",
+        "verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+        "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs"
+      ]
+    },
+    {
+      "id": "ontology",
+      "obligations": [
+        "INV-ONT-MAPPING-PROVENANCE",
+        "INV-ONT-OPEN-CLOSED-SEPARATION",
+        "INV-ONT-RELATION-AUTHORITY"
+      ],
+      "obligationClaims": [
+        {
+          "id": "INV-ONT-MAPPING-PROVENANCE",
+          "runtime": "tested",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
+          "residual": "The closed Rust validator requires immutable source resolution, evidence, integer confidence in 0..10000, non-empty reviewer identity, a shared UTC review timestamp subset, and at most one direct supersession edge to an active same-term/same-pinned-source mapping; adversarial tests cover missing/range/time/unresolved/self/cross-identity/chained cases and valid direct replacement. Quint checks the two-record direct-replacement protocol and Lean proves the compact closed predicate's confidence, review, identity-preservation, direct-terminal, and exactly-one-active consequences. Reviewer strings are not authenticated principals, confidence/evidence truth is not machine-established, timestamp parsing and arbitrary graphs are outside the formal abstractions, and no correspondence proof exists.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-checker/tests/ontology_pack.rs",
+                "command": "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+                "selectors": [
+                  "test:ontology_mapping_requires_reviewed_confidence_provenance",
+                  "test:ontology_mapping_allows_one_direct_same_term_same_source_replacement",
+                  "test:ontology_mapping_supersession_rejects_invalid_graph_edges"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+                "command": "quint verify verification/ontology-v1/models/ontology-mapping-provenance.qnt --backend apalache --invariants typeOk replacementIsDirect replacementPreservesIdentity replacementHasReviewedBoundedProvenance exactlyOneActivePerIdentity rejectedAttemptIsNoOp --max-steps 8",
+                "selectors": [
+                  "invariant:replacementIsDirect",
+                  "invariant:replacementPreservesIdentity",
+                  "invariant:replacementHasReviewedBoundedProvenance",
+                  "invariant:exactlyOneActivePerIdentity",
+                  "invariant:rejectedAttemptIsNoOp"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/ontology-v1/OntologyMappingProvenance.lean",
+                "command": "lean -DwarningAsError=true verification/ontology-v1/OntologyMappingProvenance.lean",
+                "selectors": [
+                  "theorem:accepted_provenance_bounds_confidence",
+                  "theorem:accepted_provenance_requires_review",
+                  "theorem:direct_replacement_is_not_self",
+                  "theorem:direct_replacement_preserves_term",
+                  "theorem:direct_replacement_preserves_source",
+                  "theorem:direct_replacement_is_terminal",
+                  "theorem:direct_replacement_leaves_exactly_one_active"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-ONT-OPEN-CLOSED-SEPARATION",
+          "runtime": "partial",
+          "model": "partial",
+          "proof": "partial",
+          "residual": "The closed Rust EntityIR validator and the production commit checker reject every unknown payload/schema keyword; the admitted field language is type/required plus exact finite string enums. The finite reasoner/SHACL corpus is checked, and versioned authoritative object/relation commits require exact Active ontology artifacts and revalidate that same bounded field language before publishing effects. Lean proves the declared evidence-type separation, but no implementation correspondence or end-to-end inferred-triple negative test exists; no general OWL soundness/completeness theorem is claimed.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-checker/tests/ontology_pack.rs",
+                "command": "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+                "selectors": [
+                  "test:closed_instance_checker_accepts_valid_values_and_rejects_unknown_fields",
+                  "test:owl_and_shacl_files_are_projection_only_contracts"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/ontology/scripts/validate_semantics.py",
+                "command": "scripts/check-ontology-semantics.sh",
+                "selectors": [
+                  "checker:check_owl_membership",
+                  "checker:check_shacl"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+                "selectors": [
+                  "theorem:semantic_evidence_never_authorizes",
+                  "theorem:authority_requires_current_scoped_capability"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-ONT-RELATION-AUTHORITY",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "partial",
+          "residual": "The canonical versioned authority path has retained InMemory tests for exact Relation artifact identity, exact active Relation/Entity pins, endpoint object kinds, existing and same-commit cardinality conflicts, superseded versions, atomic rejection, and immutable-id payload updates; its Turso/reopen variants were removed in #2764 (not currently covered). Quint checks a two-relation abstraction across all four declared cardinalities, exact accepted-version binding, exact endpoint-kind admission, and rejected no-ops; Lean proves compact pairwise reference lemmas. Neither artifact is Rust refinement evidence, a future parallel writer topology must add relation-kind/index-level serialization, and the legacy unversioned migration path remains non-authoritative until disabled. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/ontology-v1/models/ontology-relation-authority.qnt",
+                "command": "quint verify verification/ontology-v1/models/ontology-relation-authority.qnt --backend apalache --invariants typeOk acceptedVersionWasExact acceptedEndpointsHadExactKinds cardinalityPreserved rejectedAttemptIsNoOp --max-steps 8",
+                "selectors": [
+                  "invariant:acceptedVersionWasExact",
+                  "invariant:acceptedEndpointsHadExactKinds",
+                  "invariant:cardinalityPreserved",
+                  "invariant:rejectedAttemptIsNoOp"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+                "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+                "selectors": [
+                  "theorem:superseded_artifact_version_rejects",
+                  "theorem:relation_kind_alias_rejects",
+                  "theorem:one_to_many_duplicate_target_conflicts",
+                  "theorem:same_immutable_relation_identity_is_not_counted_twice"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "runtime": {
+        "status": "partial",
+        "artifacts": [
+          "crates/norn-checker/src/ontology.rs",
+          "crates/norn-checker/tests/ontology_pack.rs",
+          "crates/norn-checker/tests/ontology_registry.rs",
+          "crates/norn-checker/tests/quantity_unit_ontology_pack.rs",
+          "verification/ontology/packs/company-commerce-v0/pack.json",
+          "verification/ontology/packs/quantity-units-v0/pack.json",
+          "verification/ontology/fixtures/registry-conformance-v0.json"
+        ],
+        "commands": [
+          "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+          "cargo test --locked -p norn-ir -p norn-checker entity_"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "partial",
+        "bound": "two reviewed v0 packs, 19 reviewed external mappings, 20 terms, five OWL-RL membership cases, four SHACL instance decisions, a depth-eight two-record reviewed mapping-replacement protocol, and a depth-eight two-relation/four-cardinality authority protocol",
+        "artifacts": [
+          "verification/ontology/registry-v0.json",
+          "verification/ontology/scripts/validate.py",
+          "verification/ontology/scripts/validate_semantics.py",
+          "verification/ontology/tools/requirements.lock",
+          "scripts/check-ontology-semantics.sh",
+          "verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+          "verification/ontology-v1/models/ontology-relation-authority.qnt"
+        ],
+        "commands": [
+          "python3 verification/ontology/scripts/validate.py",
+          "scripts/check-ontology-semantics.sh",
+          "quint typecheck verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+          "quint verify verification/ontology-v1/models/ontology-mapping-provenance.qnt --backend apalache --invariants typeOk replacementIsDirect replacementPreservesIdentity replacementHasReviewedBoundedProvenance exactlyOneActivePerIdentity rejectedAttemptIsNoOp --max-steps 8",
+          "quint typecheck verification/ontology-v1/models/ontology-relation-authority.qnt",
+          "quint verify verification/ontology-v1/models/ontology-relation-authority.qnt --backend apalache --invariants typeOk acceptedVersionWasExact acceptedEndpointsHadExactKinds cardinalityPreserved rejectedAttemptIsNoOp --max-steps 8"
+        ],
+        "resultArtifacts": [
+          "target/verification-results/ontology-mapping-provenance-quint.json",
+          "target/verification-results/ontology-relation-authority-quint.json"
+        ],
+        "generatedArtifacts": []
+      },
+      "proof": {
+        "status": "partial",
+        "scope": "reference",
+        "artifacts": [
+          "verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+          "verification/ontology-v1/OntologyMappingProvenance.lean"
+        ],
+        "commands": [
+          "lean -DwarningAsError=true verification/ontology-v1/OntologyMappingProvenance.lean",
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "The external semantic lane covers the finite reviewed v0 fixture only; it is not a universal OWL/SHACL equivalence result.",
+        "Mapping confidence/reviewer/direct-supersession structure is runtime tested in Rust, statically reproduced over the 19 checked-in mappings, and represented by compact Lean/Quint reference semantics. Reviewer identity is not authenticated, confidence/evidence truth is not machine-established, timestamp parsing and arbitrary graphs are outside those abstractions, and no implementation correspondence proof covers mapping provenance.",
+        "An inferred-ontology-to-transition negative integration test remains open; the authoritative field validator is intentionally limited to type/required plus exact finite string enums, and direct RelationIR does not yet implement association-object/through semantics.",
+        "The Lean file proves declared compact reference semantics for evidence separation and RelationIR binding/cardinality only; no correspondence, OWL soundness, or completeness theorem connects it to the Rust implementation or general OWL semantics.",
+        "The current single authority-file writer serializes cardinality candidate-set checks; a future per-owner parallel topology must introduce an equivalent relation-kind/index consistency owner.",
+        "Legacy unversioned relation mutation is retained for migration and pre-reset tests, checks only immutable identity plus endpoint existence, is not credited as authoritative RelationIR enforcement, and must be migrated or disabled before public production."
+      ],
+      "sourceFiles": [
+        "crates/norn-checker/src/lint/mapping.rs",
+        "crates/norn-checker/src/mapping.rs",
+        "crates/norn-checker/src/mapping/compile.rs",
+        "crates/norn-checker/src/mapping/evidence.rs",
+        "crates/norn-checker/src/mapping/set.rs",
+        "crates/norn-checker/src/mapping/snapshot_lint.rs",
+        "crates/norn-checker/src/mapping/vendor.rs",
+        "crates/norn-checker/src/ontology.rs",
+        "crates/norn-ir/src/mapping.rs",
+        "crates/norn-ir/src/mapping_evidence.rs",
+        "fixtures/ir/metrics/customers-by-region-week.question.json",
+        "fixtures/ir/metrics/sales-by-store-day.question.json",
+        "fixtures/ir/synthetic-contact.source_schema.json",
+        "fixtures/ir/synthetic-rows.mapping.json",
+        "fixtures/projections/sqlite/entity-v2-object-types.sql",
+        "scripts/check-ontology-semantics.sh",
+        "tools/norn-ts/corpus/accept/ontology-type.ts",
+        "tools/norn-ts/src/builder/mapping.ts",
+        "verification/ontology-v1/OntologyMappingProvenance.lean",
+        "verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+        "verification/ontology-v1/models/ontology-relation-authority.qnt",
+        "verification/ontology/packs/company-commerce-v0/pack.json",
+        "verification/ontology/scripts/build_company_commerce_pack.py",
+        "verification/ontology/scripts/semantic_check.py",
+        "verification/ontology/scripts/validate.py",
+        "verification/ontology/scripts/validate_semantics.py"
+      ]
+    },
+    {
+      "id": "cala-boundary",
+      "obligations": [
+        "INV-QL-CERTIFICATE-POSTING-BINDING",
+        "INV-QL-AUTHORITY-BRIDGE-ATOMIC"
+      ],
+      "obligationClaims": [
+        {
+          "id": "INV-QL-CERTIFICATE-POSTING-BINDING",
+          "runtime": "tested",
+          "model": "executable_reference",
+          "proof": "missing",
+          "residual": "The checker retains exact certificate/evaluation binding. Quantity v2 compiles the immutable admitted pack and evaluates original parameters inside the cell transaction; no caller-provided leg vector or naked certificate can supply posting authority. Formal references are not v2 refinement proofs.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+                "selectors": [
+                  "test:posting_commitment_binds_runtime_evaluation_and_deterministic_outbox_identity",
+                  "test:stale_pack_or_checker_reference_fails_before_runtime_posting"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+                "selectors": [
+                  "test:posting_commitment_binds_runtime_evaluation_and_deterministic_outbox_identity"
+                ]
+              }
+            ],
+            "proof": []
+          }
+        },
+        {
+          "id": "INV-QL-AUTHORITY-BRIDGE-ATOMIC",
+          "runtime": "partial",
+          "model": "exhaustive_bounded",
+          "proof": "missing",
+          "residual": "The pure reopen-observation checker exhausts the admitted partial-record state space, with bounded/reference formal evidence. The Norn-owned snapshot port's failure/lost-reply/reopen tests were removed in #2764 (not currently covered) together with the Turso adapter. No persisted CALA posting transaction or normalized same-transaction CALA bridge exists.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+                "selectors": [
+                  "test:authority_observation_accepts_only_all_absent_or_complete_matching_state"
+                ]
+              },
+              {
+                "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+                "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+                "selectors": [
+                  "test:quantity_and_ordinary_commit_succeed_and_retry_as_one_receipt",
+                  "test:crash_before_commit_rolls_back_and_lost_reply_replays_once",
+                  "test:reopen_restore_replay_preserve_heads_holds_history_and_receipts"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+                "selectors": [
+                  "test:authority_observation_accepts_only_all_absent_or_complete_matching_state"
+                ]
+              }
+            ],
+            "proof": []
+          }
+        }
+      ],
+      "runtime": {
+        "status": "partial",
+        "artifacts": [
+          "crates/norn-checker/src/quantity_ledger/boundary.rs",
+          "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+          "crates/norn-cell/tests/quantity_reservations.rs",
+          "crates/norn-cell/src/quantity.rs",
+          "crates/norn-kernel/src/quantity.rs"
+        ],
+        "commands": [
+          "cargo test --locked -p norn-cell --test quantity_reservations",
+          "cargo test --locked -p norn-checker --test quantity_ledger_boundary"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "partial",
+        "bound": "all 2,046 nonempty partial-presence combinations in the admitted reopen record set",
+        "artifacts": [
+          "crates/norn-checker/tests/quantity_ledger_boundary.rs"
+        ],
+        "commands": [
+          "cargo test --locked -p norn-checker --test quantity_ledger_boundary"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "proof": {
+        "status": "missing",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "CALA core posting and balance maintenance do not yet run in the same Turso authority transaction.",
+        "Only the partial authority-record presence space is exhaustively enumerated; certificate and commitment identity checks are executable examples and golden vectors, not exhaustive input-space exploration.",
+        "Crash injection, reply-after-commit recovery, and production storage correspondence remain open."
+      ],
+      "sourceFiles": [
+        "crates/norn-cell/src/quantity.rs"
+      ]
+    },
+    {
+      "id": "rules-dmn",
+      "obligations": [
+        "INV-RULE-CLOSED-DETERMINISTIC-EVALUATION",
+        "INV-RULE-HIT-POLICY-SAFETY",
+        "INV-RULE-HIT-POLICY-ADMISSION-PREDICATE"
+      ],
+      "obligationClaims": [
+        {
+          "id": "INV-RULE-CLOSED-DETERMINISTIC-EVALUATION",
+          "runtime": "deferred",
+          "model": "deferred",
+          "proof": "deferred",
+          "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+          "evidence": {
+            "runtime": [],
+            "model": [],
+            "proof": []
+          }
+        },
+        {
+          "id": "INV-RULE-HIT-POLICY-SAFETY",
+          "runtime": "deferred",
+          "model": "deferred",
+          "proof": "deferred",
+          "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+          "evidence": {
+            "runtime": [],
+            "model": [],
+            "proof": []
+          }
+        },
+        {
+          "id": "INV-RULE-HIT-POLICY-ADMISSION-PREDICATE",
+          "runtime": "deferred",
+          "model": "deferred",
+          "proof": "deferred",
+          "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+          "evidence": {
+            "runtime": [],
+            "model": [],
+            "proof": []
+          }
+        }
+      ],
+      "runtime": {
+        "status": "deferred",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "deferred",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "proof": {
+        "status": "deferred",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "Historical obligations retained as identifiers only; no active UPE/RuleIR runtime, model, or proof claim.",
+        "See kernel-v2/manifest.json for current cell bounds and conformance; no unbounded Rust refinement."
+      ],
+      "sourceFiles": [
+        "crates/norn-checker/src/lint/rules.rs",
+        "crates/norn-checker/src/rule_bindings.rs",
+        "crates/norn-checker/src/rule_bindings_tests.rs",
+        "crates/norn-decisions/Cargo.toml",
+        "crates/norn-decisions/src/admit.rs",
+        "crates/norn-decisions/src/convert.rs",
+        "crates/norn-decisions/src/error.rs",
+        "crates/norn-decisions/src/evaluate.rs",
+        "crates/norn-decisions/src/lib.rs",
+        "crates/norn-decisions/src/schema.rs",
+        "crates/norn-expr/Cargo.toml",
+        "crates/norn-expr/src/actor.rs",
+        "crates/norn-expr/src/check.rs",
+        "crates/norn-expr/src/check/bounds.rs",
+        "crates/norn-expr/src/check/cost.rs",
+        "crates/norn-expr/src/convert.rs",
+        "crates/norn-expr/src/env.rs",
+        "crates/norn-expr/src/error.rs",
+        "crates/norn-expr/src/expression.rs",
+        "crates/norn-expr/src/lib.rs",
+        "crates/norn-expr/src/reads.rs",
+        "crates/norn-expr/src/schema.rs",
+        "crates/norn-expr/src/temporal.rs",
+        "crates/norn-expr/src/value.rs",
+        "fixtures/rule-ir-v2/invalid/custom-node.rule.json",
+        "fixtures/rule-ir-v2/invalid/cycle.rule.json",
+        "fixtures/rule-ir-v2/invalid/dangling-edge.rule.json",
+        "fixtures/rule-ir-v2/invalid/decide-output-not-contract.rule.json",
+        "fixtures/rule-ir-v2/invalid/duplicate-node-id.rule.json",
+        "fixtures/rule-ir-v2/invalid/fact-change-op-not-enum.rule.json",
+        "fixtures/rule-ir-v2/invalid/function-node.rule.json",
+        "fixtures/rule-ir-v2/invalid/handle-on-table-edge.rule.json",
+        "fixtures/rule-ir-v2/invalid/hit-policy-unique.rule.json",
+        "fixtures/rule-ir-v2/invalid/invalid-expression.rule.json",
+        "fixtures/rule-ir-v2/invalid/invalid-unary-test.rule.json",
+        "fixtures/rule-ir-v2/invalid/missing-contract.rule.json",
+        "fixtures/rule-ir-v2/invalid/recursive-sub-decision.rule.json",
+        "fixtures/rule-ir-v2/invalid/scalar-sub-decision-output.rule.json",
+        "fixtures/rule-ir-v2/invalid/switch-unconnected-branch.rule.json",
+        "fixtures/rule-ir-v2/invalid/switch-without-default.rule.json",
+        "fixtures/rule-ir-v2/invalid/two-output-nodes.rule.json",
+        "fixtures/rule-ir-v2/invalid/undeclared-sub-decision.rule.json",
+        "fixtures/rule-ir-v2/invalid/unknown-column.rule.json",
+        "fixtures/rule-ir-v2/invalid/unknown-node-type.rule.json",
+        "fixtures/rule-ir-v2/invalid/unreachable-node.rule.json",
+        "fixtures/rule-ir-v2/invalid/unresolved-import.rule.json",
+        "fixtures/rule-ir-v2/sets/chain-0.rule.json",
+        "fixtures/rule-ir-v2/sets/chain-1.rule.json",
+        "fixtures/rule-ir-v2/sets/chain-2.rule.json",
+        "fixtures/rule-ir-v2/sets/chain-3.rule.json",
+        "fixtures/rule-ir-v2/sets/chain-4.rule.json",
+        "fixtures/rule-ir-v2/sets/v1-priority.rule.json",
+        "fixtures/rule-ir-v2/valid/credit-hold.rule.json",
+        "fixtures/rule-ir-v2/valid/purchase-order-approval.rule.json",
+        "fixtures/rule-ir-v2/valid/reorder-decision.rule.json",
+        "fixtures/rule-ir-v2/valid/reorder-priority.rule.json",
+        "packages/norn-sdk/test/schema.test.ts",
+        "tools/norn-ts/fixtures/compiler/aliases.source.ts",
+        "tools/norn-ts/fixtures/compiler/branch-continuation.source.ts",
+        "tools/norn-ts/fixtures/compiler/caught-continuation.source.ts",
+        "tools/norn-ts/fixtures/compiler/composition.source.ts",
+        "tools/norn-ts/fixtures/compiler/expanded-callback.source.ts",
+        "tools/norn-ts/fixtures/compiler/expanded-function-schema.source.ts",
+        "tools/norn-ts/fixtures/compiler/expanded-import.source.ts",
+        "tools/norn-ts/fixtures/compiler/expanded-local.source.ts",
+        "tools/norn-ts/fixtures/compiler/flow-source-map.source.ts",
+        "tools/norn-ts/fixtures/compiler/inexact-decimal.source.ts",
+        "tools/norn-ts/fixtures/compiler/inexact-integer.source.ts",
+        "tools/norn-ts/fixtures/compiler/nested-projection.source.ts",
+        "tools/norn-ts/fixtures/compiler/pipe-catch-map.source.ts",
+        "tools/norn-ts/fixtures/compiler/pipe-flat-map.source.ts",
+        "tools/norn-ts/fixtures/compiler/support/expanded-constant.source.ts",
+        "tools/norn-ts/fixtures/core/contact.source.ts",
+        "tools/norn-ts/fixtures/core/mapping.source.ts",
+        "tools/norn-ts/fixtures/decisions/base/commerce-customer.entity.json",
+        "tools/norn-ts/fixtures/decisions/base/commerce-order.interface.json",
+        "tools/norn-ts/fixtures/decisions/base/commerce-sales-order-credit-call.rule.json",
+        "tools/norn-ts/fixtures/decisions/base/commerce-sales-order.entity.json",
+        "tools/norn-ts/fixtures/decisions/base/work-task.entity.json",
+        "tools/norn-ts/fixtures/decisions/credit-hold.editor.rule.json",
+        "tools/norn-ts/fixtures/quickstart/task.ts",
+        "vendor/zen/core/engine/Cargo.toml",
+        "vendor/zen/core/engine/src/config.rs",
+        "vendor/zen/core/engine/src/decision.rs",
+        "vendor/zen/core/engine/src/decision_graph/cleaner.rs",
+        "vendor/zen/core/engine/src/decision_graph/error.rs",
+        "vendor/zen/core/engine/src/decision_graph/graph.rs",
+        "vendor/zen/core/engine/src/decision_graph/mod.rs",
+        "vendor/zen/core/engine/src/decision_graph/tracer.rs",
+        "vendor/zen/core/engine/src/decision_graph/walker.rs",
+        "vendor/zen/core/engine/src/engine.rs",
+        "vendor/zen/core/engine/src/error.rs",
+        "vendor/zen/core/engine/src/lib.rs",
+        "vendor/zen/core/engine/src/loader/memory.rs",
+        "vendor/zen/core/engine/src/loader/mod.rs",
+        "vendor/zen/core/engine/src/loader/noop.rs",
+        "vendor/zen/core/engine/src/model/decision_content.rs",
+        "vendor/zen/core/engine/src/model/mod.rs",
+        "vendor/zen/core/engine/src/nodes/context.rs",
+        "vendor/zen/core/engine/src/nodes/decision/mod.rs",
+        "vendor/zen/core/engine/src/nodes/decision_table/mod.rs",
+        "vendor/zen/core/engine/src/nodes/definition.rs",
+        "vendor/zen/core/engine/src/nodes/expression/mod.rs",
+        "vendor/zen/core/engine/src/nodes/extensions.rs",
+        "vendor/zen/core/engine/src/nodes/input/mod.rs",
+        "vendor/zen/core/engine/src/nodes/mod.rs",
+        "vendor/zen/core/engine/src/nodes/output/mod.rs",
+        "vendor/zen/core/engine/src/nodes/result.rs",
+        "vendor/zen/core/engine/src/nodes/transform_attributes.rs",
+        "vendor/zen/core/engine/src/time.rs",
+        "vendor/zen/core/expression/Cargo.toml",
+        "vendor/zen/core/expression/src/compiler/compiler.rs",
+        "vendor/zen/core/expression/src/compiler/error.rs",
+        "vendor/zen/core/expression/src/compiler/mod.rs",
+        "vendor/zen/core/expression/src/compiler/opcode.rs",
+        "vendor/zen/core/expression/src/exports.rs",
+        "vendor/zen/core/expression/src/expression.rs",
+        "vendor/zen/core/expression/src/functions/arguments.rs",
+        "vendor/zen/core/expression/src/functions/date_method.rs",
+        "vendor/zen/core/expression/src/functions/defs.rs",
+        "vendor/zen/core/expression/src/functions/deprecated.rs",
+        "vendor/zen/core/expression/src/functions/internal.rs",
+        "vendor/zen/core/expression/src/functions/method.rs",
+        "vendor/zen/core/expression/src/functions/mod.rs",
+        "vendor/zen/core/expression/src/intellisense/completion.rs",
+        "vendor/zen/core/expression/src/intellisense/dependency.rs",
+        "vendor/zen/core/expression/src/intellisense/diagnostic.rs",
+        "vendor/zen/core/expression/src/intellisense/discriminant.rs",
+        "vendor/zen/core/expression/src/intellisense/entity_flow.rs",
+        "vendor/zen/core/expression/src/intellisense/inspection.rs",
+        "vendor/zen/core/expression/src/intellisense/mod.rs",
+        "vendor/zen/core/expression/src/intellisense/scope.rs",
+        "vendor/zen/core/expression/src/intellisense/type_provider.rs",
+        "vendor/zen/core/expression/src/isolate.rs",
+        "vendor/zen/core/expression/src/lexer/codes.rs",
+        "vendor/zen/core/expression/src/lexer/cursor.rs",
+        "vendor/zen/core/expression/src/lexer/error.rs",
+        "vendor/zen/core/expression/src/lexer/lexer.rs",
+        "vendor/zen/core/expression/src/lexer/mod.rs",
+        "vendor/zen/core/expression/src/lexer/token.rs",
+        "vendor/zen/core/expression/src/lib.rs",
+        "vendor/zen/core/expression/src/meter.rs",
+        "vendor/zen/core/expression/src/nl/mod.rs",
+        "vendor/zen/core/expression/src/nl/project.rs",
+        "vendor/zen/core/expression/src/nl/token.rs",
+        "vendor/zen/core/expression/src/parser/ast.rs",
+        "vendor/zen/core/expression/src/parser/constants.rs",
+        "vendor/zen/core/expression/src/parser/error.rs",
+        "vendor/zen/core/expression/src/parser/mod.rs",
+        "vendor/zen/core/expression/src/parser/parser.rs",
+        "vendor/zen/core/expression/src/parser/result.rs",
+        "vendor/zen/core/expression/src/parser/standard.rs",
+        "vendor/zen/core/expression/src/parser/unary.rs",
+        "vendor/zen/core/expression/src/scope.rs",
+        "vendor/zen/core/expression/src/temporal.rs",
+        "vendor/zen/core/expression/src/validate.rs",
+        "vendor/zen/core/expression/src/variable/mod.rs",
+        "vendor/zen/core/expression/src/vm/date/duration.rs",
+        "vendor/zen/core/expression/src/vm/date/duration_parser.rs",
+        "vendor/zen/core/expression/src/vm/date/duration_unit.rs",
+        "vendor/zen/core/expression/src/vm/date/mod.rs",
+        "vendor/zen/core/expression/src/vm/error.rs",
+        "vendor/zen/core/expression/src/vm/helpers.rs",
+        "vendor/zen/core/expression/src/vm/interval.rs",
+        "vendor/zen/core/expression/src/vm/mod.rs",
+        "vendor/zen/core/expression/src/vm/vm.rs",
+        "vendor/zen/core/macros/Cargo.toml",
+        "vendor/zen/core/macros/src/lib.rs",
+        "vendor/zen/core/macros/src/to_variable.rs",
+        "vendor/zen/core/template/Cargo.toml",
+        "vendor/zen/core/template/src/error.rs",
+        "vendor/zen/core/template/src/interpreter.rs",
+        "vendor/zen/core/template/src/lexer.rs",
+        "vendor/zen/core/template/src/lib.rs",
+        "vendor/zen/core/template/src/parser.rs",
+        "vendor/zen/core/types/Cargo.toml",
+        "vendor/zen/core/types/src/constant.rs",
+        "vendor/zen/core/types/src/decision/mod.rs",
+        "vendor/zen/core/types/src/lib.rs",
+        "vendor/zen/core/types/src/rccell.rs",
+        "vendor/zen/core/types/src/rcvalue/conv.rs",
+        "vendor/zen/core/types/src/rcvalue/de.rs",
+        "vendor/zen/core/types/src/rcvalue/mod.rs",
+        "vendor/zen/core/types/src/rcvalue/ser.rs",
+        "vendor/zen/core/types/src/symbol.rs",
+        "vendor/zen/core/types/src/variable/conv.rs",
+        "vendor/zen/core/types/src/variable/de.rs",
+        "vendor/zen/core/types/src/variable/impls.rs",
+        "vendor/zen/core/types/src/variable/map.rs",
+        "vendor/zen/core/types/src/variable/mod.rs",
+        "vendor/zen/core/types/src/variable/ref_deser.rs",
+        "vendor/zen/core/types/src/variable/ref_ser.rs",
+        "vendor/zen/core/types/src/variable/ser.rs",
+        "vendor/zen/core/types/src/variable_type/conv.rs",
+        "vendor/zen/core/types/src/variable_type/mod.rs",
+        "vendor/zen/core/types/src/variable_type/util.rs"
+      ]
+    },
+    {
+      "id": "verification-integrity",
+      "obligations": [
+        "INV-VER-NO-PROOF-HOLES",
+        "INV-VER-DIFFERENTIAL-REFINEMENT"
+      ],
+      "obligationClaims": [
+        {
+          "id": "INV-VER-NO-PROOF-HOLES",
+          "runtime": "missing",
+          "model": "deferred",
+          "proof": "missing",
+          "residual": "The mandatory static gate inventories every promoted handwritten Lean and F* source, requires exact Lean warning-as-error commands, rejects Lean sorry/admit/axiom/local warning disablement and F* source or command admission flags, requires an explicit trusted-assumption manifest, and scans every declared hax-generated Norn_ir.fst evidence artifact after extraction. A post-run gate also binds every cited test selector to an exact observed passing Rust or Bun test name in the owning command log. These are finite source/governance and execution-attestation checks, not proofs of the Lean/F*/SMT/toolchain implementation, translator, operating system, hardware, or host. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+          "evidence": {
+            "runtime": [],
+            "model": [],
+            "proof": []
+          }
+        },
+        {
+          "id": "INV-VER-DIFFERENTIAL-REFINEMENT",
+          "runtime": "partial",
+          "model": "partial",
+          "proof": "missing",
+          "residual": "Rust rule fixtures, generic quantity properties/fixtures, storage conformance tests, and three hax-extracted predicate lanes provide partial differential/correspondence evidence. There is no uniform generated valid/invalid differential harness for every proof-bearing executable component, no minimized-counterexample registry across every lane, and no general Rust-to-Lean refinement.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+                "selectors": [
+                  "test:generated_balanced_packs_match_independent_oracle"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/stripmine-2026-08-22/fixtures/quantity-ledger.json",
+                "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+                "selectors": [
+                  "fixture:quantity-ledger"
+                ]
+              }
+            ],
+            "proof": []
+          }
+        }
+      ],
+      "runtime": {
+        "status": "partial",
+        "artifacts": [
+          "scripts/check-proof-holes.py",
+          "scripts/validate-executed-test-selectors.py",
+          "verification/coverage-v1/negative_canaries.py",
+          "verification/coverage-v1/trusted-assumptions.json",
+          "crates/norn-checker/tests/quantity_ledger_properties.rs",
+          "scripts/check-rust-extraction-tools.sh",
+          "crates/norn-checker/tests/quantity_ledger.rs",
+          "scripts/check-verification-tools.sh",
+          "verification/stripmine-2026-08-22/scripts/validate.sh",
+          "verification/coverage-v1/validate.py",
+          "scripts/proof_enrollment.py",
+          "scripts/test_proof_enrollment.py"
+        ],
+        "commands": [
+          "scripts/check-verification-tools.sh",
+          "scripts/check-rust-extraction-tools.sh",
+          "python3 scripts/test_proof_enrollment.py",
+          "python3 verification/coverage-v1/validate.py",
+          "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+          "python3 scripts/validate-executed-test-selectors.py",
+          "python3 scripts/validate-executed-test-selectors.py --profile fast",
+          "python3 scripts/check-proof-holes.py",
+          "python3 verification/coverage-v1/negative_canaries.py"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "partial",
+        "bound": "finite promoted proof inventory plus the currently declared generic quantity and rules differential corpora; other proof-bearing components remain outside a uniform generated differential harness",
+        "artifacts": [
+          "verification/coverage-v1/trusted-assumptions.json",
+          "verification/stripmine-2026-08-22/fixtures/quantity-ledger.json",
+          "verification/archive/rules-dmn-v1/fixtures/conformance.json"
+        ],
+        "commands": [
+          "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "proof": {
+        "status": "missing",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "Warning-as-error plus lexical scanning excludes admitted source holes in the promoted finite corpus, but it does not establish compiler, kernel, solver, translator, operating-system, hardware, or dependency soundness.",
+        "The trusted-assumption manifest records the current external boundary; independent toolchain reproduction and negative canary proofs are still needed for stronger supply-chain assurance.",
+        "Differential refinement is uneven: rules and accounting have finite/reference comparisons and two predicates are extracted, while most retained Rust state machines still have independent formal references rather than machine-checked implementation correspondence."
+      ],
+      "sourceFiles": [
+        "crates/norn-authz/tests/compile.rs",
+        "crates/norn-canonical/tests/legacy_fixtures.rs",
+        "crates/norn-canonical/tests/map_order.rs",
+        "crates/norn-cell/tests/cell_host.rs",
+        "crates/norn-cell/tests/common/mod.rs",
+        "crates/norn-cell/tests/definitions_export.rs",
+        "crates/norn-cell/tests/definitions_install.rs",
+        "crates/norn-cell/tests/exact_values.rs",
+        "crates/norn-cell/tests/export_journal.rs",
+        "crates/norn-cell/tests/ingress_positions.rs",
+        "crates/norn-cell/tests/ledger_export.rs",
+        "crates/norn-cell/tests/link_read_page.rs",
+        "crates/norn-cell/tests/markings.rs",
+        "crates/norn-cell/tests/model_interfaces.rs",
+        "crates/norn-cell/tests/parent_rows.rs",
+        "crates/norn-cell/tests/quantity_refusal_boundary.rs",
+        "crates/norn-cell/tests/quantity_reservations.rs",
+        "crates/norn-cell/tests/quantity_support/mod.rs",
+        "crates/norn-cell/tests/reactive_query.rs",
+        "crates/norn-cell/tests/recovery.rs",
+        "crates/norn-cell/tests/restore.rs",
+        "crates/norn-cell/tests/sql_engine.rs",
+        "crates/norn-cell/tests/tables.rs",
+        "crates/norn-cell/tests/temporal_read_boundary.rs",
+        "crates/norn-cell/tests/value_commitments.rs",
+        "crates/norn-checker-wasm/scripts/build-pkg.sh",
+        "crates/norn-checker-wasm/src/lib.rs",
+        "crates/norn-checker-wasm/src/wasm.rs",
+        "crates/norn-checker-wasm/tests/fixtures/purchase-order.entity.json",
+        "crates/norn-checker-wasm/tests/parity.rs",
+        "crates/norn-checker-wasm/tests/parity/parity.mjs",
+        "crates/norn-checker/scripts/non-code-literals-shrink-only.sh",
+        "crates/norn-checker/src/action_set.rs",
+        "crates/norn-checker/src/codes.rs",
+        "crates/norn-checker/src/connector_path.rs",
+        "crates/norn-checker/src/definitions_diff.rs",
+        "crates/norn-checker/src/diagnostic.rs",
+        "crates/norn-checker/src/entity_instance.rs",
+        "crates/norn-checker/src/entity_lowering.rs",
+        "crates/norn-checker/src/entity_model.rs",
+        "crates/norn-checker/src/entity_model/lifecycles.rs",
+        "crates/norn-checker/src/entity_model/links.rs",
+        "crates/norn-checker/src/envelope.rs",
+        "crates/norn-checker/src/flow_source_map.rs",
+        "crates/norn-checker/src/function.rs",
+        "crates/norn-checker/src/graph.rs",
+        "crates/norn-checker/src/interfaces.rs",
+        "crates/norn-checker/src/jdm_profile.rs",
+        "crates/norn-checker/src/layout.rs",
+        "crates/norn-checker/src/lib.rs",
+        "crates/norn-checker/src/lifecycle_writes.rs",
+        "crates/norn-checker/src/lifecycle_writes/fact_literals.rs",
+        "crates/norn-checker/src/lifecycle_writes/literals.rs",
+        "crates/norn-checker/src/lifecycles.rs",
+        "crates/norn-checker/src/lint.rs",
+        "crates/norn-checker/src/lint/coverage.rs",
+        "crates/norn-checker/src/lint/duplicates.rs",
+        "crates/norn-checker/src/lint/fingerprint.rs",
+        "crates/norn-checker/src/lint/model.rs",
+        "crates/norn-checker/src/lint/naming.rs",
+        "crates/norn-checker/src/lint/provenance.rs",
+        "crates/norn-checker/src/lint/smells.rs",
+        "crates/norn-checker/src/markings.rs",
+        "crates/norn-checker/src/metric.rs",
+        "crates/norn-checker/src/metric_interchange.rs",
+        "crates/norn-checker/src/naming_series.rs",
+        "crates/norn-checker/src/object_types.rs",
+        "crates/norn-checker/src/property_codec.rs",
+        "crates/norn-checker/src/property_types.rs",
+        "crates/norn-checker/src/receipt.rs",
+        "crates/norn-checker/src/sealing.rs",
+        "crates/norn-checker/src/source_commands.rs",
+        "crates/norn-checker/src/source_schema.rs",
+        "crates/norn-checker/src/table_analysis.rs",
+        "crates/norn-checker/src/typed_roots.rs",
+        "crates/norn-checker/src/verification.rs",
+        "crates/norn-checker/src/widget_ux.rs",
+        "crates/norn-checker/tests/action_effect_program.rs",
+        "crates/norn-checker/tests/action_firing.rs",
+        "crates/norn-checker/tests/action_slice_set.rs",
+        "crates/norn-checker/tests/artifact_set.rs",
+        "crates/norn-checker/tests/check_receipt.rs",
+        "crates/norn-checker/tests/code_registry.rs",
+        "crates/norn-checker/tests/definitions_diff.rs",
+        "crates/norn-checker/tests/diagnostic_snapshots.rs",
+        "crates/norn-checker/tests/entitlement_join_budget.rs",
+        "crates/norn-checker/tests/entity_artifact_set.rs",
+        "crates/norn-checker/tests/entity_instance.rs",
+        "crates/norn-checker/tests/entity_lowering.rs",
+        "crates/norn-checker/tests/entity_model.rs",
+        "crates/norn-checker/tests/entity_relation_roots.rs",
+        "crates/norn-checker/tests/fixtures/mapping/model/commerce.sales-order.entity.json",
+        "crates/norn-checker/tests/fixtures/mapping/model/core.item.interface.json",
+        "crates/norn-checker/tests/fixtures/mapping/model/core.order.interface.json",
+        "crates/norn-checker/tests/fixtures/mapping/model/core.party.interface.json",
+        "crates/norn-checker/tests/fixtures/mapping/model/fashion.style.entity.json",
+        "crates/norn-checker/tests/fixtures/mapping/model/party.customer.entity.json",
+        "crates/norn-checker/tests/function_admission.rs",
+        "crates/norn-checker/tests/law_ir.rs",
+        "crates/norn-checker/tests/layout_admission.rs",
+        "crates/norn-checker/tests/lifecycle.rs",
+        "crates/norn-checker/tests/lifecycle_writes.rs",
+        "crates/norn-checker/tests/mapping.rs",
+        "crates/norn-checker/tests/metric.rs",
+        "crates/norn-checker/tests/metric_interchange.rs",
+        "crates/norn-checker/tests/object_types.rs",
+        "crates/norn-checker/tests/ontology_lint.rs",
+        "crates/norn-checker/tests/ontology_pack.rs",
+        "crates/norn-checker/tests/ontology_registry.rs",
+        "crates/norn-checker/tests/owned_collections.rs",
+        "crates/norn-checker/tests/property_types.rs",
+        "crates/norn-checker/tests/quantity_ledger.rs",
+        "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+        "crates/norn-checker/tests/quantity_ledger_expression.rs",
+        "crates/norn-checker/tests/quantity_ledger_properties.rs",
+        "crates/norn-checker/tests/quantity_unit_ontology_pack.rs",
+        "crates/norn-checker/tests/shared_lifecycle_semantics.rs",
+        "crates/norn-checker/tests/source_schema.rs",
+        "crates/norn-checker/tests/support/model_codes.rs",
+        "crates/norn-checker/tests/support/runtime_inputs.rs",
+        "crates/norn-checker/tests/table_analysis.rs",
+        "crates/norn-checker/tests/technical_view.rs",
+        "crates/norn-checker/tests/typed_members.rs",
+        "crates/norn-checker/tests/typed_payload_roots_compatibility.rs",
+        "crates/norn-checker/tests/ui_laws.rs",
+        "crates/norn-checker/tests/vendor_mapping_install.rs",
+        "crates/norn-checker/tests/widget_ux.rs",
+        "crates/norn-decisions/tests/dmn_tck.rs",
+        "crates/norn-decisions/tests/dmn_tck/translate.py",
+        "crates/norn-decisions/tests/evaluate.rs",
+        "crates/norn-decisions/tests/explain.rs",
+        "crates/norn-decisions/tests/flow_vertical.rs",
+        "crates/norn-decisions/tests/patch_fact.rs",
+        "crates/norn-decisions/tests/support/mod.rs",
+        "crates/norn-decisions/tests/zen_corpus.rs",
+        "crates/norn-expr/tests/check.rs",
+        "crates/norn-expr/tests/corpus.rs",
+        "crates/norn-expr/tests/cost.rs",
+        "crates/norn-expr/tests/fixtures.rs",
+        "crates/norn-expr/tests/profile_conformance.rs",
+        "crates/norn-expr/tests/support/mod.rs",
+        "crates/norn-expr/tests/type_env.rs",
+        "crates/norn-graph/tests/algorithms.rs",
+        "crates/norn-ir/tests/access_literals.rs",
+        "crates/norn-ir/tests/artifact_governance.rs",
+        "crates/norn-ir/tests/data_quality_finding.rs",
+        "crates/norn-ir/tests/entitlement.rs",
+        "crates/norn-ir/tests/entity_v2_inheritance.rs",
+        "crates/norn-ir/tests/entity_v2_lifecycles.rs",
+        "crates/norn-ir/tests/entity_v2_links.rs",
+        "crates/norn-ir/tests/entity_v2_object_types.rs",
+        "crates/norn-ir/tests/entity_v2_property_types.rs",
+        "crates/norn-ir/tests/function_manifest.rs",
+        "crates/norn-ir/tests/law_ir.rs",
+        "crates/norn-ir/tests/limit_profile.rs",
+        "crates/norn-ir/tests/mapping_ir.rs",
+        "crates/norn-ir/tests/metric.rs",
+        "crates/norn-ir/tests/proptest_ir_roundtrip.rs",
+        "crates/norn-ir/tests/provenance_envelope.rs",
+        "crates/norn-ir/tests/rule_hit_policy.rs",
+        "crates/norn-ir/tests/runtime_values.rs",
+        "crates/norn-ir/tests/source_schema_ir.rs",
+        "crates/norn-ir/tests/technical_view.rs",
+        "crates/norn-ir/tests/typed_action_rule_roots.rs",
+        "crates/norn-ir/tests/typed_entity_relation_roots.rs",
+        "crates/norn-ir/tests/typed_mapping_roots.rs",
+        "crates/norn-ir/tests/typed_payload_roots_fixtures.rs",
+        "crates/norn-ir/tests/typed_payload_roots_schema.rs",
+        "crates/norn-ir/tests/typed_remaining_roots.rs",
+        "crates/norn-ir/tests/typed_setting_business_pack_roots.rs",
+        "crates/norn-kernel/tests/action_commit.rs",
+        "crates/norn-kernel/tests/action_preconditions.rs",
+        "crates/norn-kernel/tests/action_preparation.rs",
+        "crates/norn-kernel/tests/action_series_context.rs",
+        "crates/norn-kernel/tests/authz_action.rs",
+        "crates/norn-kernel/tests/cell_host.rs",
+        "crates/norn-kernel/tests/decider.rs",
+        "crates/norn-kernel/tests/decision_commit.rs",
+        "crates/norn-kernel/tests/fact_event.rs",
+        "crates/norn-kernel/tests/invariant_commit.rs",
+        "crates/norn-kernel/tests/limits.rs",
+        "crates/norn-kernel/tests/location_hierarchy.rs",
+        "crates/norn-kernel/tests/psm_action_laws.rs",
+        "crates/norn-kernel/tests/psm_action_transition.rs",
+        "crates/norn-kernel/tests/psm_decider_laws.rs",
+        "crates/norn-kernel/tests/psm_order_lifecycle.rs",
+        "crates/norn-kernel/tests/quantity_reservations.rs",
+        "crates/norn-kernel/tests/refusal_taxonomy.rs",
+        "crates/norn-kernel/tests/refusal_wrappers.rs",
+        "crates/norn-kernel/tests/result_reconciliation.rs",
+        "crates/norn-kernel/tests/snapshot_observe.rs",
+        "crates/norn-projections/tests/cedar.rs",
+        "crates/norn-projections/tests/interop_exports.rs",
+        "crates/norn-projections/tests/lifecycle_diagram.rs",
+        "crates/norn-projections/tests/lineage.rs",
+        "crates/norn-projections/tests/lineage_world.rs",
+        "crates/norn-projections/tests/mcp_action_tool.rs",
+        "crates/norn-projections/tests/sqlite_ddl.rs",
+        "crates/norn-projections/tests/widget_ux.rs",
+        "crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh",
+        "crates/norn-skeleton-guard/scripts/public-api-boundary.sh",
+        "crates/norn-skeleton-guard/scripts/zen-dependency-tree.sh",
+        "crates/norn-skeleton-guard/src/bin/xtask.rs",
+        "crates/norn-skeleton-guard/src/ci/git.rs",
+        "crates/norn-skeleton-guard/src/ci/mod.rs",
+        "crates/norn-skeleton-guard/src/ci/provenance.rs",
+        "crates/norn-skeleton-guard/src/ci/yaml.rs",
+        "crates/norn-skeleton-guard/src/lib.rs",
+        "crates/norn-skeleton-guard/tests/provenance.rs",
+        "crates/norn-skeleton-guard/tests/skeleton.rs",
+        "crates/norn-testkit/tests/decide_commit.rs",
+        "crates/norn-testkit/tests/harness.rs",
+        "crates/norn-testkit/tests/kernel_quint.rs",
+        "crates/norn-testkit/tests/link_target_identity.rs",
+        "scripts/bootstrap-ontology-tools.sh",
+        "scripts/bootstrap-rust-extraction-tools.sh",
+        "scripts/bootstrap-verification-tools.sh",
+        "scripts/check-proof-holes.py",
+        "scripts/check-rust-extraction-tools.sh",
+        "scripts/check-verification-tools.sh",
+        "scripts/ci/core.sh",
+        "scripts/ci/validate-runner-policy.py",
+        "scripts/importers/erpnext_runtime.py",
+        "scripts/proof_enrollment.py",
+        "scripts/quint_apalache.py",
+        "scripts/test_proof_enrollment.py",
+        "scripts/validate-executed-test-selectors.py",
+        "scripts/verification_attestation.py",
+        "scripts/verify-promoted-subsystems.sh",
+        "scripts/write-verification-result.py",
+        "tools/norn-ts/src/builder/access.ts",
+        "tools/norn-ts/src/builder/action.ts",
+        "tools/norn-ts/src/builder/budget.ts",
+        "tools/norn-ts/src/builder/connector.ts",
+        "tools/norn-ts/src/builder/diagnostics.ts",
+        "tools/norn-ts/src/builder/entity.ts",
+        "tools/norn-ts/src/builder/envelope.ts",
+        "tools/norn-ts/src/builder/expr.ts",
+        "tools/norn-ts/src/builder/flow.ts",
+        "tools/norn-ts/src/builder/index.ts",
+        "tools/norn-ts/src/builder/law.ts",
+        "tools/norn-ts/src/builder/lower-flow.ts",
+        "tools/norn-ts/src/builder/rule.ts",
+        "tools/norn-ts/src/builder/schema.ts",
+        "tools/norn-ts/src/builder/source-schema.ts",
+        "tools/norn-ts/src/canonical.ts",
+        "tools/norn-ts/src/check.ts",
+        "tools/norn-ts/src/checker-abi.ts",
+        "tools/norn-ts/src/cli.ts",
+        "tools/norn-ts/src/compile-stdin.ts",
+        "tools/norn-ts/src/compiler/definitions.ts",
+        "tools/norn-ts/src/compiler/index.ts",
+        "tools/norn-ts/src/compiler/schema.ts",
+        "tools/norn-ts/src/compiler/types.ts",
+        "tools/norn-ts/src/deploy.ts",
+        "tools/norn-ts/src/flow-limits.ts",
+        "tools/norn-ts/src/flow-source-map.ts",
+        "tools/norn-ts/src/law-statement.ts",
+        "tools/norn-ts/src/pack.ts",
+        "tools/norn-ts/src/plan.ts",
+        "tools/norn-ts/src/printer.ts",
+        "tools/norn-ts/src/profile.ts",
+        "tools/norn-ts/test/authoring-sdk.test.ts",
+        "tools/norn-ts/test/checker.ts",
+        "tools/norn-ts/test/compiler.test.ts",
+        "tools/norn-ts/test/connector.test.ts",
+        "tools/norn-ts/test/decisions.test.ts",
+        "tools/norn-ts/test/entity-builders.test.ts",
+        "tools/norn-ts/test/flow-builder.test.ts",
+        "tools/norn-ts/test/law.test.ts",
+        "tools/norn-ts/test/profile-corpus.test.ts",
+        "tools/norn-ts/test/schema-lowering.test.ts",
+        "tools/norn-ts/test/vertical-fixture.test.ts",
+        "vendor/zen/core/engine/tests/decision.rs",
+        "vendor/zen/core/engine/tests/engine.rs",
+        "vendor/zen/core/engine/tests/metering.rs",
+        "vendor/zen/core/engine/tests/model.rs",
+        "vendor/zen/core/engine/tests/strict_errors.rs",
+        "vendor/zen/core/engine/tests/support/mod.rs",
+        "vendor/zen/core/expression/tests/analysis.rs",
+        "vendor/zen/core/expression/tests/bounded_strings.rs",
+        "vendor/zen/core/expression/tests/deterministic_maps.rs",
+        "vendor/zen/core/expression/tests/isolate.rs",
+        "vendor/zen/core/expression/tests/lexer.rs",
+        "vendor/zen/core/expression/tests/metering.rs",
+        "vendor/zen/core/expression/tests/nl.rs",
+        "vendor/zen/core/expression/tests/regex_lite.rs",
+        "vendor/zen/core/expression/tests/standard.rs",
+        "vendor/zen/core/expression/tests/temporal.rs",
+        "vendor/zen/core/expression/tests/unary.rs",
+        "vendor/zen/core/template/tests/template.rs",
+        "vendor/zen/core/types/tests/ref_ser.rs",
+        "vendor/zen/core/types/tests/variable.rs",
+        "vendor/zen/core/types/tests/variable_type.rs",
+        "verification/coverage-v1/negative_canaries.py",
+        "verification/coverage-v1/validate.py",
+        "verification/coverage-v1/validate_result.py",
+        "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+        "verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt",
+        "verification/stripmine-2026-08-22/models/closed-action-effect.qnt",
+        "verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
+        "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst",
+        "verification/stripmine-2026-08-22/proofs/fstar/Core_models.fst",
+        "verification/stripmine-2026-08-22/proofs/fstar/FStar.Mul.fst",
+        "verification/stripmine-2026-08-22/proofs/lean/ActiveArtifactAuthority.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/ArtifactPromotion.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/ArtifactVerificationReceipt.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/AuthorizationAuthorityCommit.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+        "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+        "verification/stripmine-2026-08-22/scripts/validate.sh"
+      ]
+    },
+    {
+      "id": "kernel-v2",
+      "obligations": [
+        "KERNEL-V2-COMMIT",
+        "KERNEL-V2-QUANTITY",
+        "KERNEL-V2-PROJECTION"
+      ],
+      "obligationClaims": [
+        {
+          "id": "KERNEL-V2-COMMIT",
+          "runtime": "tested",
+          "model": "partial",
+          "proof": "deferred",
+          "residual": "Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-testkit/tests/kernel_quint.rs",
+                "command": "cargo test --locked -p norn-testkit --test kernel_quint",
+                "selectors": [
+                  "test:commit_admission_quint_traces",
+                  "test:commit_admission_trace_mutants_fail"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/kernel-v2/models/commit-admission.qnt",
+                "command": "quint verify verification/kernel-v2/models/commit-admission.qnt --backend apalache --invariants invariant --max-steps 8",
+                "selectors": [
+                  "invariant:invariant"
+                ]
+              }
+            ],
+            "proof": []
+          }
+        },
+        {
+          "id": "KERNEL-V2-QUANTITY",
+          "runtime": "tested",
+          "model": "partial",
+          "proof": "deferred",
+          "residual": "Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-testkit/tests/kernel_quint.rs",
+                "command": "cargo test --locked -p norn-testkit --test kernel_quint",
+                "selectors": [
+                  "test:quantity_v2_quint_traces",
+                  "test:quantity_closed_slice_refusal_matches_pure_kernel"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/kernel-v2/models/quantity-ledger.qnt",
+                "command": "quint test verification/kernel-v2/models/quantity-ledger.qnt --backend rust --match conservation.*Test --max-samples 1 --seed 1",
+                "selectors": [
+                  "invariant:invariant"
+                ]
+              }
+            ],
+            "proof": []
+          }
+        },
+        {
+          "id": "KERNEL-V2-PROJECTION",
+          "runtime": "tested",
+          "model": "partial",
+          "proof": "deferred",
+          "residual": "Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-testkit/tests/kernel_quint.rs",
+                "command": "cargo test --locked -p norn-testkit --test kernel_quint",
+                "selectors": [
+                  "test:projection_trust_quint_traces"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/kernel-v2/models/projection-trust.qnt",
+                "command": "quint verify verification/kernel-v2/models/projection-trust.qnt --backend apalache --invariants invariant --max-steps 8",
+                "selectors": [
+                  "invariant:invariant"
+                ]
+              }
+            ],
+            "proof": []
+          }
+        }
+      ],
+      "runtime": {
+        "status": "tested",
+        "artifacts": [
+          "crates/norn-testkit/tests/kernel_quint.rs"
+        ],
+        "commands": [
+          "cargo test --locked -p norn-testkit --test kernel_quint"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "partial",
+        "bound": "Admission/projection full nondeterministic models: BMC depth8. Quantity: exact enumeration of four 4-step resolution paths and both 15-step expiry paths, original submit/full invariant, 46 semantic transitions and 52 init/prefix checks. No quantity Apalache BMC verdict; general step remains sampled.",
+        "artifacts": [
+          "verification/kernel-v2/models/commit-admission.qnt",
+          "verification/kernel-v2/models/quantity-ledger.qnt",
+          "verification/kernel-v2/models/projection-trust.qnt"
+        ],
+        "commands": [
+          "quint typecheck verification/kernel-v2/models/commit-admission.qnt",
+          "quint verify verification/kernel-v2/models/commit-admission.qnt --backend apalache --invariants invariant --max-steps 8",
+          "quint typecheck verification/kernel-v2/models/quantity-ledger.qnt",
+          "quint test verification/kernel-v2/models/quantity-ledger.qnt --backend rust --match conservation.*Test --max-samples 1 --seed 1",
+          "quint typecheck verification/kernel-v2/models/projection-trust.qnt",
+          "quint verify verification/kernel-v2/models/projection-trust.qnt --backend apalache --invariants invariant --max-steps 8"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": [
+          "target/verification-results/kernel-v2-commit-admission.json",
+          "target/verification-results/kernel-v2-projection-trust.json"
+        ]
+      },
+      "proof": {
+        "status": "deferred",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "Finite models and sampled traces are not unbounded Rust refinement.",
+        "No OS/fs durability, host scheduler fairness, external delivery, authorization noninterference, or i128 overflow theorem.",
+        "Quantity reservation vectors have three legs in one unit/layer partition; multi-partition vectors, reversal, account-limit admission, and growing-net-hold remainders are outside this bounded model. Existing quantity v2 regressions cover additional cases.",
+        "Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled."
+      ],
+      "sourceFiles": [
+        "crates/norn-cli/src/eval.rs",
+        "crates/norn-kernel/src/lib.rs",
+        "crates/norn-projections/Cargo.toml",
+        "crates/norn-projections/src/cedar.rs",
+        "crates/norn-projections/src/interop.rs",
+        "crates/norn-projections/src/lib.rs",
+        "crates/norn-projections/src/lifecycle.rs",
+        "crates/norn-projections/src/lineage.rs",
+        "crates/norn-projections/src/mcp.rs",
+        "crates/norn-projections/src/sqlite_ddl.rs",
+        "crates/norn-testkit/src/cell_host.rs",
+        "crates/norn-testkit/src/compose.rs",
+        "crates/norn-testkit/src/coverage.rs",
+        "crates/norn-testkit/src/laws.rs",
+        "crates/norn-testkit/src/lib.rs",
+        "crates/norn-testkit/src/machine.rs",
+        "crates/norn-testkit/src/model.rs",
+        "crates/norn-testkit/src/runner.rs",
+        "crates/norn-testkit/src/strategy.rs",
+        "verification/kernel-v2/generate.py",
+        "verification/kernel-v2/models/commit-admission.qnt",
+        "verification/kernel-v2/models/projection-trust.qnt",
+        "verification/kernel-v2/validate.py"
+      ]
+    }
+  ]
+}

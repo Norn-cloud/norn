@@ -1,0 +1,83 @@
+{
+  "format": "norn-checker/invalid-fixtures@1",
+  "fixtures": [
+    {
+      "file": "unsupported-ir-version.entity.json",
+      "reason": "irVersion is not supported by this checker",
+      "error_at": "/irVersion",
+      "code": "ir.validation.unsupported_version"
+    },
+    {
+      "file": "blank-namespace.entity.json",
+      "reason": "the envelope namespace is blank",
+      "error_at": "/namespace",
+      "code": "ir.validation.required_field"
+    },
+    {
+      "file": "retired-kind.process.json",
+      "reason": "process is a retired artifact kind",
+      "error_at": "/kind",
+      "code": "ir.validation.retired_kind"
+    },
+    {
+      "file": "unknown-kind.json",
+      "reason": "gadget is not in the closed artifact kind set",
+      "error_at": "/kind",
+      "code": "ir.validation.unknown_kind"
+    },
+    {
+      "file": "unsafe-action-binding.widget.json",
+      "reason": "a widget action binding targets a raw mutation",
+      "error_at": "/payload/actionBindings/0",
+      "code": "widget.validation.unsafe_action_binding"
+    },
+    {
+      "file": "incremental-maintenance.derived.json",
+      "reason": "incremental view maintenance is reserved",
+      "error_at": "/payload/maintenance",
+      "code": "derived.validation.incremental_not_supported"
+    },
+    {
+      "file": "unknown-resource.connector.json",
+      "reason": "a mapping names an undeclared connector resource",
+      "error_at": "/payload/mappings/0/resourceId",
+      "code": "connector.validation.unknown_resource"
+    },
+    {
+      "file": "effectful-ts-boundary.customization.json",
+      "reason": "effectful_ts is a retired executable boundary (no server-side custom TypeScript runtime; custom code is a pool Function)",
+      "error_at": "/payload/executable/boundary",
+      "code": "customization.validation.retired_boundary"
+    },
+    {
+      "file": "wasm-boundary.customization.json",
+      "reason": "wasm is a retired executable boundary (inline custom execution is rejected in v1, D33; custom code is a pool Function)",
+      "error_at": "/payload/executable/boundary",
+      "code": "customization.validation.retired_boundary"
+    },
+    {
+      "file": "v2-form.relation.json",
+      "reason": "RelationIR has no v2 form: an EntityIR v2 relation is a link on its source object type",
+      "error_at": "/payload/entityVersion",
+      "code": "relation.validation.v2_relation_is_link"
+    },
+    {
+      "file": "v1-member-in-v2.entity.json",
+      "reason": "an EntityIR v2 entity payload carries the v1 fields map",
+      "error_at": "/payload/fields",
+      "code": "entity.validation.invalid_payload"
+    },
+    {
+      "file": "null-member.entity-v2.json",
+      "reason": "an optional EntityIR v2 member is an explicit null (omit it instead)",
+      "error_at": "/payload/objectType/properties/0",
+      "code": "entity.validation.invalid_payload"
+    },
+    {
+      "file": "two-definitions.entity-v2.json",
+      "reason": "an EntityIR v2 entity artifact carries exactly one definition (here objectType and interface)",
+      "error_at": "/payload/interface",
+      "code": "entity.validation.invalid_payload"
+    }
+  ]
+}

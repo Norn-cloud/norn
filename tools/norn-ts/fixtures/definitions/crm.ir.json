@@ -1,0 +1,433 @@
+[
+  {
+    "artifactId": "crm.Account.entity",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "entity",
+    "lifecycle": "draft",
+    "name": "Account",
+    "namespace": "crm",
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "identity": [
+          {
+            "name": "primary",
+            "properties": [
+              "account_id"
+            ]
+          }
+        ],
+        "name": "crm.Account",
+        "properties": [
+          {
+            "id": "account_id",
+            "type": {
+              "kind": "text"
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/definitions/crm.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "crm.Contact.entity",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "entity",
+    "lifecycle": "draft",
+    "name": "Contact",
+    "namespace": "crm",
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "description": "A person at an account.",
+        "identity": [
+          {
+            "name": "primary",
+            "properties": [
+              "contact_id"
+            ]
+          }
+        ],
+        "lifecycles": [
+          {
+            "initial": [
+              "active"
+            ],
+            "property": "status",
+            "transitions": [
+              {
+                "from": [
+                  "active"
+                ],
+                "id": "archive",
+                "to": "archived"
+              },
+              {
+                "from": [
+                  "archived"
+                ],
+                "id": "restore",
+                "to": "active"
+              }
+            ]
+          }
+        ],
+        "links": [
+          {
+            "cardinality": {
+              "from": "many",
+              "to": "one"
+            },
+            "description": "The account the contact works for.",
+            "id": "account",
+            "inverse": "contacts",
+            "target": "crm.Account"
+          }
+        ],
+        "name": "crm.Contact",
+        "properties": [
+          {
+            "id": "contact_id",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "constraints": {
+              "nullable": true
+            },
+            "id": "email",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "default": "active",
+            "id": "status",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "active"
+                },
+                {
+                  "value": "archived"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/definitions/crm.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "crm.contact.upsert.action",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "action",
+    "lifecycle": "draft",
+    "name": "Upsert contact",
+    "namespace": "crm",
+    "payload": {
+      "actionId": "crm.contact.upsert",
+      "effectProgram": {
+        "entityArtifactId": "crm.Contact.entity",
+        "entityArtifactVersion": "0.1.0",
+        "kind": "upsert_input_object",
+        "objectIdField": "contact_id",
+        "objectKind": "crm.Contact"
+      },
+      "idempotent": true,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "contact_id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contact_id"
+        ],
+        "type": "object"
+      },
+      "ledgered": true,
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "contact_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contact_id"
+        ],
+        "type": "object"
+      },
+      "scopeRequired": [
+        "orgId",
+        "environmentId"
+      ],
+      "title": "Upsert contact",
+      "writes": [
+        {
+          "change": "created",
+          "entityKind": "crm.Contact"
+        },
+        {
+          "change": "modified",
+          "entityKind": "crm.Contact"
+        }
+      ]
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/definitions/crm.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "crm.contact.restore.action",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "action",
+    "lifecycle": "draft",
+    "name": "Restore contact",
+    "namespace": "crm",
+    "payload": {
+      "actionId": "crm.contact.restore",
+      "effectProgram": {
+        "entityArtifactId": "crm.Contact.entity",
+        "entityArtifactVersion": "0.1.0",
+        "kind": "fire_transition",
+        "lifecycle": "status",
+        "objectIdField": "contact_id",
+        "objectKind": "crm.Contact",
+        "transition": "restore"
+      },
+      "idempotent": false,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "contact_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contact_id"
+        ],
+        "type": "object"
+      },
+      "ledgered": true,
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "contact_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contact_id"
+        ],
+        "type": "object"
+      },
+      "scopeRequired": [
+        "orgId",
+        "environmentId"
+      ],
+      "title": "Restore contact",
+      "writes": [
+        {
+          "change": "modified",
+          "entityKind": "crm.Contact"
+        }
+      ]
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/definitions/crm.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "crm.contact.archive.action",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "action",
+    "lifecycle": "draft",
+    "name": "Archive contact",
+    "namespace": "crm",
+    "payload": {
+      "actionId": "crm.contact.archive",
+      "compensation": {
+        "actionId": "crm.contact.restore"
+      },
+      "description": "Archive a contact; restoring it compensates.",
+      "effectProgram": {
+        "entityArtifactId": "crm.Contact.entity",
+        "entityArtifactVersion": "0.1.0",
+        "kind": "fire_transition",
+        "lifecycle": "status",
+        "objectIdField": "contact_id",
+        "objectKind": "crm.Contact",
+        "transition": "archive"
+      },
+      "idempotent": false,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "contact_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contact_id"
+        ],
+        "type": "object"
+      },
+      "ledgerCategory": "crm.contact",
+      "ledgered": true,
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "contact_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contact_id"
+        ],
+        "type": "object"
+      },
+      "preconditions": [
+        "len(contact_id) > 0"
+      ],
+      "scopeRequired": [
+        "orgId",
+        "environmentId"
+      ],
+      "title": "Archive contact",
+      "writes": [
+        {
+          "change": "modified",
+          "entityKind": "crm.Contact"
+        }
+      ]
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/definitions/crm.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "crm.contact.access.policy",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "policy",
+    "lifecycle": "draft",
+    "name": "Contact access",
+    "namespace": "crm",
+    "payload": {
+      "accessVersion": "0.1",
+      "policyId": "crm.contact.access",
+      "rules": [
+        {
+          "actions": [
+            "crm.contact.upsert",
+            "crm.contact.archive",
+            "crm.contact.restore"
+          ],
+          "allOf": [
+            {
+              "role": {
+                "anyOf": [
+                  "Staff"
+                ]
+              }
+            }
+          ],
+          "resourceType": "crm.Contact",
+          "ruleId": "staff_manage_contacts",
+          "scope": {
+            "dimensions": [
+              "org",
+              "environment"
+            ]
+          }
+        },
+        {
+          "actions": [
+            "norn.read"
+          ],
+          "allOf": [
+            {
+              "role": {
+                "anyOf": [
+                  "Staff"
+                ]
+              }
+            },
+            {
+              "rel": {
+                "from": "resource",
+                "role": "account"
+              }
+            }
+          ],
+          "resourceType": "crm.Contact",
+          "ruleId": "owners_read_contacts",
+          "scope": {
+            "dimensions": [
+              "org",
+              "environment"
+            ]
+          }
+        }
+      ]
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/definitions/crm.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  }
+]

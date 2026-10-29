@@ -1,0 +1,365 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "commerce.sales_order.credit_hold.rule",
+  "kind": "rule",
+  "namespace": "commerce",
+  "name": "Sales order credit hold",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "tools/norn-ts/fixtures/decisions/credit-hold.editor.rule.json"
+  },
+  "payload": {
+    "ruleId": "commerce.rule.sales_order_credit_hold",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "triggers": [
+      {
+        "on": "transitioned",
+        "objectType": "commerce.SalesOrder",
+        "transition": "submit"
+      }
+    ],
+    "slice": [
+      {
+        "name": "order",
+        "objectType": "commerce.SalesOrder",
+        "key": "triggerObject"
+      },
+      {
+        "name": "customer",
+        "objectType": "commerce.Customer",
+        "key": {
+          "property": {
+            "from": "order",
+            "property": "customer"
+          }
+        }
+      }
+    ],
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "order": {
+              "type": "object",
+              "properties": {
+                "so_number": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "customer": {
+                  "type": "string"
+                },
+                "total": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "so_number",
+                "status",
+                "customer",
+                "total"
+              ],
+              "additionalProperties": false
+            },
+            "customer": {
+              "type": "object",
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                },
+                "credit_limit": {
+                  "type": "integer"
+                },
+                "exposure": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "customer_id",
+                "credit_limit",
+                "exposure"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "order",
+            "customer"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string"
+            },
+            "key": {
+              "type": "object",
+              "properties": {
+                "objectType": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "objectType",
+                "key"
+              ],
+              "additionalProperties": false
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "transition": {
+              "type": "string"
+            },
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "key",
+            "lifecycle",
+            "transition",
+            "from",
+            "to"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "transition"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "commerce.SalesOrder"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "lifecycle": {
+                "type": "string",
+                "enum": [
+                  "status"
+                ]
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "hold"
+                ]
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "afterMillis": {
+                "type": "integer"
+              },
+              "timerId": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "order": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "afterMillis",
+              "timerId",
+              "kind",
+              "order"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "slice and event",
+          "type": "inputNode",
+          "position": {
+            "x": 80,
+            "y": 200
+          }
+        },
+        {
+          "id": "credit",
+          "name": "credit limit",
+          "type": "decisionTableNode",
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [
+              {
+                "id": "c_over",
+                "name": "Over the credit limit",
+                "type": "expression"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "o_hold",
+                "name": "Hold",
+                "field": "hold"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "over_limit",
+                "c_over": "slice.order.total + slice.customer.exposure > slice.customer.credit_limit",
+                "o_hold": "true"
+              },
+              {
+                "_id": "within_limit",
+                "c_over": "",
+                "o_hold": "false"
+              }
+            ],
+            "outputPath": "credit",
+            "passThrough": true
+          },
+          "position": {
+            "x": 360,
+            "y": 180
+          }
+        },
+        {
+          "id": "decide",
+          "name": "credit hold",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "credit.hold ? [{op: 'transition', objectType: 'commerce.SalesOrder', key: slice.order.so_number, lifecycle: 'status', transition: 'hold'}] : []"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "[]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "credit.hold ? [{afterMillis: 86400000, timerId: 'credit-hold/' + slice.order.so_number, kind: 'credit_hold_review', order: slice.order.so_number}] : []"
+              }
+            ]
+          },
+          "position": {
+            "x": 720,
+            "y": 180
+          }
+        },
+        {
+          "id": "out",
+          "name": "decision",
+          "type": "outputNode",
+          "position": {
+            "x": 1040,
+            "y": 200.5
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "e_in",
+          "sourceId": "in",
+          "targetId": "credit",
+          "type": "edge"
+        },
+        {
+          "id": "e_table",
+          "sourceId": "credit",
+          "targetId": "decide",
+          "type": "edge"
+        },
+        {
+          "id": "e_out",
+          "sourceId": "decide",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "commerce.SalesOrder.entity",
+  "kind": "entity",
+  "namespace": "commerce",
+  "name": "SalesOrder",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "crates/norn-checker/tests/fixtures/mapping/model/commerce.sales-order.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "commerce.SalesOrder",
+      "implements": [
+        "core.Order"
+      ],
+      "properties": [
+        {
+          "id": "order_number",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "order_date",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "id": "total_amount",
+          "type": {
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "id": "is_large",
+          "type": {
+            "kind": "boolean"
+          },
+          "computed": "self.total_amount > 10000"
+        },
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "submitted"
+              },
+              {
+                "value": "cancelled"
+              }
+            ]
+          },
+          "default": "draft"
+        }
+      ],
+      "links": [
+        {
+          "id": "counterparty",
+          "target": "party.Customer",
+          "cardinality": {
+            "to": "one",
+            "from": "many",
+            "required": true
+          }
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "order_number"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "property": "status",
+          "initial": [
+            "draft"
+          ],
+          "terminal": [
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "id": "submit",
+              "from": [
+                "draft"
+              ],
+              "to": "submitted"
+            },
+            {
+              "id": "cancel",
+              "from": [
+                "submitted"
+              ],
+              "to": "cancelled"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

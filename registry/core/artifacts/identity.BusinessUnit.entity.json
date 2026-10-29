@@ -1,0 +1,59 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "identity.BusinessUnit.entity",
+  "kind": "entity",
+  "namespace": "identity",
+  "name": "BusinessUnit",
+  "version": "0.3.0",
+  "lifecycle": "active",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/identity.BusinessUnit.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "identity.BusinessUnit",
+      "description": "A business unit that may be attached to an identity membership. Its object key is the stable value used by principal business_units attributes.",
+      "properties": [
+        {
+          "id": "name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        }
+      ],
+      "implements": [
+        "identity.Directory"
+      ],
+      "links": [
+        {
+          "id": "legal_entity",
+          "target": "party.Organization",
+          "cardinality": {
+            "to": "one",
+            "from": "many"
+          }
+        },
+        {
+          "id": "parent",
+          "target": "identity.BusinessUnit",
+          "cardinality": {
+            "to": "one",
+            "from": "many"
+          },
+          "acyclic": true
+        }
+      ]
+    },
+    "extensions": {
+      "norn.semantic-zoom/0.1.0": {
+        "level": "organization",
+        "missingLevels": "skip"
+      }
+    }
+  }
+}

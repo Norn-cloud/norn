@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
+      "start": "6:1",
+      "end": "8:2",
+      "construct": "function normalise(id: string): string { return normalise(id) }"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-CALL",
+      "start": "15:19",
+      "end": "15:28",
+      "construct": "normalise"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "party.Customer.entity",
+  "kind": "entity",
+  "namespace": "party",
+  "name": "Customer",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "crates/norn-checker/tests/fixtures/mapping/model/party.customer.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "party.Customer",
+      "implements": [
+        "core.Party"
+      ],
+      "properties": [
+        {
+          "id": "customer_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "customer_type",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "company"
+              },
+              {
+                "value": "individual"
+              }
+            ]
+          }
+        },
+        {
+          "id": "loyalty_tier",
+          "type": {
+            "kind": "text"
+          },
+          "constraints": {
+            "nullable": true
+          }
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "customer_code"
+          ]
+        }
+      ]
+    }
+  }
+}

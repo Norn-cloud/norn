@@ -1,0 +1,29 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-ROUTE",
+      "start": "9:13",
+      "end": "9:27",
+      "construct": "invoice.status"
+    },
+    {
+      "code": "NORN-FLOW-ROUTE",
+      "start": "10:7",
+      "end": "10:20",
+      "construct": "case \"draft\":"
+    },
+    {
+      "code": "NORN-FLOW-ROUTE",
+      "start": "11:7",
+      "end": "12:77",
+      "construct": "case \"open\": yield* Norn.perform(\"charge\", chargeCard, { invoiceId: invoice.i..."
+    },
+    {
+      "code": "NORN-FLOW-ROUTE",
+      "start": "14:13",
+      "end": "14:23",
+      "construct": "invoice.id"
+    }
+  ]
+}

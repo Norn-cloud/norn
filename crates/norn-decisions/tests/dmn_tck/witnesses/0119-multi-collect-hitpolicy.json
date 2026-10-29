@@ -1,0 +1,28 @@
+{
+  "model": "0119-multi-collect-hitpolicy",
+  "issue": 2930,
+  "reason": "empty nonaggregate hits produce [] instead of null",
+  "source": "TestCases/compliance-level-2/0119-multi-collect-hitpolicy/0119-multi-collect-hitpolicy.dmn",
+  "semantics": "DMN 1.5 section 10.3.2.10 step 2: no match returns the default context, otherwise null",
+  "slice": {
+    "Age": 19,
+    "RiskCategory": "Medium",
+    "isAffordable": false
+  },
+  "event": {},
+  "expect": {
+    "facts": [],
+    "commands": [],
+    "timers": []
+  },
+  "knownActual": {
+    "facts": [],
+    "commands": [
+      {
+        "decision": "Approval Status",
+        "result": []
+      }
+    ],
+    "timers": []
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "description": "An action and a policy that depend on each other.",
+  "base": [],
+  "artifacts": [
+    {
+      "fixture": "ir/retail-reorder.action.json",
+      "patch": {
+        "dependencies": [
+          {
+            "artifactId": "retail.procurement.policy",
+            "kind": "policy",
+            "version": "0.1.0",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "ir/retail-procurement.policy.json",
+      "patch": {
+        "dependencies": [
+          {
+            "artifactId": "retail.reorder.action",
+            "kind": "action",
+            "version": "0.1.0",
+            "required": true
+          }
+        ]
+      }
+    }
+  ],
+  "expect": [
+    [
+      "retail.procurement.policy",
+      "artifact_set.resolution.dependency_cycle",
+      "/dependencies/0"
+    ]
+  ]
+}

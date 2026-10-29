@@ -1,0 +1,807 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceSchemaPayload",
+  "description": "The payload of a `source_schema` artifact: a discovered source schema\n([`source_schema::SourceSchemaIr`], T8-SRC-1).",
+  "type": "object",
+  "properties": {
+    "adapter": {
+      "description": "The adapter that produced the document.",
+      "$ref": "#/$defs/SourceAdapter"
+    },
+    "codeSets": {
+      "description": "Closed value sets. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CodeSet"
+      }
+    },
+    "constraints": {
+      "description": "Declared and inferred constraints. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceConstraint"
+      }
+    },
+    "datasets": {
+      "description": "Datasets, in discovery order. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceDataset"
+      }
+    },
+    "extensions": {
+      "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "fields": {
+      "description": "Fields of the datasets. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceField"
+      }
+    },
+    "format": {
+      "description": "The format tag.",
+      "$ref": "#/$defs/SourceSchemaFormat"
+    },
+    "lineage": {
+      "description": "Dataset lineage. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceLineage"
+      }
+    },
+    "observedAt": {
+      "description": "When the metadata was read: RFC 3339 with an explicit offset.",
+      "type": "string"
+    },
+    "profiles": {
+      "description": "Measurements. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceProfile"
+      }
+    },
+    "rawMetadata": {
+      "description": "The raw metadata the document was derived from, retained as evidence.",
+      "$ref": "#/$defs/EvidenceRef"
+    },
+    "source": {
+      "description": "The source system and instance the schema was discovered on.",
+      "$ref": "#/$defs/SourceIdentity"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "source",
+    "observedAt",
+    "adapter",
+    "rawMetadata"
+  ],
+  "$defs": {
+    "CodeSet": {
+      "description": "A closed set of values of one field.",
+      "type": "object",
+      "properties": {
+        "dataset": {
+          "description": "The dataset id.",
+          "type": "string"
+        },
+        "field": {
+          "description": "The field whose values it lists.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Stable id of the code set within the document.",
+          "type": "string"
+        },
+        "origin": {
+          "description": "`declared` (a `Select`, an enum, a check) or `observed_candidate`\n(frequent values). A candidate never becomes an ontology enum without\nreview.",
+          "$ref": "#/$defs/Origin"
+        },
+        "values": {
+          "description": "The values, unique. Non-empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CodeValue"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dataset",
+        "field",
+        "origin",
+        "values"
+      ]
+    },
+    "CodeValue": {
+      "description": "One value of a [`CodeSet`].",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "The source's display label, when it differs.",
+          "type": "string"
+        },
+        "value": {
+          "description": "The stored value.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value"
+      ]
+    },
+    "ConstraintKind": {
+      "description": "What a constraint asserts.",
+      "oneOf": [
+        {
+          "description": "The fields identify a record.",
+          "type": "string",
+          "const": "primary_key"
+        },
+        {
+          "description": "No two records share the fields' values.",
+          "type": "string",
+          "const": "unique"
+        },
+        {
+          "description": "A physical foreign key to `target`.",
+          "type": "string",
+          "const": "foreign_key"
+        },
+        {
+          "description": "A logical reference to `target` the source does not enforce\nphysically (a Frappe `Link`).",
+          "type": "string",
+          "const": "logical_reference"
+        },
+        {
+          "description": "The dataset's records are owned by `target`'s records (a Frappe child\ntable row's `parent`).",
+          "type": "string",
+          "const": "parent_child"
+        },
+        {
+          "description": "A check expression in the source's native dialect.",
+          "type": "string",
+          "const": "check"
+        }
+      ]
+    },
+    "ConstraintTarget": {
+      "description": "The referenced side of a reference constraint.",
+      "type": "object",
+      "properties": {
+        "dataset": {
+          "description": "The referenced dataset id.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "The referenced fields, in the same order as the constraint's fields.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dataset",
+        "fields"
+      ]
+    },
+    "CountPrecision": {
+      "description": "Whether a distinct count is exact.",
+      "oneOf": [
+        {
+          "description": "Counted exactly over the rows seen.",
+          "type": "string",
+          "const": "exact"
+        },
+        {
+          "description": "Estimated (for example `HyperLogLog`).",
+          "type": "string",
+          "const": "approximate"
+        }
+      ]
+    },
+    "DatasetKind": {
+      "description": "What kind of collection a dataset is.",
+      "oneOf": [
+        {
+          "description": "A database table.",
+          "type": "string",
+          "const": "table"
+        },
+        {
+          "description": "A database view.",
+          "type": "string",
+          "const": "view"
+        },
+        {
+          "description": "A workbook sheet.",
+          "type": "string",
+          "const": "sheet"
+        },
+        {
+          "description": "A delimited or columnar file.",
+          "type": "string",
+          "const": "file"
+        },
+        {
+          "description": "An API stream (not necessarily one table).",
+          "type": "string",
+          "const": "stream"
+        },
+        {
+          "description": "A document type (a Frappe `DocType`).",
+          "type": "string",
+          "const": "document"
+        },
+        {
+          "description": "A child table owned by a parent document type (a Frappe `istable`\n`DocType`).",
+          "type": "string",
+          "const": "child_document"
+        }
+      ]
+    },
+    "EvidenceRef": {
+      "description": "A content-addressed reference to evidence (raw metadata, a profile\nquery result, a sample file).",
+      "type": "object",
+      "properties": {
+        "sha256": {
+          "description": "Lower-case hex SHA-256 of the evidence bytes.",
+          "type": "string"
+        },
+        "uri": {
+          "description": "Where the evidence is stored (an object-store URI or a fixture path).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "uri",
+        "sha256"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "LineageKind": {
+      "description": "How a dataset derives from others.",
+      "oneOf": [
+        {
+          "description": "A database view definition.",
+          "type": "string",
+          "const": "view"
+        },
+        {
+          "description": "A saved query or report.",
+          "type": "string",
+          "const": "query"
+        },
+        {
+          "description": "Source configuration (a Frappe virtual `DocType`, a sync setting).",
+          "type": "string",
+          "const": "config"
+        }
+      ]
+    },
+    "MarkingId": {
+      "description": "Stable identity of a data marking.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+    },
+    "NormalizedType": {
+      "description": "A normalized type a native type is a candidate for.",
+      "oneOf": [
+        {
+          "description": "A short string.",
+          "type": "string",
+          "const": "string"
+        },
+        {
+          "description": "Long or formatted text.",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "An integer.",
+          "type": "string",
+          "const": "integer"
+        },
+        {
+          "description": "An exact decimal.",
+          "type": "string",
+          "const": "decimal"
+        },
+        {
+          "description": "A boolean.",
+          "type": "string",
+          "const": "boolean"
+        },
+        {
+          "description": "A calendar date.",
+          "type": "string",
+          "const": "date"
+        },
+        {
+          "description": "A date and time (with or without an offset; see the native type).",
+          "type": "string",
+          "const": "datetime"
+        },
+        {
+          "description": "A time of day.",
+          "type": "string",
+          "const": "time"
+        },
+        {
+          "description": "An elapsed duration.",
+          "type": "string",
+          "const": "duration"
+        },
+        {
+          "description": "Structured JSON.",
+          "type": "string",
+          "const": "json"
+        },
+        {
+          "description": "Binary content or an attachment reference.",
+          "type": "string",
+          "const": "binary"
+        },
+        {
+          "description": "The name or id of a record of another dataset.",
+          "type": "string",
+          "const": "reference"
+        },
+        {
+          "description": "Not determined.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    },
+    "Origin": {
+      "description": "Who asserted a fact about the source.",
+      "oneOf": [
+        {
+          "description": "Declared by the source's own metadata.",
+          "type": "string",
+          "const": "declared"
+        },
+        {
+          "description": "Inferred by Norn from metadata or measurements.",
+          "type": "string",
+          "const": "inferred"
+        },
+        {
+          "description": "A candidate Norn observed in the data (for example frequent values);\nnever a declaration.",
+          "type": "string",
+          "const": "observed_candidate"
+        }
+      ]
+    },
+    "ProfileMethod": {
+      "description": "How a profile was measured.",
+      "oneOf": [
+        {
+          "description": "Every row was read.",
+          "type": "string",
+          "const": "full_scan"
+        },
+        {
+          "description": "A sample of rows was read.",
+          "type": "string",
+          "const": "sample"
+        }
+      ]
+    },
+    "Redaction": {
+      "description": "How sample values are redacted.",
+      "oneOf": [
+        {
+          "description": "Values are kept as read (non-sensitive fields only).",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "Values are masked (characters replaced, shape kept).",
+          "type": "string",
+          "const": "masked"
+        },
+        {
+          "description": "Values are replaced by a keyed hash.",
+          "type": "string",
+          "const": "hashed"
+        },
+        {
+          "description": "No values are kept.",
+          "type": "string",
+          "const": "withheld"
+        }
+      ]
+    },
+    "SamplePolicy": {
+      "description": "The sample policy a [`SampleSet`] was taken under.",
+      "type": "object",
+      "properties": {
+        "maxValues": {
+          "description": "The most values kept: at most [`MAX_SAMPLE_VALUES`].",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "redaction": {
+          "description": "How kept values are redacted.",
+          "$ref": "#/$defs/Redaction"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "maxValues",
+        "redaction"
+      ]
+    },
+    "SampleSet": {
+      "description": "Bounded, redacted sample values of one field.",
+      "type": "object",
+      "properties": {
+        "policy": {
+          "description": "The policy the values were taken under.",
+          "$ref": "#/$defs/SamplePolicy"
+        },
+        "values": {
+          "description": "The values, as text after redaction; at most `policy.maxValues`, and\nnone when the policy is `withheld`. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "policy"
+      ]
+    },
+    "SourceAdapter": {
+      "description": "The adapter that produced a document.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Adapter name (`norn.importers.frappe`).",
+          "type": "string"
+        },
+        "version": {
+          "description": "Adapter version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "SourceConstraint": {
+      "description": "One declared or inferred constraint.",
+      "type": "object",
+      "properties": {
+        "collection": {
+          "description": "For `parent_child`: the target (parent) dataset's field holding the\nchild rows (a Frappe `Table` field). Absent otherwise.",
+          "type": "string"
+        },
+        "dataset": {
+          "description": "The constrained dataset id.",
+          "type": "string"
+        },
+        "evidence": {
+          "description": "Evidence for the constraint. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          }
+        },
+        "expression": {
+          "description": "The native check expression: required for `check`, absent otherwise.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "The constrained fields, in order. Non-empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "description": "Stable id of the constraint within the document.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What it asserts.",
+          "$ref": "#/$defs/ConstraintKind"
+        },
+        "origin": {
+          "description": "`declared` or `inferred`.",
+          "$ref": "#/$defs/Origin"
+        },
+        "target": {
+          "description": "The referenced side: required for `foreign_key`, `logical_reference`,\nand `parent_child`; absent otherwise.",
+          "$ref": "#/$defs/ConstraintTarget"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "dataset",
+        "fields",
+        "origin"
+      ]
+    },
+    "SourceDataset": {
+      "description": "One dataset of the source.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "The source's description of the dataset.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Stable id of the dataset within the document; every other list\nreferences datasets by it.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What kind of collection it is.",
+          "$ref": "#/$defs/DatasetKind"
+        },
+        "namespace": {
+          "description": "The native namespace (schema, module, workbook), when the source has\none.",
+          "type": "string"
+        },
+        "nativeName": {
+          "description": "The source-native name (`Sales Order`, `public.orders`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "nativeName",
+        "kind"
+      ]
+    },
+    "SourceField": {
+      "description": "One field of a dataset.",
+      "type": "object",
+      "properties": {
+        "dataset": {
+          "description": "The dataset id.",
+          "type": "string"
+        },
+        "description": {
+          "description": "The source's label or description of the field.",
+          "type": "string"
+        },
+        "markings": {
+          "description": "Classification markings declared for this source field.\nOmitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkingId"
+          }
+        },
+        "name": {
+          "description": "The source-native field name, unique within the dataset.",
+          "type": "string"
+        },
+        "nativeType": {
+          "description": "The source-native type (`varchar(140)`, `Link`, `Currency`).",
+          "type": "string"
+        },
+        "ordinal": {
+          "description": "Position in the dataset's declared order, unique within the dataset.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "required": {
+          "description": "The source's own required (non-nullable) bit, when it declares one.\nOmitted: the source does not say. Measured nullability is a profile.",
+          "type": "boolean"
+        },
+        "typeCandidate": {
+          "description": "The candidate normalized type.",
+          "$ref": "#/$defs/TypeCandidate"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dataset",
+        "name",
+        "ordinal",
+        "nativeType",
+        "typeCandidate"
+      ]
+    },
+    "SourceIdentity": {
+      "description": "The source system and instance a schema was discovered on.",
+      "type": "object",
+      "properties": {
+        "instance": {
+          "description": "The instance within the system: a site, database, or file set.",
+          "type": "string"
+        },
+        "system": {
+          "description": "The source system (`ERPNext`, `PostgreSQL`, `CSV`).",
+          "type": "string"
+        },
+        "version": {
+          "description": "The system's version, when the source reports it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "instance"
+      ]
+    },
+    "SourceLineage": {
+      "description": "One lineage edge: `output` derives from `inputs`.",
+      "type": "object",
+      "properties": {
+        "evidence": {
+          "description": "Evidence (the view or query text). Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          }
+        },
+        "id": {
+          "description": "Stable id of the edge within the document.",
+          "type": "string"
+        },
+        "inputs": {
+          "description": "Input dataset ids. Non-empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "description": "How the output derives.",
+          "$ref": "#/$defs/LineageKind"
+        },
+        "output": {
+          "description": "The derived dataset id.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "inputs",
+        "output"
+      ]
+    },
+    "SourceProfile": {
+      "description": "One measurement of a dataset, or of one of its fields.",
+      "type": "object",
+      "properties": {
+        "asOf": {
+          "description": "When it was measured: RFC 3339 with an explicit offset.",
+          "type": "string"
+        },
+        "dataset": {
+          "description": "The measured dataset id.",
+          "type": "string"
+        },
+        "distinctCount": {
+          "description": "Distinct non-null values among the rows seen (field profiles only).",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "distinctPrecision": {
+          "description": "Whether `distinctCount` is exact; present exactly when it is.",
+          "$ref": "#/$defs/CountPrecision"
+        },
+        "evidence": {
+          "description": "Evidence for the measurement (the query or file it read). Omitted\nwhen empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          }
+        },
+        "field": {
+          "description": "The measured field. Omitted: a dataset-level profile.",
+          "type": "string"
+        },
+        "method": {
+          "description": "How it was measured.",
+          "$ref": "#/$defs/ProfileMethod"
+        },
+        "nullCount": {
+          "description": "Null values among the rows seen (field profiles only).",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "rowsSeen": {
+          "description": "How many rows the measurement read.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "samples": {
+          "description": "Bounded sample values (field profiles only).",
+          "$ref": "#/$defs/SampleSet"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dataset",
+        "asOf",
+        "method",
+        "rowsSeen"
+      ]
+    },
+    "SourceSchemaFormat": {
+      "description": "The format tag of a [`SourceSchemaIr`] document.",
+      "oneOf": [
+        {
+          "description": "`norn.source-schema/1`.",
+          "type": "string",
+          "const": "norn.source-schema/1"
+        }
+      ]
+    },
+    "TypeCandidate": {
+      "description": "A candidate normalized type and who asserted it.",
+      "type": "object",
+      "properties": {
+        "origin": {
+          "description": "`declared` (the native type maps to it exactly) or `inferred`.",
+          "$ref": "#/$defs/Origin"
+        },
+        "type": {
+          "description": "The candidate type.",
+          "$ref": "#/$defs/NormalizedType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "origin"
+      ]
+    },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    }
+  }
+}

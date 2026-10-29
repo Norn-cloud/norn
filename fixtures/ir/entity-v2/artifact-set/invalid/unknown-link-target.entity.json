@@ -1,0 +1,51 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.Bundle.entity.v2",
+  "kind": "entity",
+  "namespace": "retail",
+  "name": "Bundle",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/entity-v2/artifact-set/invalid/unknown-link-target.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "retail.Bundle",
+      "properties": [
+        {
+          "id": "bundle_code",
+          "type": {
+            "kind": "ref",
+            "name": "commerce.sku_code"
+          }
+        }
+      ],
+      "links": [
+        {
+          "id": "components",
+          "target": "retail.Component",
+          "cardinality": {
+            "to": "many",
+            "from": "many"
+          }
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "bundle_code"
+          ]
+        }
+      ]
+    }
+  }
+}

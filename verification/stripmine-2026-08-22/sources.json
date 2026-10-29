@@ -1,0 +1,584 @@
+{
+  "manifest_version": "norn.verification.sources.v1",
+  "retrieved_at": "2026-08-22",
+  "sources": [
+    {
+      "id": "SRC-NORN-BC-CORPUS",
+      "title": "Norn Business Central clean-room extraction corpus",
+      "kind": "internal-corpus",
+      "locator": "knowledge/domain-extraction/specs",
+      "version": "workspace snapshot 2026-08-22",
+      "license": "internal independently written analysis; upstream Microsoft materials remain reference-only",
+      "intake": "mine-semantics",
+      "trust": "comparative-evidence",
+      "refs": [
+        {
+          "path": "bc-a1-finance-gl-part2-posting-engine.md",
+          "purpose": "posting, balancing, preview, and reversal semantics"
+        },
+        {
+          "path": "bc-a1-finance-edge-cases-posting.md",
+          "purpose": "posting failure and edge-case corpus"
+        },
+        {
+          "path": "bc-a3-inventory-part2-posting-engine.md",
+          "purpose": "inventory posting and valuation relations"
+        },
+        {
+          "path": "bc-a3-inventory-edge-cases-tracking-reservation.md",
+          "purpose": "tracking and reservation counterexamples"
+        }
+      ],
+      "caveats": [
+        "This source is evidence, not a license to reproduce Business Central code or documentation.",
+        "Every obligation requires independent Norn wording and implementation."
+      ]
+    },
+    {
+      "id": "SRC-CALA-LATEST",
+      "title": "CALA ledger \u2014 latest semantic/test mine",
+      "kind": "repository",
+      "locator": "https://github.com/GaloyMoney/cala",
+      "version": "0.26.2-dev snapshot",
+      "commit": "68d7755acc7b2e8d9740d0d6132332938d4628e2",
+      "license": "Apache-2.0",
+      "intake": "adopt-tests",
+      "trust": "executable-reference",
+      "refs": [
+        {
+          "path": "cala-ledger/tests/transaction_batch.rs",
+          "anchor": "batch_of_postings_on_overlapping_accounts_chains_balances",
+          "purpose": "atomic batch, overlap, duplicate-id, and sequential-equivalence corpus"
+        },
+        {
+          "path": "cala-ledger/tests/account_set.rs",
+          "anchor": "errors_on_membership_cycle",
+          "purpose": "account-set graph safety and atomic rejection corpus"
+        },
+        {
+          "path": "cala-ledger/tests/velocity.rs",
+          "purpose": "balance floor/ceiling and atomic control attachment behavior"
+        },
+        {
+          "path": "cala-ledger/tests/clock.rs",
+          "purpose": "injected-clock behavior"
+        },
+        {
+          "path": "cala-ledger/fuzz/fuzz_targets/balance_math.rs",
+          "purpose": "balance arithmetic fuzzing pattern"
+        },
+        {
+          "path": "cala-ledger/src/posting/repo.rs",
+          "purpose": "current Postgres lock protocol that must be replaced, not transliterated"
+        }
+      ],
+      "caveats": [
+        "This is not the intended Norn fork base; it is a separately pinned source for newer semantic and test evidence.",
+        "CALA does not establish Norn's per-unit conservation theorem.",
+        "Current code is deeply coupled to PgPool, Postgres advisory locks, JSONB, and TIMESTAMPTZ; only semantics and tests are portable without a substantial storage rewrite."
+      ]
+    },
+    {
+      "id": "SRC-CALA-FORK-BASE",
+      "title": "CALA ledger \u2014 Norn fork base",
+      "kind": "repository",
+      "locator": "https://github.com/GaloyMoney/cala/tree/0.25.0",
+      "version": "0.25.0",
+      "commit": "d0a4be8daf43b19813441cf19a5149604c72f062",
+      "license": "Apache-2.0",
+      "intake": "adopt-code",
+      "trust": "executable-reference",
+      "refs": [
+        {
+          "path": "cala-ledger",
+          "purpose": "exact upstream tree from which a Norn quantity-ledger fork may be derived"
+        }
+      ],
+      "caveats": [
+        "Keep upstream notices and attribution, record every Norn divergence, and do not imply that latest-main test behavior exists in this tag.",
+        "The Postgres repository and locking protocol require redesign for Turso; this pin does not make a mechanical SQL rewrite safe."
+      ]
+    },
+    {
+      "id": "SRC-TIGERBEETLE",
+      "title": "TigerBeetle",
+      "kind": "repository",
+      "locator": "https://github.com/tigerbeetle/tigerbeetle",
+      "version": "main snapshot 2026-07-10",
+      "commit": "97c7a8ef385270ebe0e1b75959d3d21d134629df",
+      "license": "Apache-2.0",
+      "intake": "adopt-tests",
+      "trust": "executable-reference",
+      "refs": [
+        {
+          "path": "src/state_machine_tests.zig",
+          "anchor": "create/lookup 2-phase transfers",
+          "purpose": "machine-readable status/error table for transfers"
+        },
+        {
+          "path": "src/state_machine_fuzz.zig",
+          "purpose": "generated transition-sequence testing pattern"
+        },
+        {
+          "path": "docs/coding/two-phase-transfers.md",
+          "purpose": "pending/post/void/expiry semantics"
+        },
+        {
+          "path": "src/testing/cluster/state_checker.zig",
+          "purpose": "replica-state convergence checking pattern"
+        },
+        {
+          "path": "docs/internals/testing.md",
+          "purpose": "deterministic simulation and fault-testing doctrine"
+        }
+      ],
+      "caveats": [
+        "The replicated state machine, custom storage, batching, and accounting schema are co-designed and are not a reusable generic concurrency component.",
+        "Norn must re-express selected cases in its own typed transition vocabulary."
+      ]
+    },
+    {
+      "id": "SRC-ERPNEXT",
+      "title": "ERPNext",
+      "kind": "repository",
+      "locator": "https://github.com/frappe/erpnext",
+      "version": "develop snapshot 2026-08-22",
+      "commit": "e71e08959f596355961da6408c56b32910f183ef",
+      "license": "GPL-3.0",
+      "intake": "reference-only",
+      "trust": "comparative-evidence",
+      "refs": [
+        {
+          "path": "erpnext/accounts/doctype/journal_entry/test_journal_entry.py",
+          "purpose": "multi-currency, reversal, reference, and balance edge cases"
+        },
+        {
+          "path": "erpnext/accounts/doctype/accounting_period/test_accounting_period.py",
+          "purpose": "period lock and exemption behavior"
+        },
+        {
+          "path": "erpnext/stock/doctype/stock_reservation_entry/test_stock_reservation_entry.py",
+          "purpose": "reservation ownership, release, delivery, and future-stock cases"
+        },
+        {
+          "path": "erpnext/stock/doctype/serial_and_batch_bundle/test_serial_and_batch_bundle.py",
+          "purpose": "serial/batch uniqueness, immutability, and backdated-stock cases"
+        }
+      ],
+      "caveats": [
+        "GPL source is clean-room semantic evidence under Norn's current permissive-dependency policy.",
+        "ERPNext behavior is not an accounting or legal authority."
+      ]
+    },
+    {
+      "id": "SRC-ODOO-COMMUNITY",
+      "title": "Odoo Community",
+      "kind": "repository",
+      "locator": "https://github.com/odoo/odoo",
+      "version": "19.0 snapshot 2026-08-22",
+      "commit": "7916522a03d29904b47ed684e52f3daaae2551e3",
+      "license": "LGPL-3.0; bundled files may carry compatible per-file terms",
+      "intake": "mine-semantics",
+      "trust": "comparative-evidence",
+      "refs": [
+        {
+          "path": "addons/account/tests/test_account_move_entry.py",
+          "purpose": "posted immutability, lock dates, currency, reversal, and tax cases"
+        },
+        {
+          "path": "addons/account/tests/test_account_inalterable_hash.py",
+          "purpose": "tamper evidence, sequence holes, and hash-version migration"
+        },
+        {
+          "path": "addons/account/tests/test_account_move_reconcile.py",
+          "purpose": "partial/full and multi-currency reconciliation corpus"
+        },
+        {
+          "path": "addons/stock_account/tests/test_stockvaluation.py",
+          "purpose": "FIFO, average, standard, negative-stock, and backdated valuation cases"
+        },
+        {
+          "path": "addons/stock/tests/test_quant.py",
+          "purpose": "available/reserved quantity and tracking cases"
+        }
+      ],
+      "caveats": [
+        "Odoo Enterprise is proprietary and is not covered by this source.",
+        "Module-level and file-level licenses must be checked before adopting any fixture or code."
+      ]
+    },
+    {
+      "id": "SRC-DUROXIDE",
+      "title": "Microsoft Duroxide",
+      "kind": "repository",
+      "locator": "https://github.com/microsoft/duroxide",
+      "version": "v0.1.30",
+      "commit": "cfe0b8c957ef7ede43c6026ebba0052211de1a49",
+      "license": "MIT",
+      "intake": "adopt-tests",
+      "trust": "executable-reference",
+      "refs": [
+        {
+          "path": "tests/replay_engine",
+          "purpose": "history/replay state-machine corpus"
+        },
+        {
+          "path": "tests/provider_validation",
+          "purpose": "provider conformance corpus"
+        },
+        {
+          "path": "tests/property_tests.rs",
+          "purpose": "history properties"
+        },
+        {
+          "path": "tests/scenarios/version_replay_bug.rs",
+          "purpose": "definition-version regression"
+        }
+      ],
+      "caveats": [
+        "The existing Norn audit has already normalized 174 Duroxide properties; this source must close those IDs rather than start a parallel numbering scheme."
+      ]
+    },
+    {
+      "id": "SRC-DURABLE-FUNCTIONS-PAPER",
+      "title": "Durable Functions: Semantics for Stateful Serverless",
+      "kind": "paper",
+      "locator": "https://doi.org/10.1145/3485510",
+      "version": "PACMPL 5(OOPSLA), article 133, 2021",
+      "content_sha256": "74e4d6a269c25b6fda6e376cd2103108e2f195ccab68b920cf2cbc22c7876286",
+      "license": "publisher terms; cite and summarize, do not redistribute from this pack",
+      "intake": "mine-semantics",
+      "trust": "authoritative-technical",
+      "refs": [
+        {
+          "path": "Sections 3 and 5",
+          "purpose": "deterministic orchestration and compute-storage semantics"
+        },
+        {
+          "path": "Theorems 5.3 and 5.4",
+          "purpose": "scope and limitations of the published simulations"
+        }
+      ],
+      "caveats": [
+        "The safety theorems exclude external calls, critical sections, timers, and liveness.",
+        "The PDF hash is for the Microsoft Research copy retrieved 2026-08-22."
+      ]
+    },
+    {
+      "id": "SRC-CEDAR-SPEC",
+      "title": "Cedar formal specification and differential randomized testing",
+      "kind": "repository",
+      "locator": "https://github.com/cedar-policy/cedar-spec",
+      "version": "main snapshot 2026-08-20",
+      "commit": "e6c3e1f1f5c997ba1d09a80902db314643a26f5f",
+      "license": "Apache-2.0",
+      "intake": "adopt-tests",
+      "trust": "executable-reference",
+      "refs": [
+        {
+          "path": "cedar-lean/Cedar/Spec.lean",
+          "purpose": "formal semantic reference structure"
+        },
+        {
+          "path": "cedar-lean/Cedar/Thm",
+          "purpose": "theorem organization and trusted assumptions"
+        },
+        {
+          "path": "cedar-drt/fuzz",
+          "purpose": "production-Rust versus Lean differential randomized testing pattern"
+        },
+        {
+          "path": "cedar-policy-generators",
+          "purpose": "typed valid/invalid input generation pattern"
+        }
+      ],
+      "caveats": [
+        "Cedar is authorization-specific; adopt its verification architecture, not its policy model as a universal invariant language."
+      ]
+    },
+    {
+      "id": "SRC-CEL-SPEC",
+      "title": "Common Expression Language specification",
+      "kind": "repository",
+      "locator": "https://github.com/google/cel-spec",
+      "version": "master snapshot 2026-07-29",
+      "commit": "ba58ae5007845f3a1279b488cdeb79645ce958bb",
+      "license": "Apache-2.0",
+      "intake": "adopt-tests",
+      "trust": "authoritative-technical",
+      "refs": [
+        {
+          "path": "doc/langdef.md",
+          "purpose": "expression semantics"
+        },
+        {
+          "path": "tests/simple/testdata",
+          "purpose": "cross-implementation conformance fixtures"
+        }
+      ],
+      "caveats": [
+        "CEL can evaluate guards and pure expressions; it does not establish inductive state invariants."
+      ]
+    },
+    {
+      "id": "SRC-EN16931",
+      "title": "EN 16931 validation artefacts",
+      "kind": "standard",
+      "locator": "https://github.com/ConnectingEurope/eInvoicing-EN16931/tree/validation-1.3.16",
+      "version": "validation-1.3.16",
+      "commit": "a519ba02a59e2775436428f57ee96899feb1da8c",
+      "license": "EUPL-1.2",
+      "intake": "adopt-tests",
+      "trust": "authoritative-normative",
+      "refs": [
+        {
+          "path": "ubl/schematron/abstract/EN16931-model.sch",
+          "anchor": "BR-CO-10 through BR-CO-17",
+          "purpose": "invoice total and VAT equations"
+        },
+        {
+          "path": "ubl/examples",
+          "purpose": "positive and negative UBL conformance fixtures"
+        },
+        {
+          "path": "cii/schematron",
+          "purpose": "syntax-independent parity target"
+        }
+      ],
+      "caveats": [
+        "The repository contains validation artefacts, not the paid CEN standard text and not national CIUS rules.",
+        "A valid EN 16931 invoice is not automatically legally valid in every jurisdiction."
+      ]
+    },
+    {
+      "id": "SRC-OWL2",
+      "title": "OWL 2 Web Ontology Language",
+      "kind": "standard",
+      "locator": "https://www.w3.org/TR/2012/REC-owl2-overview-20121211/",
+      "version": "W3C Recommendation 2012-12-11",
+      "license": "W3C document terms",
+      "intake": "map-vocabulary",
+      "trust": "authoritative-normative",
+      "refs": [
+        {
+          "path": "OWL 2 Direct Semantics",
+          "purpose": "class/property entailment semantics"
+        },
+        {
+          "path": "OWL 2 Profiles",
+          "purpose": "select a tractable imported-ontology profile"
+        }
+      ],
+      "caveats": [
+        "OWL's open-world semantics cannot establish closed-world transition completeness or current authorization."
+      ]
+    },
+    {
+      "id": "SRC-SHACL",
+      "title": "Shapes Constraint Language",
+      "kind": "standard",
+      "locator": "https://www.w3.org/TR/2017/REC-shacl-20170720/",
+      "version": "W3C Recommendation 2017-07-20",
+      "license": "W3C document terms",
+      "intake": "map-vocabulary",
+      "trust": "authoritative-normative",
+      "refs": [
+        {
+          "path": "Sections 2-4",
+          "purpose": "validation reports, node shapes, and property constraints"
+        }
+      ],
+      "caveats": [
+        "SHACL validates graph snapshots; it does not serialize competing state transitions."
+      ]
+    },
+    {
+      "id": "SRC-QUDT",
+      "title": "QUDT quantities, units, dimensions and datatypes",
+      "kind": "ontology",
+      "locator": "https://github.com/qudt/qudt-public-repo/tree/v3.4.0",
+      "version": "v3.4.0 (2026-06-25)",
+      "commit": "1137205617d03d3d5c8351ea58105b6719c5d6f0",
+      "license": "CC-BY-4.0; attribution to QUDT.org required",
+      "intake": "map-vocabulary",
+      "trust": "authoritative-technical",
+      "refs": [
+        {
+          "path": "QUDT-all-in-one-SHACL.ttl",
+          "purpose": "closed validation and unit mappings"
+        },
+        {
+          "path": "QUDT-all-in-one-OWL.ttl",
+          "purpose": "quantity-kind and dimensional entailment"
+        }
+      ],
+      "caveats": [
+        "Import only a pinned, reviewed subset into Norn; retain QUDT identifiers and attribution."
+      ]
+    },
+    {
+      "id": "SRC-UCUM",
+      "title": "Unified Code for Units of Measure",
+      "kind": "standard",
+      "locator": "https://ucum.org/ucum",
+      "version": "2.2 (June 2024)",
+      "license": "UCUM terms permit use but prohibit derivative works or modified UCUM content; legal review required before redistribution",
+      "intake": "reference-only",
+      "trust": "authoritative-technical",
+      "refs": [
+        {
+          "path": "ucum-essence.xml",
+          "purpose": "implementer unit and prefix table"
+        },
+        {
+          "path": "Section 7",
+          "purpose": "algebraic unit-term syntax"
+        }
+      ],
+      "caveats": [
+        "Do not copy, modify, or derive a Norn registry from UCUM tables under this intake classification.",
+        "Norn may independently define units and record external UCUM mapping identifiers only after legal review.",
+        "UCUM codes provide computable syntax; Norn must still define which quantity kinds and conversions are admissible per ledger pack."
+      ]
+    },
+    {
+      "id": "SRC-SHOPIFY-TAXONOMY",
+      "title": "Shopify Standard Product Taxonomy",
+      "kind": "taxonomy",
+      "locator": "https://github.com/Shopify/product-taxonomy/tree/v2026-05-patch-1",
+      "version": "v2026-05-patch-1",
+      "commit": "304116f64db384b8f52c91f09ca6a5df82402383",
+      "license": "MIT",
+      "intake": "map-vocabulary",
+      "trust": "authoritative-technical",
+      "refs": [
+        {
+          "path": "data/categories",
+          "purpose": "stable commerce category hierarchy"
+        },
+        {
+          "path": "data/attributes.yml",
+          "purpose": "category-associated product attributes"
+        },
+        {
+          "path": "data/integrations",
+          "purpose": "external taxonomy mappings"
+        }
+      ],
+      "caveats": [
+        "Taxonomy membership is classification evidence, not an operational invariant or product master schema."
+      ]
+    },
+    {
+      "id": "SRC-SCHEMAORG",
+      "title": "Schema.org",
+      "kind": "ontology",
+      "locator": "https://schema.org/version/30.0/",
+      "version": "30.0, published 2026-03-19",
+      "license": "Schema.org terms; vocabulary commonly distributed under CC-BY-SA-compatible project terms\u2014verify artifact metadata before bundling",
+      "intake": "map-vocabulary",
+      "trust": "authoritative-technical",
+      "refs": [
+        {
+          "path": "Organization, Person, Product, Offer, Order, Action and Event terms",
+          "purpose": "external semantic crosswalk"
+        }
+      ],
+      "caveats": [
+        "Schema.org optimizes web structured-data interoperability, not ERP completeness or transaction legality."
+      ]
+    },
+    {
+      "id": "SRC-GS1-VOC",
+      "title": "GS1 Web Vocabulary",
+      "kind": "ontology",
+      "locator": "https://ref.gs1.org/voc/",
+      "version": "1.18.0 (2026-06-01)",
+      "license": "GS1 terms; redistribution and member-standard rights must be reviewed",
+      "intake": "map-vocabulary",
+      "trust": "authoritative-technical",
+      "refs": [
+        {
+          "path": "gs1Voc.jsonld",
+          "purpose": "machine-readable product, offer, organization, and trade-item vocabulary"
+        },
+        {
+          "path": "data/archive",
+          "purpose": "versioned vocabulary snapshots"
+        }
+      ],
+      "caveats": [
+        "Use versioned archived artifacts; the unversioned latest endpoints move."
+      ]
+    },
+    {
+      "id": "SRC-PROVO",
+      "title": "PROV-O",
+      "kind": "ontology",
+      "locator": "https://www.w3.org/TR/2013/REC-prov-o-20130430/",
+      "version": "W3C Recommendation 2013-04-30",
+      "license": "W3C document terms",
+      "intake": "map-vocabulary",
+      "trust": "authoritative-normative",
+      "refs": [
+        {
+          "path": "Sections 3 and 4",
+          "purpose": "Entity, Activity, Agent, derivation, generation, attribution, and qualified relations"
+        }
+      ],
+      "caveats": [
+        "PROV-O is an interchange mapping for evidence; canonical audit facts remain Norn ledger records."
+      ]
+    },
+    {
+      "id": "SRC-AENEAS",
+      "title": "Aeneas Rust verification toolchain",
+      "kind": "tool",
+      "locator": "https://github.com/AeneasVerif/aeneas",
+      "version": "main snapshot 2026-08-21",
+      "commit": "74a460a2f80ecea481bbdf1a08f881633c3bb097",
+      "license": "Apache-2.0",
+      "intake": "tool-evaluation",
+      "trust": "untrusted-input",
+      "refs": [
+        {
+          "path": "README.md",
+          "purpose": "supported Rust subset and backend limits"
+        },
+        {
+          "path": "backends/lean",
+          "purpose": "Lean extraction runtime and proof support"
+        }
+      ],
+      "caveats": [
+        "Safe-Rust subset only; unsafe and concurrency are not currently supported.",
+        "Generated models still require external-function models and maintained proofs."
+      ]
+    },
+    {
+      "id": "SRC-HAX",
+      "title": "hax Rust verification tool",
+      "kind": "tool",
+      "locator": "https://github.com/cryspen/hax",
+      "version": "main snapshot 2026-08-20",
+      "commit": "37ecb8240fc237377f63614622650190a45617ff",
+      "license": "Apache-2.0",
+      "intake": "tool-evaluation",
+      "trust": "untrusted-input",
+      "refs": [
+        {
+          "path": "README.md",
+          "purpose": "Rust subset and Lean/F*/Rocq backend matrix"
+        },
+        {
+          "path": "examples",
+          "purpose": "candidate extraction and proof patterns"
+        }
+      ],
+      "caveats": [
+        "F* is the stable general-purpose backend; Lean support is active but newer.",
+        "The toolchain cannot prove database transactions, async runtimes, or unsupported Rust merely by translation."
+      ]
+    }
+  ]
+}

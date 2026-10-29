@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.Sku.entity",
+      "code": "ir.validation.unknown_kind",
+      "message": "artifact kind 'gadget' is not a known kind",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/kind",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

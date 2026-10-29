@@ -1,0 +1,77 @@
+{
+  "format": "norn.mapping/1",
+  "source": {
+    "schemaId": "erpnext.fashion_source_schema",
+    "version": "0.1.0",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "interfaces": ["core.Item.interface"],
+  "maps": [
+    {
+      "id": "fashion_item_template",
+      "source": { "dataset": "Item" },
+      "target": {
+        "entity": "fashion.Style.entity",
+        "interface": "core.Item.interface"
+      },
+      "when": "input.variant_of == null",
+      "subject": "input.item_code",
+      "sourceRecord": "input.name",
+      "properties": [
+        { "property": "item_code", "value": "input.item_code" },
+        { "property": "display_name", "value": "trim(input.item_name)" },
+        {
+          "property": "size",
+          "value": "input.attribute_value",
+          "nested": {
+            "dataset": "Item Variant Attribute",
+            "field": "attributes",
+            "where": "input.attribute == 'Size'"
+          }
+        },
+        {
+          "property": "color",
+          "value": "input.attribute_value",
+          "nested": {
+            "dataset": "Item Variant Attribute",
+            "field": "attributes",
+            "where": "input.attribute == 'Color'"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fashion_item",
+      "source": { "dataset": "Item" },
+      "target": {
+        "entity": "fashion.Style.entity",
+        "interface": "core.Item.interface"
+      },
+      "when": "input.variant_of != null",
+      "subject": "input.item_code",
+      "sourceRecord": "input.name",
+      "properties": [
+        { "property": "item_code", "value": "input.item_code" },
+        { "property": "display_name", "value": "trim(input.item_name)" },
+        {
+          "property": "size",
+          "value": "input.attribute_value",
+          "nested": {
+            "dataset": "Item Variant Attribute",
+            "field": "attributes",
+            "where": "input.attribute == 'Size'"
+          }
+        },
+        {
+          "property": "color",
+          "value": "input.attribute_value",
+          "nested": {
+            "dataset": "Item Variant Attribute",
+            "field": "attributes",
+            "where": "input.attribute == 'Color'"
+          }
+        }
+      ]
+    }
+  ]
+}

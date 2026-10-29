@@ -1,0 +1,18 @@
+{
+  "description": "A valid multi-artifact set: a composition pack pinning its members, plus a derived view and a customization that depend on the SKU entity.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-core.business_pack.json",
+    "ir/retail-low-stock.derived.json",
+    "ir/retail-sku-reorder-point.customization.json",
+    "ir/retail-sku.entity.json",
+    "ir/retail-reorder.action.json",
+    "ir/retail-purchase-request.entity.json",
+    "ir/retail-procurement.policy.json",
+    "ir/retail-reorder-threshold.setting.json",
+    "ir/retail-sku-supplier.relation.json",
+    "ir/retail-reorder-routing.rule.json",
+    "ir/retail-inventory.connector.json"
+  ],
+  "expect": []
+}

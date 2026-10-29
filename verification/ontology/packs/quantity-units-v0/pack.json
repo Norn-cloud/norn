@@ -1,0 +1,390 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "norn.ontology-pack.quantity-units",
+  "kind": "business_pack",
+  "namespace": "norn.ontology",
+  "name": "Quantity and Unit Ontology v0",
+  "version": "0.1.0",
+  "lifecycle": "proposed",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "system",
+    "sourcePath": "verification/ontology/packs/quantity-units-v0/pack.json",
+    "createdAt": "2026-08-23T00:00:00Z"
+  },
+  "payload": {
+    "packId": "norn.ontology-pack.quantity-units",
+    "packVersion": "0.1",
+    "packKind": "ontology",
+    "sources": [
+      {
+        "sourceId": "source.qudt",
+        "releaseId": "v3.4.0@1137205617d03d3d5c8351ea58105b6719c5d6f0",
+        "releasedAt": "2026-06-25",
+        "retrievedAt": "2026-08-22",
+        "canonicalUrl": "https://github.com/qudt/qudt-public-repo/tree/v3.4.0",
+        "license": "CC-BY-4.0; attribution to QUDT.org required",
+        "redistribution": "reference_only"
+      },
+      {
+        "sourceId": "source.ucum",
+        "releaseId": "2.2@2024-06-17",
+        "releasedAt": "2024-06-17",
+        "retrievedAt": "2026-08-22",
+        "canonicalUrl": "https://ucum.org/ucum",
+        "license": "UCUM-License-1.1; reference and interoperability use only; no derivative works",
+        "redistribution": "reference_only"
+      },
+      {
+        "sourceId": "source.skos",
+        "releaseId": "w3c-rec-20090818",
+        "releasedAt": "2009-08-18",
+        "retrievedAt": "2026-08-22",
+        "canonicalUrl": "https://www.w3.org/TR/2009/REC-skos-reference-20090818/",
+        "license": "W3C-Document-License",
+        "redistribution": "reference_only"
+      }
+    ],
+    "terms": [
+      {
+        "termId": "norn.measure.quantity-kind",
+        "label": "Quantity Kind",
+        "definition": "A Norn-owned classification of the comparable property represented by a quantity.",
+        "termKind": "concept_scheme_root",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.measure.quantity-kind.count",
+        "label": "Count",
+        "definition": "A Norn quantity kind for a discrete number of items.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.measure.quantity-kind"
+      },
+      {
+        "termId": "norn.measure.quantity-kind.mass",
+        "label": "Mass",
+        "definition": "A Norn quantity kind for mass-valued observations and commitments.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.measure.quantity-kind"
+      },
+      {
+        "termId": "norn.measure.quantity-kind.duration",
+        "label": "Duration",
+        "definition": "A Norn quantity kind for elapsed time intervals, excluding time-point identity.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.measure.quantity-kind"
+      },
+      {
+        "termId": "norn.measure.quantity-kind.ratio",
+        "label": "Ratio",
+        "definition": "A Norn quantity kind for a dimensionless ratio of like quantities.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.measure.quantity-kind"
+      },
+      {
+        "termId": "norn.measure.unit",
+        "label": "Unit",
+        "definition": "A Norn-owned unit identity associated with a quantity kind; conversion is outside this ontology pack.",
+        "termKind": "concept_scheme_root",
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+      },
+      {
+        "termId": "norn.measure.unit.count",
+        "label": "Count Unit",
+        "definition": "A Norn unit identity for discrete counts.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.measure.unit"
+      },
+      {
+        "termId": "norn.measure.unit.kilogram",
+        "label": "Kilogram",
+        "definition": "A Norn unit identity for mass values represented as kilograms; no conversion rule is declared here.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.measure.unit"
+      },
+      {
+        "termId": "norn.measure.unit.gram",
+        "label": "Gram",
+        "definition": "A Norn unit identity for mass values represented as grams; no conversion rule is declared here.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.measure.unit"
+      },
+      {
+        "termId": "norn.measure.unit.hour",
+        "label": "Hour",
+        "definition": "A Norn unit identity for durations represented as hours; no conversion rule is declared here.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.measure.unit"
+      },
+      {
+        "termId": "norn.measure.unit.fraction",
+        "label": "Fraction",
+        "definition": "A Norn unit identity for a dimensionless ratio expressed as a whole-scaled fraction.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.measure.unit"
+      },
+      {
+        "termId": "norn.measure.unit.percent",
+        "label": "Percent",
+        "definition": "A Norn unit identity for a dimensionless ratio expressed in percent form; no scale factor is declared here.",
+        "termKind": "value_object",
+        "status": "active",
+        "semanticAuthority": "semantic_only",
+        "parentTermId": "norn.measure.unit"
+      }
+    ],
+    "mappings": [
+      {
+        "mappingId": "mapping.quantity-kind.count.qudt",
+        "termId": "norn.measure.quantity-kind.count",
+        "sourceId": "source.qudt",
+        "externalIri": "https://qudt.org/vocab/quantitykind/Count",
+        "relation": "close_match",
+        "justification": "Both concepts classify item counts, while Norn retains its own operational identity and admissibility rules.",
+        "evidenceRefs": ["https://github.com/qudt/qudt-public-repo/blob/v3.4.0/src/main/rdf/vocab/quantitykinds/VOCAB_QUDT-QUANTITY-KINDS-ALL.ttl"],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "principal.norn-ontology-maintainers",
+        "reviewedAt": "2026-08-24T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.quantity-kind.mass.qudt",
+        "termId": "norn.measure.quantity-kind.mass",
+        "sourceId": "source.qudt",
+        "externalIri": "https://qudt.org/vocab/quantitykind/Mass",
+        "relation": "close_match",
+        "justification": "QUDT Mass is strong interoperability evidence, but does not own Norn ledger or transition semantics.",
+        "evidenceRefs": ["https://github.com/qudt/qudt-public-repo/blob/v3.4.0/src/main/rdf/vocab/quantitykinds/VOCAB_QUDT-QUANTITY-KINDS-ALL.ttl"],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "principal.norn-ontology-maintainers",
+        "reviewedAt": "2026-08-24T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.quantity-kind.duration.qudt-time",
+        "termId": "norn.measure.quantity-kind.duration",
+        "sourceId": "source.qudt",
+        "externalIri": "https://qudt.org/vocab/quantitykind/Time",
+        "relation": "related_match",
+        "justification": "QUDT Time covers time measurement more broadly; Norn Duration deliberately excludes time-point identity.",
+        "evidenceRefs": ["https://github.com/qudt/qudt-public-repo/blob/v3.4.0/src/main/rdf/vocab/quantitykinds/VOCAB_QUDT-QUANTITY-KINDS-ALL.ttl"],
+        "confidenceBasisPoints": 7500,
+        "reviewedBy": "principal.norn-ontology-maintainers",
+        "reviewedAt": "2026-08-24T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.quantity-kind.ratio.qudt",
+        "termId": "norn.measure.quantity-kind.ratio",
+        "sourceId": "source.qudt",
+        "externalIri": "https://qudt.org/vocab/quantitykind/DimensionlessRatio",
+        "relation": "close_match",
+        "justification": "The concepts overlap for dimensionless ratios, while Norn keeps independent admissibility and representation rules.",
+        "evidenceRefs": ["https://github.com/qudt/qudt-public-repo/blob/v3.4.0/src/main/rdf/vocab/quantitykinds/VOCAB_QUDT-QUANTITY-KINDS-ALL.ttl"],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "principal.norn-ontology-maintainers",
+        "reviewedAt": "2026-08-24T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.unit.count.qudt",
+        "termId": "norn.measure.unit.count",
+        "sourceId": "source.qudt",
+        "externalIri": "https://qudt.org/vocab/unit/COUNT",
+        "relation": "close_match",
+        "justification": "QUDT COUNT supplies a pinned interoperability target; Norn owns the canonical unit identifier.",
+        "evidenceRefs": ["https://github.com/qudt/qudt-public-repo/blob/v3.4.0/src/main/rdf/vocab/unit/VOCAB_QUDT-UNITS-ALL.ttl"],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "principal.norn-ontology-maintainers",
+        "reviewedAt": "2026-08-24T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.unit.kilogram.qudt",
+        "termId": "norn.measure.unit.kilogram",
+        "sourceId": "source.qudt",
+        "externalIri": "https://qudt.org/vocab/unit/KiloGM",
+        "relation": "close_match",
+        "justification": "QUDT KiloGM supplies a pinned interoperability target without importing its conversion assertions.",
+        "evidenceRefs": ["https://github.com/qudt/qudt-public-repo/blob/v3.4.0/src/main/rdf/vocab/unit/VOCAB_QUDT-UNITS-ALL.ttl"],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "principal.norn-ontology-maintainers",
+        "reviewedAt": "2026-08-24T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.unit.gram.qudt",
+        "termId": "norn.measure.unit.gram",
+        "sourceId": "source.qudt",
+        "externalIri": "https://qudt.org/vocab/unit/GM",
+        "relation": "close_match",
+        "justification": "QUDT GM supplies a pinned interoperability target without importing its conversion assertions.",
+        "evidenceRefs": ["https://github.com/qudt/qudt-public-repo/blob/v3.4.0/src/main/rdf/vocab/unit/VOCAB_QUDT-UNITS-ALL.ttl"],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "principal.norn-ontology-maintainers",
+        "reviewedAt": "2026-08-24T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.unit.hour.qudt",
+        "termId": "norn.measure.unit.hour",
+        "sourceId": "source.qudt",
+        "externalIri": "https://qudt.org/vocab/unit/HR",
+        "relation": "close_match",
+        "justification": "QUDT HR supplies a pinned interoperability target without importing conversion or calendar-time behavior.",
+        "evidenceRefs": ["https://github.com/qudt/qudt-public-repo/blob/v3.4.0/src/main/rdf/vocab/unit/VOCAB_QUDT-UNITS-ALL.ttl"],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "principal.norn-ontology-maintainers",
+        "reviewedAt": "2026-08-24T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.unit.fraction.qudt",
+        "termId": "norn.measure.unit.fraction",
+        "sourceId": "source.qudt",
+        "externalIri": "https://qudt.org/vocab/unit/ONE-PER-ONE",
+        "relation": "close_match",
+        "justification": "QUDT ONE-PER-ONE is the closest pinned ratio representation; Norn does not import its numeric conversion semantics.",
+        "evidenceRefs": ["https://github.com/qudt/qudt-public-repo/blob/v3.4.0/src/main/rdf/vocab/unit/VOCAB_QUDT-UNITS-ALL.ttl"],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "principal.norn-ontology-maintainers",
+        "reviewedAt": "2026-08-24T00:00:00Z"
+      },
+      {
+        "mappingId": "mapping.unit.percent.qudt",
+        "termId": "norn.measure.unit.percent",
+        "sourceId": "source.qudt",
+        "externalIri": "https://qudt.org/vocab/unit/PERCENT",
+        "relation": "close_match",
+        "justification": "QUDT PERCENT supplies a pinned interoperability target; scale and conversion execution remain outside this pack.",
+        "evidenceRefs": ["https://github.com/qudt/qudt-public-repo/blob/v3.4.0/src/main/rdf/vocab/unit/VOCAB_QUDT-UNITS-ALL.ttl"],
+        "confidenceBasisPoints": 9000,
+        "reviewedBy": "principal.norn-ontology-maintainers",
+        "reviewedAt": "2026-08-24T00:00:00Z"
+      }
+    ],
+    "shapes": [
+      {
+        "shapeId": "shape.measure.quantity-kind",
+        "termId": "norn.measure.quantity-kind",
+        "closed": true,
+        "fields": [
+          { "fieldId": "code", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "label", "valueType": "string", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.quantity-kind.count",
+        "termId": "norn.measure.quantity-kind.count",
+        "closed": true,
+        "fields": [
+          { "fieldId": "code", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "label", "valueType": "string", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.quantity-kind.mass",
+        "termId": "norn.measure.quantity-kind.mass",
+        "closed": true,
+        "fields": [
+          { "fieldId": "code", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "label", "valueType": "string", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.quantity-kind.duration",
+        "termId": "norn.measure.quantity-kind.duration",
+        "closed": true,
+        "fields": [
+          { "fieldId": "code", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "label", "valueType": "string", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.quantity-kind.ratio",
+        "termId": "norn.measure.quantity-kind.ratio",
+        "closed": true,
+        "fields": [
+          { "fieldId": "code", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "label", "valueType": "string", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.unit",
+        "termId": "norn.measure.unit",
+        "closed": true,
+        "fields": [
+          { "fieldId": "symbol", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "quantityKind", "valueType": "term_ref", "targetTermId": "norn.measure.quantity-kind", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.unit.count",
+        "termId": "norn.measure.unit.count",
+        "closed": true,
+        "fields": [
+          { "fieldId": "symbol", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "quantityKind", "valueType": "term_ref", "targetTermId": "norn.measure.quantity-kind", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.unit.kilogram",
+        "termId": "norn.measure.unit.kilogram",
+        "closed": true,
+        "fields": [
+          { "fieldId": "symbol", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "quantityKind", "valueType": "term_ref", "targetTermId": "norn.measure.quantity-kind", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.unit.gram",
+        "termId": "norn.measure.unit.gram",
+        "closed": true,
+        "fields": [
+          { "fieldId": "symbol", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "quantityKind", "valueType": "term_ref", "targetTermId": "norn.measure.quantity-kind", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.unit.hour",
+        "termId": "norn.measure.unit.hour",
+        "closed": true,
+        "fields": [
+          { "fieldId": "symbol", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "quantityKind", "valueType": "term_ref", "targetTermId": "norn.measure.quantity-kind", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.unit.fraction",
+        "termId": "norn.measure.unit.fraction",
+        "closed": true,
+        "fields": [
+          { "fieldId": "symbol", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "quantityKind", "valueType": "term_ref", "targetTermId": "norn.measure.quantity-kind", "minCount": 1, "maxCount": 1 }
+        ]
+      },
+      {
+        "shapeId": "shape.measure.unit.percent",
+        "termId": "norn.measure.unit.percent",
+        "closed": true,
+        "fields": [
+          { "fieldId": "symbol", "valueType": "string", "minCount": 1, "maxCount": 1 },
+          { "fieldId": "quantityKind", "valueType": "term_ref", "targetTermId": "norn.measure.quantity-kind", "minCount": 1, "maxCount": 1 }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "name": "commerce.is_discontinued",
+  "type": { "kind": "boolean" }
+}

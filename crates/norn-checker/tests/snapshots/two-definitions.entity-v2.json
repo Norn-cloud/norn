@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.Sku.entity.v2.two_definitions",
+      "code": "entity.validation.invalid_payload",
+      "message": "interface cannot accompany objectType: an EntityIR v2 entity artifact carries exactly one definition",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/interface",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

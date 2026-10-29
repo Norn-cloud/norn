@@ -1,0 +1,24 @@
+{
+  "name": "erpnext.distinct_customers",
+  "label": "erpnext.distinct_customers",
+  "type": "simple",
+  "type_params": {
+    "expr": "customer_key",
+    "metric_aggregation_params": {
+      "semantic_model": "erpnext.SalesInvoice",
+      "agg": "count_distinct",
+      "agg_time_dimension": "posting_date"
+    }
+  },
+  "x-norn": {
+    "irVersion": "0.1",
+    "additivity": {
+      "kind": "non_additive"
+    },
+    "timeDimension": {
+      "property": "posting_date"
+    },
+    "owner": "sales",
+    "certified": false
+  }
+}

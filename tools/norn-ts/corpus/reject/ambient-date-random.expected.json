@@ -1,0 +1,23 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-AMBIENT",
+      "start": "9:17",
+      "end": "9:25",
+      "construct": "Date.now"
+    },
+    {
+      "code": "NORN-FLOW-AMBIENT",
+      "start": "10:18",
+      "end": "10:29",
+      "construct": "Math.random"
+    },
+    {
+      "code": "NORN-FLOW-AMBIENT",
+      "start": "11:19",
+      "end": "11:29",
+      "construct": "new Date()"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-TYPED-FAILURE-CATCH",
+      "start": "10:5",
+      "end": "14:6",
+      "construct": "try { yield* Norn.perform(\"charge\", chargeCard, { invoiceId: \"inv-1\" }) } cat..."
+    }
+  ]
+}

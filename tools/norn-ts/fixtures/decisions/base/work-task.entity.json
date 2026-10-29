@@ -1,0 +1,59 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "work.Task.entity",
+  "kind": "entity",
+  "namespace": "work",
+  "name": "Task",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/dev/sales-order/work-task.entity.json"
+  },
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "work.Task",
+      "description": "A unit of human work a decision opened, such as calling a customer about a credit hold.",
+      "properties": [
+        {
+          "id": "task_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "kind",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "subject",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "state",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "task_id"
+          ]
+        }
+      ]
+    }
+  }
+}

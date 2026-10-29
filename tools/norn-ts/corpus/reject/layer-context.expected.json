@@ -1,0 +1,35 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-CONTEXT",
+      "start": "4:22",
+      "end": "4:37",
+      "construct": "Context.Service"
+    },
+    {
+      "code": "NORN-FLOW-CONTEXT",
+      "start": "6:27",
+      "end": "6:40",
+      "construct": "Layer.succeed"
+    },
+    {
+      "code": "NORN-FLOW-CONTEXT",
+      "start": "11:27",
+      "end": "11:41",
+      "construct": "Effect.service"
+    },
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "12:31",
+      "end": "12:40",
+      "construct": "undefined"
+    },
+    {
+      "code": "NORN-FLOW-CONTEXT",
+      "start": "13:11",
+      "end": "13:25",
+      "construct": "Effect.provide"
+    }
+  ]
+}

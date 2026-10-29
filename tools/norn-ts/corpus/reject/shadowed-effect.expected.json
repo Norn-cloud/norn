@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
+      "start": "5:23",
+      "end": "5:37",
+      "construct": "RealEffect.gen"
+    },
+    {
+      "code": "NORN-FLOW-SYMBOL",
+      "start": "9:3",
+      "end": "9:13",
+      "construct": "Effect.gen"
+    }
+  ]
+}

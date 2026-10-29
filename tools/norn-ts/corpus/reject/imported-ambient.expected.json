@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-IMPORT",
+      "start": "5:27",
+      "end": "5:56",
+      "construct": "\"../support/ambient-const.ts\""
+    },
+    {
+      "code": "NORN-FLOW-VALUE",
+      "start": "10:14",
+      "end": "10:23",
+      "construct": "startedAt"
+    }
+  ]
+}

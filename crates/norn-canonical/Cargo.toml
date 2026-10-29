@@ -1,0 +1,27 @@
+[package]
+name = "norn-canonical"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "0.10.9"
+unicode-normalization = "0.1.25"
+
+[features]
+# CI-only (#2882): force serde_json's insertion-ordered map so the canonical
+# hash goldens run under both map backends (`cedar-policy` turns it on in any
+# build that links norn-authz). Never enabled by a dependent crate.
+preserve-order-probe = ["serde_json/preserve_order"]
+
+[dev-dependencies]
+proptest = "1.11.0"
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

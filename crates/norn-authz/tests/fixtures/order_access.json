@@ -1,0 +1,35 @@
+{
+  "accessVersion": "0.1",
+  "policyId": "commerce.order_access",
+  "rules": [
+    {
+      "ruleId": "view_own_or_watched",
+      "actions": ["commerce.order.view"],
+      "resourceType": "commerce.SalesOrder",
+      "scope": { "dimensions": ["org", "tenant"] },
+      "allOf": [
+        { "rel": { "from": "resource", "role": "watchers" } }
+      ]
+    },
+    {
+      "ruleId": "approve",
+      "actions": ["commerce.order.approve"],
+      "resourceType": "commerce.SalesOrder",
+      "scope": { "dimensions": ["tenant", "org", "environment"] },
+      "allOf": [
+        { "role": { "anyOf": ["approver", "finance.manager"] } },
+        { "context": { "name": "mfa", "op": "eq", "value": true } },
+        { "context": { "name": "channel", "op": "ne", "value": "api \"legacy\"" } }
+      ]
+    },
+    {
+      "ruleId": "view_any_in_org",
+      "actions": ["commerce.order.view", "commerce.order.approve"],
+      "resourceType": "commerce.SalesOrder",
+      "scope": { "dimensions": ["org"] },
+      "allOf": [
+        { "role": { "anyOf": ["auditor"] } }
+      ]
+    }
+  ]
+}

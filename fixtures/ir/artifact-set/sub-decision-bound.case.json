@@ -1,0 +1,18 @@
+{
+  "description": "A sub-decision chain four levels deep; the Norn profile admits three (T3-DEC-1).",
+  "base": [],
+  "artifacts": [
+    "rule-ir-v2/sets/chain-0.rule.json",
+    "rule-ir-v2/sets/chain-1.rule.json",
+    "rule-ir-v2/sets/chain-2.rule.json",
+    "rule-ir-v2/sets/chain-3.rule.json",
+    "rule-ir-v2/sets/chain-4.rule.json"
+  ],
+  "expect": [
+    [
+      "retail.chain_0.rule",
+      "artifact_set.decision.sub_decision_bound",
+      "/payload/graph/nodes/1/content/key"
+    ]
+  ]
+}

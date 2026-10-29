@@ -1,0 +1,35 @@
+// Stand-in for the T1-PROJ-3 (#2530) projection of a `commerce.SalesOrder`
+// object type, the principal type, and three actions, following the contract
+// in `src/base.rs`.
+namespace commerce {
+  entity SalesOrder = {
+    scope: Norn::Scope,
+    customer: Norn::Actor,
+    watchers: Set<Norn::Actor>,
+    total: Long
+  };
+  entity Note = {
+    body: String
+  };
+}
+namespace Norn {
+  entity Actor in [Role] = {
+    scope: Scope,
+    accounts?: Set<commerce::SalesOrder>
+  };
+  action "commerce.order.view" appliesTo {
+    principal: [Actor],
+    resource: [commerce::SalesOrder],
+    context: { scope: Scope }
+  };
+  action "commerce.order.approve" appliesTo {
+    principal: [Actor],
+    resource: [commerce::SalesOrder],
+    context: { scope: Scope, mfa: Bool, channel: String }
+  };
+  action "commerce.note.read" appliesTo {
+    principal: [Actor],
+    resource: [commerce::Note],
+    context: { scope: Scope }
+  };
+}

@@ -1,0 +1,14 @@
+{
+  "name": "norn-ir",
+  "ring": "Zero",
+  "allowed_norn": [
+    "norn-canonical"
+  ],
+  "dev_only_norn": [],
+  "third_party": [
+    "serde",
+    "schemars",
+    "rust_decimal",
+    "serde_json"
+  ]
+}

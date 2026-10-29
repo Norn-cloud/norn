@@ -1,0 +1,21 @@
+{
+  "description": "Two actions of one set share an actionId, the command and MCP tool name.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-reorder.action.json",
+    {
+      "fixture": "ir/retail-reorder.action.json",
+      "patch": {
+        "artifactId": "retail.reorder.action.copy"
+      }
+    },
+    "ir/retail-purchase-request.entity.json"
+  ],
+  "expect": [
+    [
+      "retail.reorder.action.copy",
+      "artifact_set.action.duplicate_action_id",
+      "/payload/actionId"
+    ]
+  ]
+}

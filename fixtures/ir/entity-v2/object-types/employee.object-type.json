@@ -1,0 +1,12 @@
+{
+  "name": "hr.Employee",
+  "description": "A party employed by the business. The second implementor of party.Party: its email is required.",
+  "implements": ["party.Party"],
+  "properties": [
+    { "id": "employee_number", "type": { "kind": "text" } },
+    { "id": "display_name", "type": { "kind": "text" } },
+    { "id": "email", "type": { "kind": "text", "format": "email" } },
+    { "id": "hired_on", "type": { "kind": "date" } }
+  ],
+  "identity": [{ "name": "primary", "properties": ["employee_number"] }]
+}

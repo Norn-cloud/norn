@@ -1,0 +1,21 @@
+{
+  "description": "A candidate redefines an installed, read-only base artifact.",
+  "base": [
+    "ir/retail-sku.entity.json"
+  ],
+  "artifacts": [
+    {
+      "fixture": "ir/retail-sku.entity.json",
+      "patch": {
+        "version": "0.2.0"
+      }
+    }
+  ],
+  "expect": [
+    [
+      "retail.Sku.entity",
+      "artifact_set.resolution.shadows_base",
+      "/artifactId"
+    ]
+  ]
+}

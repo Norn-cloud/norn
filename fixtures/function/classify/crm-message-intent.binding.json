@@ -1,0 +1,20 @@
+{
+  "format": "norn.function-binding/1",
+  "package": ".",
+  "destination": {
+    "objectType": "crm.MessageIntent",
+    "values": {
+      "message": "subject.key",
+      "intent": "summary.intent",
+      "confidence": "summary.confidence",
+      "function": "function.id",
+      "receipt": "receipt.digest"
+    }
+  },
+  "deadlineMillis": 60000,
+  "maxReschedules": 1,
+  "resubmit": {
+    "channel": "channel",
+    "messageText": "text"
+  }
+}

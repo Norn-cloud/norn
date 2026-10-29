@@ -1,0 +1,15 @@
+{
+  "description": "The same artifact id and version twice.",
+  "base": [],
+  "artifacts": [
+    "ir/retail-sku.entity.json",
+    "ir/retail-sku.entity.json"
+  ],
+  "expect": [
+    [
+      "retail.Sku.entity",
+      "artifact_set.resolution.duplicate_artifact",
+      "/artifactId"
+    ]
+  ]
+}

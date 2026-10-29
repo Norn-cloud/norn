@@ -1,0 +1,11 @@
+{
+  "semantic_models": [{
+    "name": "invoice_items",
+    "model": "ref('invoice_items')",
+    "defaults": {"agg_time_dimension":"posting_date"},
+    "entities": [{"name":"item","type":"primary","expr":"id"},{"name":"invoice","type":"foreign","expr":"invoice_id"}],
+    "dimensions": [{"name":"posting_date","type":"time","type_params":{"time_granularity":"day"}}],
+    "measures": [{"name":"sales_weight","agg":"sum","expr":"weight"}]
+  }],
+  "metrics": [{"name":"sales_weight","label":"Sales weight","type":"simple","type_params":{"measure":"sales_weight"}}]
+}

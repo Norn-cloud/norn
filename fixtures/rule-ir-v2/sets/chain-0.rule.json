@@ -1,0 +1,95 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.chain_0.rule",
+  "kind": "rule",
+  "namespace": "retail",
+  "name": "Chain 0",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [
+    {
+      "artifactId": "retail.chain_1.rule",
+      "kind": "rule",
+      "version": "0.1.0",
+      "required": true
+    }
+  ],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/rule-ir-v2/sets/chain-0.rule.json"
+  },
+  "payload": {
+    "ruleId": "retail.rule.chain_0",
+    "ruleVersion": "2.0",
+    "contract": "sub_decision",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "graph": {
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "next",
+          "name": "next",
+          "type": "decisionNode",
+          "content": {
+            "key": "retail.chain_1.rule",
+            "passThrough": true
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e_next",
+          "sourceId": "in",
+          "targetId": "next",
+          "type": "edge"
+        },
+        {
+          "id": "e_out",
+          "sourceId": "next",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  }
+}

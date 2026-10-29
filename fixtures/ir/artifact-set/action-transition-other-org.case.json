@@ -1,0 +1,28 @@
+{
+  "description": "The transition action fires a transition of a sales order type defined in another org: the target is outside the action's scope.",
+  "base": [],
+  "artifacts": [
+    {
+      "fixture": "ir/entity-v2/artifact-set/commerce-sales-order.entity.json",
+      "patch": {
+        "scope": {
+          "orgId": "org_other",
+          "environmentId": "dev"
+        }
+      }
+    },
+    "ir/commerce-sales-order-submit-invoice.action.json"
+  ],
+  "expect": [
+    [
+      "commerce.sales_order.submit_invoice.action",
+      "artifact_set.scope.incompatible_reference",
+      "/payload/effectProgram/entityArtifactId"
+    ],
+    [
+      "commerce.sales_order.submit_invoice.action",
+      "artifact_set.scope.incompatible_reference",
+      "/payload/writes/0/entityKind"
+    ]
+  ]
+}

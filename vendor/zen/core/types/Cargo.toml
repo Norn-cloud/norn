@@ -1,0 +1,21 @@
+[package]
+name = "zen-types"
+description = "Zen Core Types"
+version = "2.0.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/gorules/zen.git"
+homepage = "https://gorules.io"
+publish = false
+
+[dependencies]
+ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
+serde = { version = "1", features = ["rc", "derive"] }
+serde_json = { version = "1", features = [] }
+smallvec = { version = "1", features = ["union"] }
+hipstr = { version = "0.8", features = ["serde"] }
+rust_decimal = { version = "1", features = ["maths-nopanic"] }
+rust_decimal_macros = "1"
+thiserror = "1"
+nohash-hasher = "0.2"
+indexmap = "2"

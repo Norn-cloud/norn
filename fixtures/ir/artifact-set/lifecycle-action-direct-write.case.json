@@ -1,0 +1,90 @@
+{
+  "description": "An action upserts a purchase order from input that includes its lifecycle-owned status: the upsert may modify and carries no transition, so the status write fails closed (a status changes only through a fire_transition effect).",
+  "base": [],
+  "artifacts": [
+    "ir/entity-v2/artifact-set/commerce-purchase-order.entity.json",
+    {
+      "fixture": "ir/retail-reorder.action.json",
+      "patch": {
+        "artifactId": "commerce.purchase_order.upsert.action",
+        "namespace": "commerce",
+        "name": "Upsert purchase order",
+        "provenance": {
+          "source": "authoring_sdk",
+          "sourcePath": "fixtures/ir/artifact-set/lifecycle-action-direct-write.case.json"
+        },
+        "payload": {
+          "actionId": "commerce.purchase_order.upsert",
+          "title": "Upsert purchase order",
+          "description": "Create or update a purchase order from its input, status included.",
+          "scopeRequired": [
+            "orgId",
+            "environmentId"
+          ],
+          "idempotent": true,
+          "ledgered": true,
+          "ledgerCategory": "procurement.purchase_order",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "po_number": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "po_number",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "po_number": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "po_number"
+            ],
+            "additionalProperties": false
+          },
+          "preconditions": [
+            "len(po_number) > 0"
+          ],
+          "writes": [
+            {
+              "entityKind": "commerce.PurchaseOrder",
+              "change": "created"
+            },
+            {
+              "entityKind": "commerce.PurchaseOrder",
+              "change": "modified"
+            }
+          ],
+          "access": {
+            "artifactId": "retail.procurement.policy",
+            "version": "0.1.0"
+          },
+          "effectProgram": {
+            "kind": "upsert_input_object",
+            "objectIdField": "po_number",
+            "objectKind": "commerce.PurchaseOrder",
+            "entityArtifactId": "commerce.PurchaseOrder.entity",
+            "entityArtifactVersion": "0.1.0"
+          }
+        }
+      }
+    }
+  ],
+  "expect": [
+    [
+      "commerce.purchase_order.upsert.action",
+      "artifact_set.lifecycle.direct_write",
+      "/payload/inputSchema/properties/status"
+    ]
+  ]
+}

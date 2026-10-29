@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.low_stock.view",
+      "code": "derived.validation.incremental_not_supported",
+      "message": "maintenance \"incremental\" is reserved for a future IVM phase and is not yet supported; use \"recompute_on_read\"",
+      "remediation": "upgrade_ir",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/maintenance",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

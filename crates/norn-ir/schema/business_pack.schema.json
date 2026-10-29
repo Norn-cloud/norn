@@ -1,0 +1,534 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BusinessPackPayload",
+  "description": "The payload of a `business_pack` artifact: a composition pack\n(`packKind: \"composition\"`, or omitted by IR `0.1` packs; `provides`,\n`artifacts`) or an ontology pack (`packKind: \"ontology\"`; `sources`,\n`terms`, `mappings`, `shapes`).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/OntologyPackRoot"
+    },
+    {
+      "$ref": "#/$defs/CompositionPackRoot"
+    }
+  ],
+  "$defs": {
+    "CompositionPackKind": {
+      "description": "The only `packKind` literal of a composition pack.",
+      "type": "string",
+      "enum": [
+        "composition"
+      ]
+    },
+    "CompositionPackRoot": {
+      "description": "A composition pack: the exact artifact versions that ship together.",
+      "type": "object",
+      "properties": {
+        "artifacts": {
+          "description": "Non-empty list of the pack's artifacts.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PackArtifactRef"
+          }
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "packId": {
+          "type": "string"
+        },
+        "packKind": {
+          "description": "Omitted by IR `0.1` composition packs; newly authored packs emit it.",
+          "$ref": "#/$defs/CompositionPackKind"
+        },
+        "packVersion": {
+          "type": "string"
+        },
+        "provides": {
+          "description": "Capabilities the pack provides.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "packId",
+        "packVersion",
+        "artifacts"
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "MappingRelation": {
+      "description": "SKOS-style mapping relations.",
+      "type": "string",
+      "enum": [
+        "exact_match",
+        "close_match",
+        "broad_match",
+        "narrow_match",
+        "related_match"
+      ]
+    },
+    "OntologyMapping": {
+      "description": "A reviewed mapping from a Norn term to an external IRI of a pinned source.",
+      "type": "object",
+      "properties": {
+        "confidenceBasisPoints": {
+          "description": "0 through 10000 (checker rule).",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "evidenceRefs": {
+          "description": "Non-empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "externalIri": {
+          "description": "Absolute HTTPS IRI.",
+          "type": "string"
+        },
+        "justification": {
+          "type": "string"
+        },
+        "mappingId": {
+          "description": "Unique within the pack.",
+          "type": "string"
+        },
+        "ratifiedAt": {
+          "description": "When the mapping was ratified: a UTC RFC 3339 string, required on\n`exact_match` mappings and optional on the other relations (checker\nrule).",
+          "type": "string"
+        },
+        "ratifiedBy": {
+          "description": "Who ratified the mapping: a non-empty string, required on\n`exact_match` mappings and optional on the other relations (checker\nrule).",
+          "type": "string"
+        },
+        "relation": {
+          "$ref": "#/$defs/MappingRelation"
+        },
+        "reviewedAt": {
+          "description": "UTC RFC 3339.",
+          "type": "string"
+        },
+        "reviewedBy": {
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string"
+        },
+        "supersededByMappingId": {
+          "description": "Names a mapping of the same term and source in the pack.",
+          "type": "string"
+        },
+        "termId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mappingId",
+        "termId",
+        "sourceId",
+        "externalIri",
+        "relation",
+        "justification",
+        "evidenceRefs",
+        "confidenceBasisPoints",
+        "reviewedBy",
+        "reviewedAt"
+      ]
+    },
+    "OntologyPackKind": {
+      "description": "The only `packKind` literal of an ontology pack.",
+      "type": "string",
+      "enum": [
+        "ontology"
+      ]
+    },
+    "OntologyPackRoot": {
+      "description": "An ontology pack: a closed-world, semantic-only ontology profile.",
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "mappings": {
+          "description": "Non-empty; reviewed mappings from terms to external IRIs.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OntologyMapping"
+          }
+        },
+        "packId": {
+          "description": "In the opaque `norn.ontology-pack.*` namespace (checker rule).",
+          "type": "string"
+        },
+        "packKind": {
+          "$ref": "#/$defs/OntologyPackKind"
+        },
+        "packVersion": {
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "shapes": {
+          "description": "Non-empty; one closed promotion shape per active term.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OntologyShape"
+          }
+        },
+        "sources": {
+          "description": "Non-empty; pinned upstream source releases.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OntologySource"
+          }
+        },
+        "terms": {
+          "description": "Non-empty; Norn-owned terms.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OntologyTerm"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "packId",
+        "packVersion",
+        "packKind",
+        "sources",
+        "terms",
+        "mappings",
+        "shapes"
+      ]
+    },
+    "OntologyShape": {
+      "description": "A closed promotion shape for one active term.",
+      "type": "object",
+      "properties": {
+        "closed": {
+          "description": "Must be `true` (checker rule).",
+          "type": "boolean"
+        },
+        "fields": {
+          "description": "Non-empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OntologyShapeField"
+          }
+        },
+        "shapeId": {
+          "description": "Unique within the pack.",
+          "type": "string"
+        },
+        "termId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "shapeId",
+        "termId",
+        "closed",
+        "fields"
+      ]
+    },
+    "OntologyShapeField": {
+      "description": "One field of an ontology shape.",
+      "type": "object",
+      "properties": {
+        "fieldId": {
+          "description": "Unique within the shape.",
+          "type": "string"
+        },
+        "maxCount": {
+          "description": "At least `minCount` (checker rule).",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "minCount": {
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "targetTermId": {
+          "description": "Required exactly on `term_ref` fields.",
+          "type": "string"
+        },
+        "valueType": {
+          "$ref": "#/$defs/ShapeValueType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fieldId",
+        "valueType",
+        "minCount",
+        "maxCount"
+      ]
+    },
+    "OntologySource": {
+      "description": "A pinned upstream source release of an ontology pack.",
+      "type": "object",
+      "properties": {
+        "canonicalUrl": {
+          "description": "Absolute HTTPS URL.",
+          "type": "string"
+        },
+        "files": {
+          "description": "Required (non-empty) for vendored sources.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OntologySourceFile"
+          }
+        },
+        "license": {
+          "type": "string"
+        },
+        "redistribution": {
+          "$ref": "#/$defs/SourceRedistribution"
+        },
+        "releaseId": {
+          "description": "A strict immutable version, dated-standard release, or content pin.",
+          "type": "string"
+        },
+        "releasedAt": {
+          "description": "`YYYY-MM-DD`.",
+          "type": "string"
+        },
+        "retrievedAt": {
+          "description": "`YYYY-MM-DD`.",
+          "type": "string"
+        },
+        "sourceId": {
+          "description": "In the lowercase `source.*` namespace, unique within the pack.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sourceId",
+        "releaseId",
+        "releasedAt",
+        "retrievedAt",
+        "canonicalUrl",
+        "license",
+        "redistribution"
+      ]
+    },
+    "OntologySourceFile": {
+      "description": "A hash-pinned file of a vendored source.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "description": "64 lowercase hexadecimal characters.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ]
+    },
+    "OntologyTerm": {
+      "description": "A Norn-owned ontology term.",
+      "type": "object",
+      "properties": {
+        "definition": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "parentTermId": {
+          "description": "Resolves within the pack to a compatible, acyclic parent.",
+          "type": "string"
+        },
+        "semanticAuthority": {
+          "$ref": "#/$defs/SemanticAuthority"
+        },
+        "status": {
+          "$ref": "#/$defs/OntologyTermStatus"
+        },
+        "supersededBy": {
+          "description": "Required exactly on `superseded` terms; names an active term.",
+          "type": "string"
+        },
+        "termId": {
+          "description": "An opaque lowercase `norn.*` identifier, unique within the pack.",
+          "type": "string"
+        },
+        "termKind": {
+          "$ref": "#/$defs/OntologyTermKind"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "termId",
+        "label",
+        "definition",
+        "termKind",
+        "status",
+        "semanticAuthority"
+      ]
+    },
+    "OntologyTermKind": {
+      "description": "What an ontology term denotes.",
+      "type": "string",
+      "enum": [
+        "class",
+        "property",
+        "value_object",
+        "concept_scheme_root"
+      ]
+    },
+    "OntologyTermStatus": {
+      "description": "Lifecycle status of an ontology term.",
+      "type": "string",
+      "enum": [
+        "active",
+        "deprecated",
+        "superseded"
+      ]
+    },
+    "PackArtifactKind": {
+      "description": "Artifact kinds a composition pack may contain (not `derived`).",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "entity",
+            "relation",
+            "action",
+            "rule",
+            "connector",
+            "widget",
+            "customization",
+            "setting",
+            "business_pack",
+            "policy"
+          ]
+        },
+        {
+          "description": "A discovered source schema included in a mapping pack.",
+          "type": "string",
+          "const": "source_schema"
+        },
+        {
+          "description": "An interface-scoped source-to-Core mapping.",
+          "type": "string",
+          "const": "mapping"
+        },
+        {
+          "description": "Scoped temporal law.",
+          "type": "string",
+          "const": "law"
+        }
+      ]
+    },
+    "PackArtifactRef": {
+      "description": "One exact artifact version in a composition pack.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PackArtifactKind"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "artifactId",
+        "kind",
+        "version"
+      ]
+    },
+    "SemanticAuthority": {
+      "description": "Ontology terms are semantic only: they never grant mutation authority.",
+      "type": "string",
+      "enum": [
+        "semantic_only"
+      ]
+    },
+    "ShapeValueType": {
+      "description": "Value types of an ontology shape field.",
+      "type": "string",
+      "enum": [
+        "string",
+        "boolean",
+        "integer",
+        "decimal",
+        "date_time",
+        "iri",
+        "term_ref",
+        "external_identifier",
+        "category_ref"
+      ]
+    },
+    "SourceRedistribution": {
+      "description": "Whether a source is only referenced or vendored into the repository.",
+      "type": "string",
+      "enum": [
+        "reference_only",
+        "vendored"
+      ]
+    },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    }
+  }
+}

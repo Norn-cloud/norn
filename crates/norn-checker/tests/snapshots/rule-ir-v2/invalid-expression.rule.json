@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.reorder_decision.rule",
+      "code": "rule.validation.jdm_invalid_expression",
+      "message": "'event.quantity * * event.unitCost' is not a ZEN expression: expression failed to compile: Parser error: Unexpected token: Operator at (17, 18); Expected UnaryOperator.",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/graph/nodes/1/content/expressions/0/value",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "retail.reorder_decision.rule",
+      "code": "rule.validation.jdm_hit_policy_rejected",
+      "message": "hit policy 'unique' is not admitted by the Norn profile: JDM admits first and collect; other DMN hit policies are translated or rejected at DMN ingress (T3-DEC-4)",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/graph/nodes/4/content/hitPolicy",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}

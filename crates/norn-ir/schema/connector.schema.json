@@ -1,0 +1,1385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConnectorPayload",
+  "type": "object",
+  "properties": {
+    "auth": {
+      "$ref": "#/$defs/ConnectorAuth"
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ConnectorCommand"
+      }
+    },
+    "connectorVersion": {
+      "$ref": "#/$defs/IrVersion01"
+    },
+    "cursor": {
+      "$ref": "#/$defs/ConnectorCursor"
+    },
+    "customStepHookIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "customStepHooks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ConnectorCustomStepHook"
+      }
+    },
+    "deadLetterPolicy": {
+      "$ref": "#/$defs/DeadLetterPolicy"
+    },
+    "extensions": {
+      "description": "Reserved extension slots keyed by `<name>/<semver>`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "mappings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ConnectorMapping"
+      }
+    },
+    "proposal": {
+      "$ref": "#/$defs/ProposalMetadata"
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ConnectorResource"
+      }
+    },
+    "supportedVersions": {
+      "$ref": "#/$defs/ConnectorSupportedVersions"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "connectorVersion",
+    "auth",
+    "resources",
+    "mappings"
+  ],
+  "$defs": {
+    "ActionCommandOperation": {
+      "description": "Closed set of outbound command operations.",
+      "oneOf": [
+        {
+          "description": "Submit an existing source document.",
+          "type": "string",
+          "const": "submit"
+        },
+        {
+          "description": "Create a source document.",
+          "type": "string",
+          "const": "create"
+        },
+        {
+          "description": "Update an existing source document.",
+          "type": "string",
+          "const": "update"
+        },
+        {
+          "description": "Cancel an existing source document.",
+          "type": "string",
+          "const": "cancel"
+        }
+      ]
+    },
+    "ApiKeyFormat": {
+      "description": "Structural validation rule for a resolved API key.",
+      "oneOf": [
+        {
+          "description": "Accept any visible key value permitted by its placement.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "raw"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Require two non-empty visible components separated by this string.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pair"
+            },
+            "separator": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "separator"
+          ]
+        }
+      ]
+    },
+    "ApiKeyPlacement": {
+      "description": "Where an API key is sent.",
+      "oneOf": [
+        {
+          "description": "Place the key in an HTTP header.",
+          "type": "string",
+          "const": "header"
+        },
+        {
+          "description": "Place the key in a query parameter.",
+          "type": "string",
+          "const": "query"
+        }
+      ]
+    },
+    "ConnectorAuth": {
+      "description": "How the connector authenticates to its source. Secrets are references only.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "none"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "authId": {
+              "type": "string"
+            },
+            "authorizationUrl": {
+              "type": "string"
+            },
+            "clientSecretRef": {
+              "description": "Optional secret reference used by hosts that exchange credentials\nfor an access token. The secret itself is never stored in IR.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "oauth2"
+            },
+            "scopes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tokenUrl": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "authId",
+            "authorizationUrl",
+            "tokenUrl",
+            "scopes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "authId": {
+              "type": "string"
+            },
+            "format": {
+              "description": "Optional validation/format contract for the resolved key material.\nOmission preserves legacy raw-key connector profiles.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ApiKeyFormat"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "api_key"
+            },
+            "name": {
+              "type": "string"
+            },
+            "placement": {
+              "$ref": "#/$defs/ApiKeyPlacement"
+            },
+            "prefix": {
+              "description": "Static prefix prepended to the resolved secret, e.g. `token `.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "secretRef": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "authId",
+            "placement",
+            "name",
+            "secretRef"
+          ]
+        }
+      ]
+    },
+    "ConnectorChildMergeProfile": {
+      "description": "Merge rules for one source child-table field.",
+      "type": "object",
+      "properties": {
+        "conflictKeyFields": {
+          "description": "Unique business-key fields checked against desired and foreign rows.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "field": {
+          "description": "Parent field holding the child rows.",
+          "type": "string"
+        },
+        "ownershipField": {
+          "description": "Child row field that identifies rows owned by Norn.",
+          "type": "string"
+        },
+        "rowKeyField": {
+          "description": "Child row identity field used to preserve names on updates.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "ownershipField",
+        "rowKeyField"
+      ]
+    },
+    "ConnectorCommand": {
+      "description": "A typed command capability admitted by a connector definition.\n\n`endpoint` is relative to the host-bound connection URL and may contain\n`{doctype}` and `{name}` path bindings. `doctypes` may be empty when the\naction itself already narrows the target document type.",
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "description": "Optional action id to narrow this capability; omitted means any action.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bodyFields": {
+          "description": "Allowlisted input fields that may be copied into the outbound body.\n`*` admits all action fields; caller-supplied guard fields remain rejected.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "conflicts": {
+          "description": "Source error classifications for known write conflicts.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConnectorConflictRule"
+          }
+        },
+        "doctypes": {
+          "description": "Optional target document type allowlist; empty means action-authorized types.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "endpoint": {
+          "description": "Relative endpoint path, with `{doctype}` / `{name}` path bindings.",
+          "type": "string"
+        },
+        "fixedBody": {
+          "description": "Fixed fields supplied by the connector declaration. Reserved fields\nfrom lifecycle/idempotency contracts always override these values.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "idempotency": {
+          "description": "Optional remote idempotency and receipt contract.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConnectorIdempotencyProfile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifecycle": {
+          "description": "Optional source document version and lifecycle contract.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConnectorLifecycleProfile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mergeProfiles": {
+          "description": "Child tables that this command may merge by declared ownership.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConnectorChildMergeProfile"
+          }
+        },
+        "method": {
+          "description": "HTTP verb used for this command.",
+          "$ref": "#/$defs/HttpMethod"
+        },
+        "operation": {
+          "description": "Closed source operation matched to ActionIR.",
+          "$ref": "#/$defs/ActionCommandOperation"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "endpoint",
+        "method"
+      ]
+    },
+    "ConnectorConflictCategory": {
+      "description": "Typed conflict categories surfaced from a source response.",
+      "oneOf": [
+        {
+          "description": "Source rejected a command because its idempotency key already exists.",
+          "type": "string",
+          "const": "duplicate"
+        },
+        {
+          "description": "Source rejected a declared unique-key constraint.",
+          "type": "string",
+          "const": "unique"
+        },
+        {
+          "description": "Source rejected a stale optimistic version.",
+          "type": "string",
+          "const": "version"
+        }
+      ]
+    },
+    "ConnectorConflictRule": {
+      "description": "A source-specific conflict response mapped to a stable connector outcome.",
+      "type": "object",
+      "properties": {
+        "category": {
+          "description": "Stable connector conflict category.",
+          "$ref": "#/$defs/ConnectorConflictCategory"
+        },
+        "errorType": {
+          "description": "Optional source error type discriminator.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "HTTP status that activates this classification.",
+          "$ref": "#/$defs/WholeNumber"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "category"
+      ]
+    },
+    "ConnectorCursor": {
+      "description": "Durable sync cursor over a declared resource.",
+      "type": "object",
+      "properties": {
+        "cursorId": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "storageKey": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "cursorId",
+        "resourceId",
+        "storageKey"
+      ]
+    },
+    "ConnectorCustomStepHook": {
+      "description": "A capability-scoped custom step hook installed from an extension.",
+      "type": "object",
+      "properties": {
+        "errorSchema": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "extensionVersion": {
+          "type": "string"
+        },
+        "hookId": {
+          "type": "string"
+        },
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "installId": {
+          "type": "string"
+        },
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "requiredServices": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scopeCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "hookId",
+        "installId",
+        "extensionVersion",
+        "requiredServices",
+        "scopeCapabilities",
+        "inputSchema",
+        "outputSchema",
+        "errorSchema"
+      ]
+    },
+    "ConnectorIdempotencyProfile": {
+      "description": "Declarative remote idempotency contract for one command capability.",
+      "type": "object",
+      "properties": {
+        "createLookup": {
+          "description": "Lookup used to reconcile a create by its unique idempotency key.",
+          "$ref": "#/$defs/ConnectorLookup"
+        },
+        "headerName": {
+          "description": "Optional header carrying the key on writes and reconciliation reads.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headerPrefix": {
+          "description": "Optional static prefix applied before the header key.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keyField": {
+          "description": "Source field that stores the command's stable idempotency key.",
+          "type": "string"
+        },
+        "receipt": {
+          "description": "Child-table receipt columns and parent linkage.",
+          "$ref": "#/$defs/ConnectorReceiptContract"
+        },
+        "receiptLookup": {
+          "description": "Lookup used to find a prior immutable receipt, globally or for a target.",
+          "$ref": "#/$defs/ConnectorLookup"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "keyField",
+        "receipt",
+        "createLookup",
+        "receiptLookup"
+      ]
+    },
+    "ConnectorKeysetProfile": {
+      "description": "Typed HTTP query and ordering contract for a keyset resource sweep.",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "description": "Fields requested from the source.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fieldsParam": {
+          "description": "Query parameter carrying projected fields.",
+          "type": "string"
+        },
+        "filtersParam": {
+          "description": "Query parameter carrying conjunctive filters.",
+          "type": "string"
+        },
+        "orFilterParam": {
+          "description": "Query parameter carrying the compound cursor disjunction.",
+          "type": "string"
+        },
+        "orderParam": {
+          "description": "Query parameter carrying ordering.",
+          "type": "string"
+        },
+        "pageParam": {
+          "description": "Query parameter carrying row offset.",
+          "type": "string"
+        },
+        "pageSize": {
+          "description": "Maximum number of rows per source page.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "sizeParam": {
+          "description": "Query parameter carrying maximum page size.",
+          "type": "string"
+        },
+        "tieBreakerField": {
+          "description": "Stable field that orders rows sharing the high-water value.",
+          "type": "string"
+        },
+        "watermarkField": {
+          "description": "Field used as the high-water component.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "filtersParam",
+        "orFilterParam",
+        "fieldsParam",
+        "orderParam",
+        "pageParam",
+        "sizeParam",
+        "watermarkField",
+        "tieBreakerField",
+        "fields",
+        "pageSize"
+      ]
+    },
+    "ConnectorLifecycleProfile": {
+      "description": "Numeric source-document lifecycle fields and statuses.",
+      "type": "object",
+      "properties": {
+        "cancelledStatus": {
+          "description": "Numeric status after cancellation.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "documentPath": {
+          "description": "JSON Pointer to the source document in a response.",
+          "type": "string"
+        },
+        "identityField": {
+          "description": "Identity field within the selected document.",
+          "type": "string"
+        },
+        "initialStatus": {
+          "description": "Numeric status for a newly created/initial document.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "statusField": {
+          "description": "Numeric document status field.",
+          "type": "string"
+        },
+        "submittedStatus": {
+          "description": "Numeric status after submit.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "versionField": {
+          "description": "Version field used for optimistic mutation guards.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "documentPath",
+        "identityField",
+        "versionField",
+        "statusField",
+        "initialStatus",
+        "submittedStatus",
+        "cancelledStatus"
+      ]
+    },
+    "ConnectorLookup": {
+      "description": "Configured query used to find existing records or receipts.",
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "description": "Relative request endpoint, with optional path bindings.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "Projection fields to request from the source.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fieldsParam": {
+          "description": "Query parameter carrying the serialized field projection.",
+          "type": "string"
+        },
+        "filters": {
+          "description": "Declared filters evaluated for each reconciliation context.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConnectorLookupFilter"
+          }
+        },
+        "filtersParam": {
+          "description": "Query parameter carrying the serialized filters array.",
+          "type": "string"
+        },
+        "itemsPath": {
+          "description": "JSON Pointer or simple JSONPath path to the result array.",
+          "type": "string"
+        },
+        "limitParam": {
+          "description": "Query parameter carrying the result limit.",
+          "type": "string"
+        },
+        "maxResults": {
+          "description": "Maximum number of results needed to detect ambiguity.",
+          "$ref": "#/$defs/WholeNumber"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "itemsPath",
+        "fields",
+        "filtersParam",
+        "fieldsParam",
+        "limitParam",
+        "maxResults"
+      ]
+    },
+    "ConnectorLookupFilter": {
+      "description": "One equality filter in a configured lookup. When `entity` is present, the\nquery encoder emits the four-element child-table tuple; otherwise it emits\na normal three-element filter tuple.",
+      "type": "object",
+      "properties": {
+        "entity": {
+          "description": "Optional child doctype prefix for source-specific child-table filters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "field": {
+          "description": "Source field filtered by this declaration.",
+          "type": "string"
+        },
+        "operator": {
+          "description": "Filter operator; defaults to equality.",
+          "type": "string",
+          "default": "="
+        },
+        "value": {
+          "description": "Runtime context member used as the filter value.",
+          "$ref": "#/$defs/ConnectorLookupValue"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "value"
+      ]
+    },
+    "ConnectorLookupValue": {
+      "description": "Runtime value inserted into a declarative lookup filter.",
+      "oneOf": [
+        {
+          "description": "Stable command idempotency key.",
+          "type": "string",
+          "const": "idempotency_key"
+        },
+        {
+          "description": "Operation name such as `create` or `cancel`.",
+          "type": "string",
+          "const": "operation"
+        },
+        {
+          "description": "Action identifier.",
+          "type": "string",
+          "const": "action_id"
+        },
+        {
+          "description": "Target source doctype.",
+          "type": "string",
+          "const": "document_type"
+        },
+        {
+          "description": "Target source document name; omitted for global lookup.",
+          "type": "string",
+          "const": "target_name"
+        },
+        {
+          "description": "Parent doctype for a receipt row.",
+          "type": "string",
+          "const": "parent_type"
+        },
+        {
+          "description": "Parent child-table field for a receipt row.",
+          "type": "string",
+          "const": "parent_field"
+        }
+      ]
+    },
+    "ConnectorMapping": {
+      "description": "One source-path-to-object mapping over a declared resource.",
+      "oneOf": [
+        {
+          "description": "Map a source value onto an object field.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "field"
+            },
+            "resourceId": {
+              "type": "string"
+            },
+            "sourcePath": {
+              "type": "string"
+            },
+            "targetField": {
+              "type": "string"
+            },
+            "targetObjectKind": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "resourceId",
+            "sourcePath",
+            "targetObjectKind",
+            "targetField"
+          ]
+        },
+        {
+          "description": "Map a source value onto an object's external identity.",
+          "type": "object",
+          "properties": {
+            "externalSource": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "external_id"
+            },
+            "resourceId": {
+              "type": "string"
+            },
+            "sourcePath": {
+              "type": "string"
+            },
+            "targetObjectKind": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "resourceId",
+            "sourcePath",
+            "targetObjectKind",
+            "externalSource"
+          ]
+        }
+      ]
+    },
+    "ConnectorPageMode": {
+      "description": "Pagination numbering convention for a paginated resource.",
+      "oneOf": [
+        {
+          "description": "The parameter is a one-based page number (the default for older roots).",
+          "type": "string",
+          "const": "page"
+        },
+        {
+          "description": "The parameter is a zero-based row offset.",
+          "type": "string",
+          "const": "offset"
+        }
+      ]
+    },
+    "ConnectorReceiptContract": {
+      "description": "Receipt child-table schema and the columns needed for lookup and recovery.",
+      "type": "object",
+      "properties": {
+        "actionIdField": {
+          "description": "Optional child row field storing the action id.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "doctype": {
+          "description": "Source child-row doctype used in child-table filters.",
+          "type": "string"
+        },
+        "doctypeField": {
+          "description": "Optional child row field storing the document type.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "identityField": {
+          "description": "Optional child row identity field required on persisted receipts.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keyField": {
+          "description": "Child row field storing the stable idempotency key.",
+          "type": "string"
+        },
+        "operationField": {
+          "description": "Child row field storing the operation name.",
+          "type": "string"
+        },
+        "parentField": {
+          "description": "Child row field linking to the parent document.",
+          "type": "string"
+        },
+        "parentTableField": {
+          "description": "Child row field linking to the parent table field.",
+          "type": "string"
+        },
+        "parentTypeField": {
+          "description": "Child row field linking to the parent's doctype.",
+          "type": "string"
+        },
+        "tableField": {
+          "description": "Parent document field that stores the receipt rows.",
+          "type": "string"
+        },
+        "targetNameField": {
+          "description": "Optional child row field storing the target document name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestampField": {
+          "description": "Optional child row timestamp field used for validation or audit output.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "doctype",
+        "tableField",
+        "keyField",
+        "operationField",
+        "parentField",
+        "parentTypeField",
+        "parentTableField"
+      ]
+    },
+    "ConnectorResource": {
+      "description": "One source resource the connector reads.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "itemsPath": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "paginated"
+            },
+            "method": {
+              "$ref": "#/$defs/HttpMethod"
+            },
+            "missingItemsIsEmpty": {
+              "description": "Treat a missing item path as an empty page. A present non-array\nvalue is always an invalid response.",
+              "type": "boolean"
+            },
+            "pageMode": {
+              "description": "Numbering convention; omitted roots default to one-based pages.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ConnectorPageMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pageParam": {
+              "type": "string"
+            },
+            "pageSize": {
+              "description": "Declared page size, used for requests and short-page exhaustion.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WholeNumber"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pageSizeParam": {
+              "type": "string"
+            },
+            "pageStart": {
+              "description": "Starting page number or row offset; defaults by `pageMode`.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WholeNumber"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "queryParams": {
+              "description": "Fixed query parameters declared by the source profile. String\nvalues may contain `{doctype}` and `{name}` bindings.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "resourceId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "resourceId",
+            "endpoint",
+            "method",
+            "pageParam",
+            "itemsPath"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cursorParam": {
+              "type": "string"
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "itemsPath": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "cursor"
+            },
+            "missingItemsIsEmpty": {
+              "description": "Treat a missing item path as an empty page. A present non-array\nvalue is always an invalid response.",
+              "type": "boolean"
+            },
+            "nextCursorPath": {
+              "type": "string"
+            },
+            "queryParams": {
+              "description": "Fixed source query parameters; values may include path bindings.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "resourceId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "resourceId",
+            "endpoint",
+            "cursorParam",
+            "nextCursorPath",
+            "itemsPath"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "itemsPath": {
+              "type": "string"
+            },
+            "keyset": {
+              "description": "Optional compound-key paging contract for safe delta scans.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ConnectorKeysetProfile"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "delta"
+            },
+            "missingItemsIsEmpty": {
+              "description": "Treat a missing item path as an empty page. A present non-array\nvalue is always an invalid response.",
+              "type": "boolean"
+            },
+            "queryParams": {
+              "description": "Fixed source query parameters; values may include path bindings.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "resourceId": {
+              "type": "string"
+            },
+            "sinceParam": {
+              "type": "string"
+            },
+            "updatedAtPath": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "resourceId",
+            "endpoint",
+            "sinceParam",
+            "updatedAtPath",
+            "itemsPath"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "eventType": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "webhook"
+            },
+            "payloadPath": {
+              "type": "string"
+            },
+            "resourceId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "resourceId",
+            "eventType",
+            "payloadPath"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "delimiter": {
+              "$ref": "#/$defs/CsvDelimiter"
+            },
+            "kind": {
+              "type": "string",
+              "const": "csv_import"
+            },
+            "resourceId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "required": [
+            "kind",
+            "resourceId",
+            "delimiter",
+            "columns"
+          ]
+        }
+      ]
+    },
+    "ConnectorSupportedVersions": {
+      "description": "Runtime check that the remote source reports a supported set of app majors.",
+      "type": "object",
+      "properties": {
+        "components": {
+          "description": "Allowed major versions for each reported application.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConnectorVersionComponent"
+          }
+        },
+        "endpoint": {
+          "description": "Relative endpoint used to read source versions.",
+          "type": "string"
+        },
+        "requireMatchingMajors": {
+          "description": "Require all components to report the same major version.",
+          "type": "boolean"
+        },
+        "responsePath": {
+          "description": "JSON Pointer to the response object containing app versions.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "responsePath",
+        "components",
+        "requireMatchingMajors"
+      ]
+    },
+    "ConnectorVersionComponent": {
+      "description": "One source application and its accepted major versions.",
+      "type": "object",
+      "properties": {
+        "app": {
+          "description": "Source application's reported name (for example `frappe`).",
+          "type": "string"
+        },
+        "majors": {
+          "description": "Accepted numeric major versions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WholeNumber"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "majors"
+      ]
+    },
+    "CsvDelimiter": {
+      "description": "Field delimiter of a CSV import.",
+      "type": "string",
+      "enum": [
+        ",",
+        ";",
+        "\t"
+      ]
+    },
+    "DeadLetterPolicy": {
+      "description": "Where records that keep failing go.",
+      "type": "object",
+      "properties": {
+        "maxFailures": {
+          "description": "Positive failure count before a record is dead-lettered.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "route": {
+          "$ref": "#/$defs/DeadLetterRoute"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "maxFailures",
+        "route"
+      ]
+    },
+    "DeadLetterRoute": {
+      "description": "Dead-letter destinations.",
+      "type": "string",
+      "enum": [
+        "ledger",
+        "queue"
+      ]
+    },
+    "HttpMethod": {
+      "description": "HTTP method of a paginated resource.",
+      "oneOf": [
+        {
+          "description": "Read or call using HTTP GET.",
+          "type": "string",
+          "const": "GET"
+        },
+        {
+          "description": "Create or call using HTTP POST.",
+          "type": "string",
+          "const": "POST"
+        },
+        {
+          "description": "Replace/update a source resource using HTTP PUT.",
+          "type": "string",
+          "const": "PUT"
+        },
+        {
+          "description": "Delete or cancel a source resource using HTTP DELETE.",
+          "type": "string",
+          "const": "DELETE"
+        }
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "ProposalActor": {
+      "description": "Who proposed a definition.",
+      "type": "string",
+      "enum": [
+        "agent",
+        "user"
+      ]
+    },
+    "ProposalMetadata": {
+      "description": "Preview-proposal metadata carried by agent- or user-proposed connector and\nwidget definitions.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ProposalMode"
+        },
+        "proposedBy": {
+          "$ref": "#/$defs/ProposalActor"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "sourceArtifactId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "required": [
+        "mode",
+        "proposedBy"
+      ]
+    },
+    "ProposalMode": {
+      "description": "How a proposal may be applied. Only previews exist today.",
+      "type": "string",
+      "enum": [
+        "preview"
+      ]
+    },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    }
+  }
+}

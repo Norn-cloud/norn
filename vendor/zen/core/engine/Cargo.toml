@@ -1,0 +1,40 @@
+[package]
+authors = ["GoRules Team <bot@gorules.io>"]
+description = "Business rules engine (Norn vendored and stripped; #3404)"
+name = "zen-engine"
+license = "MIT"
+version = "2.0.1"
+edition = "2021"
+repository = "https://github.com/gorules/zen.git"
+homepage = "https://gorules.io"
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+# Norn (#3404): fixed-seed maps only (`no-rng`), so there is no runtime RNG (getrandom).
+ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
+anyhow = "1"
+thiserror = "1"
+petgraph = "0.8"
+serde_json = { version = "1", features = [] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_path_to_error = "0.1"
+strum = { version = "0.27", features = ["derive"] }
+once_cell = "1"
+rust_decimal = { version = "1", features = ["maths-nopanic"] }
+fixedbitset = "0.5"
+zen-types = { path = "../types", version = "2.0.1", default-features = false }
+zen-expression = { path = "../expression", version = "2.0.1", default-features = false }
+zen-tmpl = { path = "../template", version = "2.0.1", default-features = false }
+downcast-rs = { version = "2.0", features = ["std", "sync"] }
+
+# Norn: tokio-based test harness is native-only (rt-multi-thread cannot run on
+# wasm anyway); keeps `cargo tree --target wasm32-unknown-unknown` free of tokio.
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+# Norn: wasm-safe monotonic clock. std::time::Instant traps on wasm32-unknown-unknown.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+web-time = "1"

@@ -1,0 +1,23 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-UNBOUNDED",
+      "start": "8:94",
+      "end": "8:121",
+      "construct": "Schedule.spaced(\"1 second\")"
+    },
+    {
+      "code": "NORN-FLOW-UNBOUNDED",
+      "start": "9:94",
+      "end": "9:110",
+      "construct": "Schedule.forever"
+    },
+    {
+      "code": "NORN-FLOW-UNBOUNDED",
+      "start": "11:94",
+      "end": "11:111",
+      "construct": "Schedule.jittered"
+    }
+  ]
+}

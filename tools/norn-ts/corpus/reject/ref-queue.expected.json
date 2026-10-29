@@ -1,0 +1,17 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-CONCURRENCY",
+      "start": "7:28",
+      "end": "7:36",
+      "construct": "Ref.make"
+    },
+    {
+      "code": "NORN-FLOW-CONCURRENCY",
+      "start": "8:26",
+      "end": "8:41",
+      "construct": "Queue.unbounded"
+    }
+  ]
+}

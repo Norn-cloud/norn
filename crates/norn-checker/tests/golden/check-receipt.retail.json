@@ -1,0 +1,51 @@
+{
+  "admitted": true,
+  "artifactSet": {
+    "artifacts": [
+      {
+        "artifactId": "commerce.property_types.entity.v2",
+        "sha256": "3d36e7723f8c7c5d7bb392187b73044fd96d68d9b6876c320586f3edb45c7ced",
+        "version": "0.1.0"
+      },
+      {
+        "artifactId": "party.Party.interface.v2",
+        "sha256": "32f69215cca1a0632858ae56420c6c8548011435d1a8c0055c0124e3fe5bb064",
+        "version": "0.1.0"
+      },
+      {
+        "artifactId": "purchasing.Supplier.entity.v2",
+        "sha256": "d06329bb8bc5abcfb24001f898e13f6a258d324e180036bc4b9e0448d49c76ec",
+        "version": "0.1.0"
+      },
+      {
+        "artifactId": "retail.Sku.entity.v2",
+        "sha256": "7d954a90d49028b169560d8b074eb82f7b5d5ebce6a2ab867eb1158665ea4b75",
+        "version": "0.1.0"
+      }
+    ],
+    "base": [],
+    "sha256": "212b293cc9308e01458882722cb7fb01c7f3dd5956e98e3a4b951b0fc5cbdec3"
+  },
+  "checker": {
+    "name": "norn-checker",
+    "version": "0.2.0"
+  },
+  "diagnostics": {
+    "count": 0,
+    "errors": 0,
+    "sha256": "f7ba6f0754c50c99631cc4cdea32ff456852b9f01dcdb57cc3d0fd0deb5f3d13"
+  },
+  "exprProfile": "norn-zen/6",
+  "format": "norn-checker/receipt@2",
+  "identifierProfile": "norn-identifiers/1",
+  "limitProfile": {
+    "id": "norn.limits",
+    "sha256": "1f0296b10aa2d862ce777ad83183c7e184e69be9891ef0a4c442df36e53c6f05",
+    "version": 1
+  },
+  "typeEnv": {
+    "id": "norn.expr.env",
+    "sha256": "f038d7f8df3c97e163b314c97be08862dc53f33dee9302a7f1100d9e977fc6e8",
+    "version": 1
+  }
+}
