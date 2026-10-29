@@ -112,6 +112,9 @@ fn artifacts_text(case: &Value) -> String {
 }
 
 fn context_text(case: &Value) -> String {
+    if let Some(text) = case["contextText"].as_str() {
+        return text.to_owned();
+    }
     let mut members = vec![format!("\"base\":{}", array_text(case, "base"))];
     if let Some(extra) = case["context"].as_object() {
         members.extend(
