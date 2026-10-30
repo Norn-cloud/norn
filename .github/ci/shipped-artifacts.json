@@ -4734,7 +4734,7 @@
     },
     {
       "path": "crates/norn-checker/tests/ui_interaction.rs",
-      "sha256": "2a69a0bb2f53f98326bc794a09403d6f0025e445db148088a3fa83a6066cda61",
+      "sha256": "b9f8f210d16128b4304fb3eda13eab2aa9986d15f5686c6474cf86013c13f7ac",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

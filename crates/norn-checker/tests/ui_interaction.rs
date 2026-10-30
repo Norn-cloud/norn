@@ -437,7 +437,11 @@ fn with_unnamed_display_field(value: &mut Value) {
     ux(value)["pages"][0]["root"]["children"]
         .as_array_mut()
         .expect("root children")
-        .push(node("note", &json!({ "kind": "field", "fieldId": "note" }), &json!([])));
+        .push(node(
+            "note",
+            &json!({ "kind": "field", "fieldId": "note" }),
+            &json!([]),
+        ));
 }
 
 #[test]
@@ -446,7 +450,11 @@ fn a_control_override_decides_whether_a_field_is_an_input() {
     let mut display = widget();
     with_unnamed_display_field(&mut display);
     assert!(
-        !has(&findings(display.clone()), "widget.interaction.unnamed_control", pointer),
+        !has(
+            &findings(display.clone()),
+            "widget.interaction.unnamed_control",
+            pointer
+        ),
         "a read-only display is not an input"
     );
     let mut input = display;
