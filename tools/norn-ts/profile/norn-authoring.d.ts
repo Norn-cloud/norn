@@ -422,6 +422,10 @@ declare module "@norn/authoring" {
 
     /** Pure calendar-date comparison; lowers to explicit ZEN date constructors. */
     function dateBefore(left: string, right: string): boolean
+    /** Explicit checked calendar conversion; malformed input fails evaluation. */
+    function parseDate(text: string): string
+    /** Explicit checked RFC 3339 conversion; requires a known offset, returns canonical UTC. */
+    function parseTimestamp(text: string): string
     /** UTF-8 byte count, matching the canonical ZEN profile. */
     function byteLength(text: string): number
 
@@ -438,6 +442,12 @@ declare module "@norn/authoring" {
         readonly dataset: string; readonly name: string; readonly ordinal: number; readonly nativeType: string
         readonly typeCandidate: { readonly type: "string" | "text" | "integer" | "decimal" | "boolean" | "date" | "datetime" | "time" | "duration" | "json" | "binary" | "reference" | "unknown"; readonly origin: "declared" | "inferred" }
         readonly required?: boolean; readonly markings?: ReadonlyArray<string>
+      }>
+      /** Only declared sets narrow mapping inputs; candidates remain evidence. */
+      readonly codeSets?: ReadonlyArray<{
+        readonly id: string; readonly dataset: string; readonly field: string
+        readonly origin: "declared" | "observed_candidate"
+        readonly values: ReadonlyArray<{ readonly value: string; readonly label?: string }>
       }>
       /** Declared constraints; a `parent_child` one names the parent's collection field a nested map reads. */
       readonly constraints?: ReadonlyArray<{
