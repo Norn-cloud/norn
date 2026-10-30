@@ -2,6 +2,7 @@
 //! by the commit path (the guard and the writer read through the same
 //! functions inside the commit transaction).
 
+use crate::payload_storage::EVENT_BYTES;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -3026,7 +3027,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         let page_limit_sql = i64::try_from(limit).unwrap_or(MAX_SAFE_INTEGER);
         let length_rows = self.conn.query(
             &format!(
-                "SELECT \"seq\", COALESCE(octet_length(\"world\"), 0), COALESCE(octet_length(\"event\"), 0), COALESCE(octet_length(\"prev_hash\"), 0), COALESCE(octet_length(\"hash\"), 0) FROM \"{LEDGER}\" WHERE \"seq\" > ?1 ORDER BY \"seq\" LIMIT ?2"
+                "SELECT \"seq\", COALESCE(octet_length(\"world\"), 0), COALESCE({EVENT_BYTES}, 0), COALESCE(octet_length(\"prev_hash\"), 0), COALESCE(octet_length(\"hash\"), 0) FROM \"{LEDGER}\" WHERE \"seq\" > ?1 ORDER BY \"seq\" LIMIT ?2"
             ),
             params![to_i64(after, "seq")?, page_limit_sql],
         )?;
@@ -3076,7 +3077,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         // Check end-of-history even with no rows left: exactly exhausting the
         // admitted scan is valid, but another real ledger row must refuse.
         let lengths = self.conn.query(
-            &format!("SELECT \"seq\", \"commit_seq\", json_extract(\"event\", '$.op') IN ('data_quality_finding', 'observed_out_of_band'), json_extract(\"event\", '$.type') = 'observation.recorded', octet_length(\"event\") + octet_length(\"world\") + octet_length(\"prev_hash\") + octet_length(\"hash\") + 64 FROM \"{LEDGER}\" WHERE \"seq\" > ?1 ORDER BY \"seq\" LIMIT ?2"),
+            &format!("SELECT \"seq\", \"commit_seq\", json_extract(\"event\", '$.op') IN ('data_quality_finding', 'observed_out_of_band'), json_extract(\"event\", '$.type') = 'observation.recorded', {EVENT_BYTES} + octet_length(\"world\") + octet_length(\"prev_hash\") + octet_length(\"hash\") + 64 FROM \"{LEDGER}\" WHERE \"seq\" > ?1 ORDER BY \"seq\" LIMIT ?2"),
             params![to_i64(after, "seq")?, i64::try_from(limit.min(budget.remaining_rows().saturating_add(1))).unwrap_or(MAX_SAFE_INTEGER)],
         )?;
         if lengths.len() > budget.remaining_rows() {
@@ -3103,7 +3104,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 } else {
                     let remaining = budget.remaining_rows().saturating_sub(work_rows);
                     let lookup = self.conn.query(
-                        &format!("SELECT CASE WHEN json_extract(\"event\", '$.op') IN ('data_quality_finding', 'observed_out_of_band') THEN octet_length(\"event\") + octet_length(\"world\") + octet_length(\"prev_hash\") + octet_length(\"hash\") + 64 ELSE NULL END FROM \"{LEDGER}\" WHERE \"commit_seq\" = ?1 ORDER BY \"seq\" LIMIT ?2"),
+                        &format!("SELECT CASE WHEN json_extract(\"event\", '$.op') IN ('data_quality_finding', 'observed_out_of_band') THEN {EVENT_BYTES} + octet_length(\"world\") + octet_length(\"prev_hash\") + octet_length(\"hash\") + 64 ELSE NULL END FROM \"{LEDGER}\" WHERE \"commit_seq\" = ?1 ORDER BY \"seq\" LIMIT ?2"),
                         params![to_i64(commit, "commit_seq")?, i64::try_from(remaining.saturating_add(1)).unwrap_or(MAX_SAFE_INTEGER)],
                     )?;
                     if lookup.len() > remaining {
@@ -3267,10 +3268,31 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 seq: to_u64(row.get(0)?, "seq")?,
                 commit_seq: to_u64(row.get(1)?, "commit_seq")?,
                 world: row.get(2)?,
-                event: serde_json::from_str(&event)?,
+                event: crate::payload_storage::decode_event(
+                    self.conn,
+                    to_u64(row.get(0)?, "seq")?,
+                    &row.get::<String>(2)?,
+                    &event,
+                )?,
                 prev_hash: row.get(4)?,
                 hash: row.get(5)?,
             };
+            // Result placeholders must never escape when their encoding index
+            // is missing or changed. Valid legacy lookalikes retain their own hash.
+            if entry.event.get("type").and_then(Value::as_str) == Some("command.result")
+                && entry_hash(
+                    entry.seq,
+                    entry.commit_seq,
+                    &entry.world,
+                    &entry.event,
+                    &entry.prev_hash,
+                )? != entry.hash
+            {
+                return Err(CellError::LedgerCorrupt {
+                    seq: entry.seq,
+                    reason: "command result payload does not verify".to_owned(),
+                });
+            }
             self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
             out.push(entry);
         }
@@ -3835,7 +3857,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                     command: serde_json::from_str(&command)?,
                 },
                 result: result
-                    .map(|result| serde_json::from_str(&result))
+                    .map(|result| {
+                        crate::payload_storage::decode_result(
+                            self.conn,
+                            &result,
+                            Some(&crate::payload_storage::receipt_world(
+                                self.conn,
+                                to_u64(row.get(1)?, "commit_seq")?,
+                            )?),
+                        )
+                    })
                     .transpose()?,
             });
         }
@@ -3992,7 +4023,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 command_id: command_id.to_owned(),
                 generation: to_u64(row.get(0)?, "generation")?,
                 attempt: to_u64(row.get(1)?, "attempt")?,
-                outcome: serde_json::from_str(&outcome)?,
+                outcome: crate::payload_storage::decode_result(
+                    self.conn,
+                    &outcome,
+                    crate::payload_storage::command_world(
+                        self.conn,
+                        command_id,
+                        to_u64(row.get(0)?, "generation")?,
+                    )?
+                    .as_deref(),
+                )?,
                 consumed_commit_seq: consumed
                     .map(|value| to_u64(value, "commit_seq"))
                     .transpose()?,
