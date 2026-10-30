@@ -53,9 +53,10 @@ third-party code; keep its notices and provenance.
 
 ## Provenance
 
-Every tracked file has an entry in `.github/ci/shipped-artifacts.json` with its
-SHA-256, origin, category and licence. A change to a tracked file updates its
-hash; a new file adds an entry. `cargo xtask ci provenance` enforces this, and
+Every tracked file except `.github/ci/shipped-artifacts.json` has an entry in
+that manifest with its SHA-256, origin, category and licence. For those files, a
+change updates the hash and a new file adds an entry. Never add an entry for the
+manifest itself. `cargo xtask ci provenance` enforces this, and
 the trusted policy lane checks pull requests against the base branch's rules.
 Symlinks, customer data, credentials, vendor schemas and copied GPL-family code
 are refused.
