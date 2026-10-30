@@ -51,7 +51,7 @@ def evidence(path, data, revision, line=1, level='analyzed'):
 
 
 def framework(package):
-    return PACKAGES.get(package) or next((v for k, v in PACKAGES.items() if package.startswith(k + '/')), None)
+    return PACKAGES.get(package) or next((v for k, v in PACKAGES.items() if (package.startswith(k + '/') or (k in {'frappe', 'odoo', 'temporalio'} and package.startswith(k + '.')))), None)
 
 
 def analyze(sources: dict[str, bytes], revision='working-tree'):
