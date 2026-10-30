@@ -2613,7 +2613,7 @@
     },
     {
       "path": "crates/norn-checker/src/mapping.rs",
-      "sha256": "9c07e278f920238789458365574098de0a30605869d95510faf8969b564961cb",
+      "sha256": "c326b0165c10d07f11588eb39405553782490bd1cacb59e391f27248fea7a7e3",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

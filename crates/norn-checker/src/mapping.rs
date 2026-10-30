@@ -48,8 +48,10 @@
 //! The `input` record has one field per source field: a field with a
 //! declared code set is that `enum`; otherwise its candidate type
 //! (`decimal` reads as a number; `datetime` and `time` as text, since the
-//! source may omit the offset; use an explicit `timestamp(text)` conversion
-//! before writing a timestamp target; `json`, `binary`, and `unknown` are opaque),
+//! source may omit the offset; before writing a timestamp target, convert
+//! with an explicit `timestamp(text)`, which refuses text without a known
+//! offset, so supply the offset upstream or keep the value as text; `json`,
+//! `binary`, and `unknown` are opaque),
 //! nullable unless the source declares it required.
 
 mod compile;
