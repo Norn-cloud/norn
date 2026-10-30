@@ -952,3 +952,19 @@ fn merge_group_admits_exactly_the_longest_walk_and_rejects_a_longer_one() {
         }
     }
 }
+
+#[test]
+fn merge_group_admits_a_shared_head_when_any_of_its_pull_requests_is_approved() {
+    let (candidate, base, heads, head) = merge_group(&[&gate_edit]);
+    let pr = heads[0].as_str();
+    let pulls = [
+        (pr, "contributor/norn", None),
+        (pr, "Norn-cloud/norn", Some((pr, "admin"))),
+    ];
+    let errors = group_checked(&candidate, &base, &head, &pulls);
+    assert!(errors.is_empty(), "{errors:?}");
+    rejected(
+        &group_checked(&candidate, &base, &head, &pulls[..1]),
+        "only Norn-cloud/norn branches",
+    );
+}
