@@ -101,6 +101,6 @@ pub fn same_paths(root: &Path, a: &str, b: &str, paths: &[&str]) -> Result<bool,
     match status.code() {
         Some(0) => Ok(true),
         Some(1) => Ok(false),
-        _ => Err(format!("git diff failed between {a} and {b}")),
+        Some(_) | None => Err(format!("git diff failed between {a} and {b}")),
     }
 }

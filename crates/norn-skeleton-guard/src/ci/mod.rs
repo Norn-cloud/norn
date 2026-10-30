@@ -140,7 +140,7 @@ fn contract_errors(contract: Vec<String>, approval: Option<Result<String, String
 /// or [`merge_group_approval`] when the evidence describes a merge-queue group.
 fn approval_of(evidence: &Path, root: &Path) -> Result<String, String> {
     let bytes = std::fs::read(evidence).map_err(|error| format!("maintainer evidence: {error}"))?;
-    let document =
+    let document: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|error| format!("maintainer evidence: {error}"))?;
     if document.get("merge_group").is_some() {
         return merge_group_approval(&document, root);
@@ -212,8 +212,13 @@ pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result
         if commit == base {
             return Ok(approvers.join(", "));
         }
-        let [previous, pull_head] = <[String; 2]>::try_from(git::parents(root, &commit)?)
-            .map_err(|_| format!("merge group commit {commit} is not a two-parent merge"))?;
+        let [previous, pull_head] =
+            <[String; 2]>::try_from(git::parents(root, &commit)?).map_err(|parents| {
+                format!(
+                    "merge group commit {commit} is not a two-parent merge ({} parents)",
+                    parents.len()
+                )
+            })?;
         if !git::same_paths(root, &previous, &commit, &gates)? {
             if !git::same_paths(root, &pull_head, &commit, &gates)? {
                 return Err(format!(

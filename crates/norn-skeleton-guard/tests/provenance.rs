@@ -822,7 +822,7 @@ fn group_checked(
 ) -> Vec<String> {
     let pull_requests: Vec<Value> = pulls
         .iter()
-        .map(|(sha, repository, approved)| {
+        .map(|&(sha, repository, approved)| {
             let comments: Vec<Value> = approved
                 .map(|(commit, permission)| json!({"user":"owner","body":format!("/approve-gates {commit}"),"created_at":"2026-10-30T12:00:00Z","updated_at":"2026-10-30T12:00:00Z","permission":permission}))
                 .into_iter()
