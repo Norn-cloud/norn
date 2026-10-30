@@ -57,6 +57,7 @@ prepare_inputs() {
   export NORN_UPSTREAM_FIXTURE_DIR="$upstream"
   (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile)
   bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/core --org org_demo --env dev --out "$upstream/core-artifacts.json"
+  bun tools/norn-ts/src/cli.ts compile crates/norn-metrics/tests/demand.source.ts --org org_demo --env dev --out "$upstream/metric-demand.json"
   bun -e 'const artifacts = await Bun.file(process.argv[1]).json(); for (const [id, path] of [["toy.contacts.source", "fixtures/ir/synthetic-contact.source_schema.json"], ["toy.rows", "fixtures/ir/synthetic-rows.mapping.json"]]) { const artifact = artifacts.find((value) => value.artifactId === id); if (!artifact) throw new Error(`missing ${id}`); await Bun.write(path, JSON.stringify(artifact, null, 2) + "\n"); }' "$upstream/core-artifacts.json"
 }
 use_jsonschema() {

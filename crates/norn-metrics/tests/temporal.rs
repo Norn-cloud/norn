@@ -1,8 +1,7 @@
 //! Synthetic typed authoring through the production ontology and temporal checks.
 #![allow(clippy::expect_used, reason = "test failures identify their assertion")]
 
-use std::path::Path;
-use std::process::Command;
+use std::path::PathBuf;
 
 use norn_checker::EffectiveCatalog;
 use norn_ir::{ArtifactEnvelope, RuntimeValue};
@@ -10,28 +9,14 @@ use norn_metrics::temporal::{TemporalError, TemporalPlan, TemporalRow, TemporalV
 
 #[test]
 fn admits_only_point_in_time_rows_and_chronological_holdouts() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let compiled = Command::new("bun")
-        .current_dir(root)
-        .args([
-            "tools/norn-ts/src/cli.ts",
-            "compile",
-            "crates/norn-metrics/tests/demand.source.ts",
-            "--org",
-            "org_demo",
-            "--env",
-            "dev",
-        ])
-        .output()
-        .expect("Bun authoring toolchain installed as in CI");
-    assert!(
-        compiled.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&compiled.stdout),
-        String::from_utf8_lossy(&compiled.stderr)
+    let root = PathBuf::from(
+        std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR")
+            .expect("generate typed fixtures with scripts/ci/core.sh before testing"),
     );
+    let bytes =
+        std::fs::read(root.join("metric-demand.json")).expect("generated synthetic fixture");
     let artifacts: Vec<ArtifactEnvelope> =
-        serde_json::from_slice(&compiled.stdout).expect("generated artifacts");
+        serde_json::from_slice(&bytes).expect("generated artifacts");
     let catalog = EffectiveCatalog::from_artifacts(&artifacts);
     let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 10)
         .expect("plan");
