@@ -1,5 +1,5 @@
 {
- "schema": "norn.ci-frontier/v1",
+ "schema": "norn.ci-frontier/v2",
  "repo": "Norn-cloud/norn",
  "workflow": "Public core",
  "runner": "ubuntu-24.04 GitHub-hosted (public repository: $0)",
@@ -1315,6 +1315,11 @@
    "causes": {
     "known-norn#8": 10
    },
+   "reruns": {
+    "n": 0,
+    "harness": 0,
+    "flake": 0
+   },
    "flake_rate": 0.0,
    "verdict_s": {
     "p50": 25.0,
@@ -1428,6 +1433,11 @@
    "n_measured": 10,
    "causes": {
     "scratch-workflow-edit": 10
+   },
+   "reruns": {
+    "n": 0,
+    "harness": 0,
+    "flake": 0
    },
    "flake_rate": 0.0,
    "verdict_s": {

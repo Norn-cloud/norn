@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CI Pareto frontier for the hosted `Public core` gates (Norn-cloud/norn-platform#3541).
 
-    python3 scripts/ci/frontier.py collect RUN_ID... > .github/ci/frontier.json
+    python3 scripts/ci/frontier.py collect RUN_ID[:ATTEMPT]... > .github/ci/frontier.json
     python3 scripts/ci/frontier.py check .github/ci/frontier.json
 
 `collect` reads run, job and step timings (and, for failed jobs, the job log)
@@ -9,7 +9,12 @@ through `gh api`, classifies each verdict and writes rows plus series
 statistics. `check` recomputes the statistics from the stored rows offline and
 fails on drift, so the summary can never disagree with its evidence.
 
-Time to verdict is run creation to the last job's completion (queue + wall).
+Time to verdict is the attempt's start to the last job's completion (queue + wall).
+Only first attempts enter the timing series: a rerun keeps the run's original
+`created_at`, so measuring it would count the wait before the rerun as queue
+time. Reruns are counted in their own `reruns` column instead, split into
+`harness` (the first attempt was refused by the harness) and `flake` (the rerun
+reached a different verdict on the same inputs).
 Percentiles interpolate linearly between closest ranks. The noise band is a
 seeded bootstrap 95% interval of each percentile; with n=10, p95 sits between
 the two slowest rows, so its band is wide by construction.
@@ -23,7 +28,7 @@ import sys
 from datetime import datetime
 
 REPO = "Norn-cloud/norn"
-SCHEMA = "norn.ci-frontier/v1"
+SCHEMA = "norn.ci-frontier/v2"
 WORKFLOW = ".github/workflows/ci-policy.yml"
 GATES = {"core", "trusted-policy"}
 RESAMPLES = 2000
@@ -62,17 +67,19 @@ def classify(job):
     return "harness-other" if not job["steps"] else "unknown"
 
 
-def row(run_id):
-    run = gh(f"actions/runs/{run_id}")
-    jobs = [j for j in gh(f"actions/runs/{run_id}/jobs")["jobs"] if j["conclusion"] != "skipped"]
+def row(spec):
+    run_id, _, attempt = str(spec).partition(":")
+    attempt = int(attempt or 1)
+    run = gh(f"actions/runs/{run_id}/attempts/{attempt}")
+    jobs = [j for j in gh(f"actions/runs/{run_id}/attempts/{attempt}/jobs")["jobs"]
+            if j["conclusion"] != "skipped"]
     if (run["path"].split("@", 1)[0] != WORKFLOW or run["status"] != "completed" or len(jobs) != 1
             or jobs[0]["name"] not in GATES or jobs[0]["labels"] != [RUNNER]):
         raise SystemExit(f"run {run_id}: expected one completed Public core gate job")
-    # A rerun keeps the first attempt's created_at, which would inflate its queue time.
-    if run["run_attempt"] != 1:
-        raise SystemExit(f"run {run_id}: only first attempts are measured")
     job = jobs[0]
-    created, started, completed = ts(run["created_at"]), ts(job["started_at"]), ts(job["completed_at"])
+    # A rerun keeps the first attempt's created_at; time each attempt from its own start.
+    created = ts(run["created_at"] if run["run_attempt"] == 1 else run["run_started_at"])
+    started, completed = ts(job["started_at"]), ts(job["completed_at"])
     failed = [s["name"] for s in job["steps"] if s["conclusion"] == "failure"]
     return {
         "run_id": run["id"], "attempt": run["run_attempt"], "event": run["event"],
@@ -118,9 +125,15 @@ def series(rows):
         groups.setdefault((r["ref"], r["head_sha"], r["gate"]), []).append(r)
     out = []
     for (ref, sha, gate), rs in sorted(groups.items()):
-        # Cancelled and harness-refused rows stay as evidence but carry no verdict.
-        measured = [r for r in rs if verdict(r) in ("success", "failure")
+        # Cancelled, harness-refused and rerun rows stay as evidence but carry no timing.
+        firsts = [r for r in rs if r["attempt"] == 1]
+        measured = [r for r in firsts if verdict(r) in ("success", "failure")
                     and not r["cause"].startswith("harness")]
+        first_of = {r["run_id"]: r for r in firsts}
+        reruns = [r for r in rs if r["attempt"] > 1]
+        harness = sum(first_of.get(r["run_id"], {}).get("cause", "").startswith("harness") for r in reruns)
+        flake = sum(r["run_id"] in first_of and not first_of[r["run_id"]]["cause"].startswith("harness")
+                    and verdict(first_of[r["run_id"]]) != verdict(r) for r in reruns)
         causes = {}
         for r in rs:
             causes[r["cause"]] = causes.get(r["cause"], 0) + 1
@@ -136,6 +149,7 @@ def series(rows):
         out.append({
             "ref": ref, "head_sha": sha, "gate": gate, "n": len(rs), "n_measured": len(measured),
             "causes": causes,
+            "reruns": {"n": len(reruns), "harness": harness, "flake": flake},
             # Same inputs, different verdicts: every minority verdict is a flake.
             "flake_rate": round(1 - max(sum(verdict(r) == v for r in measured) for v in verdicts)
                                 / len(measured), 3) if measured else None,
@@ -162,7 +176,7 @@ def document(rows):
 
 def main(argv):
     if len(argv) >= 2 and argv[0] == "collect":
-        json.dump(document([row(int(r)) for r in argv[1:]]), sys.stdout, indent=1)
+        json.dump(document([row(r) for r in argv[1:]]), sys.stdout, indent=1)
         sys.stdout.write("\n")
         return 0
     if len(argv) == 2 and argv[0] == "check":
