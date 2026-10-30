@@ -1210,10 +1210,16 @@ impl<'d, 'e> Derivation<'d, 'e> {
             match interface_lineage(def, |name| self.interfaces.get(name.as_str()).copied()) {
                 Ok(lineage) => lineage,
                 Err(name) => {
-                    self.errors.push(EnvError::Unresolved {
-                        site: format!("{owner}.extends"),
-                        name: name.0,
-                    });
+                    // A name that resolves came back round: the lineage is a cycle.
+                    let error = if self.interfaces.contains_key(name.as_str()) {
+                        EnvError::Cycle { name: name.0 }
+                    } else {
+                        EnvError::Unresolved {
+                            site: format!("{owner}.extends"),
+                            name: name.0,
+                        }
+                    };
+                    self.errors.push(error);
                     return RecordType {
                         kind: RecordKind::Interface,
                         fields,
