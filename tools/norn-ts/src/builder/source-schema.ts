@@ -16,6 +16,12 @@ export interface SourceSchemaSpec {
     readonly typeCandidate: { readonly type: "string" | "text" | "integer" | "decimal" | "boolean" | "date" | "datetime" | "time" | "duration" | "json" | "binary" | "reference" | "unknown"; readonly origin: "declared" | "inferred" }
     readonly required?: boolean; readonly markings?: ReadonlyArray<string>
   }>
+  /** Only declared sets narrow mapping inputs; candidates remain evidence. */
+  readonly codeSets?: ReadonlyArray<{
+    readonly id: string; readonly dataset: string; readonly field: string
+    readonly origin: "declared" | "observed_candidate"
+    readonly values: ReadonlyArray<{ readonly value: string; readonly label?: string }>
+  }>
   /** Declared constraints; a `parent_child` one names the parent's collection field a nested map reads. */
   readonly constraints?: ReadonlyArray<{
     readonly id: string; readonly kind: "primary_key" | "unique" | "foreign_key" | "logical_reference" | "parent_child"
@@ -30,6 +36,7 @@ export function lowerSourceSchema(def: SourceSchemaDef, options: EnvelopeOptions
   return { ok: true, artifact: envelope({ kind: "source_schema", artifactId: def.id, namespace: def.id.split(".")[0]!, name: def.title, version: def.version }, {
     format: "norn.source-schema/1", source: def.source, observedAt: def.observedAt, adapter: def.adapter, rawMetadata: def.rawMetadata,
     ...(def.datasets.length ? { datasets: def.datasets } : {}), ...(def.fields.length ? { fields: def.fields } : {}),
+    ...(def.codeSets?.length ? { codeSets: def.codeSets } : {}),
     ...(def.constraints?.length ? { constraints: def.constraints } : {}),
   }, options) }
 }

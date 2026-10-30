@@ -1,5 +1,7 @@
 {
   "required": [
+    "`@norn/authoring#Norn.parseDate`",
+    "`@norn/authoring#Norn.parseTimestamp`",
     "`@norn/authoring#Norn.dateBefore`",
     "`@norn/authoring#Norn.byteLength`",
     "`@norn/authoring#Norn.evaluate`",
