@@ -1,0 +1,8 @@
+[
+  {"file":"hooks.py","source":"app_name = 'synthetic'\ndoc_events = {}\n","framework":"frappe","confidence":0.8,"signal":"config:hooks","line":1},
+  {"file":"model.py","source":"from odoo import models, api\n","framework":"odoo","confidence":0.95,"signal":"import:odoo","line":1},
+  {"file":"machine.ts","source":"// synthetic\nimport { createMachine } from 'xstate';\n","framework":"xstate","confidence":0.95,"signal":"import:xstate","line":2},
+  {"file":"workflow.py","source":"from temporalio import workflow\n","framework":"temporal","confidence":0.95,"signal":"import:temporalio","line":1},
+  {"file":"layer.ts","source":"import { Effect } from 'effect';\n","framework":"effect","confidence":0.95,"signal":"import:effect","line":1},
+  {"file":"client.ts","source":"import { createAdminApiClient } from '@shopify/admin-api-client';\n","framework":"shopify_graphql","confidence":0.95,"signal":"import:@shopify/admin-api-client","line":1}
+]

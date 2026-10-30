@@ -1,0 +1,3 @@
+# MIT (bindings) and MIT (grammar); no CodeQL runtime.
+tree-sitter==0.25.2
+tree-sitter-typescript==0.23.2
