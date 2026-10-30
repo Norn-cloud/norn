@@ -38,6 +38,7 @@ mod history;
 pub mod host;
 mod migration;
 pub mod model;
+mod payload_storage;
 pub mod quantity;
 pub mod reactive;
 mod reactive_read;

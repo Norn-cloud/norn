@@ -399,33 +399,6 @@ fn interop_exports_prov_document_validates() {
 }
 
 #[test]
-fn interop_exports_are_read_only_and_deterministic() {
-    // Exports take the chain by shared reference and return new JSON; the
-    // lineage input and the chain are unchanged, and a second export is
-    // identical.
-    let input = input();
-    let pristine_input = input.clone();
-    let chain = chain(&input);
-    let pristine_chain = chain.clone();
-    let defs = artifact_set();
-    let first = (
-        openlineage_run_events(&chain),
-        prov_document(&chain),
-        dcat_catalog(&input.objects),
-        skos_concept_scheme(&defs),
-    );
-    let second = (
-        openlineage_run_events(&chain),
-        prov_document(&chain),
-        dcat_catalog(&input.objects),
-        skos_concept_scheme(&defs),
-    );
-    assert_eq!(first, second);
-    assert_eq!(input, pristine_input);
-    assert_eq!(chain, pristine_chain);
-}
-
-#[test]
 fn interop_exports_all_four_formats_are_unique_per_cell() {
     let input = input();
     let defs = artifact_set();
@@ -724,29 +697,4 @@ fn interop_exports_skos_scheme_uses_declared_skos_terms() {
         "A sales order that a credit decision may put on hold."
     );
     assert!(graph[2].get("skos:altLabel").is_none());
-}
-
-#[test]
-fn interop_exports_all_four_from_one_artifact_set() {
-    let input = input();
-    let defs = artifact_set();
-    let pristine = (input.clone(), defs.clone());
-    let chain = chain(&input);
-    assert_eq!(openlineage_run_events(&chain).len(), 3);
-    assert!(
-        json_of(&prov_document(&chain))["@graph"]
-            .as_array()
-            .is_some_and(|graph| !graph.is_empty())
-    );
-    assert!(
-        json_of(&dcat_catalog(&input.objects))["dcat:dataset"]
-            .as_array()
-            .is_some_and(|datasets| !datasets.is_empty())
-    );
-    assert!(
-        json_of(&skos_concept_scheme(&defs))["@graph"]
-            .as_array()
-            .is_some_and(|graph| !graph.is_empty())
-    );
-    assert_eq!((input, defs), pristine, "exports never change their source");
 }

@@ -33,6 +33,31 @@ pub const EXPORT_FORMAT: &str = "norn.cell.export/5";
 /// The atomically replaced manifest object in a dedicated export prefix.
 pub const MANIFEST_PATH: &str = "manifest.json";
 
+/// Conservative logical byte bound for a retained export, including every
+/// referenced payload occurrence. Hosts must check this before materialization.
+///
+/// # Errors
+/// SQL or stored byte-length range errors.
+pub fn record_decode_bytes(
+    engine: &impl crate::engine::SqlEngine,
+    commit_seq: u64,
+) -> Result<Option<u64>, CellError> {
+    let length: Option<i64> = engine.query_optional(
+        &format!(
+            "SELECT {} FROM \"_norn_export_journal\" WHERE \"commit_seq\"=?1",
+            crate::payload_storage::EXPORT_BYTES
+        ),
+        &[crate::engine::SqlValue::Integer(crate::read::to_i64(
+            commit_seq,
+            "export commit seq",
+        )?)],
+        |row| row.get(0),
+    )?;
+    length
+        .map(|length| crate::read::to_u64(length, "export decoded bytes"))
+        .transpose()
+}
+
 /// One immutable object per committed batch, including batches with no events.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
