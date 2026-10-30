@@ -9,7 +9,6 @@ use serde::Serialize;
 #[cfg(feature = "native")]
 use tokio::sync::Notify;
 
-use crate::codec::canonical_json;
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::{EXPORT_FORMAT, ExportRecord};
@@ -44,7 +43,7 @@ pub(crate) fn read_record(
     let Some((stored_hash, serialized)) = row else {
         return Ok(None);
     };
-    let record: ExportRecord = serde_json::from_str(&serialized)?;
+    let record = crate::payload_storage::decode_export(engine, &serialized, commit_seq)?;
     if record.format != EXPORT_FORMAT
         || record.receipt.body.commit_seq != commit_seq
         || record.hash()? != stored_hash
@@ -238,7 +237,7 @@ pub(crate) fn record<E: SqlEngine>(
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
     let hash = export.hash()?;
-    let serialized = canonical_json(&export)?;
+    let serialized = crate::payload_storage::encode_export(engine, &export)?;
     engine.execute(
         r#"INSERT INTO "_norn_export_journal" ("commit_seq", "hash", "record") VALUES (?1, ?2, ?3)"#,
         params![to_i64(commit_seq, "commit_seq")?, hash, serialized],

@@ -2,6 +2,9 @@ name: Public core
 on:
   pull_request:
   pull_request_target:
+  # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.
+  issue_comment:
+    types: [created, edited, deleted]
   push:
   merge_group:
   workflow_dispatch:
@@ -9,11 +12,11 @@ permissions:
   contents: read
 jobs:
   core:
-    if: github.event_name != 'pull_request_target'
+    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 110
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -29,33 +32,108 @@ jobs:
   trusted-policy:
     permissions:
       contents: read
+      issues: read
+      pull-requests: read
       statuses: write
-    if: github.event_name == 'pull_request_target'
+    # An edit re-runs when either the new or the previous body mentions the
+    # command, so removing an approval re-evaluates and fails closed. `contains`
+    # also covers bodies the gate accepts after trimming.
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      (contains(github.event.comment.body, '/approve-gates') ||
+      (github.event.action == 'edited' && contains(github.event.changes.body.from, '/approve-gates'))))
+    # One trusted-policy run per pull request at a time: a newer run (a push, or
+    # an approval posted, edited or deleted) cancels the older one, whose
+    # always() reporter then writes failure, so a stale approval run can never
+    # publish success after a revocation.
+    concurrency:
+      group: trusted-policy-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # A comment event carries the issue, not the pull request: read the PR
+      # from the API, taking base and head from the same snapshot.
+      - name: Resolve the pull request
+        id: pr
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          retries: 3
+          script: |
+            const event = context.payload.pull_request;
+            const number = event ? event.number : context.payload.issue.number;
+            const { data } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number });
+            core.setOutput('number', String(data.number));
+            core.setOutput('base_sha', data.base.sha);
+            core.setOutput('head_sha', data.head.sha);
+            core.setOutput('head_repository', data.head.repo ? data.head.repo.full_name : '');
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
           path: trusted
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ steps.pr.outputs.head_repository }}
+          ref: ${{ steps.pr.outputs.head_sha }}
           path: candidate
           persist-credentials: false
-      - name: Validate candidate as data with base-owned policy
-        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate
-      - name: Report trusted policy on the exact PR head
-        if: always()
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+      # Workflow and gate changes need a same-repository head and an unedited
+      # `/approve-gates <head sha>` comment from an admin; re-run this job after
+      # commenting. Without this evidence such changes fail closed; data-only PRs
+      # never need it.
+      - name: Record admin approvals of the exact PR head
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
+            const { owner, repo } = context.repo;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: Number('${{ steps.pr.outputs.number }}') });
+            // A commenter the API does not know as a user (a bot) has no
+            // permission; any other API failure fails closed.
+            const permissions = new Map();
+            const permission = async (username) => {
+              if (!permissions.has(username)) {
+                const level = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username })
+                  .then(({ data }) => data.permission, (error) => {
+                    if (error.status === 404) return 'none';
+                    throw error;
+                  });
+                permissions.set(username, level);
+              }
+              return permissions.get(username);
+            };
+            const comments = [];
+            for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
+              if (!comment.user || !(comment.body || '').trim().startsWith('/approve-gates')) continue;
+              comments.push({ user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
+            }
+            require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify({
+              repository: `${owner}/${repo}`,
+              head_repository: pr.head.repo ? pr.head.repo.full_name : null,
+              head_sha: pr.head.sha,
+              comments
+            }));
+      - name: Validate candidate as data with base-owned policy
+        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
+      - name: Report trusted policy on the exact PR head
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            // If resolution failed there is no validated head: look it up again so
+            // the failure still replaces any earlier success on that head.
+            let sha = '${{ steps.pr.outputs.head_sha }}';
+            if (!sha) {
+              const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
+              sha = (await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number })).data.head.sha;
+            }
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: context.payload.pull_request.head.sha,
+              sha,
               state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
               context: 'trusted-policy',
               description: 'Base-owned policy over candidate data',

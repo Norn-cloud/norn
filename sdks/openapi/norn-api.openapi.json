@@ -5740,6 +5740,13 @@
           "description": {
             "type": "string"
           },
+          "extends": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrInterfaceName"
+            },
+            "description": "Parent contracts. All members, constraints, markings and invariants apply."
+          },
           "invariants": {
             "type": "array",
             "items": {
