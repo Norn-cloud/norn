@@ -548,6 +548,21 @@ fn assert_clean(found: &[Diagnostic]) {
     );
 }
 
+/// For fixtures that deliberately strip a widget down to one reference-semantics question (an
+/// isolated page or binding): the contract must be clean except for the named interaction findings
+/// that stripping causes. Interaction rules judge whole documents and are covered by
+/// `tests/ui_interaction.rs`.
+fn assert_contract_clean(found: &[Diagnostic], expected_interaction: &[&str]) {
+    let unexpected: Vec<&Diagnostic> = found
+        .iter()
+        .filter(|finding| !expected_interaction.contains(&finding.code.as_str()))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "expected a clean widget contract; got {unexpected:#?}"
+    );
+}
+
 #[test]
 fn create_and_edit_forms_admit_bounded_owned_child_grids_with_row_conditions() {
     let widget = ordered_rows_widget();
@@ -1973,7 +1988,10 @@ fn optional_array_action_inputs_accept_an_empty_array_mapping() {
         }));
     let mut support = support_artifacts();
     support.push(array_action);
-    assert_clean(&findings_with_support(value, support, &[]));
+    assert_contract_clean(
+        &findings_with_support(value, support, &[]),
+        &["widget.interaction.control_missing_for_transition"],
+    );
 }
 
 #[test]
@@ -3447,7 +3465,13 @@ fn navigation_forwards_runtime_key_context_only_with_the_same_entity_marker() {
                 }}
             }
         }));
-    assert_clean(&widget_findings(value.clone()));
+    assert_contract_clean(
+        &widget_findings(value.clone()),
+        &[
+            "widget.interaction.unreachable_page",
+            "widget.interaction.keyboard_unreachable_control",
+        ],
+    );
 
     value["payload"]["ux"]["pages"][2]["contextParams"][0]["runtimeKeyOf"]["id"] =
         json!("crm.Customer.entity");
@@ -3847,7 +3871,13 @@ fn runtime_detail_requires_the_exact_entity_marker_and_owning_page() {
         .as_object_mut()
         .expect("customer")
         .remove("identity");
-    assert_clean(&findings_with_support(value.clone(), base.clone(), &[]));
+    assert_contract_clean(
+        &findings_with_support(value.clone(), base.clone(), &[]),
+        &[
+            "widget.interaction.unreachable_page",
+            "widget.interaction.keyboard_unreachable_control",
+        ],
+    );
     value["payload"]["ux"]["pages"][1]["contextParams"][0]["runtimeKeyOf"]["id"] =
         json!("commerce.Order.entity");
     assert_issue(
@@ -4040,4 +4070,61 @@ fn metric_bucket_format_is_not_an_action_input_presentation() {
     let mut value = widget();
     value["payload"]["ux"]["fields"][4]["format"] = json!("metric_buckets");
     assert_issue(&widget_findings(value), "/fields/4/format", "not an input");
+}
+
+fn with_comment_field(required_when: Option<Value>) -> Value {
+    let mut value = widget();
+    let ux = &mut value["payload"]["ux"];
+    ux["forms"][0]["inputNames"] = json!(["orderId", "reason", "comment"]);
+    ux["actionBindings"][0]["inputMapping"]["comment"] = json!("input.draft.comment");
+    let mut field = json!({
+        "fieldId": "approve-comment",
+        "target": { "kind": "form_input", "formId": "approve-form", "inputName": "comment" },
+        "label": { "en": "Comment" },
+        "control": "text_area"
+    });
+    if let Some(condition) = required_when {
+        field["requiredWhen"] = condition;
+    }
+    ux["fields"]
+        .as_array_mut()
+        .expect("fields array")
+        .push(field);
+    ux["pages"][0]["root"]["children"][2]["children"]
+        .as_array_mut()
+        .expect("form children")
+        .push(json!({
+            "nodeId": "approve-comment-node",
+            "semanticId": "approve-comment-field",
+            "component": { "kind": "field", "fieldId": "approve-comment" },
+            "children": []
+        }));
+    value
+}
+
+fn nullable_clear_findings(value: Value) -> Vec<String> {
+    findings(value)
+        .iter()
+        .filter(|finding| finding.code.as_str() == "widget.interaction.nullable_without_clear")
+        .map(|finding| {
+            finding
+                .span
+                .as_ref()
+                .map_or(String::new(), |span| span.pointer.clone())
+        })
+        .collect()
+}
+
+#[test]
+fn a_nullable_form_input_must_stay_clearable() {
+    // `comment` is a nullable ActionIR leaf; a free control is clearable to an explicit null.
+    assert!(nullable_clear_findings(with_comment_field(None)).is_empty());
+    // Always required: a cleared value could never be submitted, so there is no real clear path.
+    let forced = with_comment_field(Some(json!({ "expression": "true", "inputs": {} })));
+    let found = nullable_clear_findings(forced);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].starts_with("/payload/ux/pages/0/root/children/2/children/"),
+        "{found:?}"
+    );
 }
