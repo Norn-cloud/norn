@@ -780,6 +780,13 @@ impl<'a> Checker<'a, '_> {
         target: &ObjectTypeName,
         id: &str,
     ) -> Option<(&'a InterfaceName, &'static str)> {
+        // Only an interface target is inherited by other interfaces' implementors.
+        if !self
+            .interfaces
+            .contains_key(&InterfaceName(target.as_str().to_owned()))
+        {
+            return None;
+        }
         for entry in self.interfaces.values() {
             let owners = self.interface_lineage(entry.def);
             if !owners

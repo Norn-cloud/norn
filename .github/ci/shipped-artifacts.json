@@ -2307,7 +2307,7 @@
     },
     {
       "path": "crates/norn-checker/src/entity_model/links.rs",
-      "sha256": "28ad8e6967b79e6e2b5ef116e219b5b843be89bbc3efc4096b8937c325c45373",
+      "sha256": "5cb8c57af4bcc0d17f750ca165fb0f076eb55b7e0a8d635a2326ec683d9b631f",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
