@@ -623,6 +623,83 @@ fn stored_receipts_verify_integrity_bindings_and_known_profiles() {
 }
 
 #[test]
+fn bundled_iso639_receipts_verify_original_and_normalized_envelopes() {
+    let source = include_str!("../../../registry/core/artifacts/std.iso639.entity.json");
+    assert!(source.contains("Daatsʼi\u{301}in"));
+    assert!(source.contains("Du\u{303}ya"));
+    let original = [json_of(source)];
+    // Use the fresh-install preparation boundary, which canonicalizes source
+    // before decoding, while the host retains the bundled original envelope.
+    let prepared = norn_checker::layout::prepare_artifact_source(
+        norn_ir::RuntimeValue::from_json_text(source).expect("bundled ISO639 source"),
+    )
+    .expect("normalized install input");
+    let normalized = [serde_json::to_value(prepared.artifact).expect("normalized envelope")];
+    assert_ne!(original, normalized, "fixture must retain non-NFC labels");
+    let original_envelopes = envelopes(&original);
+    let normalized_envelopes = envelopes(&normalized);
+    assert_eq!(
+        ArtifactRef::of(&original_envelopes[0]).expect("bundled identity"),
+        ArtifactRef::of(&normalized_envelopes[0]).expect("normalized identity")
+    );
+
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    for (original_candidates, original_base, normalized_candidates, normalized_base) in [
+        (original.as_slice(), &[][..], normalized.as_slice(), &[][..]),
+        (&[][..], original.as_slice(), &[][..], normalized.as_slice()),
+    ] {
+        let checked = check_with(
+            normalized_candidates,
+            normalized_base,
+            &BTreeSet::new(),
+            None,
+            &limits,
+        );
+        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+        assert!(checked.receipt.admitted);
+        let original_candidates = envelopes(original_candidates);
+        let original_base = envelopes(original_base);
+        let normalized_candidates = envelopes(normalized_candidates);
+        let normalized_base = envelopes(normalized_base);
+        assert_eq!(
+            ArtifactSetRef::of(&original_candidates, &original_base).expect("bundled set identity"),
+            ArtifactSetRef::of(&normalized_candidates, &normalized_base)
+                .expect("normalized set identity")
+        );
+
+        let current = checked.receipt;
+        let mut historical = current.clone();
+        historical.checker_version = "0.1.0".to_owned();
+        historical.expr_profile = "norn-zen/5".to_owned();
+        historical.artifact_set =
+            ArtifactSetRef::of_legacy(&normalized_candidates, &normalized_base)
+                .expect("legacy full-envelope identity");
+        historical.diagnostics = empty_diagnostics_for("0.1.0");
+        let (legacy_body, legacy_hash) = as_legacy_receipt(&historical);
+        for (candidates, base) in [
+            (&original_candidates, &original_base),
+            (&normalized_candidates, &normalized_base),
+        ] {
+            verify_admission_receipt(
+                &compact(&current),
+                &current.content_sha256().expect("current receipt hash"),
+                candidates,
+                base,
+                &limits,
+            )
+            .expect("normalized install receipt verifies retained definitions");
+            verify_admission_receipt(&legacy_body, &legacy_hash, candidates, base, &limits)
+                .expect("legacy receipt verifies retained definitions");
+            assert_eq!(
+                recover_legacy_admission_receipt(&legacy_hash, candidates, base, &limits)
+                    .expect("legacy receipt recovers from retained definitions"),
+                legacy_body
+            );
+        }
+    }
+}
+
+#[test]
 fn stored_receipts_refuse_tampering_unknown_profiles_and_definition_drift() {
     let artifacts = registry_layer();
     let stored_envelopes = envelopes(&artifacts);
