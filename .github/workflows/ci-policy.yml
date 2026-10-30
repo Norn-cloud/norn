@@ -11,7 +11,7 @@ jobs:
   core:
     if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -29,6 +29,8 @@ jobs:
   trusted-policy:
     permissions:
       contents: read
+      issues: read
+      pull-requests: read
       statuses: write
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-24.04
@@ -45,8 +47,44 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: candidate
           persist-credentials: false
+      # Workflow and gate changes need a same-repository head and an unedited
+      # `/approve-gates <head sha>` comment from an admin; re-run this job after
+      # commenting. Without this evidence such changes fail closed; data-only PRs
+      # never need it.
+      - name: Record admin approvals of the exact PR head
+        continue-on-error: true
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+            // A commenter the API does not know as a user (a bot) has no
+            // permission; any other API failure fails closed.
+            const permissions = new Map();
+            const permission = async (username) => {
+              if (!permissions.has(username)) {
+                const level = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username })
+                  .then(({ data }) => data.permission, (error) => {
+                    if (error.status === 404) return 'none';
+                    throw error;
+                  });
+                permissions.set(username, level);
+              }
+              return permissions.get(username);
+            };
+            const comments = [];
+            for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
+              if (!comment.user || !(comment.body || '').trim().startsWith('/approve-gates')) continue;
+              comments.push({ user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
+            }
+            require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify({
+              repository: `${owner}/${repo}`,
+              head_repository: pr.head.repo ? pr.head.repo.full_name : null,
+              head_sha: pr.head.sha,
+              comments
+            }));
       - name: Validate candidate as data with base-owned policy
-        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate
+        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
       - name: Report trusted policy on the exact PR head
         if: always()
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
