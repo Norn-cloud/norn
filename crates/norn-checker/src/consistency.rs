@@ -9,9 +9,13 @@
 //! triggers them.
 
 mod chase;
+mod exchange;
 mod theory;
 
-pub use chase::{ChaseBudget, ChaseError, ChaseOutcome, Conflict, Fact, Value, chase};
+pub use chase::{
+    ChaseBudget, ChaseError, ChaseOutcome, Conflict, Fact, Value, chase, first_violation,
+};
+pub use exchange::{Exchange, check_instance, check_mapping_totality, check_schema_compatibility};
 pub use theory::{Atom, Dependency, Egd, RuleOrigin, Term, Tgd, Theory, TheoryError};
 
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
@@ -26,6 +30,14 @@ pub mod codes {
     pub const VACUOUS: &str = "consistency.theory.vacuous";
     /// The chase exhausted its budget; nothing is claimed.
     pub const CHASE_REFUSED: &str = "consistency.chase.refused";
+    /// No tuple of a source relation can be exchanged into the target.
+    pub const INCOMPATIBLE: &str = "consistency.schema.incompatible";
+    /// The source and mapping permit data that breaks a target constraint.
+    pub const UNPRESERVED: &str = "consistency.schema.unpreserved_constraint";
+    /// Sample or real data breaks a source or target constraint.
+    pub const INSTANCE_VIOLATION: &str = "consistency.instance.violation";
+    /// A source relation or column never reaches the target.
+    pub const NON_TOTAL: &str = "consistency.mapping.non_total";
 }
 
 /// The non-vacuity witness for `relation`: chase one tuple of fresh labelled
@@ -74,21 +86,31 @@ pub fn check_non_vacuity(theory: &Theory, budget: ChaseBudget) -> Vec<Diagnostic
 }
 
 fn vacuous(theory: &Theory, relation: &str, conflict: &Conflict) -> Diagnostic {
-    let witness: Vec<String> = conflict.witness.iter().map(ToString::to_string).collect();
-    let matched: Vec<String> = conflict.matched.iter().map(ToString::to_string).collect();
     finding(
         codes::VACUOUS,
-        format!(
-            "{relation} can never hold a tuple: from {} the rules [{}] force {} = {} \
-             (EGD {} on {})",
-            witness.join(", "),
-            conflict.rules.join(", "),
-            conflict.left,
-            conflict.right,
-            conflict.egd,
-            matched.join(", "),
-        ),
+        DiagnosticSeverity::Error,
+        format!("{relation} can never hold a tuple: {}", conflict_message(conflict)),
         origin_of(theory, &conflict.egd),
+    )
+}
+
+/// `from <witness> the rules [<rules>] force <left> = <right> (EGD <id> on <facts>)`.
+fn conflict_message(conflict: &Conflict) -> String {
+    let render = |facts: &[Fact]| {
+        facts
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "from {} the rules [{}] force {} = {} (EGD {} on {})",
+        render(&conflict.witness),
+        conflict.rules.join(", "),
+        conflict.left,
+        conflict.right,
+        conflict.egd,
+        render(&conflict.matched),
     )
 }
 
@@ -96,11 +118,13 @@ fn refusal(theory: &Theory, error: &ChaseError) -> Diagnostic {
     match error {
         ChaseError::Theory(error) => finding(
             codes::MALFORMED,
+            DiagnosticSeverity::Error,
             format!("the lowered theory is malformed: {error:?}"),
             None,
         ),
         ChaseError::NotWeaklyAcyclic { rules } => finding(
             codes::NOT_WEAKLY_ACYCLIC,
+            DiagnosticSeverity::Error,
             format!(
                 "TGDs [{}] create existential values on a cycle, so the chase may not terminate",
                 rules.join(", ")
@@ -109,11 +133,13 @@ fn refusal(theory: &Theory, error: &ChaseError) -> Diagnostic {
         ),
         ChaseError::BudgetExceeded { resource, limit } => finding(
             codes::CHASE_REFUSED,
+            DiagnosticSeverity::Error,
             format!("the chase exceeded its {resource} budget of {limit}; consistency is unknown"),
             None,
         ),
         ChaseError::Internal(detail) => finding(
             codes::CHASE_REFUSED,
+            DiagnosticSeverity::Error,
             format!("the chase was refused: {detail}; consistency is unknown"),
             None,
         ),
@@ -128,10 +154,15 @@ fn origin_of<'a>(theory: &'a Theory, rule: &str) -> Option<&'a RuleOrigin> {
         .map(Dependency::origin)
 }
 
-fn finding(code: &str, message: String, origin: Option<&RuleOrigin>) -> Diagnostic {
+fn finding(
+    code: &str,
+    severity: DiagnosticSeverity,
+    message: String,
+    origin: Option<&RuleOrigin>,
+) -> Diagnostic {
     Diagnostic {
         code: DiagnosticCode::new(code),
-        severity: DiagnosticSeverity::Error,
+        severity,
         message,
         span: origin.map(|origin| Span::pointer(origin.pointer.clone())),
         artifact_id: origin.and_then(|origin| origin.artifact_id.clone()),
