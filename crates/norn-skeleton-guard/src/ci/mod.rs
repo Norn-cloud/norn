@@ -133,8 +133,8 @@ fn contract_errors(contract: Vec<String>, approval: Option<Result<String, String
 /// [`maintainer_approval`] of the evidence file for the candidate checkout's HEAD.
 fn approval_of(evidence: &Path, root: &Path) -> Result<String, String> {
     let bytes = std::fs::read(evidence).map_err(|error| format!("maintainer evidence: {error}"))?;
-    let document = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("maintainer evidence: {error}"))?;
+    let document =
+        serde_json::from_slice(&bytes).map_err(|error| format!("maintainer evidence: {error}"))?;
     maintainer_approval(&document, &git::head(root)?)
 }
 
@@ -165,7 +165,9 @@ pub fn maintainer_approval(
         ));
     }
     let head = text(evidence, "head_sha")
-        .filter(|sha| sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        .filter(|sha| {
+            sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
         .ok_or("maintainer evidence names no exact head commit")?;
     if head != candidate_head {
         return Err(format!(
@@ -183,8 +185,14 @@ pub fn maintainer_approval(
         let (Some(user), Some(state)) = (text(review, "user"), text(review, "state")) else {
             return Err("maintainer evidence has a malformed review".to_owned());
         };
-        if matches!(state.as_str(), "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED") {
-            let maintainer = matches!(text(review, "permission").as_deref(), Some("admin" | "write"));
+        if matches!(
+            state.as_str(),
+            "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED"
+        ) {
+            let maintainer = matches!(
+                text(review, "permission").as_deref(),
+                Some("admin" | "write")
+            );
             decisive.insert(user, (state, text(review, "commit_id"), maintainer));
         }
     }
@@ -305,7 +313,10 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
         .split_once("match kind with")
         .ok_or("artifact promotion requires an explicit match on kind")?;
     let mut patterns = arms.split('|');
-    if patterns.next().is_none_or(|prefix| !prefix.trim().is_empty()) {
+    if patterns
+        .next()
+        .is_none_or(|prefix| !prefix.trim().is_empty())
+    {
         return Err("artifact promotion requires explicit constructor patterns".into());
     }
     let mut actual = BTreeSet::new();
@@ -357,8 +368,16 @@ mod tests {
     fn maintainer_approval_needs_write_permission_on_the_exact_head() {
         let approved = review("maintainer", "APPROVED", HEAD, "write");
         assert_eq!(approval(&[approved]), Ok("maintainer".to_owned()));
-        assert_eq!(approval(&[review("owner", "APPROVED", HEAD, "admin")]), Ok("owner".to_owned()));
-        for (commit, permission) in [(HEAD, "read"), (HEAD, "triage"), (HEAD, "none"), (OLDER, "admin")] {
+        assert_eq!(
+            approval(&[review("owner", "APPROVED", HEAD, "admin")]),
+            Ok("owner".to_owned())
+        );
+        for (commit, permission) in [
+            (HEAD, "read"),
+            (HEAD, "triage"),
+            (HEAD, "none"),
+            (OLDER, "admin"),
+        ] {
             assert!(approval(&[review("someone", "APPROVED", commit, permission)]).is_err());
         }
         assert!(approval(&[review("maintainer", "COMMENTED", HEAD, "write")]).is_err());
@@ -370,20 +389,32 @@ mod tests {
         let comment = review("maintainer", "COMMENTED", HEAD, "write");
         assert!(approval(&[approved.clone(), comment]).is_ok());
         for later in ["DISMISSED", "CHANGES_REQUESTED"] {
-            assert!(approval(&[approved.clone(), review("maintainer", later, HEAD, "write")]).is_err());
+            assert!(
+                approval(&[approved.clone(), review("maintainer", later, HEAD, "write")]).is_err()
+            );
         }
         let blocking = review("other", "CHANGES_REQUESTED", OLDER, "admin");
         assert!(approval(&[approved.clone(), blocking]).is_err());
-        assert!(approval(&[approved, review("reader", "CHANGES_REQUESTED", HEAD, "read")]).is_ok());
+        assert!(
+            approval(&[
+                approved,
+                review("reader", "CHANGES_REQUESTED", HEAD, "read")
+            ])
+            .is_ok()
+        );
     }
 
     #[test]
     fn maintainer_approval_binds_repository_and_candidate() {
         let reviews = [review("maintainer", "APPROVED", HEAD, "write")];
-        let evidence = |repository: &str, head_repository: Value, head: &str| {
-            json!({"repository": repository, "head_repository": head_repository, "head_sha": head, "reviews": reviews})
-        };
-        assert!(maintainer_approval(&evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), HEAD), HEAD).is_ok());
+        let evidence = |repository: &str, head_repository: Value, head: &str| json!({"repository": repository, "head_repository": head_repository, "head_sha": head, "reviews": reviews});
+        assert!(
+            maintainer_approval(
+                &evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), HEAD),
+                HEAD
+            )
+            .is_ok()
+        );
         for document in [
             evidence("Norn-cloud/norn", json!("fork/norn"), HEAD),
             evidence("Norn-cloud/norn", Value::Null, HEAD),
@@ -398,15 +429,25 @@ mod tests {
                 Err("maintainer evidence names no exact head commit".to_owned())
             );
         }
-        assert!(maintainer_approval(&evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), HEAD), OLDER).is_err());
+        assert!(
+            maintainer_approval(
+                &evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), HEAD),
+                OLDER
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn contract_changes_need_an_approval() {
-        let contract = || vec!["scripts/ci/core.sh: gate contract differs from the trusted base".to_owned()];
+        let contract =
+            || vec!["scripts/ci/core.sh: gate contract differs from the trusted base".to_owned()];
         assert_eq!(contract_errors(contract(), None), contract());
         assert!(contract_errors(contract(), Some(Ok("maintainer".to_owned()))).is_empty());
-        assert_eq!(contract_errors(contract(), Some(Err("fork".to_owned()))).len(), 2);
+        assert_eq!(
+            contract_errors(contract(), Some(Err("fork".to_owned()))).len(),
+            2
+        );
         assert!(contract_errors(Vec::new(), Some(Err("fork".to_owned()))).is_empty());
     }
 

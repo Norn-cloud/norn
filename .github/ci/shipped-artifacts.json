@@ -12429,7 +12429,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/src/ci/mod.rs",
-      "sha256": "0787c41623b478227d7896fa357028a738ebec4b195621ccf6eae16b36c9f822",
+      "sha256": "bf7a4cecb3091769b24bf35a98cd6e66c06af343fee78879e8016b4c95e1b982",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12501,7 +12501,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/tests/provenance.rs",
-      "sha256": "7acfe60bc2ce6a0eafb868abc9618dace4f3381baee4a8cab98504fdb302ab58",
+      "sha256": "b1a6fcee021835766562c846e168afc36a6512f527fbbb2d7a872bc91a1b8379",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
