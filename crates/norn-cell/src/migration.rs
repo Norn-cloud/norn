@@ -97,7 +97,7 @@ pub(crate) fn upgrade_raw_property_columns<E: SqlEngine>(
             if renames.is_empty() {
                 continue;
             }
-            let mut layout: BTreeSet<String> = engine
+            let present: BTreeSet<String> = engine
                 .query(
                     "SELECT \"name\" FROM pragma_table_info(?1)",
                     params![table.as_str()],
@@ -105,12 +105,30 @@ pub(crate) fn upgrade_raw_property_columns<E: SqlEngine>(
                 .into_iter()
                 .map(|row| SqlRow(row).get::<String>(0))
                 .collect::<Result<_, _>>()?;
-            let legacy = renames.iter().all(|(raw, _)| layout.remove(*raw))
-                && renames
-                    .iter()
-                    .all(|(_, physical)| layout.insert((*physical).to_owned()));
-            if !legacy {
-                continue;
+            let raw = renames
+                .iter()
+                .filter(|(raw, _)| present.contains(*raw))
+                .count();
+            let generated = renames
+                .iter()
+                .filter(|(_, physical)| present.contains(*physical))
+                .count();
+            // Every property column of a table is raw, or every one is generated, or the
+            // table does not exist yet. Anything else is refused before the marker is
+            // written, and the open transaction rolls back any rename already made.
+            match (raw, generated) {
+                (0, 0) if present.is_empty() => continue,
+                (0, all) if all == renames.len() => continue,
+                (all, 0) if all == renames.len() => {}
+                _ => {
+                    return Err(CellError::SchemaMismatch {
+                        expected: format!(
+                            "{table}: all {} property columns raw or all `{PROPERTY_COLUMN_PREFIX}`",
+                            renames.len()
+                        ),
+                        found: format!("{raw} raw and {generated} `{PROPERTY_COLUMN_PREFIX}`"),
+                    });
+                }
             }
             renames.sort_by_key(|(raw, _)| std::cmp::Reverse(raw.len()));
             for (raw, physical) in renames {

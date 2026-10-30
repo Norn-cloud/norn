@@ -4788,6 +4788,74 @@ fn sqlite_keywords_as_property_ids_store_read_write_and_index_in_generated_colum
 }
 
 #[test]
+fn mixed_or_incomplete_property_column_layouts_are_refused_and_left_untouched() {
+    let definition = serde_json::from_value(json!({
+        "name":"defs.Item",
+        "properties":[
+            {"id":"name", "type":{"kind":"text"}},
+            {"id":"code", "type":{"kind":"text"}},
+            {"id":"note", "type":{"kind":"text"}, "constraints":{"nullable":true}}
+        ],
+        "identity":[{"name":"by_code", "properties":["code"]}]
+    }))
+    .expect("object type decodes");
+    let model = Model::from_definitions(&[definition], &[]).expect("model projects");
+    let directory = tempfile::tempdir().expect("temp directory");
+    // Mixed: one raw column beside two generated ones. Incomplete: the raw
+    // layout with a property column missing.
+    let cases: [(&str, &[&str]); 2] = [
+        (
+            "mixed",
+            &["ALTER TABLE \"o:defs.Item\" RENAME COLUMN \"p:name\" TO \"name\""],
+        ),
+        (
+            "incomplete",
+            &[
+                "ALTER TABLE \"o:defs.Item\" RENAME COLUMN \"p:name\" TO \"name\"",
+                "ALTER TABLE \"o:defs.Item\" RENAME COLUMN \"p:code\" TO \"code\"",
+                "ALTER TABLE \"o:defs.Item\" DROP COLUMN \"p:note\"",
+            ],
+        ),
+    ];
+    for (case, edits) in cases {
+        let path = directory.path().join(format!("{case}.sqlite"));
+        drop(CellStore::open(&path, model.clone(), StoreOptions::default()).expect("creates"));
+        let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine opens");
+        for edit in edits {
+            engine.execute_batch(edit).expect("edits the layout");
+        }
+        engine
+            .execute_batch("DELETE FROM \"_norn_meta\" WHERE \"key\" = 'property_columns'")
+            .expect("drops the layout marker");
+        let before = table_columns(&engine, "o:defs.Item");
+        drop(engine);
+
+        let refused = CellStore::open(&path, model.clone(), StoreOptions::default());
+        assert!(
+            matches!(refused, Err(CellError::SchemaMismatch { .. })),
+            "{case}: {:?}",
+            refused.err()
+        );
+        let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine opens");
+        assert_eq!(
+            table_columns(&engine, "o:defs.Item"),
+            before,
+            "{case}: no rename kept"
+        );
+        let marker = engine
+            .query(
+                "SELECT \"value\" FROM \"_norn_meta\" WHERE \"key\" = 'property_columns'",
+                &[],
+            )
+            .expect("reads meta");
+        assert!(
+            marker.is_empty(),
+            "{case}: the layout marker is not written"
+        );
+    }
+}
+
+#[test]
 fn raw_named_property_columns_are_renamed_on_open_with_data_and_indexes() {
     let definition = serde_json::from_value(json!({
         "name":"defs.Item",
