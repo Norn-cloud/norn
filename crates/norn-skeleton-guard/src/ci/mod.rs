@@ -17,7 +17,7 @@ pub fn run(root: &Path, base: &Path) -> Vec<String> {
 }
 
 /// [`run`] for the trusted lane: workflow and gate contract changes are admitted
-/// only with `evidence` of a maintainer approval of the exact candidate commit
+/// only with `evidence` that an admin approved the exact candidate commit
 /// (see [`maintainer_approval`]). Every other check is unchanged.
 #[must_use]
 pub fn trusted(root: &Path, base: &Path, evidence: Option<&Path>) -> Vec<String> {
@@ -117,7 +117,7 @@ pub fn trusted(root: &Path, base: &Path, evidence: Option<&Path>) -> Vec<String>
     errors
 }
 
-/// Contract changes stay errors unless a maintainer approved the exact head.
+/// Contract changes stay errors unless an admin approved the exact head.
 fn contract_errors(contract: Vec<String>, approval: Option<Result<String, String>>) -> Vec<String> {
     match approval {
         _ if contract.is_empty() => contract,
@@ -138,15 +138,17 @@ fn approval_of(evidence: &Path, root: &Path) -> Result<String, String> {
     maintainer_approval(&document, &git::head(root)?)
 }
 
-/// The maintainer who approved the exact candidate commit, from the API evidence
-/// that the base-owned trusted workflow records (`repository`, `head_repository`,
-/// `head_sha`, and `reviews` in API order with each reviewer's `permission`).
-/// Fork heads stay data-only: they never change workflows or gates, approved or not.
+/// The admin who commented `/approve-gates <head>` for the exact candidate commit,
+/// from the API evidence that the base-owned trusted workflow records
+/// (`repository`, `head_repository`, `head_sha`, and the pull request's
+/// `/approve-gates` `comments` with each author's `permission`). Edited comments
+/// do not count; deleted ones are gone from the API. Fork heads stay data-only:
+/// they never change workflows or gates, approved or not.
 ///
 /// # Errors
 /// Returns why the candidate is not admitted: a fork or unknown head repository,
-/// evidence for another commit, an outstanding maintainer change request, or no
-/// maintainer approval whose commit is the candidate head.
+/// evidence for another commit, malformed evidence, or no unedited admin comment
+/// naming the candidate head.
 pub fn maintainer_approval(
     evidence: &serde_json::Value,
     candidate_head: &str,
@@ -174,41 +176,27 @@ pub fn maintainer_approval(
             "evidence is for {head}, the candidate is {candidate_head}"
         ));
     }
-    // As on GitHub, each reviewer's latest approval, change request or
-    // dismissal decides; comments do not.
-    let mut decisive = BTreeMap::new();
-    for review in evidence
-        .get("reviews")
+    let command = format!("/approve-gates {head}");
+    let mut approver = None;
+    for comment in evidence
+        .get("comments")
         .and_then(serde_json::Value::as_array)
-        .ok_or("maintainer evidence has no reviews")?
+        .ok_or("maintainer evidence has no comments")?
     {
-        let (Some(user), Some(state)) = (text(review, "user"), text(review, "state")) else {
-            return Err("maintainer evidence has a malformed review".to_owned());
+        let (Some(user), Some(body), Some(created), Some(updated)) = (
+            text(comment, "user"),
+            text(comment, "body"),
+            text(comment, "created_at"),
+            text(comment, "updated_at"),
+        ) else {
+            return Err("maintainer evidence has a malformed comment".to_owned());
         };
-        if matches!(
-            state.as_str(),
-            "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED"
-        ) {
-            let maintainer = matches!(
-                text(review, "permission").as_deref(),
-                Some("admin" | "write")
-            );
-            decisive.insert(user, (state, text(review, "commit_id"), maintainer));
+        let admin = text(comment, "permission").as_deref() == Some("admin");
+        if approver.is_none() && admin && created == updated && body.trim() == command {
+            approver = Some(user);
         }
     }
-    if let Some((user, _)) = decisive
-        .iter()
-        .find(|(_, (state, _, maintainer))| *maintainer && state == "CHANGES_REQUESTED")
-    {
-        return Err(format!("maintainer {user} requested changes"));
-    }
-    decisive
-        .into_iter()
-        .find(|(_, (state, commit, maintainer))| {
-            *maintainer && state == "APPROVED" && commit.as_deref() == Some(head.as_str())
-        })
-        .map(|(user, _)| user)
-        .ok_or_else(|| format!("no maintainer approved the exact head {head}"))
+    approver.ok_or_else(|| format!("no admin commented `{command}` unedited"))
 }
 
 fn retained_obligations(root: &Path, base: &Path) -> Result<(), String> {
@@ -354,60 +342,47 @@ mod tests {
 
     const HEAD: &str = "1111111111111111111111111111111111111111";
     const OLDER: &str = "2222222222222222222222222222222222222222";
+    const AT: &str = "2026-10-30T12:00:00Z";
 
-    fn review(user: &str, state: &str, commit: &str, permission: &str) -> Value {
-        json!({"user": user, "state": state, "commit_id": commit, "permission": permission})
+    fn comment(user: &str, body: &str, permission: &str) -> Value {
+        json!({"user": user, "body": body, "created_at": AT, "updated_at": AT, "permission": permission})
     }
 
-    fn approval(reviews: &[Value]) -> Result<String, String> {
-        let evidence = json!({"repository": "Norn-cloud/norn", "head_repository": "Norn-cloud/norn", "head_sha": HEAD, "reviews": reviews});
+    fn approval(comments: &[Value]) -> Result<String, String> {
+        let evidence = json!({"repository": "Norn-cloud/norn", "head_repository": "Norn-cloud/norn", "head_sha": HEAD, "comments": comments});
         maintainer_approval(&evidence, HEAD)
     }
 
     #[test]
-    fn maintainer_approval_needs_write_permission_on_the_exact_head() {
-        let approved = review("maintainer", "APPROVED", HEAD, "write");
-        assert_eq!(approval(&[approved]), Ok("maintainer".to_owned()));
+    fn maintainer_approval_needs_an_unedited_admin_comment_on_the_exact_head() {
+        let exact = format!("/approve-gates {HEAD}");
         assert_eq!(
-            approval(&[review("owner", "APPROVED", HEAD, "admin")]),
+            approval(&[comment("owner", &format!("{exact}\n"), "admin")]),
             Ok("owner".to_owned())
         );
-        for (commit, permission) in [
-            (HEAD, "read"),
-            (HEAD, "triage"),
-            (HEAD, "none"),
-            (OLDER, "admin"),
+        for permission in ["write", "maintain", "triage", "read", "none"] {
+            assert!(approval(&[comment("someone", &exact, permission)]).is_err());
+        }
+        for body in [
+            format!("/approve-gates {OLDER}"),
+            "/approve-gates 1111111".to_owned(),
+            format!("lgtm {exact}"),
+            "/approve-gates".to_owned(),
         ] {
-            assert!(approval(&[review("someone", "APPROVED", commit, permission)]).is_err());
+            assert!(approval(&[comment("owner", &body, "admin")]).is_err(), "{body}");
         }
-        assert!(approval(&[review("maintainer", "COMMENTED", HEAD, "write")]).is_err());
-    }
-
-    #[test]
-    fn maintainer_approval_follows_each_reviewers_latest_decision() {
-        let approved = review("maintainer", "APPROVED", HEAD, "write");
-        let comment = review("maintainer", "COMMENTED", HEAD, "write");
-        assert!(approval(&[approved.clone(), comment]).is_ok());
-        for later in ["DISMISSED", "CHANGES_REQUESTED"] {
-            assert!(
-                approval(&[approved.clone(), review("maintainer", later, HEAD, "write")]).is_err()
-            );
-        }
-        let blocking = review("other", "CHANGES_REQUESTED", OLDER, "admin");
-        assert!(approval(&[approved.clone(), blocking]).is_err());
-        assert!(
-            approval(&[
-                approved,
-                review("reader", "CHANGES_REQUESTED", HEAD, "read")
-            ])
-            .is_ok()
-        );
+        let mut edited = comment("owner", &exact, "admin");
+        edited["updated_at"] = json!("2026-10-30T12:05:00Z");
+        assert!(approval(&[edited.clone()]).is_err());
+        assert!(approval(&[edited, comment("owner", &exact, "admin")]).is_ok());
+        assert!(approval(&[]).is_err());
+        assert!(approval(&[json!({"user": "owner", "body": exact})]).is_err());
     }
 
     #[test]
     fn maintainer_approval_binds_repository_and_candidate() {
-        let reviews = [review("maintainer", "APPROVED", HEAD, "write")];
-        let evidence = |repository: &str, head_repository: Value, head: &str| json!({"repository": repository, "head_repository": head_repository, "head_sha": head, "reviews": reviews});
+        let comments = [comment("owner", &format!("/approve-gates {HEAD}"), "admin")];
+        let evidence = |repository: &str, head_repository: Value, head: &str| json!({"repository": repository, "head_repository": head_repository, "head_sha": head, "comments": comments});
         assert!(
             maintainer_approval(
                 &evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), HEAD),

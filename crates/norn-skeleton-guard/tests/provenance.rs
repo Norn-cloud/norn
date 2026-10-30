@@ -637,18 +637,19 @@ fn gate_change_candidate() -> (Fixture, String, String) {
     (candidate, older, head)
 }
 
-/// The base-owned trusted lane over `candidate`, with API evidence as recorded by the workflow.
+/// The base-owned trusted lane over `candidate`, with API evidence as recorded by
+/// the workflow: an optional `/approve-gates <commit>` comment by a user with `permission`.
 fn trusted_with(
     candidate: &Fixture,
     head_repository: &str,
     head: &str,
-    approved: Option<&str>,
+    approved: Option<(&str, &str)>,
 ) -> Vec<String> {
-    let reviews: Vec<Value> = approved
-        .map(|commit| json!({"user":"maintainer","state":"APPROVED","commit_id":commit,"permission":"write"}))
+    let comments: Vec<Value> = approved
+        .map(|(commit, permission)| json!({"user":"owner","body":format!("/approve-gates {commit}"),"created_at":"2026-10-30T12:00:00Z","updated_at":"2026-10-30T12:00:00Z","permission":permission}))
         .into_iter()
         .collect();
-    let evidence = json!({"repository":"Norn-cloud/norn","head_repository":head_repository,"head_sha":head,"reviews":reviews});
+    let evidence = json!({"repository":"Norn-cloud/norn","head_repository":head_repository,"head_sha":head,"comments":comments});
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("maintainer-approval.json");
     fs::write(&path, evidence.to_string()).unwrap();
@@ -667,27 +668,9 @@ fn rejected(errors: &[String], reason: &str) {
 }
 
 #[test]
-fn trusted_policy_rejects_a_fork_gate_change_even_with_an_exact_head_approval() {
+fn trusted_policy_admits_a_gate_change_an_admin_approved_on_its_exact_head() {
     let (candidate, _, head) = gate_change_candidate();
-    rejected(
-        &trusted_with(&candidate, "contributor/norn", &head, Some(&head)),
-        "only Norn-cloud/norn branches",
-    );
-}
-
-#[test]
-fn trusted_policy_rejects_a_same_repository_gate_change_without_approval() {
-    let (candidate, _, head) = gate_change_candidate();
-    rejected(
-        &trusted_with(&candidate, "Norn-cloud/norn", &head, None),
-        "no maintainer approved the exact head",
-    );
-}
-
-#[test]
-fn trusted_policy_admits_a_same_repository_gate_change_approved_on_its_exact_head() {
-    let (candidate, _, head) = gate_change_candidate();
-    let errors = trusted_with(&candidate, "Norn-cloud/norn", &head, Some(&head));
+    let errors = trusted_with(&candidate, "Norn-cloud/norn", &head, Some((&head, "admin")));
     assert!(errors.is_empty(), "{errors:?}");
     // Without evidence the same candidate is rejected exactly as before.
     let base = policy_fixture();
@@ -699,15 +682,42 @@ fn trusted_policy_admits_a_same_repository_gate_change_approved_on_its_exact_hea
 }
 
 #[test]
-fn trusted_policy_ignores_an_approval_of_an_older_head() {
+fn trusted_policy_rejects_an_approval_of_a_stale_head() {
     let (candidate, older, head) = gate_change_candidate();
     rejected(
-        &trusted_with(&candidate, "Norn-cloud/norn", &head, Some(&older)),
-        "no maintainer approved the exact head",
+        &trusted_with(&candidate, "Norn-cloud/norn", &head, Some((&older, "admin"))),
+        "no admin commented",
     );
     // Evidence recorded for the older head cannot vouch for the candidate checkout.
     rejected(
-        &trusted_with(&candidate, "Norn-cloud/norn", &older, Some(&older)),
+        &trusted_with(&candidate, "Norn-cloud/norn", &older, Some((&older, "admin"))),
         "the candidate is",
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_an_approval_from_a_non_admin() {
+    let (candidate, _, head) = gate_change_candidate();
+    rejected(
+        &trusted_with(&candidate, "Norn-cloud/norn", &head, Some((&head, "write"))),
+        "no admin commented",
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_a_fork_gate_change_even_with_an_exact_head_approval() {
+    let (candidate, _, head) = gate_change_candidate();
+    rejected(
+        &trusted_with(&candidate, "contributor/norn", &head, Some((&head, "admin"))),
+        "only Norn-cloud/norn branches",
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_a_gate_change_without_an_approval_comment() {
+    let (candidate, _, head) = gate_change_candidate();
+    rejected(
+        &trusted_with(&candidate, "Norn-cloud/norn", &head, None),
+        "no admin commented",
     );
 }

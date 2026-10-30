@@ -12,7 +12,8 @@ in base code (crates/norn-skeleton-guard), never in the workflow:
   checkout that holds this file (the pull request's base) checks the pull
   request as data. Nothing from the candidate runs. The evidence file, recorded
   by the base-owned workflow from the GitHub API, lets a same-repository head
-  that a maintainer approved on its exact commit change workflows and gates.
+  that an admin approved with `/approve-gates <head sha>` change workflows and
+  gates.
 """
 
 import argparse
@@ -29,7 +30,7 @@ REPO = Path(__file__).resolve().parents[2]
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", help="the pull request checkout, checked as data by this checkout's gates")
-    parser.add_argument("--maintainer-evidence", help="API evidence of a maintainer approval of the exact head")
+    parser.add_argument("--maintainer-evidence", help="API evidence of an admin approval of the exact head")
     args = parser.parse_args()
     env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}
     subprocess.run(["rustup", "toolchain", "install", TOOLCHAIN, "--profile", "minimal", "--no-self-update"], check=True, env=env)

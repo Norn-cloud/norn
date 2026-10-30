@@ -29,6 +29,7 @@ jobs:
   trusted-policy:
     permissions:
       contents: read
+      issues: read
       pull-requests: read
       statuses: write
     if: github.event_name == 'pull_request_target'
@@ -46,18 +47,19 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: candidate
           persist-credentials: false
-      # Workflow and gate changes need a same-repository head that a maintainer
-      # approved on its exact commit; re-run this job after approving. Without
-      # this evidence such changes fail closed; data-only PRs never need it.
-      - name: Record maintainer reviews of the exact PR head
+      # Workflow and gate changes need a same-repository head and an unedited
+      # `/approve-gates <head sha>` comment from an admin; re-run this job after
+      # commenting. Without this evidence such changes fail closed; data-only PRs
+      # never need it.
+      - name: Record admin approvals of the exact PR head
         continue-on-error: true
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
             const pr = context.payload.pull_request;
             const { owner, repo } = context.repo;
-            // Only decisive reviews need a permission. A reviewer the API does not
-            // know as a user (a bot) has none; any other API failure fails closed.
+            // A commenter the API does not know as a user (a bot) has no
+            // permission; any other API failure fails closed.
             const permissions = new Map();
             const permission = async (username) => {
               if (!permissions.has(username)) {
@@ -70,16 +72,16 @@ jobs:
               }
               return permissions.get(username);
             };
-            const reviews = [];
-            for (const review of await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: pr.number, per_page: 100 })) {
-              if (!review.user || !['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) continue;
-              reviews.push({ user: review.user.login, state: review.state, commit_id: review.commit_id, permission: await permission(review.user.login) });
+            const comments = [];
+            for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
+              if (!comment.user || !(comment.body || '').trim().startsWith('/approve-gates')) continue;
+              comments.push({ user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
             }
             require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify({
               repository: `${owner}/${repo}`,
               head_repository: pr.head.repo ? pr.head.repo.full_name : null,
               head_sha: pr.head.sha,
-              reviews
+              comments
             }));
       - name: Validate candidate as data with base-owned policy
         run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
