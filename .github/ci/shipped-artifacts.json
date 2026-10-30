@@ -176,7 +176,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "556ec76e5b376535670474fdbb5d06920fa8ff9539b839e315b49f43dd3295c0",
+      "sha256": "6c61e8daa0af180ac2c8aa0c210799748a4d44f6ac171f34c944a0184a13385b",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -24913,7 +24913,7 @@
     },
     {
       "path": "vendor/zen/core/expression/Cargo.toml",
-      "sha256": "662b19461ace3174962018818bd3f847fc3fb946efe022002b78e68eaa0bd6c5",
+      "sha256": "c774d978a401dcc8a2446e57cf959d8b999156f0e4c923337d2c439f25d141f2",
       "origin": "derived",
       "category": "software",
       "license": "MIT",
