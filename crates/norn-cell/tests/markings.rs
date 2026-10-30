@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 
+use norn_cell::engine::{NativeEngine, SqlEngine, SqlRow, SqlValue};
 use norn_cell::{
     CellError, CellStore, CommitBatch, CommitOutcome, FactWriteRow, MAIN_WORLD,
     MarkingDeclassification, Model, StoreOptions,
@@ -20,6 +21,376 @@ use serde_json::{Value as JsonValue, json};
 const SCOPE: &str = "org_demo/dev";
 const CONTACT: &str = "pii.contact";
 const HEALTH: &str = "pii.health";
+
+fn raw_marking_database_state(engine: &NativeEngine) -> BTreeMap<String, Vec<Vec<SqlValue>>> {
+    let catalog = engine
+        .query(
+            "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master ORDER BY type, name",
+            &[],
+        )
+        .expect("original physical schema");
+    let mut result = BTreeMap::from([("sqlite_master".to_owned(), catalog)]);
+    let tables = engine
+        .query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+            &[],
+        )
+        .expect("original tables");
+    for values in tables {
+        let name: String = SqlRow(values).get(0).expect("table name");
+        let rows = engine
+            .query(
+                &format!(
+                    "SELECT rowid, * FROM {} ORDER BY rowid",
+                    norn_projections::sqlite_ddl::quote_identifier(&name)
+                ),
+                &[],
+            )
+            .expect("original rows including NULLs and metadata");
+        result.insert(name, rows);
+    }
+    result
+}
+
+fn malformed_marking_fixture(
+    path: &std::path::Path,
+    model: &Model,
+    legacy: bool,
+    bad_table: &str,
+    defect: &str,
+) -> NativeEngine {
+    drop(
+        CellStore::open(path, model.clone(), StoreOptions::default()).expect("seed cell metadata"),
+    );
+    let engine = NativeEngine::open(path, StoreOptions::default()).expect("fixture engine");
+    engine.execute_batch("DROP INDEX _norn_marking_current_nonempty;
+        INSERT INTO _norn_marking_subject (subject, world, object_type, id) VALUES (1, 'main', 'marking.Contact', 'row');").expect("retain original subject metadata");
+    let (identity, kind) = if legacy {
+        ("id", "TEXT")
+    } else {
+        ("subject", "INTEGER")
+    };
+    for table in ["_norn_marking_current", "_norn_marking_version"] {
+        let required_world = if table == bad_table && defect == "nullable_world" {
+            ""
+        } else {
+            " NOT NULL"
+        };
+        let key = if table == bad_table && defect == "wrong_primary_key" {
+            format!("world, object_type, {identity}")
+        } else if table == "_norn_marking_version" {
+            format!("world, object_type, {identity}, property, version")
+        } else {
+            format!("world, object_type, {identity}, property")
+        };
+        engine.execute_batch(&format!(
+            "DROP TABLE {table}; CREATE TABLE {table} (\"world\" TEXT{required_world}, \"object_type\" TEXT NOT NULL, \"{identity}\" {kind} NOT NULL, \"property\" TEXT NOT NULL, \"version\" INTEGER NOT NULL, \"markings\" TEXT NOT NULL, PRIMARY KEY ({key}));"
+        )).expect("install the physical schema under review");
+        let malformed = table == bad_table;
+        let world = if malformed && defect == "nullable_world" {
+            SqlValue::Null
+        } else {
+            SqlValue::from(MAIN_WORLD)
+        };
+        let identity_value = if legacy {
+            SqlValue::from("row")
+        } else {
+            SqlValue::Integer(1)
+        };
+        let version = if malformed && defect == "version_text" {
+            SqlValue::from("not-a-version")
+        } else {
+            SqlValue::Integer(1)
+        };
+        let labels = if malformed && defect == "invalid_markings" {
+            "["
+        } else {
+            "[\"pii.contact\"]"
+        };
+        engine.execute(
+            &format!("INSERT INTO {table} (world, object_type, {identity}, property, version, markings) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"),
+            &[world, SqlValue::from("marking.Contact"), identity_value, SqlValue::from("value"), version, SqlValue::from(labels)],
+        ).expect("persist the exact malformed row without omitting its NULL identity");
+    }
+    engine
+}
+
+#[test]
+fn malformed_marking_storage_rolls_back_original_schema_rows_and_metadata() {
+    let model = model(&[json!({"name":"marking.Contact","properties":[
+        {"id":"value","type":{"kind":"text"},"markings":[CONTACT]}
+    ]})]);
+    for legacy in [true, false] {
+        for table in ["_norn_marking_current", "_norn_marking_version"] {
+            for defect in [
+                "nullable_world",
+                "wrong_primary_key",
+                "version_text",
+                "invalid_markings",
+            ] {
+                let directory = tempfile::tempdir().expect("directory");
+                let path = directory.path().join("cell.sqlite");
+                let engine = malformed_marking_fixture(&path, &model, legacy, table, defect);
+                let before = raw_marking_database_state(&engine);
+                if defect == "nullable_world" {
+                    let identity = if legacy { "id" } else { "subject" };
+                    assert_eq!(
+                        engine
+                            .query(&format!("SELECT world, {identity} FROM {table}"), &[])
+                            .expect("NULL-world fixture"),
+                        vec![vec![
+                            SqlValue::Null,
+                            if legacy {
+                                SqlValue::from("row")
+                            } else {
+                                SqlValue::Integer(1)
+                            }
+                        ]],
+                        "the legacy fixture must reproduce INSERT OR IGNORE's omitted identity"
+                    );
+                }
+                assert!(
+                    CellStore::open(&path, model.clone(), StoreOptions::default()).is_err(),
+                    "legacy={legacy}, table={table}, defect={defect} must fail closed"
+                );
+                assert_eq!(
+                    raw_marking_database_state(&engine),
+                    before,
+                    "legacy={legacy}, table={table}, defect={defect}: original tables, rows, indexes and metadata must survive refusal"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn marking_subjects_keep_world_type_and_full_key_distinct() {
+    let model = model(&[
+        json!({"name":"marking.One","properties":[{"id":"value","type":{"kind":"text"},"markings":[CONTACT]}]}),
+        json!({"name":"marking.Two","properties":[{"id":"value","type":{"kind":"text"},"markings":[HEALTH]}]}),
+    ]);
+    let mut store = CellStore::open_in_memory(model).expect("store");
+    let long = "é".repeat(2_000);
+    let neighbor = format!("{long}x");
+    let subjects = [
+        (MAIN_WORLD, "marking.One", long.as_str(), "first"),
+        ("other", "marking.One", long.as_str(), "second"),
+        (MAIN_WORLD, "marking.Two", long.as_str(), "third"),
+        (MAIN_WORLD, "marking.One", neighbor.as_str(), "fourth"),
+    ];
+    for (world, ty, key, label) in subjects {
+        let mut request = batch(1, vec![put(ty, key, &[("value", label)])]);
+        request.world = world.to_owned();
+        store.commit(&request).expect("subject commits");
+    }
+    let change = MarkingDeclassification {
+        object_type: "marking.One".to_owned(),
+        key: long.clone(),
+        property: "value".to_owned(),
+        expected_version: 1,
+        markings: vec![CONTACT.to_owned()],
+        actor: "officer".to_owned(),
+        reason: "approved".to_owned(),
+    };
+    let mut request = batch(2, Vec::new());
+    request.events = vec![change.ledger_event().expect("event")];
+    request.marking_declassifications = vec![change];
+    store
+        .commit(&request)
+        .expect("declassify exactly one subject");
+    for (world, ty, key, label) in subjects {
+        assert_eq!(
+            store
+                .read()
+                .object(world, ty, key)
+                .expect("object")
+                .expect("retained")
+                .values["value"],
+            Value::String(label.to_owned())
+        );
+        for version in [None, Some(1)] {
+            let labels =
+                if world == MAIN_WORLD && ty == "marking.One" && key == long && version.is_none() {
+                    Vec::new()
+                } else {
+                    vec![if ty == "marking.Two" { HEALTH } else { CONTACT }.to_owned()]
+                };
+            assert_eq!(
+                store
+                    .read()
+                    .effective_markings(world, ty, key, version)
+                    .expect("markings"),
+                Some(BTreeMap::from([("value".to_owned(), labels)]))
+            );
+            assert_eq!(
+                store
+                    .read()
+                    .fact_occurrence_markings(world, ty, key, version)
+                    .expect("occurrence"),
+                Some(std::collections::BTreeSet::new())
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "storage conversion must preserve declassification, historical and incomplete snapshots and roll back on refusal"
+)]
+fn uninterned_marking_storage_converts_atomically_without_reclassifying() {
+    let model = model(&[json!({"name":"marking.Contact","properties":[
+        {"id":"email","type":{"kind":"text"},"markings":[CONTACT]},
+        {"id":"public","type":{"kind":"text"}}
+    ]})]);
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let mut store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("store");
+    store
+        .commit(&batch(
+            1,
+            vec![
+                put(
+                    "marking.Contact",
+                    "alice",
+                    &[("email", "private"), ("public", "public")],
+                ),
+                put(
+                    "marking.Contact",
+                    "partial",
+                    &[("email", "private"), ("public", "public")],
+                ),
+            ],
+        ))
+        .expect("seed");
+    let change = MarkingDeclassification {
+        object_type: "marking.Contact".to_owned(),
+        key: "alice".to_owned(),
+        property: "email".to_owned(),
+        expected_version: 1,
+        markings: vec![CONTACT.to_owned()],
+        actor: "officer".to_owned(),
+        reason: "approved".to_owned(),
+    };
+    let mut request = batch(2, Vec::new());
+    request.events = vec![change.ledger_event().expect("event")];
+    request.marking_declassifications = vec![change];
+    store.commit(&request).expect("declassify current only");
+    let before = store
+        .read()
+        .dump_filtered(|table| !table.starts_with("_norn_marking_"))
+        .expect("business and ledger state");
+    let head = store.read().verify_ledger().expect("head");
+    let current = store
+        .read()
+        .effective_markings(MAIN_WORLD, "marking.Contact", "alice", None)
+        .expect("current");
+    let historical = store
+        .read()
+        .effective_markings(MAIN_WORLD, "marking.Contact", "alice", Some(1))
+        .expect("historical");
+    assert_ne!(current, historical);
+    drop(store);
+    let mut raw = rusqlite::Connection::open(&path).expect("fixture connection");
+    let tx = raw.transaction().expect("fixture transaction");
+    for (table, key) in [
+        ("_norn_marking_current", "world, object_type, id, property"),
+        (
+            "_norn_marking_version",
+            "world, object_type, id, property, version",
+        ),
+    ] {
+        tx.execute_batch(&format!(
+            "DROP INDEX IF EXISTS _norn_marking_current_nonempty;
+             ALTER TABLE {table} RENAME TO fixture_slots;
+             CREATE TABLE {table} (\"world\" TEXT NOT NULL, \"object_type\" TEXT NOT NULL, \"id\" TEXT NOT NULL, \"property\" TEXT NOT NULL, \"version\" INTEGER NOT NULL, \"markings\" TEXT NOT NULL, PRIMARY KEY ({key}));
+             INSERT INTO {table} SELECT m.world, m.object_type, s.id, m.property, m.version, m.markings FROM fixture_slots AS m JOIN _norn_marking_subject AS s ON s.subject = m.subject;
+             DROP TABLE fixture_slots;"
+        )).expect("restore prior physical schema");
+    }
+    tx.execute_batch(
+        "DROP TABLE _norn_marking_subject;
+        DELETE FROM _norn_marking_current WHERE id = 'partial' AND property = 'public';
+        DELETE FROM _norn_marking_version WHERE id = 'partial' AND property = '';",
+    )
+    .expect("incomplete slots stay incomplete");
+    tx.commit().expect("fixture commits");
+    let wrong = Model::from_definitions(&[], &[]).expect("different model");
+    assert!(CellStore::open(&path, wrong, StoreOptions::default()).is_err());
+    for table in ["_norn_marking_current", "_norn_marking_version"] {
+        let schema: String = raw
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name = ?1",
+                [table],
+                |row| row.get(0),
+            )
+            .expect("schema after failed open");
+        assert!(schema.contains("\"id\" TEXT NOT NULL"));
+        assert!(!schema.contains("\"subject\""));
+    }
+    drop(raw);
+    let store =
+        CellStore::open(&path, model.clone(), StoreOptions::default()).expect("convert storage");
+    assert_eq!(
+        store
+            .read()
+            .dump_filtered(|table| !table.starts_with("_norn_marking_"))
+            .expect("business and ledger state"),
+        before
+    );
+    assert_eq!(
+        store.read().verify_ledger().expect("ledger unchanged"),
+        head
+    );
+    assert_eq!(
+        store
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Contact", "alice", None)
+            .expect("current"),
+        current
+    );
+    assert_eq!(
+        store
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Contact", "alice", Some(1))
+            .expect("historical"),
+        historical
+    );
+    assert_eq!(
+        store
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Contact", "partial", None)
+            .expect("partial"),
+        None
+    );
+    assert_eq!(
+        store
+            .read()
+            .fact_occurrence_markings(MAIN_WORLD, "marking.Contact", "partial", Some(1))
+            .expect("missing occurrence"),
+        None
+    );
+    drop(store);
+    let mut store =
+        CellStore::open(&path, model, StoreOptions::default()).expect("conversion is idempotent");
+    store
+        .commit(&batch(
+            3,
+            vec![put(
+                "marking.Contact",
+                "alice",
+                &[("email", "next"), ("public", "public")],
+            )],
+        ))
+        .expect("rewrite converted subject");
+    assert_eq!(
+        store
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Contact", "alice", None)
+            .expect("labels inherited"),
+        historical
+    );
+}
 
 #[tokio::test]
 #[allow(
@@ -642,7 +1013,7 @@ fn action_and_command_outputs_preserve_empty_unions_and_fail_closed_on_partial_s
     let raw = rusqlite::Connection::open(&path).expect("raw SQLite connection opens");
     let removed = raw
         .execute(
-            "DELETE FROM \"_norn_marking_current\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"property\" = ?4",
+            "DELETE FROM \"_norn_marking_current\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = (SELECT \"subject\" FROM \"_norn_marking_subject\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3) AND \"property\" = ?4",
             rusqlite::params![MAIN_WORLD, "marking.MarkedTarget", "partial", "health"],
         )
         .expect("remove one row from the current marking snapshot");
@@ -2958,7 +3329,7 @@ async fn noop_put_occurrence_lineage_preserves_values_and_survives_restart_and_r
     // property snapshot look like a public no-op event.
     let connection = rusqlite::Connection::open(&target).expect("corruption fixture");
     connection.execute(
-        "DELETE FROM _norn_marking_version WHERE world = ?1 AND object_type = 'marking.Evidence' AND id = 'classified' AND version = 2 AND property = ''",
+        "DELETE FROM _norn_marking_version WHERE world = ?1 AND object_type = 'marking.Evidence' AND subject = (SELECT subject FROM _norn_marking_subject WHERE world = ?1 AND object_type = 'marking.Evidence' AND id = 'classified') AND version = 2 AND property = ''",
         [MAIN_WORLD],
     ).expect("remove only immutable occurrence evidence");
     let event = restored
