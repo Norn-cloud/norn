@@ -274,6 +274,22 @@ pub fn analyze_table(
     if work > MAX_EVALUATIONS {
         return Err(Unknown::Limit);
     }
+    // Bound result construction as well as evaluator work: row identities can
+    // otherwise multiply across all overlap witnesses before the caller can meter them.
+    let row_bytes = table
+        .rules
+        .iter()
+        .fold(0_usize, |total, row| total.saturating_add(row.id.len()));
+    let output_bound = inputs.bytes.saturating_mul(2).saturating_add(
+        inputs
+            .values
+            .len()
+            .saturating_mul(row_bytes)
+            .saturating_mul(2),
+    );
+    if output_bound > MAX_DOMAIN_BYTES {
+        return Err(Unknown::Limit);
+    }
     let mut selected = BTreeSet::new();
     let mut result = Analysis {
         inputs_checked: inputs.values.len(),

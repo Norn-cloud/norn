@@ -269,3 +269,10 @@ fn noncanonical_intermediate_strings_never_claim_renormalized_semantics() {
         Err(Unknown::NonCanonicalIntermediate)
     );
 }
+
+#[test]
+fn overlap_witness_identity_bytes_are_bounded_before_allocation() {
+    let mut large = table("collect", &["true", "true"]);
+    large.rules[0].id = "r".repeat(65_536);
+    assert_eq!(analyze_table(&large, &boolean()), Err(Unknown::Limit));
+}
