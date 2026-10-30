@@ -7,7 +7,7 @@
 )]
 use norn_checker::{
     EntityArtifactSetContext, check_artifact_set,
-    verification::{codes, conservative_closure},
+    verification::{LawWriter, codes, conservative_closure},
 };
 use norn_graph::Budget;
 use norn_ir::ArtifactEnvelope;
@@ -104,22 +104,28 @@ fn whole_set_closure_includes_hidden_new_writers_and_refuses_missing_dependencie
         max_edges: 100,
         max_steps: 1000,
     };
-    let before = conservative_closure(&law, &pool, budget).expect("closure");
+    let before = conservative_closure(&law, &pool, &BTreeSet::new(), budget).expect("closure");
     let mut hidden = serde_json::to_value(&pool[0]).expect("writer envelope");
     hidden["artifactId"] = json!("erpnext.hidden.rule");
     hidden["kind"] = json!("rule");
     hidden["payload"] = json!({"ruleId":"hidden", "ruleVersion":"2.0", "graph": {}});
     pool.push(serde_json::from_value(hidden).expect("lenient envelope"));
-    let after = conservative_closure(&law, &pool, budget).expect("closure");
+    let after = conservative_closure(&law, &pool, &BTreeSet::new(), budget).expect("closure");
     assert!(after.artifacts.is_superset(&before.artifacts));
-    assert!(after.writers.contains("erpnext.hidden.rule"));
-    assert!(after.writers.contains("erpnext.SalesOrder:status:shipped"));
+    assert!(after.writers.contains(&LawWriter::Artifact {
+        artifact_id: "erpnext.hidden.rule".into()
+    }));
+    assert!(after.writers.contains(&LawWriter::Transition {
+        object_type: "erpnext.SalesOrder".into(),
+        property: "status".into(),
+        transition: "shipped".into()
+    }));
     assert!(after.open_boundaries.contains("restore"));
     let mut edited = pool.clone();
     let mut value = serde_json::to_value(&edited[0]).expect("envelope");
     value["payload"]["objectType"]["description"] = json!("same-version changed meaning");
     edited[0] = serde_json::from_value(value).expect("modified envelope");
-    let changed = conservative_closure(&law, &edited, budget).expect("closure");
+    let changed = conservative_closure(&law, &edited, &BTreeSet::new(), budget).expect("closure");
     assert_ne!(changed.content_digests, after.content_digests);
     pool[0].dependencies.push(norn_ir::ArtifactDependency {
         artifact_id: "absent".to_owned(),
@@ -127,11 +133,12 @@ fn whole_set_closure_includes_hidden_new_writers_and_refuses_missing_dependencie
         version: Some("0.1.0".to_owned()),
         required: true,
     });
-    assert!(conservative_closure(&law, &pool, budget).is_err());
+    assert!(conservative_closure(&law, &pool, &BTreeSet::new(), budget).is_err());
     assert!(
         conservative_closure(
             &law,
             &pool,
+            &BTreeSet::new(),
             Budget {
                 max_nodes: 0,
                 ..budget
@@ -170,6 +177,7 @@ fn closure_lists_inherited_transitions_on_the_actual_subtype() {
     let closure = conservative_closure(
         &law,
         &pool,
+        &BTreeSet::new(),
         Budget {
             max_nodes: 100,
             max_edges: 100,
@@ -177,10 +185,42 @@ fn closure_lists_inherited_transitions_on_the_actual_subtype() {
         },
     )
     .expect("closure");
+    assert!(closure.writers.contains(&LawWriter::Transition {
+        object_type: "erpnext.SpecialOrder".into(),
+        property: "status".into(),
+        transition: "shipped".into()
+    }));
+}
+
+#[test]
+fn registry_typed_entity_keeps_its_transition_writers_and_refuses_without_registry() {
+    let law: ArtifactEnvelope = serde_json::from_value(laws()[0].clone()).expect("law");
+    let mut pool = entities();
+    let mut entity = serde_json::to_value(&pool[0]).expect("entity");
+    entity["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .expect("properties")
+        .push(json!({"id":"currency", "type":{"kind":"ref", "name":"iso4217.currency_code"}}));
+    pool[0] = serde_json::from_value(entity).expect("registry-typed entity");
+    pool.push(law.clone());
+    let registry = BTreeSet::from([norn_ir::PropertyTypeName("iso4217.currency_code".into())]);
+    let budget = Budget {
+        max_nodes: 100,
+        max_edges: 100,
+        max_steps: 1000,
+    };
+    let closure = conservative_closure(&law, &pool, &registry, budget).expect("registry closure");
+    assert!(closure.writers.contains(&LawWriter::Transition {
+        object_type: "erpnext.SalesOrder".into(),
+        property: "status".into(),
+        transition: "shipped".into(),
+    }));
+    assert!(norn_checker::verification::check_law_set(&pool, &[], &registry).is_empty());
+    assert!(conservative_closure(&law, &pool, &BTreeSet::new(), budget).is_err());
     assert!(
-        closure
-            .writers
-            .contains("erpnext.SpecialOrder:status:shipped")
+        norn_checker::verification::check_law_set(&pool, &[], &BTreeSet::new())
+            .iter()
+            .any(|d| d.code.as_str() == codes::CLOSURE_REFUSED)
     );
 }
 
