@@ -41,6 +41,7 @@ pub mod connector;
 pub mod customization;
 pub mod data_quality;
 pub mod decision_output;
+pub mod deontic;
 pub mod entitlement;
 pub mod entity;
 pub mod entity_v2;
@@ -71,6 +72,7 @@ pub mod sealing;
 pub mod setting;
 pub mod source_schema;
 pub mod technical_view;
+pub mod theorem_input;
 pub mod view;
 pub mod widget;
 pub mod widget_ux;
@@ -193,6 +195,12 @@ pub use setting::{
     SettingValueType,
 };
 pub use technical_view::{LineageRelation, TECHNICAL_NAMESPACE, TechnicalType, is_technical_type};
+pub use theorem_input::{
+    SourceRef, SourceSpan, TheoremAuthority, TheoremConclusion, TheoremConclusionModality,
+    TheoremEvidenceKind, TheoremEvidenceLabel, TheoremEvidenceTarget, TheoremInput,
+    TheoremInputSchemaVersion, TheoremPremise, TheoremPremiseKind, TheoremSemanticProfile,
+    TheoremStateModel, TheoremVariable, TheoremVariableDomain, TheoremVariableType,
+};
 pub use view::{
     CalcExpr, PrimitiveBasisClass, TemporalScope, TemporalScopeMode, ViewInputKind, ViewInputRef,
     ViewIrPayload, ViewMaintenance,

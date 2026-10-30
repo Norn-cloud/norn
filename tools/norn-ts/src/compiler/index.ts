@@ -28,13 +28,18 @@ interface Plan {
 }
 
 /** Quotas are checked before local sources are parsed. Pinned declaration files are fixed inputs. */
-function boundedHost(started: number, limits: CompilerLimits): ts.CompilerHost {
+function boundedHost(started: number, limits: CompilerLimits, declarations: Map<string, ts.SourceFile>): ts.CompilerHost {
   const host = createHost(), original = host.getSourceFile
   const sources = new Set<string>()
   let bytes = 0, tokens = 0
   host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) => {
     const path = resolve(file)
     const pinnedDeclarations = path.endsWith(".d.ts") && (path.startsWith(resolve(TOOL_ROOT, "node_modules/effect") + sep) || path.startsWith(resolve(TOOL_ROOT, "node_modules/typescript") + sep) || path === INTRINSICS_PATH)
+    if (pinnedDeclarations && !shouldCreateNewSourceFile) {
+      if (Date.now() - started >= limits.maxMillis) throw new CompileError("NORN-FLOW-UNBOUNDED", "cooperative compiler time bound exceeded", ts.createSourceFile(path, "", ts.ScriptTarget.ES2022))
+      const known = declarations.get(path)
+      if (known) return known
+    }
     if (!pinnedDeclarations && !sources.has(path)) {
       if (host.fileExists(path) && statSync(path).size > limits.maxSourceBytes - bytes) {
         throw new CompileError("NORN-FLOW-UNBOUNDED", "source import closure exceeds compiler byte bound before read", ts.createSourceFile(path, "", ts.ScriptTarget.ES2022))
@@ -53,7 +58,9 @@ function boundedHost(started: number, limits: CompilerLimits): ts.CompilerHost {
         }
       }
     }
-    return original(file, languageVersion, onError, shouldCreateNewSourceFile)
+    const source = original(file, languageVersion, onError, shouldCreateNewSourceFile)
+    if (pinnedDeclarations && source) declarations.set(path, source)
+    return source
   }
   return host
 }
@@ -143,9 +150,13 @@ export function prepareCompilation(files: ReadonlyArray<string>, overrides: Part
       isCancellationRequested: () => Date.now() - started >= limits.maxMillis,
       throwIfCancellationRequested: () => { if (Date.now() - started >= limits.maxMillis) throw new CompileError("NORN-FLOW-UNBOUNDED", "cooperative compiler time bound exceeded", budgetNode) },
     }
-    reports = profile.check(eligible, { host: boundedHost(started, limits), cancellationToken })
+    // Pinned declaration syntax may be shared within this compilation. Keep
+    // fresh Programs/checkers: profile queries can change union ordering, and
+    // rejected authored roots must never contribute globals to lowering.
+    const declarations = new Map<string, ts.SourceFile>()
+    reports = profile.check(eligible, { host: boundedHost(started, limits, declarations), cancellationToken })
     const accepted = eligible.filter((_, i) => reports[i]!.diagnostics.length === 0)
-    program = accepted.length > 0 ? ts.createProgram({ rootNames: [...accepted, INTRINSICS_PATH], options: COMPILER_OPTIONS, host: boundedHost(started, limits) }) : undefined
+    program = accepted.length > 0 ? ts.createProgram({ rootNames: [...accepted, INTRINSICS_PATH], options: COMPILER_OPTIONS, host: boundedHost(started, limits, declarations) }) : undefined
   } catch (error) {
     if (!(error instanceof CompileError)) throw error
     const fatal = [diagnostic(error.node, error.code, error.message)]
@@ -442,6 +453,10 @@ export class SyntaxCompiler {
           return B.X.unsafeZen(text, valueSchema(this.checker, this.checker.getTypeFromTypeNode(e.typeArguments[0]), e, new Set(), this.schemaBudget))
         }
         if (id === "@norn/authoring#Norn.byteLength") return B.X.call("len", this.data(e.arguments[0]!, env))
+        if (id === "@norn/authoring#Norn.parseDate" || id === "@norn/authoring#Norn.parseTimestamp") {
+          if (e.arguments.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "temporal conversion needs exactly one argument", e)
+          return B.X.call(id.endsWith("parseDate") ? "date" : "timestamp", this.data(e.arguments[0]!, env))
+        }
         if (id === "@norn/authoring#Norn.dateBefore") return B.X.call("dateBefore", ...e.arguments.map((a) => this.data(a, env)))
         if (ts.isPropertyAccessExpression(e.expression)) {
           const receiver = this.data(e.expression.expression, env), name = e.expression.name.text

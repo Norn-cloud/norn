@@ -164,7 +164,7 @@ impl FactVersion {
     /// The next version, or `None` on overflow.
     #[must_use]
     pub const fn checked_next(self) -> Option<Self> {
-        match self.0.checked_add(1) {
+        match crate::version_check::checked_next_version(self.0) {
             Some(value) => Some(Self(value)),
             None => None,
         }
