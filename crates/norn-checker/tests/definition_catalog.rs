@@ -1,0 +1,346 @@
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    missing_docs,
+    reason = "integration-test crate"
+)]
+
+//! The definition catalog projection (norn#62): every relation is projected
+//! from the admitted IR it names, each reference pinned to an exact artifact
+//! and member, and the projection is deterministic.
+
+use norn_checker::definition_catalog::project;
+use norn_checker::resolve_artifact_set;
+use norn_ir::ArtifactEnvelope;
+use norn_ir::definition_catalog::{
+    ArtifactKey, DefinitionCatalog, DependencyVia, DependsOnRow, LawBinding, MapRule, Member,
+    MemberRef, TypeKind, WriteVia,
+};
+use norn_ir::mapping::GapReason;
+use serde_json::{Value, json};
+
+const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+
+fn read_json(path: &str) -> Value {
+    serde_json::from_str(
+        &std::fs::read_to_string(format!("{ROOT}/{path}"))
+            .unwrap_or_else(|error| panic!("{path} should be readable: {error}")),
+    )
+    .unwrap_or_else(|error| panic!("{path} should parse: {error}"))
+}
+
+fn envelope(value: Value) -> ArtifactEnvelope {
+    serde_json::from_value(value).expect("envelope decodes")
+}
+
+fn catalog(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> DefinitionCatalog {
+    let set = resolve_artifact_set(artifacts, base).expect("set resolves");
+    project(&set).expect("catalog projects")
+}
+
+fn sales_order() -> ArtifactEnvelope {
+    envelope(read_json(
+        "registry/core/artifacts/commerce.SalesOrder.entity.json",
+    ))
+}
+
+fn submit_invoice() -> ArtifactEnvelope {
+    envelope(read_json(
+        "fixtures/ir/commerce-sales-order-submit-invoice.action.json",
+    ))
+}
+
+fn order_member(member: Member) -> MemberRef {
+    MemberRef {
+        artifact_id: "commerce.SalesOrder.entity".to_owned(),
+        version: "0.1.0".to_owned(),
+        member,
+    }
+}
+
+fn invoice_transition() -> MemberRef {
+    order_member(Member::Transition {
+        type_name: "commerce.SalesOrder".to_owned(),
+        lifecycle: "status".to_owned(),
+        transition: "invoice".to_owned(),
+    })
+}
+
+#[test]
+fn types_properties_links_and_transitions_bind_their_declaring_artifact() {
+    let catalog = catalog(&[sales_order()], &[]);
+
+    let artifact = catalog
+        .artifact("commerce.SalesOrder.entity", "0.1.0")
+        .expect("the artifact is pinned");
+    assert!(artifact.candidate);
+    assert_eq!(artifact.sha256.len(), 64);
+    assert!(artifact.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()));
+
+    let order_type = &catalog.types[0];
+    assert_eq!(
+        order_type.at,
+        order_member(Member::Type {
+            type_name: "commerce.SalesOrder".to_owned()
+        })
+    );
+    assert_eq!(order_type.kind, TypeKind::ObjectType);
+    assert_eq!(order_type.implements, ["core.Order"]);
+
+    let status = catalog
+        .properties
+        .iter()
+        .find(|row| row.at.member.id() == "property:commerce.SalesOrder#status")
+        .expect("status is a property row");
+    let states = status.lifecycle.as_ref().expect("status owns a lifecycle");
+    assert_eq!(
+        states.states,
+        [
+            "draft",
+            "submitted",
+            "on_hold",
+            "approved",
+            "invoiced",
+            "completed",
+            "cancelled"
+        ]
+    );
+    assert_eq!(states.initial, ["draft"]);
+    assert!(!status.computed);
+    assert!(catalog.contains(&order_member(Member::State {
+        type_name: "commerce.SalesOrder".to_owned(),
+        lifecycle: "status".to_owned(),
+        state: "invoiced".to_owned(),
+    })));
+    assert!(!catalog.contains(&order_member(Member::State {
+        type_name: "commerce.SalesOrder".to_owned(),
+        lifecycle: "status".to_owned(),
+        state: "shipped".to_owned(),
+    })));
+
+    let invoice = catalog
+        .transitions
+        .iter()
+        .find(|row| row.at == invoice_transition())
+        .expect("invoice is a transition row");
+    assert_eq!(invoice.from, ["approved"]);
+    assert_eq!(invoice.to, "invoiced");
+    assert_eq!(catalog.transitions.len(), 7);
+
+    assert!(
+        catalog
+            .links
+            .iter()
+            .any(|row| row.at.member.id() == "link:commerce.SalesOrder#lines"
+                && row.target == "commerce.SalesOrderLine")
+    );
+}
+
+#[test]
+fn an_action_effect_is_an_authored_write_of_the_pinned_transition() {
+    let catalog = catalog(&[sales_order(), submit_invoice()], &[]);
+    let writes: Vec<_> = catalog
+        .writes
+        .iter()
+        .map(|row| (row.writer.artifact_id.as_str(), &row.target, row.via))
+        .collect();
+    assert_eq!(
+        writes,
+        [(
+            "commerce.sales_order.submit_invoice.action",
+            &invoice_transition(),
+            WriteVia::FireTransition
+        )]
+    );
+    assert!(catalog.contains(&catalog.writes[0].target));
+}
+
+#[test]
+fn a_decide_graph_writes_only_the_declared_members_its_schema_admits() {
+    let order = envelope(read_json(
+        "fixtures/ir/entity-v2/artifact-set/commerce-purchase-order.entity.json",
+    ));
+    let rule = envelope(read_json(
+        "fixtures/rule-ir-v2/valid/purchase-order-approval.rule.json",
+    ));
+    let catalog = catalog(&[order, rule], &[]);
+    let mut writes: Vec<(String, WriteVia)> = catalog
+        .writes
+        .iter()
+        .map(|row| (row.target.member.id(), row.via))
+        .collect();
+    writes.sort();
+    // `create` writes the object; `transition` writes `submit` and `approve`
+    // of `status`, the only lifecycle the schema names.
+    assert_eq!(
+        writes,
+        [
+            (
+                "transition:commerce.PurchaseOrder#status/approve".to_owned(),
+                WriteVia::FactTransition
+            ),
+            (
+                "transition:commerce.PurchaseOrder#status/submit".to_owned(),
+                WriteVia::FactTransition
+            ),
+            (
+                "type:commerce.PurchaseOrder".to_owned(),
+                WriteVia::FactObject
+            ),
+        ]
+    );
+}
+
+#[test]
+fn dependencies_resolve_to_exact_versions_including_the_base() {
+    let mut action = read_json("fixtures/ir/commerce-sales-order-submit-invoice.action.json");
+    action["dependencies"] = json!([{
+        "artifactId": "commerce.SalesOrder.entity",
+        "kind": "entity",
+        "version": "0.1.0",
+        "required": true
+    }]);
+    let catalog = catalog(&[envelope(action)], &[sales_order()]);
+
+    assert_eq!(
+        catalog.depends_on,
+        [DependsOnRow {
+            from: ArtifactKey {
+                artifact_id: "commerce.sales_order.submit_invoice.action".to_owned(),
+                version: "0.1.0".to_owned(),
+            },
+            to: ArtifactKey {
+                artifact_id: "commerce.SalesOrder.entity".to_owned(),
+                version: "0.1.0".to_owned(),
+            },
+            via: DependencyVia::Dependency,
+        }]
+    );
+    let base = catalog
+        .artifact("commerce.SalesOrder.entity", "0.1.0")
+        .expect("the referenced base artifact is pinned");
+    assert!(!base.candidate);
+    // Base definitions are projected too, so rules can reach them.
+    assert!(catalog.contains(&invoice_transition()));
+}
+
+#[test]
+fn a_mapping_observes_members_and_declares_gaps() {
+    let mapping = envelope(json!({
+        "irVersion": "0.1",
+        "artifactId": "erpnext.sales_order.mapping",
+        "kind": "mapping",
+        "namespace": "erpnext",
+        "name": "Sales orders",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {},
+        "dependencies": [],
+        "provenance": { "source": "authoring_sdk" },
+        "payload": {
+            "format": "norn.mapping/1",
+            "source": {
+                "schemaId": "erpnext.schema",
+                "version": "0.1.0",
+                "sha256": "a".repeat(64)
+            },
+            "interfaces": ["core.Order.interface"],
+            "maps": [{
+                "id": "sales_order",
+                "source": { "dataset": "Sales Order" },
+                "target": {
+                    "entity": "commerce.SalesOrder.entity",
+                    "interface": "core.Order.interface"
+                },
+                "subject": "input.name",
+                "sourceRecord": "input.name",
+                "properties": [{ "property": "total_amount", "value": "input.grand_total" }],
+                "links": [{ "link": "counterparty", "key": "input.customer" }],
+                "lifecycles": [{ "property": "status", "state": "input.status" }],
+                "gaps": [{ "member": "amended_from", "reason": "deferred" }]
+            }]
+        }
+    }));
+    let catalog = catalog(&[sales_order(), mapping], &[]);
+    let mut rows: Vec<(String, MapRule)> = catalog
+        .mappings
+        .iter()
+        .map(|row| {
+            assert_eq!(row.map.member.id(), "map:sales_order");
+            assert_eq!(row.dataset, "Sales Order");
+            assert_eq!(row.target.artifact_id, "commerce.SalesOrder.entity");
+            (row.target.member.id(), row.rule.clone())
+        })
+        .collect();
+    rows.sort();
+    assert_eq!(
+        rows,
+        [
+            (
+                "link:commerce.SalesOrder#amended_from".to_owned(),
+                MapRule::Gap {
+                    reason: GapReason::Deferred
+                }
+            ),
+            (
+                "link:commerce.SalesOrder#counterparty".to_owned(),
+                MapRule::Link {}
+            ),
+            (
+                "property:commerce.SalesOrder#status".to_owned(),
+                MapRule::Lifecycle {}
+            ),
+            (
+                "property:commerce.SalesOrder#total_amount".to_owned(),
+                MapRule::Property {}
+            ),
+        ]
+    );
+    // Observation is not authorship: a mapping adds no write.
+    assert!(catalog.writes.is_empty());
+}
+
+#[test]
+fn laws_bind_their_subject_and_response() {
+    let mut artifacts: Vec<ArtifactEnvelope> = Vec::new();
+    for path in ["fixtures/law-ir/entities.json", "fixtures/law-ir/laws.json"] {
+        let Value::Array(values) = read_json(path) else {
+            panic!("{path} is a list of artifacts");
+        };
+        artifacts.extend(values.into_iter().map(envelope));
+    }
+    let catalog = catalog(&artifacts, &[]);
+    assert_eq!(catalog.laws.len(), 5);
+    let identity = catalog
+        .laws
+        .iter()
+        .find(|row| row.at.artifact_id == "erpnext.invariant_identity.law")
+        .expect("the invariant law is a row");
+    assert_eq!(identity.subject, "erpnext.PurchaseOrder");
+    assert_eq!(
+        identity.binds,
+        Some(LawBinding::Invariant {
+            type_name: "erpnext.PurchaseOrder".to_owned(),
+            invariant: "amount_frozen".to_owned(),
+        })
+    );
+    assert!(
+        catalog
+            .laws
+            .iter()
+            .filter(|row| row.at.artifact_id != "erpnext.invariant_identity.law")
+            .all(|row| row.binds.is_none())
+    );
+}
+
+#[test]
+fn the_projection_is_deterministic_and_order_independent() {
+    let forward = catalog(&[sales_order(), submit_invoice()], &[]);
+    let reverse = catalog(&[submit_invoice(), sales_order()], &[]);
+    assert_eq!(forward, reverse);
+    let bytes = serde_json::to_string(&forward).expect("catalog serializes");
+    assert!(bytes.starts_with(r#"{"format":"norn.catalog/1","#));
+    let round_trip: DefinitionCatalog = serde_json::from_str(&bytes).expect("catalog decodes");
+    assert_eq!(round_trip, forward);
+}

@@ -41,6 +41,7 @@ pub mod connector;
 pub mod customization;
 pub mod data_quality;
 pub mod decision_output;
+pub mod definition_catalog;
 pub mod deontic;
 pub mod entitlement;
 pub mod entity;
@@ -248,7 +249,9 @@ pub use verification::{
 
 pub const SUPPORTED_IR_VERSION: &str = "0.1";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactKind {
     Entity,
