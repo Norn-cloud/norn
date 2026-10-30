@@ -11655,7 +11655,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/decider.rs",
-      "sha256": "db566481d7927b259ee611e7ad058b5191940995da515d9449f2978dbc4ffbbd",
+      "sha256": "4d3121323ae2ae31d86af7a6447176d64ff0183a160f9876dd5a6fdecd2bf8db",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11673,7 +11673,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/decision_commit.rs",
-      "sha256": "3c53e3eea433dee253aa623f330e7e8e93240a62b0564f91ec7f978b7261ae1b",
+      "sha256": "46d366137ec73df97f2fedcfa88f852230cd36f0361705c1eb2aabb6e5692708",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11727,7 +11727,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/limits.rs",
-      "sha256": "b3f6d31a90bb92fc5889cf30a520d0ec22d2f71f62229298c4695a944c8ef92a",
+      "sha256": "86d689738c3216cc30d2d9717fcda5a9f76c87439b70b727ab10acfc00967478",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11781,7 +11781,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/psm_action_transition.rs",
-      "sha256": "56d368e76fa67daeac4c22a5ab015c914c610fee90d54b35c90b09862d69ba99",
+      "sha256": "d9b7d1d2a1fff5a0c4e45f342dd9c689633b261c6e095e754de1325abb59bd2a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11853,25 +11853,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/refusal_taxonomy.rs",
-      "sha256": "f227a1e317496ccfa101ce63fb588c142b5573cc5bca1618e7daf04caab30a25",
-      "origin": "authored",
-      "category": "code",
-      "license": "Apache-2.0",
-      "sources": [],
-      "analyzed_sources": [],
-      "parents": [],
-      "rights_evidence": [
-        {
-          "path": "NOTICE",
-          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
-        }
-      ],
-      "notices": [],
-      "connector": null
-    },
-    {
-      "path": "crates/norn-kernel/tests/refusal_wrappers.rs",
-      "sha256": "84d15c0087c1d4f7093b53db0a3079522c06aad614435b08f4ca563eb9b97fe9",
+      "sha256": "6ccb37ad4182ac7a1105747fb9f223536feae8239c50e24966957ce40664022b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29467,7 +29449,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "2b228a329a022f89d949f24b5bfd0c8803c23c02bbe059bc66a849f372132638",
+      "sha256": "7f2daa1ee5b2b946af69014875a09b7c014d66ac3ca741db1852cde96d98c22f",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

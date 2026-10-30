@@ -2201,7 +2201,6 @@
         "crates/norn-kernel/tests/psm_order_lifecycle.rs",
         "crates/norn-kernel/tests/quantity_reservations.rs",
         "crates/norn-kernel/tests/refusal_taxonomy.rs",
-        "crates/norn-kernel/tests/refusal_wrappers.rs",
         "crates/norn-kernel/tests/result_reconciliation.rs",
         "crates/norn-kernel/tests/snapshot_observe.rs",
         "crates/norn-projections/tests/cedar.rs",

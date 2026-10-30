@@ -1,12 +1,15 @@
-//! Decider form, closed effect ADT, and tick-shaped `step` (T2-KER-1).
+//! Decider form, closed effect ADT, and tick-shaped `step` (T2-KER-1): wire
+//! shapes, world capabilities, and checked counters. The `step` rules
+//! themselves (decide → world check → caps → perform-outside-main → evolve,
+//! replay, purity, rejection) are property-tested against an independent
+//! oracle in `psm_decider_laws.rs`.
 
 use std::fmt;
 
 use norn_kernel::{
     Command, CommandId, CommitId, Decider, Decision, DependencyToken, Effect, Entropy,
-    EnvelopeKind, EnvelopeLimits, FreshnessPolicy, Generation, IdempotencyKey, InputIdentity,
-    LogicalTime, Observations, OwnerVersion, StepError, Timer, TimerId, World, WorldId, replay,
-    step,
+    EnvelopeLimits, FreshnessPolicy, Generation, IdempotencyKey, InputIdentity, LogicalTime,
+    Observations, OwnerVersion, StepError, Timer, TimerId, World, WorldId, step,
 };
 use serde::{Deserialize, Serialize};
 
@@ -31,12 +34,6 @@ enum Input {
     Submit,
     Approve,
     Timeout,
-    /// Emits `events` events, `commands` performs, and `timers` schedules.
-    Burst {
-        events: usize,
-        commands: usize,
-        timers: usize,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,7 +41,6 @@ enum Event {
     Submitted { at: LogicalTime },
     Approved,
     Expired,
-    Noted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,27 +117,6 @@ impl Decider for Approval {
             (Status::Submitted, Input::Approve) => Ok(Decision::events(vec![Event::Approved])
                 .with_effect(Effect::CancelTimer(TimerId("expire".into())))),
             (Status::Submitted, Input::Timeout) => Ok(Decision::events(vec![Event::Expired])),
-            (
-                _,
-                Input::Burst {
-                    events,
-                    commands,
-                    timers,
-                },
-            ) => {
-                let mut decision = Decision::events(vec![Event::Noted; *events]);
-                for _ in 0..*commands {
-                    decision = decision.with_effect(Effect::Perform(notify(obs)));
-                }
-                for n in 0..*timers {
-                    decision = decision.with_effect(Effect::Schedule(Timer {
-                        id: TimerId(format!("t{n}")),
-                        due: obs.now,
-                        payload: Input::Timeout,
-                    }));
-                }
-                Ok(decision)
-            }
             (status, _) => Err(Invalid(status)),
         }
     }
@@ -160,7 +135,6 @@ impl Decider for Approval {
                 status: Status::Expired,
                 ..state.clone()
             },
-            Event::Noted => state.clone(),
         }
     }
 }
@@ -177,29 +151,6 @@ fn in_world(world: World) -> Observations {
 }
 
 #[test]
-fn step_decides_then_evolves() {
-    let d = Approval;
-    let s0 = d.initial_state();
-    let out = step(&d, &s0, &Input::Submit, &obs(1_000), &EnvelopeLimits::V1).unwrap();
-    assert_eq!(
-        out.events,
-        [Event::Submitted {
-            at: LogicalTime::from_millis(1_000)
-        }]
-    );
-    assert_eq!(out.state.status, Status::Submitted);
-    assert_eq!(out.effects.len(), 2);
-    assert!(out.effects[0].is_perform());
-    assert!(out.effects[1].is_timer());
-    let Effect::Schedule(timer) = &out.effects[1] else {
-        panic!("expected a timer")
-    };
-    assert_eq!(timer.due, LogicalTime::from_millis(61_000));
-    // The borrowed input state is untouched.
-    assert_eq!(s0, d.initial_state());
-}
-
-#[test]
 fn rejection_produces_no_transition() {
     let d = Approval;
     let s0 = d.initial_state();
@@ -211,171 +162,6 @@ fn rejection_produces_no_transition() {
         Some("input not allowed in Draft".to_owned())
     );
     assert_eq!(s0, d.initial_state());
-}
-
-#[test]
-fn replay_is_fold_of_evolve_over_step_events() {
-    let d = Approval;
-    let mut state = d.initial_state();
-    let mut ledger = Vec::new();
-    for (input, now) in [(Input::Submit, 10), (Input::Approve, 20)] {
-        let out = step(&d, &state, &input, &obs(now), &EnvelopeLimits::V1).unwrap();
-        ledger.extend(out.events);
-        state = out.state;
-    }
-    assert_eq!(replay(&d, &ledger), state);
-    assert_eq!(replay(&d, &[]), d.initial_state());
-    assert_eq!(
-        state,
-        State {
-            status: Status::Approved,
-            submitted_at: Some(LogicalTime::from_millis(10)),
-        }
-    );
-}
-
-#[test]
-fn timer_delivery_is_an_ordinary_input() {
-    let d = Approval;
-    let submitted = step(
-        &d,
-        &d.initial_state(),
-        &Input::Submit,
-        &obs(0),
-        &EnvelopeLimits::V1,
-    )
-    .unwrap();
-    // The host's `clock` delivers the scheduled payload back, unchanged, as
-    // the next input — after a serialization round trip through the timer
-    // table.
-    let Some(Effect::Schedule(timer)) = submitted.effects.iter().find(|e| e.is_timer()) else {
-        panic!("expected a scheduled timer")
-    };
-    let stored = serde_json::to_string(timer).unwrap();
-    let due: Timer<Input> = serde_json::from_str(&stored).unwrap();
-    let expired = step(
-        &d,
-        &submitted.state,
-        &due.payload,
-        &Observations::main(due.due, Entropy::from_bytes([1; 32])),
-        &EnvelopeLimits::V1,
-    )
-    .unwrap();
-    assert_eq!(expired.events, [Event::Expired]);
-    assert_eq!(expired.state.status, Status::Expired);
-    assert!(expired.effects.is_empty());
-    // A late approval after expiry is rejected.
-    let err = step(
-        &d,
-        &expired.state,
-        &Input::Approve,
-        &obs(TIMEOUT_MS),
-        &EnvelopeLimits::V1,
-    )
-    .unwrap_err();
-    assert_eq!(err, StepError::Rejected(Invalid(Status::Expired)));
-}
-
-#[test]
-fn step_is_deterministic_in_its_inputs() {
-    let d = Approval;
-    let s0 = d.initial_state();
-    let a = step(&d, &s0, &Input::Submit, &obs(5), &EnvelopeLimits::V1).unwrap();
-    let b = step(&d, &s0, &Input::Submit, &obs(5), &EnvelopeLimits::V1).unwrap();
-    assert_eq!(a, b);
-    // Different entropy → different command identity; nothing else differs.
-    let other = Observations {
-        entropy: Entropy::from_bytes([9; 32]),
-        ..obs(5)
-    };
-    let c = step(&d, &s0, &Input::Submit, &other, &EnvelopeLimits::V1).unwrap();
-    assert_eq!(a.events, c.events);
-    assert_ne!(a.effects, c.effects);
-}
-
-#[test]
-fn historical_world_is_read_only() {
-    let d = Approval;
-    let world = World::Historical {
-        commit: CommitId("c1".into()),
-    };
-    let err = step(
-        &d,
-        &d.initial_state(),
-        &Input::Submit,
-        &in_world(world),
-        &EnvelopeLimits::V1,
-    )
-    .unwrap_err();
-    assert_eq!(err, StepError::ReadOnlyWorld);
-}
-
-#[test]
-fn only_main_performs() {
-    let d = Approval;
-    let fork = in_world(World::Fork {
-        id: WorldId("what-if".into()),
-    });
-    let err = step(
-        &d,
-        &d.initial_state(),
-        &Input::Submit,
-        &fork,
-        &EnvelopeLimits::V1,
-    )
-    .unwrap_err();
-    assert_eq!(err, StepError::PerformOutsideMain { count: 1 });
-
-    // A fork may still commit events and manage timers.
-    let submitted = State {
-        status: Status::Submitted,
-        submitted_at: Some(LogicalTime::EPOCH),
-    };
-    let out = step(&d, &submitted, &Input::Approve, &fork, &EnvelopeLimits::V1).unwrap();
-    assert_eq!(out.state.status, Status::Approved);
-    assert_eq!(out.effects, [Effect::CancelTimer(TimerId("expire".into()))]);
-}
-
-#[test]
-fn envelope_limits_are_enforced_per_kind() {
-    let d = Approval;
-    let s0 = d.initial_state();
-    let limits = EnvelopeLimits {
-        max_events: 2,
-        max_commands: 1,
-        max_timers: 3,
-        ..EnvelopeLimits::V1
-    };
-    let burst = |events, commands, timers| Input::Burst {
-        events,
-        commands,
-        timers,
-    };
-    assert!(step(&d, &s0, &burst(2, 1, 3), &obs(0), &limits).is_ok());
-    for (input, kind, limit, actual) in [
-        (burst(3, 0, 0), EnvelopeKind::Events, 2, 3),
-        (burst(0, 2, 0), EnvelopeKind::Commands, 1, 2),
-        (burst(0, 0, 4), EnvelopeKind::Timers, 3, 4),
-    ] {
-        let err = step(&d, &s0, &input, &obs(0), &limits).unwrap_err();
-        assert_eq!(
-            err,
-            StepError::EnvelopeExceeded {
-                kind,
-                limit,
-                actual
-            }
-        );
-    }
-    let err = step(
-        &d,
-        &s0,
-        &burst(33, 0, 0),
-        &obs(0),
-        &EnvelopeLimits::default(),
-    )
-    .unwrap_err();
-    assert_eq!(err.to_string(), "decision emitted 33 events, limit is 32");
 }
 
 #[test]
