@@ -483,6 +483,17 @@ def workflow_canaries() -> None:
             "name: Public core\n", "name: Public core\nenv:\n  toolchain: 1.98.0\n", 1)
         candidate.write_text(decoy, encoding="utf-8")
         expect_coverage_validator_rejection("decoy toolchain key", formal_workflow_path=candidate)
+        command = "bash scripts/ci/core.sh test ${{ matrix.shard }}"
+        decoy = source.replace("run: " + command, "run: echo skipped", 1).replace(
+            "name: Public core\n", "name: Public core\nenv:\n  DECOY: '" + command + "'\n", 1)
+        candidate.write_text(decoy, encoding="utf-8")
+        expect_coverage_validator_rejection("decoy shard command", formal_workflow_path=candidate)
+        for option in ("if: false", "continue-on-error: true"):
+            candidate.write_text(source.replace(
+                "      - run: " + command,
+                "      - " + option + "\n        run: " + command, 1), encoding="utf-8")
+            expect_coverage_validator_rejection("disabled shard step: " + option,
+                                               formal_workflow_path=candidate)
 
 
 def counterexampled(run: quint_apalache.QuintRun) -> bool:

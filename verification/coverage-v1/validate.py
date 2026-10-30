@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -386,22 +387,44 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}", action) is not None, f"workflow action must be content-pinned: {action}")
     for trigger in ("pull_request", "pull_request_target", "push", "merge_group"):
         require(re.search(rf"^  {trigger}:", source, re.MULTILINE) is not None, f"missing required trigger {trigger}")
-    # CI partitions core.sh across jobs; a prefix match also accepts the cheap
-    # phase alone, or a different shard command after the first is removed.
-    required_lines = (
-        "      - run: bash scripts/ci/core.sh cheap",
-        '        run: echo "plan=$(bash scripts/ci/core.sh plan)" >> "$GITHUB_OUTPUT"',
-        "      - run: bash scripts/ci/core.sh test ${{ matrix.shard }}",
-        "      - run: bash scripts/ci/core.sh ${{ matrix.phase }}",
-        "        shard: ${{ fromJSON(needs.plan.outputs.plan).shard }}",
-        "        phase: ${{ fromJSON(needs.plan.outputs.plan).phase }}",
-        "    needs: [core, plan, test, phase]",
-        '          RESULTS: ${{ join(needs.*.result, \' \') }}',
-        '            [ "$result" = success ] || { echo "a full-gate job ended $result: $RESULTS"; exit 1; }',
-        '          [ "$(echo $RESULTS | wc -w)" -eq 4 ]',
-    )
-    for line in required_lines:
-        require(line in source.splitlines(), f"full public-core gate is missing: {line.strip()}")
+    # Bind commands to executable steps and the matrices that cover the plan;
+    # comments, environment values and a cheap-only invocation earn no credit.
+    jobs = yaml.safe_load(source)["jobs"]
+    required_runs = {
+        "core": "bash scripts/ci/core.sh cheap",
+        "plan": 'echo "plan=$(bash scripts/ci/core.sh plan)" >> "$GITHUB_OUTPUT"',
+        "test": "bash scripts/ci/core.sh test ${{ matrix.shard }}",
+        "phase": "bash scripts/ci/core.sh ${{ matrix.phase }}",
+    }
+    candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
+    for name, command in required_runs.items():
+        job = jobs.get(name, {})
+        require(job.get("if") == (candidate_condition if name in {"core", "plan"} else None),
+                f"{name}: candidate gate condition changed")
+        require(not job.get("continue-on-error"), f"{name}: gate must fail closed")
+        steps = [step for step in job.get("steps", []) if step.get("run", "").strip() == command]
+        require(len(steps) == 1 and "if" not in steps[0] and not steps[0].get("continue-on-error"),
+                f"{name}: required gate command missing or conditional")
+        if name == "plan":
+            require(steps[0].get("id") == "plan" and job.get("outputs", {}).get("plan") == "${{ steps.plan.outputs.plan }}",
+                    "plan: gate plan output must bind the producer step")
+    for name, axis in (("test", "shard"), ("phase", "phase")):
+        job = jobs[name]
+        require(job.get("needs") == "plan" and job.get("strategy", {}).get("matrix") == {
+            axis: "${{ fromJSON(needs.plan.outputs.plan)." + axis + " }}"
+        }, f"{name}: matrix must execute the complete gate plan")
+    full = jobs.get("full", {})
+    require(full.get("needs") == ["core", "plan", "test", "phase"], "full: verdict must depend on every gate")
+    require(full.get("if") == "always() && " + candidate_condition and not full.get("continue-on-error"),
+            "full: verdict must run and fail closed")
+    verdict = '''for result in $RESULTS; do
+  [ "$result" = success ] || { echo "a full-gate job ended $result: $RESULTS"; exit 1; }
+done
+[ "$(echo $RESULTS | wc -w)" -eq 4 ]'''
+    require(any(step.get("run", "").strip() == verdict and "if" not in step
+                and not step.get("continue-on-error")
+                and step.get("env", {}).get("RESULTS") == "${{ join(needs.*.result, ' ') }}"
+                for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = (ROOT / "scripts/ci/core.sh").read_text()
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
     require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,
