@@ -812,14 +812,13 @@ fn gate_edit(candidate: &mut Fixture) {
 /// is in the single-line manifest, so two edits of it would conflict).
 fn data_edit(_: &mut Fixture) {}
 
+/// A queued pull request's head, head repository and optional
+/// `/approve-gates` (commit, commenter permission).
+type Pull<'a> = (&'a str, &'a str, Option<(&'a str, &'a str)>);
+
 /// The base-owned lane over a merge group with the workflow-recorded evidence:
 /// each pull request head with an optional `/approve-gates` comment.
-fn group_checked(
-    candidate: &Fixture,
-    base: &str,
-    head: &str,
-    pulls: &[(&str, &str, Option<(&str, &str)>)],
-) -> Vec<String> {
+fn group_checked(candidate: &Fixture, base: &str, head: &str, pulls: &[Pull<'_>]) -> Vec<String> {
     let pull_requests: Vec<Value> = pulls
         .iter()
         .map(|&(sha, repository, approved)| {
