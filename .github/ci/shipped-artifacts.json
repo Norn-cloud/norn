@@ -104,7 +104,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "820ecfc6f2c6ffe07026befb7e248d4be0290f821808fe961f6991eaae89a38b",
+      "sha256": "d3d21e68e924dd6cc541bf8d620a3c3dd8cf106bd4f391be0edfe7a22cbec69c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18529,7 +18529,7 @@
     },
     {
       "path": "scripts/ci/core.sh",
-      "sha256": "0a3e4741222cffa70c1ebc454e44d3ba7d29555669ec183266cee4de83f39c7b",
+      "sha256": "8d79d1d27776d22476edcf29a4c0c0ea69af2defe5b5e5d61aaa25446c1f2562",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29971,7 +29971,7 @@
     },
     {
       "path": "verification/coverage-v1/validate.py",
-      "sha256": "06361c93f3dc3fa878cab10577b108ddca66f5074d023c25f0adea1dfae420a6",
+      "sha256": "63b7f23b31f4dc5b0e623266daf220fed56bede46619b49b905e3bc06f572bb8",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

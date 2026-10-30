@@ -88,8 +88,7 @@ PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 GATE_PROFILES = {"fast", "full"}
 QUINT_APALACHE_HARNESS = ROOT / "scripts/quint_apalache.py"
 NEGATIVE_CANARIES = ROOT / "verification/coverage-v1/negative_canaries.py"
-# `full` verification runs as a `phase` job of the sharded full gate.
-PROFILE_JOBS = {"fast": "core", "full": "phase"}
+PROFILE_JOBS = {"fast": "core", "full": "core"}
 # Nominal wall-clock of everything in a profile's job except its slowest
 # Quint/Apalache check: setup, tool bootstrap, and every other gate at typical
 # speed. Observed 2026-09-30 (#2830): fast setup ~2.5 min plus non-kernel gates

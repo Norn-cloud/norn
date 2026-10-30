@@ -33,7 +33,7 @@ jobs:
           bun-version: 1.3.14
       - run: bash scripts/ci/core.sh cheap
   # The full gate: `core.sh all` split into parallel jobs. The plan comes from
-  # core.sh itself, so CI runs exactly its shards and phases.
+  # core.sh itself, so CI runs exactly its shards and phases (all but formal).
   plan:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     runs-on: ubuntu-24.04
@@ -98,9 +98,6 @@ jobs:
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest@0.9.150
-      # The proof tool checks use ripgrep, which the runner image lacks.
-      - if: matrix.phase == 'formal'
-        run: sudo apt-get install --yes --no-install-recommends ripgrep
       - run: bash scripts/ci/core.sh ${{ matrix.phase }}
   # The single required verdict: every planned job ran and passed.
   full:

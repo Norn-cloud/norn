@@ -176,11 +176,13 @@ PY
 }
 case "${1:-all}" in
   # CI's job plan: every test shard, and every other phase except `cheap`
-  # (the `core` job), plus the shard partition proof.
+  # (the `core` job), plus the shard partition proof. `formal` stays a Boat
+  # gate: on hosted runners its Apalache server stalls without a verdict
+  # (Norn-cloud/norn-platform#3541).
   plan)
     [[ $# -le 1 ]] || run_phase usage
     others=()
-    for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test ]] || others+=("$phase"); done
+    for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test || $phase == formal ]] || others+=("$phase"); done
     python3 -c 'import json, sys; print(json.dumps({"shard": sys.argv[1].split(), "phase": sys.argv[2].split() + ["test-shards"]}))' \
       "$(list_shards | tr '\n' ' ')" "${others[*]}"
     ;;
