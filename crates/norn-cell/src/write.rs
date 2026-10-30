@@ -3057,7 +3057,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     to_i64(seq, "seq")?,
                     commit_seq,
                     self.world,
-                    canonical_json(event)?,
+                    crate::payload_storage::encode_event(self.conn, seq, &self.batch.scope, self.world, event)?,
                     prev,
                     hash
                 ],
@@ -3197,6 +3197,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 ],
             )?;
         }
+        crate::payload_storage::remember_command(
+            self.conn,
+            &command.command_id,
+            command.generation,
+            self.commit_seq,
+        )?;
         Ok(())
     }
 
