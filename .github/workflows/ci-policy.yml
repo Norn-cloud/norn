@@ -80,8 +80,9 @@ jobs:
       matrix:
         phase: ${{ fromJSON(needs.plan.outputs.plan).phase }}
     env:
-      # Shrink-only baselines compare against the commit this one lands on.
-      NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+      # Shrink-only baselines compare against the commit this one lands on
+      # (main for a manual run).
+      NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
