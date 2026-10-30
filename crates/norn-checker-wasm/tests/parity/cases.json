@@ -1,5 +1,5 @@
 {
-  "_comment": "Native-vs-wasm parity cases (T1-CHK-4, #2527). tests/parity.rs runs each natively; parity.mjs runs each against the built npm package and compares the output bytes. `artifacts`/`base` are repo-relative envelope files joined into JSON arrays; `inlineLayoutOn` adds legacy editor fields for layout regressions; `artifactsText` is raw argument text; `context` members are appended to the context object.",
+  "_comment": "Native-vs-wasm parity cases (T1-CHK-4, #2527). tests/parity.rs runs each natively; parity.mjs runs each against the built npm package and compares the output bytes. `artifacts`/`base` are repo-relative envelope files joined into JSON arrays; `inlineLayoutOn` adds legacy editor fields for layout regressions; `artifactsText` is raw argument text; `contextText` overrides the raw context argument; `context` members are appended to the context object.",
   "cases": [
     {
       "name": "retail-registry-clean",
