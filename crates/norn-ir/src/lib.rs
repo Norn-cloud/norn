@@ -41,6 +41,7 @@ pub mod connector;
 pub mod customization;
 pub mod data_quality;
 pub mod decision_output;
+pub mod deontic;
 pub mod entitlement;
 pub mod entity;
 pub mod entity_v2;
