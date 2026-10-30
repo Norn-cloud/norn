@@ -641,3 +641,31 @@ fn owned_collection_bound_increases_are_not_narrowing() {
         );
     }
 }
+
+#[test]
+fn adding_an_interface_parent_invariant_is_a_narrowing_for_transitive_implementers() {
+    let before = vec![
+        interface_artifact(
+            "commerce.parent",
+            json!({"name":"commerce.Parent","properties":[{"id":"name","type":{"kind":"text"}}],"invariants":[invariant("required","self.name != ''",None)]}),
+        ),
+        interface_artifact("commerce.child", json!({"name":"commerce.Child"})),
+        object_type_artifact(
+            "commerce.item",
+            json!({"name":"commerce.Item","implements":["commerce.Child"],"properties":[{"id":"name","type":{"kind":"text"}}]}),
+        ),
+    ];
+    let mut after = before.clone();
+    after[1] = interface_artifact(
+        "commerce.child",
+        json!({"name":"commerce.Child","extends":["commerce.Parent"]}),
+    );
+    let diff = diff_definition_sets(&before, &after);
+    assert!(
+        diff.narrowing
+            .iter()
+            .any(|item| item.kind == "integrity_invariant_narrowed"
+                && item.object_type.as_deref() == Some("commerce.Item")
+                && item.ids == vec!["required".to_owned()])
+    );
+}
