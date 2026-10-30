@@ -19018,7 +19018,7 @@
     },
     {
       "path": "tools/norn-code/tests/test_xstate.py",
-      "sha256": "6394463bb294de823c2bc530810a6e80814772ff5cd8aca0abd0ec4ca4e34a91",
+      "sha256": "5c69d0058ff57ab4e96cc3f02b24c193ecc1199f00b89f11135f8f4946635885",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -19036,7 +19036,7 @@
     },
     {
       "path": "tools/norn-code/xstate.py",
-      "sha256": "928ca35305407b616cb5148339eb0cb31b12b0a0a12374d99efcfb8a4255063b",
+      "sha256": "d79852d689420f0229d88d2547975dfbdfcb433a6bbe97c53b3f224737617c9c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
