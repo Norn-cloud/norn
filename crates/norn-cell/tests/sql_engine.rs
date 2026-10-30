@@ -100,6 +100,30 @@ fn unwinding_rolls_back_native_transaction() {
 }
 
 #[test]
+fn a_double_quoted_name_that_matches_no_column_is_an_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for engine in [
+        NativeEngine::open_in_memory().expect("open"),
+        NativeEngine::open(&dir.path().join("cell.sqlite"), norn_cell::StoreOptions::default())
+            .expect("open file"),
+    ] {
+        engine
+            .execute_batch("CREATE TABLE item (\"p:weight\" INTEGER)")
+            .expect("schema");
+        engine
+            .execute("INSERT INTO item VALUES (?1)", &[SqlValue::Integer(7)])
+            .expect("insert");
+        let error = engine
+            .query_row("SELECT \"weight\" FROM item", &[], |row| row.get::<String>(0))
+            .expect_err("a stale column name must not read back as text");
+        assert!(error.to_string().contains("no such column"), "{error}");
+        engine
+            .execute_batch("CREATE INDEX stale ON item (\"weight\")")
+            .expect_err("DDL must not take a stale column name as text either");
+    }
+}
+
+#[test]
 fn integer_boundary_is_exact_in_both_directions() {
     let engine = NativeEngine::open_in_memory().expect("open");
     for integer in [-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER] {
@@ -708,7 +732,7 @@ fn full_range_integers_round_trip_without_crossing_the_seam_as_integers() {
     let link_storage = verifier
         .query_row(
             &format!(
-                "SELECT typeof(\"weight\"), CAST(\"weight\" AS TEXT) FROM {} WHERE {} = ?1 AND {} = ?2 AND {} = ?3",
+                "SELECT typeof(\"p:weight\"), CAST(\"p:weight\" AS TEXT) FROM {} WHERE {} = ?1 AND {} = ?2 AND {} = ?3",
                 quote_identifier(&link_table),
                 quote_identifier(WORLD_COLUMN),
                 quote_identifier(SOURCE_COLUMN),

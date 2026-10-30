@@ -1062,7 +1062,7 @@
     },
     {
       "path": "crates/norn-cell/src/engine.rs",
-      "sha256": "3d437d926af775a40bfd6127f19572c6926d220b8f51417fcf1f41efdcd8a162",
+      "sha256": "866a19a5cc942a8748123289d1113299a219b05715196cb937c8a8ff32589f59",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1746,7 +1746,7 @@
     },
     {
       "path": "crates/norn-cell/tests/sql_engine.rs",
-      "sha256": "2344a6ee5521d105d95e23c2f4eb315970bf7ef8fef8c995fadc62c95149fe31",
+      "sha256": "17506802d3cfc720f4c3a633fef8faea92a3821934dc65a60207ea13eb8851c8",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
