@@ -19,9 +19,10 @@ third-party code; keep its notices and provenance.
   IR, decision tables, policies, JSON or TOML that a generator owns; change the
   source and regenerate.
 - **Definitions are declarative.** Object, relation, action, decision,
-  lifecycle, connector and widget definitions serialize to IR. They perform no
-  IO and accept no executable callbacks. Extraction rejects non-serializable
-  values and restricted imports.
+  lifecycle, connector and widget definitions serialize to IR and perform no
+  IO. Authoring callbacks such as `Norn.expression(Schema, input => ...)` are
+  compiled to declarative IR; no callback survives extraction or runs at
+  runtime. Extraction rejects non-serializable values and restricted imports.
 - **Rust is the engine.** Use typed `Result<Output, DomainError>` errors,
   `tracing`, and explicit dependencies. No `unsafe` in kernel or evaluator
   crates.
