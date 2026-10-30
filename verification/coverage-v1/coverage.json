@@ -2251,6 +2251,7 @@
         "scripts/check-rust-extraction-tools.sh",
         "scripts/check-verification-tools.sh",
         "scripts/ci/core.sh",
+        "scripts/ci/frontier.py",
         "scripts/ci/validate-runner-policy.py",
         "scripts/importers/erpnext_runtime.py",
         "scripts/proof_enrollment.py",
