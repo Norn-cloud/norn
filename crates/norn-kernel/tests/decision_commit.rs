@@ -1382,42 +1382,6 @@ fn decision_race_property() {
     );
 }
 
-#[test]
-fn decision_repeat_firing_from_target_state_is_refused() {
-    let types = types();
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = cell();
-    let so1 = key(ORDER, "SO-1");
-    decide(
-        &mut cell,
-        &catalog,
-        "t1",
-        &[],
-        &[create(ORDER, "SO-1", 5.0)],
-    )
-    .unwrap();
-    decide(
-        &mut cell,
-        &catalog,
-        "t2",
-        std::slice::from_ref(&so1),
-        &[transition(ORDER, "SO-1", "submit")],
-    )
-    .unwrap();
-    let slice = load_slice(&cell, [so1]).unwrap();
-    let again = output(
-        json!({ "facts": [transition(ORDER, "SO-1", "submit")], "commands": [], "timers": [] }),
-    );
-    assert_refused(
-        &mut cell,
-        &catalog,
-        &slice,
-        &turn("t3"),
-        &again,
-        "lifecycle.validation.undeclared_write",
-    );
-}
-
 // ------------------------------------------- correspondence with the checker
 
 /// `fixtures/ir/action-firing/*.case.json` (#2876): each case's
@@ -2209,4 +2173,61 @@ fn a_create_is_not_redirected_through_an_absent_subtype_read() {
             .iter()
             .all(|write| write.key.object_type.as_str() != BIG)
     );
+}
+
+#[test]
+fn lean_l1_lifecycle_corpus_matches_real_commit() {
+    let types = types();
+    let catalog = TypeCatalog::new(&types);
+    let corpus = include_str!("../../../verification/kernel-l1/corpus.tsv");
+    let mut count = 0;
+    for line in corpus
+        .lines()
+        .filter(|line| line.starts_with("lifecycle\t"))
+    {
+        let fields: Vec<_> = line.split('\t').collect();
+        assert_eq!(fields.len(), 4);
+        assert_eq!(fields[0], "lifecycle");
+        let amount: i64 = fields[2].parse().unwrap();
+        let accepted: bool = fields[3].parse().unwrap();
+        let mut cell = cell();
+        let object = key(ORDER, "lean");
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: object.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: record(json!({
+                        "order_no": "lean", "amount": amount, "approver": "",
+                        "status": fields[1]
+                    })),
+                },
+            }],
+            ..CellCommit::empty()
+        })
+        .unwrap();
+        let before = visible(&cell, std::slice::from_ref(&object));
+        let result = decide(
+            &mut cell,
+            &catalog,
+            "lean-submit",
+            std::slice::from_ref(&object),
+            &[transition(ORDER, "lean", "submit")],
+        );
+        assert_eq!(result.is_ok(), accepted, "{line}: {result:?}");
+        if accepted {
+            assert_eq!(
+                status(&cell, &object),
+                Some(JsonValue::String("submitted".into()))
+            );
+        } else {
+            assert_eq!(
+                visible(&cell, std::slice::from_ref(&object)),
+                before,
+                "{line}"
+            );
+        }
+        count += 1;
+    }
+    assert_eq!(count, 20);
 }

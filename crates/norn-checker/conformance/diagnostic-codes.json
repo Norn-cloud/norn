@@ -3264,6 +3264,69 @@
       "tier": "T2"
     },
     {
+      "code": "widget.interaction.control_missing_for_transition",
+      "message": "a declared navigation item or action binding has no control that offers it: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.control_without_legal_transition",
+      "message": "a navigation control leads to a page the app does not declare: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.dialog_depth_exceeds_verified_bound",
+      "message": "dialog nesting exceeds the stacked dialogs the renderer interaction statechart is verified for: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.dialog_no_keyboard_close",
+      "message": "a dialog can only be dismissed by pointer; it needs a visible close or Escape: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.dialog_no_restore_target",
+      "message": "a dialog has no focus restore target (action control inside it, named enclosing region or page): {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.keyboard_unreachable_control",
+      "message": "an interactive control is not keyboard reachable: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.nullable_without_clear",
+      "message": "a field bound to a nullable input cannot be cleared to null (no clear affordance, or always required): {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.unnamed_control",
+      "message": "an interactive control has no accessible name: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.unreachable_page",
+      "message": "an app page has no control that reaches it from the entry page: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
       "code": "widget.validation.invalid_payload",
       "message": "WidgetIR payload is invalid at {path}: {detail}",
       "severity": "error",
