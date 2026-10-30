@@ -19,7 +19,10 @@ Fork pull requests are data-only: `trusted-policy` rejects any change to
 change them once an admin comments `/approve-gates <full 40-character head SHA>`
 on the pull request. Posting, editing or deleting a `/approve-gates` comment
 re-runs `trusted-policy` for that pull request. Only an unedited comment that
-names the exact current head counts.
+names the exact current head counts. A revocation takes effect only when a run
+writes its failure, so before merging a gate change, confirm that the latest
+`trusted-policy` run for the head finished after the last approval comment
+changed.
 After any new push, approve again.
 
 Agents post `/approve-gates` from the owner account only after a Sol review has
