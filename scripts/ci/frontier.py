@@ -198,7 +198,8 @@ def main(argv):
         rows = [row(r) for r in argv[1:]]
         # A rerun needs its first attempt for the harness/flake split: collect it too.
         have = {(r["run_id"], r["attempt"]) for r in rows}
-        rows += [row(r["run_id"]) for r in list(rows) if r["attempt"] > 1 and (r["run_id"], 1) not in have]
+        missing = sorted({r["run_id"] for r in rows if r["attempt"] > 1 and (r["run_id"], 1) not in have})
+        rows += [row(run_id) for run_id in missing]
         json.dump(document(rows), sys.stdout, indent=1)
         sys.stdout.write("\n")
         return 0
