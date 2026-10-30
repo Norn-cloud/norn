@@ -75,3 +75,9 @@ class XStateTests(unittest.TestCase):
     def test_escaped_event_key_is_decoded(self):
         result = self.report(CONFIG.replace('SUBMIT:', "'S\\x55BMIT':"))
         self.assertEqual(result['extracted'][0]['transitions'][0]['event'], 'SUBMIT')
+
+    def test_mixed_commonjs_aliases_block_authoring(self):
+        source = PREFIX + "const {createMachine: other} = require('xstate'); machine(" + CONFIG + "); other(" + CONFIG + ");"
+        result = extract({'x.ts': source.encode()})
+        self.assertEqual(result['extracted'], [])
+        self.assertEqual(len(result['unknown']), 1)
