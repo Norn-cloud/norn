@@ -24,6 +24,8 @@ from datetime import datetime
 
 REPO = "Norn-cloud/norn"
 SCHEMA = "norn.ci-frontier/v1"
+WORKFLOW = ".github/workflows/ci-policy.yml"
+GATES = {"core", "trusted-policy"}
 RESAMPLES = 2000
 # Log or annotation substring -> cause. First match wins; order is specific to general.
 CAUSES = [
@@ -60,8 +62,11 @@ def classify(job):
 def row(run_id):
     run = gh(f"actions/runs/{run_id}")
     jobs = [j for j in gh(f"actions/runs/{run_id}/jobs")["jobs"] if j["conclusion"] != "skipped"]
-    if run["status"] != "completed" or len(jobs) != 1:
-        raise SystemExit(f"run {run_id}: expected one completed gate job, got {len(jobs)}")
+    if run["path"] != WORKFLOW or run["status"] != "completed" or len(jobs) != 1 or jobs[0]["name"] not in GATES:
+        raise SystemExit(f"run {run_id}: expected one completed Public core gate job")
+    # A rerun keeps the first attempt's created_at, which would inflate its queue time.
+    if run["run_attempt"] != 1:
+        raise SystemExit(f"run {run_id}: only first attempts are measured")
     job = jobs[0]
     created, started, completed = ts(run["created_at"]), ts(job["started_at"]), ts(job["completed_at"])
     failed = [s["name"] for s in job["steps"] if s["conclusion"] == "failure"]
