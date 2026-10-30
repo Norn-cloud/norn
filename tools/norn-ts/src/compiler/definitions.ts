@@ -394,13 +394,14 @@ class DefinitionCompiler {
 
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
-      "name", "title", "version", "description", "properties", "invariants", "markings", "propertyMarkings",
+      "name", "title", "version", "description", "extends", "properties", "invariants", "markings", "propertyMarkings",
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const invariantsNode = members.get("invariants")
     return E.interfaceType({
       ...rest,
+      extends: members.has("extends") ? this.list(members.get("extends")!).map((parent) => this.typeName(parent, INTERFACES)) : [],
       properties: projected.map((p) => ({ id: p.id, ...(propertyMarkings.has(p.id) ? { markings: propertyMarkings.get(p.id)! } : {}), type: p.projection.type, ...(p.projection.nullable ? { nullable: true } : {}), at: this.at(p.node) })),
       invariants: invariantsNode ? this.list(invariantsNode).map((x) => this.invariant(x)) : [],
       at: this.at(call),
