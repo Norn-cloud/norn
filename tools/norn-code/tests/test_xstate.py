@@ -65,3 +65,13 @@ class XStateTests(unittest.TestCase):
         result = extract({'x.ts': (PREFIX + 'machine(' + CONFIG + '); X.createMachine(' + CONFIG + ');').encode()})
         self.assertEqual(len(result['extracted']), 1)
         self.assertEqual(len(result['unknown']), 1)
+
+    def test_authoring_name_grammar_and_comments(self):
+        for identity in ['order', 'Order_2']:
+            self.assertEqual(self.report(CONFIG.replace("id:'Order'", "id:'" + identity + "'"))['extracted'], [])
+        result = extract({'x.ts': (PREFIX + 'machine(/* note */' + CONFIG + ');').encode()})
+        self.assertEqual(len(result['extracted']), 1)
+
+    def test_escaped_event_key_is_decoded(self):
+        result = self.report(CONFIG.replace('SUBMIT:', "'S\\x55BMIT':"))
+        self.assertEqual(result['extracted'][0]['transitions'][0]['event'], 'SUBMIT')
