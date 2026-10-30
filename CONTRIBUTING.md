@@ -24,7 +24,8 @@ After any new push, approve again.
 Agents post `/approve-gates` from the owner account only after a Sol review has
 approved that exact head SHA. Record the Sol verdict on the pull request. Never
 post it for a head Sol has not approved, and never edit an earlier comment to
-change its SHA.
+change its SHA. `trusted-policy` checks only the admin comment, not the Sol
+review, so this rule binds agents rather than the gate.
 
 ## Contributor licence agreement — version 1
 
