@@ -579,3 +579,160 @@ fn trusted_policy_rejects_artifact_promotion_drift() {
         "{errors:?}"
     );
 }
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "commit only independently authored disposable policy test data"
+)]
+fn commit_fixture(fixture: &Fixture) -> String {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(fixture.root())
+            .args(args)
+            .output()
+            .expect("git fixture commit")
+    };
+    assert!(git(&["add", "."]).status.success());
+    let identity = [
+        "-c",
+        "user.name=fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+    ];
+    let commit = [
+        &identity[..],
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+    ]
+    .concat();
+    assert!(git(&commit).status.success());
+    String::from_utf8(git(&["rev-parse", "HEAD"]).stdout)
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+/// A same-shape candidate whose only finding is a changed gate file: its older
+/// commit is the unchanged tree and its head commit changes the gate.
+fn gate_change_candidate() -> (Fixture, String, String) {
+    let mut candidate = policy_fixture();
+    let older = commit_fixture(&candidate);
+    let path = "scripts/ci/core.sh";
+    let record = candidate
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("gate record");
+    candidate.write(path, b"#!/usr/bin/env bash\necho reviewed gate change\n");
+    candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
+    candidate.save();
+    let head = commit_fixture(&candidate);
+    (candidate, older, head)
+}
+
+/// The base-owned trusted lane over `candidate`, with API evidence as recorded by
+/// the workflow: an optional `/approve-gates <commit>` comment by a user with `permission`.
+fn checked_with(
+    candidate: &Fixture,
+    head_repository: &str,
+    head: &str,
+    approved: Option<(&str, &str)>,
+) -> Vec<String> {
+    let comments: Vec<Value> = approved
+        .map(|(commit, permission)| json!({"user":"owner","body":format!("/approve-gates {commit}"),"created_at":"2026-10-30T12:00:00Z","updated_at":"2026-10-30T12:00:00Z","permission":permission}))
+        .into_iter()
+        .collect();
+    let evidence = json!({"repository":"Norn-cloud/norn","head_repository":head_repository,"head_sha":head,"comments":comments});
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("maintainer-approval.json");
+    fs::write(&path, evidence.to_string()).unwrap();
+    let base = policy_fixture();
+    norn_skeleton_guard::ci::run_with_evidence(candidate.root(), base.root(), Some(&path))
+}
+
+fn rejected(errors: &[String], reason: &str) {
+    assert!(errors.iter().any(|error| error == "scripts/ci/core.sh: gate contract differs from the trusted base"), "{errors:?}");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.starts_with("maintainer path: ") && error.contains(reason)),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn trusted_policy_admits_a_gate_change_an_admin_approved_on_its_exact_head() {
+    let (candidate, _, head) = gate_change_candidate();
+    let errors = checked_with(&candidate, "Norn-cloud/norn", &head, Some((&head, "admin")));
+    assert!(errors.is_empty(), "{errors:?}");
+    // Without evidence the same candidate is rejected exactly as before.
+    let base = policy_fixture();
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert_eq!(
+        errors,
+        ["scripts/ci/core.sh: gate contract differs from the trusted base"]
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_an_approval_of_a_stale_head() {
+    let (candidate, older, head) = gate_change_candidate();
+    rejected(
+        &checked_with(
+            &candidate,
+            "Norn-cloud/norn",
+            &head,
+            Some((&older, "admin")),
+        ),
+        "no admin commented",
+    );
+    // Evidence recorded for the older head cannot vouch for the candidate checkout.
+    rejected(
+        &checked_with(
+            &candidate,
+            "Norn-cloud/norn",
+            &older,
+            Some((&older, "admin")),
+        ),
+        "the candidate is",
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_an_approval_from_a_non_admin() {
+    let (candidate, _, head) = gate_change_candidate();
+    rejected(
+        &checked_with(&candidate, "Norn-cloud/norn", &head, Some((&head, "write"))),
+        "no admin commented",
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_a_fork_gate_change_even_with_an_exact_head_approval() {
+    let (candidate, _, head) = gate_change_candidate();
+    rejected(
+        &checked_with(
+            &candidate,
+            "contributor/norn",
+            &head,
+            Some((&head, "admin")),
+        ),
+        "only Norn-cloud/norn branches",
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_a_gate_change_without_an_approval_comment() {
+    let (candidate, _, head) = gate_change_candidate();
+    rejected(
+        &checked_with(&candidate, "Norn-cloud/norn", &head, None),
+        "no admin commented",
+    );
+}
