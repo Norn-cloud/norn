@@ -10,6 +10,7 @@ import ast
 from dataclasses import asdict, dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import tomllib
@@ -88,7 +89,7 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                     if isinstance(node, ast.Import):
                         for alias in node.names:
                             aliases[alias.asname or alias.name.split('.')[0]] = alias.name
-                    elif isinstance(node, ast.ImportFrom) and node.module:
+                    elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                         for alias in node.names:
                             aliases[alias.asname or alias.name] = node.module + '.' + alias.name
                 for node in ast.walk(tree):
@@ -102,7 +103,7 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                     if isinstance(node, ast.Import):
                         for alias in node.names:
                             emit(alias.name, 'import:' + alias.name, .95, node.lineno)
-                    elif isinstance(node, ast.ImportFrom) and node.module:
+                    elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                         emit(node.module, 'import:' + node.module, .95, node.lineno)
                 if name == 'hooks.py':
                     keys = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
@@ -143,14 +144,15 @@ def collect(root: Path):
     if not root.is_dir():
         raise ValueError('source root must be a directory')
     sources = {}
-    for path in sorted(root.rglob('*')):
-        relative = path.relative_to(root)
-        if set(relative.parts) & SKIP:
-            continue
-        if path.is_symlink():
-            raise ValueError('symlink source: ' + str(relative))
-        if path.is_file() and (path.suffix in {'.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'} or path.name in {'package.json', 'pyproject.toml', 'shopify.app.toml', 'shopify.web.toml'}):
-            sources[relative.as_posix()] = path.read_bytes()
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP)
+        for name in [*dirs, *sorted(files)]:
+            path = Path(directory) / name
+            relative = path.relative_to(root)
+            if path.is_symlink():
+                raise ValueError('symlink source: ' + str(relative))
+            if path.is_file() and (path.suffix in {'.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'} or path.name in {'package.json', 'pyproject.toml', 'shopify.app.toml', 'shopify.web.toml'}):
+                sources[relative.as_posix()] = path.read_bytes()
     return sources
 
 
