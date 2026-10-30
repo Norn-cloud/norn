@@ -551,6 +551,13 @@
         "description": {
           "type": "string"
         },
+        "extends": {
+          "description": "Parent contracts. All members, constraints, markings and invariants apply.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InterfaceName"
+          }
+        },
         "invariants": {
           "description": "Invariants every implementing object type satisfies, in addition to\nits own and inherited invariants. Omitted when empty.",
           "type": "array",

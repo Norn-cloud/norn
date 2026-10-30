@@ -256,7 +256,10 @@ impl<'a> Checker<'a, '_> {
             .filter_map(|name| self.types.get_key_value(name).map(|(name, _)| *name))
             .chain(self.ancestors(name))
             .filter_map(|name| self.types.get(name))
-            .flat_map(|entry| entry.def.implements.iter().map(InterfaceName::as_str))
+            .flat_map(|entry| &entry.def.implements)
+            .filter_map(|name| self.interfaces.get(name).map(|entry| entry.def))
+            .flat_map(|def| self.interface_lineage(def))
+            .map(|def| def.name.as_str())
             .collect()
     }
 
@@ -271,7 +274,11 @@ impl<'a> Checker<'a, '_> {
             return Some(true);
         }
         if !self.types.contains_key(sub) {
-            return Some(false); // interfaces are flat
+            return Some(self.interface_named(sub).is_some_and(|interface| {
+                self.interface_lineage(interface)
+                    .iter()
+                    .any(|parent| parent.name.as_str() == sup.as_str())
+            }));
         }
         if self.types.contains_key(sup) {
             return Some(self.ancestors(sub).contains(&sup));
@@ -398,9 +405,8 @@ impl<'a> Checker<'a, '_> {
             reason = "BTreeSet sorts and deduplicates inherited interface targets, preserving inverse-member order"
         )]
         let targets = std::iter::once(name.as_str()).chain(
-            def.implements
-                .iter()
-                .map(InterfaceName::as_str)
+            self.held_interfaces(name)
+                .into_iter()
                 .filter(|interface| !inherited.contains(interface))
                 .collect::<BTreeSet<_>>(),
         );
@@ -762,30 +768,40 @@ impl<'a> Checker<'a, '_> {
                 span_at(at, &["inverse"]),
             ));
         }
-        if let Some(interface) = self.interface_named(&link.target) {
-            let required = interface
-                .properties
+        if let Some((owner, kind)) = self.interface_required_member(&link.target, id) {
+            self.report_once(error(codes::MEMBER_ID_CONFLICT,
+                format!("inverse role {id:?} takes the id of the {kind} interface {:?} requires; properties, links, and inverse roles share one member name space", owner.as_str()),
+                span_at(at, &["inverse"])));
+        }
+    }
+
+    fn interface_required_member(
+        &self,
+        target: &ObjectTypeName,
+        id: &str,
+    ) -> Option<(&'a InterfaceName, &'static str)> {
+        for entry in self.interfaces.values() {
+            let owners = self.interface_lineage(entry.def);
+            if !owners
                 .iter()
-                .map(|property| (property.id.as_str(), "property"))
-                .chain(
-                    interface
-                        .links
-                        .iter()
-                        .map(|link| (link.id.as_str(), "link")),
-                )
-                .find(|(required, _)| *required == id);
-            if let Some((_, kind)) = required {
-                let message = format!(
-                    "inverse role {id:?} takes the id of the {kind} interface {:?} requires; properties, links, and inverse roles share one member name space",
-                    interface.name.as_str()
-                );
-                self.report_once(error(
-                    codes::MEMBER_ID_CONFLICT,
-                    message,
-                    span_at(at, &["inverse"]),
-                ));
+                .any(|owner| owner.name.as_str() == target.as_str())
+            {
+                continue;
+            }
+            for owner in owners {
+                if owner
+                    .properties
+                    .iter()
+                    .any(|property| property.id.as_str() == id)
+                {
+                    return Some((&owner.name, "property"));
+                }
+                if owner.links.iter().any(|link| link.id.as_str() == id) {
+                    return Some((&owner.name, "link"));
+                }
             }
         }
+        None
     }
 
     /// A link override only narrows the link it overrides, and inherits its
@@ -934,10 +950,12 @@ impl<'a> Checker<'a, '_> {
         let mut held: Vec<(Option<usize>, &'a InterfaceDef)> = Vec::new();
         let mut seen = BTreeSet::new();
         for (position, interface) in def.implements.iter().enumerate() {
-            if let Some(entry) = self.interfaces.get(interface)
-                && seen.insert(interface.as_str())
-            {
-                held.push((Some(position), entry.def));
+            if let Some(entry) = self.interfaces.get(interface) {
+                for parent in self.interface_lineage(entry.def) {
+                    if seen.insert(parent.name.as_str()) {
+                        held.push((Some(position), parent));
+                    }
+                }
             }
         }
         for ancestor in ancestors {
@@ -945,10 +963,12 @@ impl<'a> Checker<'a, '_> {
                 continue;
             };
             for interface in &entry.def.implements {
-                if let Some(interface) = self.interfaces.get(interface)
-                    && seen.insert(interface.def.name.as_str())
-                {
-                    held.push((None, interface.def));
+                if let Some(interface) = self.interfaces.get(interface) {
+                    for parent in self.interface_lineage(interface.def) {
+                        if seen.insert(parent.name.as_str()) {
+                            held.push((None, parent));
+                        }
+                    }
                 }
             }
         }
@@ -1032,14 +1052,72 @@ impl<'a> Checker<'a, '_> {
 
     // ----- invariants --------------------------------------------------------
 
+    pub(super) fn check_interface_parent_links(&mut self, base: &[&str], def: &'a InterfaceDef) {
+        let lineage = self.interface_lineage(def);
+        let mut groups: BTreeMap<&str, Vec<LinkRequirement<'a>>> = BTreeMap::new();
+        for owner in &lineage {
+            for link in &owner.links {
+                groups
+                    .entry(link.id.as_str())
+                    .or_default()
+                    .push((Some(0), owner, link));
+            }
+        }
+        for (id, group) in groups {
+            let properties: Vec<_> = lineage
+                .iter()
+                .filter(|owner| {
+                    owner
+                        .properties
+                        .iter()
+                        .any(|property| property.id.as_str() == id)
+                })
+                .map(|owner| (Some(0), *owner))
+                .collect();
+            let conflict = self.link_requirement_conflict(&group, &properties);
+            let widens = group.iter().any(|(_, child, link)| {
+                child.name == def.name
+                    && group.iter().any(|(_, parent, requirement)| {
+                        parent.name != def.name
+                            && (self.target_narrows(&link.target, &requirement.target)
+                                == Some(false)
+                                || !cardinality_narrows(link.cardinality, requirement.cardinality))
+                    })
+            });
+            if conflict.is_some() || widens {
+                self.out.push(error(
+                    crate::interfaces::codes::INVALID_INHERITANCE,
+                    conflict.unwrap_or_else(|| {
+                        "interface redeclaration widens a parent link".to_owned()
+                    }),
+                    span_at(base, &["extends"]),
+                ));
+            }
+        }
+    }
+
     /// Invariant ids (unique across the type's effective contract, including
     /// supertype and interface invariants), namespaces, and non-blank
     /// expressions and messages.
     pub(super) fn check_interface_invariants(&mut self, base: &[&str], def: &'a InterfaceDef) {
+        let mut inherited = BTreeSet::new();
+        for parent in self
+            .interface_lineage(def)
+            .into_iter()
+            .filter(|parent| parent.name != def.name)
+        {
+            for invariant in &parent.invariants {
+                if !inherited.insert(invariant.id.as_str().to_owned()) {
+                    self.out.push(error(codes::DUPLICATE_INVARIANT_ID,
+                        "parent interfaces declare conflicting invariant ids; inherited invariants cannot be replaced".to_owned(),
+                        span_at(base, &["extends"])));
+                }
+            }
+        }
         self.check_invariant_list(
             base,
             &def.invariants,
-            &BTreeSet::new(),
+            &inherited,
             None,
             InvariantSubject::Interface(&def.name),
         );
@@ -1055,6 +1133,9 @@ impl<'a> Checker<'a, '_> {
             .iter()
             .filter_map(|ancestor| self.types.get(ancestor))
             .flat_map(|entry| entry.def.implements.iter())
+            .filter_map(|name| self.interfaces.get(name).map(|entry| entry.def))
+            .flat_map(|def| self.interface_lineage(def))
+            .map(|def| &def.name)
             .collect();
         let mut inherited: BTreeSet<String> = ancestors
             .iter()
@@ -1078,27 +1159,18 @@ impl<'a> Checker<'a, '_> {
         // type. IDs share the effective invariant namespace with object
         // invariants and with the other implemented interfaces.
         let mut effective_ids = inherited.clone();
-        let mut declared_interfaces = BTreeSet::new();
-        for (index, interface) in def.implements.iter().enumerate() {
-            if ancestor_interfaces.contains(interface) || !declared_interfaces.insert(interface) {
+        for (position, interface) in self.held_with_positions(def, ancestors) {
+            let Some(index) = position else { continue };
+            if ancestor_interfaces.contains(&interface.name) {
                 continue;
             }
-            let Some(entry) = self.interfaces.get(interface) else {
-                continue;
-            };
             let mut local_ids = BTreeSet::new();
-            for invariant in &entry.def.invariants {
+            for invariant in &interface.invariants {
                 let id = invariant.id.as_str();
                 if local_ids.insert(id) && !effective_ids.insert(id.to_owned()) {
-                    let index = index.to_string();
-                    let at = [base, &["implements", index.as_str()]].concat();
-                    self.out.push(error(
-                        codes::DUPLICATE_INVARIANT_ID,
-                        format!(
-                            "interface invariant id {id:?} conflicts with another invariant already required by this type"
-                        ),
-                        span_at(&at, &[]),
-                    ));
+                    self.out.push(error(codes::DUPLICATE_INVARIANT_ID,
+                        format!("interface invariant id {id:?} conflicts with another invariant already required by this type"),
+                        span_at(base, &["implements", &index.to_string()])));
                 }
             }
         }
@@ -1188,6 +1260,17 @@ impl<'a> Checker<'a, '_> {
                     .extends
                     .as_ref()
                     .is_some_and(|parent| !self.types.contains_key(parent))
+            })
+        {
+            return;
+        }
+        if let InvariantSubject::Interface(name) = subject
+            && self.interfaces.get(name).is_some_and(|entry| {
+                entry
+                    .def
+                    .extends
+                    .iter()
+                    .any(|parent| !self.interfaces.contains_key(parent))
             })
         {
             return;

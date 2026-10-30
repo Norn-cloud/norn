@@ -2816,6 +2816,8 @@ export interface components {
         /** @description The declared state machine of one `enum` property of an object type. */
         NornIrLifecycle: {
             description?: string;
+            /** @description Parent contracts. All members, constraints, markings and invariants apply. */
+            extends?: components["schemas"]["NornIrInterfaceName"][];
             /**
              * @description States in which non-lifecycle properties cannot be written. Declared
              *     transitions may still leave these states. Omitted when empty.

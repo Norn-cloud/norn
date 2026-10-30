@@ -209,9 +209,12 @@ declare module "@norn/authoring" {
     ): TypeDefinition<EffectiveProperties<E, I, S["Type"]>>
 
     /** An EntityIR v2 interface (`interface` is a reserved word). */
-    function interfaceType<S extends Schema.Top>(
-      meta: InterfaceMeta<S> & InterfaceInvariantMeta,
-    ): InterfaceDefinition<S["Type"]>
+    function interfaceType<
+      S extends Schema.Top,
+      const P extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
+    >(
+      meta: InterfaceMeta<S> & InterfaceInvariantMeta & { readonly extends?: P },
+    ): InterfaceDefinition<EffectiveProperties<undefined, P, S["Type"]>>
 
     /** Opaque action definition; the syntax compiler lowers the call. */
     interface ActionDefinition<I> {

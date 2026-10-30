@@ -572,3 +572,81 @@ fn structured_property_members_have_closed_expression_types() {
     );
     assert!(!members.contains_key("unknown"));
 }
+
+#[test]
+fn interface_lineage_is_closed_deduplicated_and_available_to_expressions() {
+    let model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],
+        "interfaces":[
+            {"name":"test.Root","properties":[{"id":"code","type":{"kind":"text"}}]},
+            {"name":"test.Left","extends":["test.Root"]},
+            {"name":"test.Right","extends":["test.Root"]},
+            {"name":"test.Diamond","extends":["test.Left","test.Right"]}
+        ],
+        "objectTypes":[{"name":"test.Source","links":[{"id":"owner","target":"test.Root",
+            "cardinality":{"to":"one","from":"many"},"inverse":"sources"}]}]
+    }))
+    .unwrap();
+    let lookup = |name: &InterfaceName| {
+        model
+            .interfaces
+            .iter()
+            .find(|definition| &definition.name == name)
+    };
+    let lineage = norn_expr::env::interface_lineage(&model.interfaces[3], lookup).unwrap();
+    assert_eq!(
+        lineage
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["test.Root", "test.Left", "test.Right", "test.Diamond"]
+    );
+    let env = model.env();
+    let record = env.record("test.Diamond").expect("derived interface");
+    assert_eq!(record.fields["code"].ty, Type::text());
+    assert!(record.fields.contains_key("sources"));
+}
+
+#[test]
+fn interface_parent_read_contracts_intersect_independently_of_parent_order() {
+    let mut model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],"objectTypes":[],
+        "interfaces":[
+            {"name":"test.Left","properties":[{"id":"state","type":{"kind":"enum","values":[{"value":"a"},{"value":"b"}]}}]},
+            {"name":"test.Right","properties":[{"id":"state","type":{"kind":"enum","values":[{"value":"b"},{"value":"c"}]},"constraints":{"nullable":true}}]},
+            {"name":"test.Both","extends":["test.Left","test.Right"]}
+        ]
+    })).unwrap();
+    let first = model.env();
+    model.interfaces[2].extends.reverse();
+    let second = model.env();
+    assert_eq!(first.record("test.Both"), second.record("test.Both"));
+    assert_eq!(
+        first.record("test.Both").unwrap().fields["state"].ty,
+        Type::enumeration(["b"])
+    );
+}
+
+#[test]
+fn inherited_interface_link_intersections_keep_every_guaranteed_target_field() {
+    let mut model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],"objectTypes":[],
+        "interfaces":[
+            {"name":"test.TargetA","properties":[{"id":"alpha","type":{"kind":"text"}}]},
+            {"name":"test.TargetB","properties":[{"id":"beta","type":{"kind":"integer"}}]},
+            {"name":"test.Left","links":[{"id":"owner","target":"test.TargetA","cardinality":{"to":"one","from":"many","required":true}}]},
+            {"name":"test.Right","links":[{"id":"owner","target":"test.TargetB","cardinality":{"to":"one","from":"many","required":true}}]},
+            {"name":"test.Both","extends":["test.Left","test.Right"]}
+        ]
+    })).unwrap();
+    let first = model.env();
+    model.interfaces[4].extends.reverse();
+    let second = model.env();
+    assert_eq!(first.record("test.Both"), second.record("test.Both"));
+    let Type::Record(target) = &first.record("test.Both").unwrap().fields["owner"].ty else {
+        panic!("required reference")
+    };
+    let fields = &first.record(target).unwrap().fields;
+    assert_eq!(fields["alpha"].ty, Type::text());
+    assert_eq!(fields["beta"].ty, Type::Integer);
+}

@@ -4430,3 +4430,45 @@ fn record_defaults_backfill_exact_numbers_in_columns_and_overflow() {
         assert_eq!(object.values.get("zz_record"), Some(&expected));
     }
 }
+
+#[test]
+fn adding_an_interface_parent_scans_existing_rows_before_activating_its_invariants() {
+    let mut snapshot = interface_total_invariant_model(false).definitions_snapshot();
+    let parent: InterfaceDef = serde_json::from_value(json!({"name":"defs.ParentTotal",
+        "properties":[{"id":"total","type":{"kind":"integer"}}],
+        "invariants":[{"id":"non_negative_total","expression":"self.total >= 0","message":"nonnegative"}]
+    })).expect("parent");
+    snapshot.interfaces.push(parent.clone());
+    let original = Model::from_snapshot(&snapshot).expect("original model");
+    snapshot.interfaces[0].extends = vec![parent.name.clone()];
+    let candidate = Model::from_snapshot(&snapshot).expect("candidate model");
+    assert_ne!(original.model_hash(), candidate.model_hash());
+    for total in [-1, 1] {
+        let mut store = CellStore::open_in_memory(original.clone()).expect("store");
+        store
+            .install_definitions(
+                original.clone(),
+                install_input("parent-v1", 1, &original),
+                Some(0),
+                "org_demo/dev",
+            )
+            .expect("seed");
+        store
+            .commit(&batch(put_total("defs.Item", "existing", total), 2))
+            .expect("existing data");
+        let result = store.install_definitions(
+            candidate.clone(),
+            install_input("parent-v2", 3, &candidate),
+            Some(1),
+            "org_demo/dev",
+        );
+        if total < 0 {
+            assert!(
+                matches!(result, Err(CellError::DefinitionInvariantViolation { violations, .. })
+                if violations.iter().any(|finding| finding.owner == norn_ir::InvariantOwner::Interface(parent.name.clone())))
+            );
+        } else {
+            result.expect("valid existing data accepts inherited integrity contract");
+        }
+    }
+}
