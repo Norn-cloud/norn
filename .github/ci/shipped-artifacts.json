@@ -17850,7 +17850,7 @@
     },
     {
       "path": "packages/norn-sdk/src/generated/norn-api.ts",
-      "sha256": "34f878aaa91b61b4f33686126b382e9ebba1785b99e59d8041277c2f19ee9238",
+      "sha256": "95d4518f21f9a8394aa26d8e943e5c5cf5c81c23ea399ac5df63adf11a5ed57b",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
