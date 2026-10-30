@@ -773,9 +773,9 @@ fn many_children_share_an_ancestors_structured_property_records() {
     // parent's declaring-site record instead of expanding it again.
     let mut interfaces = vec![serde_json::json!({"name":"test.Root","properties":[
         {"id":"address","type":{"kind":"record","members":[{"id":"city","type":{"kind":"text"}}]}}]})];
-    interfaces.extend((0..4200).map(|index| {
-        serde_json::json!({"name": format!("test.Child{index}"), "extends": ["test.Root"]})
-    }));
+    interfaces.extend((0..4200).map(
+        |index| serde_json::json!({"name": format!("test.Child{index}"), "extends": ["test.Root"]}),
+    ));
     let model: Model = serde_json::from_value(serde_json::json!({
         "propertyTypes":[],"extensions":[],"objectTypes":[],"interfaces": interfaces
     }))

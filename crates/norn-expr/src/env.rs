@@ -1229,7 +1229,8 @@ impl<'d, 'e> Derivation<'d, 'e> {
                 let cached = self.interface_property_types.get(&site).cloned();
                 let (ty, nullable) = cached.unwrap_or_else(|| {
                     let resolved = self.resolve(&site, &property.property_type);
-                    self.interface_property_types.insert(site.clone(), resolved.clone());
+                    self.interface_property_types
+                        .insert(site.clone(), resolved.clone());
                     resolved
                 });
                 let ty = nullable_type(ty, nullable || property.constraints.nullable);
