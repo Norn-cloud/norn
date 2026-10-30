@@ -426,6 +426,41 @@ fn a_label_override_is_the_name_the_user_gets() {
     ));
 }
 
+/// A field shown read-only in the baseline, labelled without a letter or digit.
+fn with_unnamed_display_field(value: &mut Value) {
+    ux(value)["fields"] = json!([{
+        "fieldId": "note",
+        "target": { "kind": "property", "property": { "bindingId": "rows", "propertyId": "note" } },
+        "label": { "en": "…" },
+        "control": "display"
+    }]);
+    ux(value)["pages"][0]["root"]["children"]
+        .as_array_mut()
+        .expect("root children")
+        .push(node("note", &json!({ "kind": "field", "fieldId": "note" }), &json!([])));
+}
+
+#[test]
+fn a_control_override_decides_whether_a_field_is_an_input() {
+    let pointer = "/payload/ux/pages/0/root/children/1";
+    let mut display = widget();
+    with_unnamed_display_field(&mut display);
+    assert!(
+        !has(&findings(display.clone()), "widget.interaction.unnamed_control", pointer),
+        "a read-only display is not an input"
+    );
+    let mut input = display;
+    ux(&mut input)["overrides"] = json!([{
+        "targetSemanticId": "note",
+        "value": { "kind": "control", "control": "text" }
+    }]);
+    let found = findings(input);
+    assert!(
+        has(&found, "widget.interaction.unnamed_control", pointer),
+        "the override renders a text input, which needs a name: {found:#?}"
+    );
+}
+
 const BASELINE_ID: &str = "test.baseline";
 
 /// A host whose only page composes the baseline's `main` page; `overrides` are the host's.

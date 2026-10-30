@@ -181,6 +181,22 @@ fn label_overrides(ux: &WidgetUx) -> BTreeMap<&str, &LocaleText> {
         .collect()
 }
 
+fn control_overrides(ux: &WidgetUx) -> BTreeMap<&str, WidgetFieldControl> {
+    ux.overrides
+        .iter()
+        .filter_map(|over| match &over.value {
+            WidgetOverrideValue::Control { control } => {
+                Some((over.target_semantic_id.as_str(), *control))
+            }
+            WidgetOverrideValue::Label { .. }
+            | WidgetOverrideValue::Order { .. }
+            | WidgetOverrideValue::Grouping { .. }
+            | WidgetOverrideValue::Visibility { .. }
+            | WidgetOverrideValue::ActionPlacement { .. } => None,
+        })
+        .collect()
+}
+
 fn text_is_named(text: &str) -> bool {
     text.chars().any(char::is_alphanumeric)
 }
@@ -228,6 +244,8 @@ struct Context<'a> {
     nullable: &'a BTreeSet<Pair>,
     /// Label overrides by semantic id: the effective label of a node is the override when present.
     label_overrides: BTreeMap<&'a str, &'a LocaleText>,
+    /// Control overrides by semantic id: the renderer shows the override's control when present.
+    control_overrides: BTreeMap<&'a str, WidgetFieldControl>,
     composed: &'a ComposedUx<'a>,
     /// Composed baselines being walked, to stop a cycle.
     stack: Vec<(String, String, String)>,
@@ -242,6 +260,16 @@ impl Context<'_> {
         node.semantic_id
             .as_deref()
             .and_then(|semantic| self.label_overrides.get(semantic).copied())
+            .unwrap_or(declared)
+    }
+
+    fn effective_control(
+        &self,
+        semantic: Option<&str>,
+        declared: WidgetFieldControl,
+    ) -> WidgetFieldControl {
+        semantic
+            .and_then(|semantic| self.control_overrides.get(semantic).copied())
             .unwrap_or(declared)
     }
 }
@@ -270,6 +298,7 @@ impl Facts {
             .map(|form| (form.form_id.as_str(), form))
             .collect();
         let label_overrides = label_overrides(ux);
+        let control_overrides = control_overrides(ux);
 
         facts.declare(ux, &items);
         let context = Context {
@@ -279,6 +308,7 @@ impl Facts {
             forms: &forms,
             nullable: nullable_inputs,
             label_overrides,
+            control_overrides,
             composed,
             stack: Vec::new(),
             host: None,
@@ -444,6 +474,8 @@ impl Facts {
         // The baseline's own overrides apply first; the host's overrides replace them.
         let mut overrides = label_overrides(&baseline);
         overrides.extend(context.label_overrides.iter().map(|(k, v)| (*k, *v)));
+        let mut controls = control_overrides(&baseline);
+        controls.extend(context.control_overrides.iter().map(|(k, v)| (*k, *v)));
         let no_nullable: BTreeSet<Pair> = BTreeSet::new();
         let mut stack = context.stack.clone();
         stack.push(identity);
@@ -454,6 +486,7 @@ impl Facts {
             forms: &forms,
             nullable: &no_nullable,
             label_overrides: overrides,
+            control_overrides: controls,
             composed: context.composed,
             stack,
             host: Some(host_node.to_owned()),
@@ -541,7 +574,10 @@ impl Facts {
         }
         for field_id in field_ids {
             if let Some(field) = context.fields.get(field_id.as_str())
-                && !matches!(field.control, WidgetFieldControl::Display)
+                && !matches!(
+                    context.effective_control(Some(field_id.as_str()), field.control),
+                    WidgetFieldControl::Display
+                )
             {
                 let element = input_key(id, field_id);
                 self.interactive.insert(element.clone());
@@ -575,7 +611,8 @@ impl Facts {
         let Some(field) = context.fields.get(field_id) else {
             return;
         };
-        if matches!(field.control, WidgetFieldControl::Display) {
+        let control = context.effective_control(node.semantic_id.as_deref(), field.control);
+        if matches!(control, WidgetFieldControl::Display) {
             return;
         }
         self.interactive.insert(id.to_owned());
@@ -591,7 +628,7 @@ impl Facts {
         {
             self.nullable_field.insert(id.to_owned());
         }
-        if clear_capable(field.control) {
+        if clear_capable(control) {
             self.clear_capable.insert(id.to_owned());
         }
         if field
