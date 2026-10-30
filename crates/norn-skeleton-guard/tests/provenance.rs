@@ -654,7 +654,7 @@ fn checked_with(
     let path = dir.path().join("maintainer-approval.json");
     fs::write(&path, evidence.to_string()).unwrap();
     let base = policy_fixture();
-    norn_skeleton_guard::ci::trusted(candidate.root(), base.root(), Some(&path))
+    norn_skeleton_guard::ci::run_with_evidence(candidate.root(), base.root(), Some(&path))
 }
 
 fn rejected(errors: &[String], reason: &str) {

@@ -67,7 +67,7 @@ fn main() -> ExitCode {
             base_root,
             maintainer_evidence,
         } => {
-            let errors = ci::trusted(&root, &base_root, maintainer_evidence.as_deref());
+            let errors = ci::run_with_evidence(&root, &base_root, maintainer_evidence.as_deref());
             (serde_json::to_string_pretty(&errors), errors.is_empty())
         }
     };

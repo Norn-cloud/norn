@@ -13,14 +13,14 @@ const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 /// A fork never runs on a self-hosted runner or receives a repository secret.
 #[must_use]
 pub fn run(root: &Path, base: &Path) -> Vec<String> {
-    trusted(root, base, None)
+    run_with_evidence(root, base, None)
 }
 
 /// [`run`] for the trusted lane: workflow and gate contract changes are admitted
 /// only with `evidence` that an admin approved the exact candidate commit
 /// (see [`maintainer_approval`]). Every other check is unchanged.
 #[must_use]
-pub fn trusted(root: &Path, base: &Path, evidence: Option<&Path>) -> Vec<String> {
+pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> Vec<String> {
     let mut errors = provenance::check_against(root, base).errors();
     if !errors.is_empty() {
         return errors;
