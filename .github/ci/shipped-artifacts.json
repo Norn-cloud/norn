@@ -23455,7 +23455,7 @@
     },
     {
       "path": "tools/norn-ts/test/interface-inheritance.test.ts",
-      "sha256": "f89692ecaea1b265934437d158b4672a6c8b9211c2fa3c7f6b0558d83d6d4f6f",
+      "sha256": "ef9f0a53e9da71d8de1f36a06c55f49586ba7cc893953549be56a610e2a89092",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
