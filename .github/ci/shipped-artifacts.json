@@ -104,7 +104,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "e2bbe5a507e5386ac975bf7b319cc71b9cfd9fc94cdc01974f4b79e5d2f23975",
+      "sha256": "97fa4a5b7f2c0b80c0d296984683c3cf65ac05784a9f56e107ac50f87acf8734",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12717,7 +12717,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/src/ci/mod.rs",
-      "sha256": "8711696f8a36cc80598eb2713b8e0fa89f2b69a92c5a488ef6b2a8a49ced869d",
+      "sha256": "081e54b26dc14b2011fb1ba9440e73943b61181cd4b15076eae8b7fa9333fd2b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12789,7 +12789,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/tests/provenance.rs",
-      "sha256": "16fc0e345eda81798e6c0cc5c7590875c07cfbf51961d4c9331eba4e32ab5bac",
+      "sha256": "016c02c0037e9359b198fd9cec375de24f29dc013d823db03df1012931a88bb9",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
