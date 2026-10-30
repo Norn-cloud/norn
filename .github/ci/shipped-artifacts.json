@@ -1224,7 +1224,7 @@
     },
     {
       "path": "crates/norn-cell/src/model.rs",
-      "sha256": "86e7f98afb00dbea10efc37746b881e7b5ffc454d94291af41c6e3f36cc9eee8",
+      "sha256": "5901b70cf0ede329ea4a4d277c8d4a2dc340faddc7ab99ef75a1d765fa06ea71",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1332,7 +1332,7 @@
     },
     {
       "path": "crates/norn-cell/src/read.rs",
-      "sha256": "286b9ccfb2613d41d45827b2c01de39fb47379460b92613f547a80b18ddeed81",
+      "sha256": "2739e2359bac46e74d8dd35411a3f9655c179348cfcd6458585b4858d5796fef",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1584,7 +1584,7 @@
     },
     {
       "path": "crates/norn-cell/tests/link_read_page.rs",
-      "sha256": "09d4928a31fde1c5b4e249bca12911c2f147734b7afb032aac84387ec8415c8c",
+      "sha256": "ce9b4604a7e999e066ba6c929e94590f618c242812430469128f1a07fc450d6d",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1620,7 +1620,7 @@
     },
     {
       "path": "crates/norn-cell/tests/model_interfaces.rs",
-      "sha256": "545802dcb72cb3c9d1e6163d1c3b913a477b1396983a5bc0e45106d97be6f876",
+      "sha256": "c1d1dae552d8442c935e4c200bc864b548ece554b2f10036b39fe477313b516a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11565,7 +11565,7 @@
     },
     {
       "path": "crates/norn-kernel/src/commit_check.rs",
-      "sha256": "b94363fb97dead4085e6d5fce1f1ace8c6870da2497dda2d7f1a7016ad430f50",
+      "sha256": "da016f654a6fe2e4983fda29625d5533bc0ecddba05d9f4866b792b0ebb24e1b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11601,7 +11601,7 @@
     },
     {
       "path": "crates/norn-kernel/src/decision_commit.rs",
-      "sha256": "93a77d26a037d1ba53001673ae3ed4ef3606cfb09653f84449232e31f33259c8",
+      "sha256": "5d094d09f8393021de20079e082c7e50aa2ff95194fb251fd6ea31b2d43edacb",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11997,7 +11997,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/invariant_commit.rs",
-      "sha256": "ef0ecef76a9da8ce1f17ed9bd0016e785feb60d8eb3f37783e2a628322142814",
+      "sha256": "2ce070a4941c0f850e34e24465917b915f932b4c933de899f122dd51b67670f1",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
