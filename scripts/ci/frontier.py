@@ -119,6 +119,24 @@ def verdict(r):
     return "failure" if r["cause"] == "timeout" else r["conclusion"]
 
 
+def validate_rows(rows):
+    """Reject evidence the statistics cannot trust, before any summary is computed."""
+    seen = set()
+    for r in rows:
+        key = (r["run_id"], r["attempt"])
+        if key in seen:
+            raise ValueError(f"run {r['run_id']} attempt {r['attempt']}: duplicate row")
+        seen.add(key)
+        if min(r["queue_s"], r["wall_s"], r["verdict_s"]) < 0:
+            raise ValueError(f"run {r['run_id']} attempt {r['attempt']}: negative duration")
+        # Each duration is rounded on its own, so the sum may differ by one second.
+        if abs(r["verdict_s"] - (r["queue_s"] + r["wall_s"])) > 1:
+            raise ValueError(f"run {r['run_id']} attempt {r['attempt']}: verdict_s != queue_s + wall_s")
+    for r in rows:
+        if r["attempt"] > 1 and (r["run_id"], 1) not in seen:
+            raise ValueError(f"run {r['run_id']} attempt {r['attempt']}: rerun without its first attempt")
+
+
 def series(rows):
     groups = {}
     for r in rows:
@@ -168,7 +186,8 @@ def series(rows):
 
 
 def document(rows):
-    rows = sorted(rows, key=lambda r: (r["created_at"], r["run_id"]))
+    validate_rows(rows)
+    rows = sorted(rows, key=lambda r: (r["created_at"], r["run_id"], r["attempt"]))
     return {"schema": SCHEMA, "repo": REPO, "workflow": "Public core",
             "runner": f"{RUNNER} GitHub-hosted (public repository: $0)",
             "rows": rows, "series": series(rows)}
@@ -176,12 +195,21 @@ def document(rows):
 
 def main(argv):
     if len(argv) >= 2 and argv[0] == "collect":
-        json.dump(document([row(r) for r in argv[1:]]), sys.stdout, indent=1)
+        rows = [row(r) for r in argv[1:]]
+        # A rerun needs its first attempt for the harness/flake split: collect it too.
+        have = {(r["run_id"], r["attempt"]) for r in rows}
+        rows += [row(r["run_id"]) for r in list(rows) if r["attempt"] > 1 and (r["run_id"], 1) not in have]
+        json.dump(document(rows), sys.stdout, indent=1)
         sys.stdout.write("\n")
         return 0
     if len(argv) == 2 and argv[0] == "check":
         stored = json.load(open(argv[1], encoding="utf-8"))
-        if stored.get("schema") != SCHEMA or stored != document(stored["rows"]):
+        try:
+            recomputed = document(stored["rows"])
+        except ValueError as error:
+            print(f"{argv[1]}: {error}", file=sys.stderr)
+            return 1
+        if stored.get("schema") != SCHEMA or stored != recomputed:
             print(f"{argv[1]}: series drift from rows; rerun collect", file=sys.stderr)
             return 1
         return 0
