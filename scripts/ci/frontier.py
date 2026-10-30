@@ -31,6 +31,7 @@ RUNNER = "ubuntu-24.04"
 # Every substring present in one log or annotation -> cause. First match wins.
 CAUSES = [
     (("recent account payments have failed",), "harness-billing"),
+    (("has exceeded the maximum execution time",), "timeout"),
     (("exceeds timeout-minutes budget",), "known-norn#9"),
     (("Diff in /", "/crates/norn-skeleton-guard/src/ci/mod.rs:203:"), "known-norn#8"),
     (("Diff in /",), "fmt-other"),
@@ -81,7 +82,7 @@ def row(run_id):
         "conclusion": job["conclusion"], "failed_step": failed[0] if failed else None,
         "cause": classify(job),
         "steps": [{"name": s["name"], "conclusion": s["conclusion"],
-                   "s": round(ts(s["completed_at"]) - ts(s["started_at"]))}
+                   "number": s["number"], "s": round(ts(s["completed_at"]) - ts(s["started_at"]))}
                   for s in job["steps"] if s.get("started_at") and s.get("completed_at")],
     }
 
@@ -106,6 +107,11 @@ def dist(values):
             "min": min(values), "max": max(values)}
 
 
+def verdict(r):
+    """A job killed at its timeout-minutes reports `cancelled`; it is a failed gate run."""
+    return "failure" if r["cause"] == "timeout" else r["conclusion"]
+
+
 def series(rows):
     groups = {}
     for r in rows:
@@ -113,7 +119,7 @@ def series(rows):
     out = []
     for (ref, sha, gate), rs in sorted(groups.items()):
         # Cancelled and harness-refused rows stay as evidence but carry no verdict.
-        measured = [r for r in rs if r["conclusion"] in ("success", "failure")
+        measured = [r for r in rs if verdict(r) in ("success", "failure")
                     and not r["cause"].startswith("harness")]
         causes = {}
         for r in rs:
@@ -121,15 +127,17 @@ def series(rows):
         steps = {}
         for r in measured:
             for s in r["steps"]:
-                steps.setdefault(s["name"], [])
+                # Unnamed steps of the same action share a display name; the number tells them apart.
+                key = f'{s["number"]}. {s["name"]}'
+                steps.setdefault(key, [])
                 if s["conclusion"] != "skipped":
-                    steps[s["name"]].append(s)
-        verdicts = {r["conclusion"] for r in measured}
+                    steps[key].append(s)
+        verdicts = {verdict(r) for r in measured}
         out.append({
             "ref": ref, "head_sha": sha, "gate": gate, "n": len(rs), "n_measured": len(measured),
             "causes": causes,
             # Same inputs, different verdicts: every minority verdict is a flake.
-            "flake_rate": round(1 - max(sum(r["conclusion"] == v for r in measured) for v in verdicts)
+            "flake_rate": round(1 - max(sum(verdict(r) == v for r in measured) for v in verdicts)
                                 / len(measured), 3) if measured else None,
             "verdict_s": dist([r["verdict_s"] for r in measured]) if measured else None,
             "queue_s": dist([r["queue_s"] for r in measured]) if measured else None,

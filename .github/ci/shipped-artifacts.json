@@ -50,7 +50,7 @@
     },
     {
       "path": ".github/ci/frontier.json",
-      "sha256": "d384b4368d8bc394e6c359af899570f187bb914004c50b60631b0256ec217b9f",
+      "sha256": "3dae68a8ff60c88dd5483e33dc59ab0de15449302e169d9727ad0e76e2f217d2",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18277,7 +18277,7 @@
     },
     {
       "path": "scripts/ci/frontier.py",
-      "sha256": "94f717eba438abfc8f1464dc08f5238cca748a47b0b2119cef47735422663312",
+      "sha256": "c695a4fe25fc15023ede3597304f4163c1326bbfb1b387a30c6f3f26a4c073d5",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
