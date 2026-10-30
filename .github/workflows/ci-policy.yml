@@ -52,6 +52,8 @@ jobs:
       cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      head_sha: ${{ steps.pr.outputs.head_sha }}
     steps:
       # A comment event carries the issue, not the pull request: read the PR
       # from the API, taking base and head from the same snapshot.
@@ -160,5 +162,13 @@ jobs:
               'query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id mergeQueueEntry { id } } } }',
               { owner: context.repo.owner, repo: context.repo.repo, number });
             if (!repository.pullRequest.mergeQueueEntry) return;
+            // A newer run may have passed since: act only while the failure is
+            // the latest trusted-policy verdict on the unchanged head.
+            const failed = '${{ needs.trusted-policy.outputs.head_sha }}';
+            const { owner, repo } = context.repo;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+            const { data: statuses } = await github.rest.repos.listCommitStatusesForRef({ owner, repo, ref: pr.head.sha, per_page: 100 });
+            const latest = statuses.find((status) => status.context === 'trusted-policy');
+            if (pr.head.sha !== failed || !latest || latest.state !== 'failure') return;
             await github.graphql('mutation($id: ID!) { dequeuePullRequest(input: { id: $id }) { clientMutationId } }', { id: repository.pullRequest.id });
             core.notice(`Removed #${number} from the merge queue: trusted-policy failed on its head.`);
