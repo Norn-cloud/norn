@@ -5,7 +5,10 @@ on:
   # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.
   issue_comment:
     types: [created, edited, deleted]
+  # Branch heads are checked by their pull_request run; a branch push run
+  # would duplicate the full gate on the same commit.
   push:
+    branches: [main]
   merge_group:
   workflow_dispatch:
 permissions:
@@ -95,6 +98,9 @@ jobs:
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest@0.9.150
+      # The proof tool checks use ripgrep, which the runner image lacks.
+      - if: matrix.phase == 'formal'
+        run: sudo apt-get install --yes --no-install-recommends ripgrep
       - run: bash scripts/ci/core.sh ${{ matrix.phase }}
   # The single required verdict: every planned job ran and passed.
   full:
