@@ -54,17 +54,18 @@ jobs:
     timeout-minutes: 20
     steps:
       # A comment event carries the issue, not the pull request: read the PR
-      # from the API. A pull_request_target run keeps its event's base SHA.
+      # from the API, taking base and head from the same snapshot.
       - name: Resolve the pull request
         id: pr
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
+          retries: 3
           script: |
             const event = context.payload.pull_request;
             const number = event ? event.number : context.payload.issue.number;
             const { data } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number });
             core.setOutput('number', String(data.number));
-            core.setOutput('base_sha', event ? event.base.sha : data.base.sha);
+            core.setOutput('base_sha', data.base.sha);
             core.setOutput('head_sha', data.head.sha);
             core.setOutput('head_repository', data.head.repo ? data.head.repo.full_name : '');
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -120,11 +121,19 @@ jobs:
         if: always()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
+          retries: 3
           script: |
+            // If resolution failed there is no validated head: look it up again so
+            // the failure still replaces any earlier success on that head.
+            let sha = '${{ steps.pr.outputs.head_sha }}';
+            if (!sha) {
+              const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
+              sha = (await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number })).data.head.sha;
+            }
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ steps.pr.outputs.head_sha }}',
+              sha,
               state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
               context: 'trusted-policy',
               description: 'Base-owned policy over candidate data',
