@@ -786,3 +786,38 @@ fn many_children_share_an_ancestors_structured_property_records() {
     };
     assert!(env.record(address).unwrap().fields.contains_key("city"));
 }
+
+#[test]
+fn an_interface_extends_cycle_is_a_cycle_and_a_missing_parent_is_unresolved() {
+    let model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],"objectTypes":[],"interfaces":[
+            {"name":"test.A","extends":["test.B"]},
+            {"name":"test.B","extends":["test.A"]},
+            {"name":"test.C","extends":["test.Missing"]}
+        ]
+    }))
+    .unwrap();
+    let Err(errors) = ZenTypeEnv::from_artifact_set(&model.definitions(), EnvOptions::default())
+    else {
+        panic!("cyclic and missing parents do not derive")
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|error| matches!(error, EnvError::Cycle { .. })),
+        "{errors:?}"
+    );
+    assert!(
+        errors.iter().any(
+            |error| matches!(error, EnvError::Unresolved { name, .. } if name == "test.Missing")
+        ),
+        "{errors:?}"
+    );
+    assert!(
+        !errors.iter().any(|error| matches!(
+            error,
+            EnvError::Unresolved { name, .. } if name == "test.A" || name == "test.B"
+        )),
+        "an existing interface on a cycle is not unresolved: {errors:?}"
+    );
+}
