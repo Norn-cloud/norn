@@ -1296,7 +1296,7 @@
     },
     {
       "path": "crates/norn-cell/src/read.rs",
-      "sha256": "b225fb1b02993cd3dccf8e39c14463ec34c22e279ee018c50fad774881bf8001",
+      "sha256": "4cd110997824856fed3ea7bf865a9e7e6e98d81c67ad17da51edba07129e9a51",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

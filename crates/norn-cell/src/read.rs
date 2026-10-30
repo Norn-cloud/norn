@@ -240,6 +240,24 @@ pub enum LinkDirection {
     Both,
 }
 
+/// Count the objects of one concrete type in `root_table` whose current version
+/// has a current marking row for property `?3`. Each object resolves its marking
+/// subject through the unique `(world, object_type, id)` index, then seeks that
+/// subject's current row by the full primary key: no per-row correlated scan.
+fn marking_property_rows_sql(root_table: &str) -> String {
+    format!(
+        "SELECT COUNT(*) FROM {root} AS o \
+         JOIN \"{MARKING_SUBJECT}\" AS ms ON ms.\"world\" = o.{world} AND ms.\"object_type\" = o.{ty} AND ms.\"id\" = o.{id} \
+         JOIN \"{MARKING_CURRENT}\" AS m ON m.\"world\" = o.{world} AND m.\"object_type\" = o.{ty} AND m.\"subject\" = ms.\"subject\" AND m.\"property\" = ?3 AND m.\"version\" = o.{version} \
+         WHERE o.{world} = ?1 AND o.{ty} = ?2",
+        root = quote_identifier(root_table),
+        world = quote_identifier(WORLD_COLUMN),
+        ty = quote_identifier(TYPE_COLUMN),
+        id = quote_identifier(ID_COLUMN),
+        version = quote_identifier(VERSION_COLUMN),
+    )
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "directional index, cursor and locator bounds stay in one SQL builder"
@@ -1599,16 +1617,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 |row| row.get(0),
             )?.ok_or_else(|| CellError::Engine("marking snapshot count query returned no row".to_owned()))?;
             let property_rows: i64 = self.conn.query_optional(
-                &format!(
-                    "SELECT COUNT(*) FROM {} AS o JOIN \"{MARKING_CURRENT}\" AS m ON m.\"world\" = o.{} AND m.\"object_type\" = o.{} AND m.\"subject\" = (SELECT \"subject\" FROM \"{MARKING_SUBJECT}\" WHERE \"world\" = m.\"world\" AND \"object_type\" = m.\"object_type\" AND \"id\" = o.{}) AND m.\"version\" = o.{} AND m.\"property\" = ?3 WHERE o.{} = ?1 AND o.{} = ?2",
-                    quote_identifier(&root.table),
-                    quote_identifier(WORLD_COLUMN),
-                    quote_identifier(TYPE_COLUMN),
-                    quote_identifier(ID_COLUMN),
-                    quote_identifier(VERSION_COLUMN),
-                    quote_identifier(WORLD_COLUMN),
-                    quote_identifier(TYPE_COLUMN),
-                ),
+                &marking_property_rows_sql(&root.table),
                 params![world, concrete_type, property],
                 |row| row.get(0),
             )?.ok_or_else(|| CellError::Engine("current marking count query returned no row".to_owned()))?;
@@ -4248,6 +4257,55 @@ mod link_candidate_index_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn marking_property_rows_seek_subjects_and_current_rows_by_key() {
+        let engine = NativeEngine::open_in_memory().expect("opens SQLite");
+        for statement in SYSTEM_DDL {
+            engine
+                .execute(statement, &[])
+                .expect("creates system schema");
+        }
+        engine
+            .execute(
+                r#"CREATE TABLE "o:test.Item" ("_world" TEXT NOT NULL, "_id" TEXT NOT NULL, "_type" TEXT NOT NULL, "_version" INTEGER NOT NULL, PRIMARY KEY ("_world", "_id"))"#,
+                &[],
+            )
+            .expect("creates root table");
+        let sql = super::marking_property_rows_sql("o:test.Item");
+        let bindings = [
+            SqlValue::Text("main".to_owned()),
+            SqlValue::Text("test.Item".to_owned()),
+            SqlValue::Text("name".to_owned()),
+        ];
+        let plan = engine
+            .query(&format!("EXPLAIN QUERY PLAN {sql}"), &bindings)
+            .expect("explains marking count");
+        let details = plan
+            .iter()
+            .filter_map(|row| match row.get(3) {
+                Some(SqlValue::Text(detail)) => Some(detail.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        // A per-object correlated lookup re-scans every matching marking row
+        // (about 800x more SQLite work at 1,000 objects).
+        assert!(
+            details.iter().all(|detail| !detail.contains("CORRELATED")),
+            "no correlated subquery: {details:?}"
+        );
+        assert!(
+            details.iter().any(|detail| detail.starts_with("SEARCH ms")
+                && detail.contains("_norn_marking_subject/identity")),
+            "subjects resolve through the identity index: {details:?}"
+        );
+        assert!(
+            details
+                .iter()
+                .any(|detail| detail.starts_with("SEARCH m ") && detail.contains("PRIMARY KEY")),
+            "current rows are sought by primary key: {details:?}"
+        );
     }
 
     #[test]
