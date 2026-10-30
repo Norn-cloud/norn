@@ -2045,6 +2045,7 @@
         "crates/norn-cell/tests/recovery.rs",
         "crates/norn-cell/tests/restore.rs",
         "crates/norn-cell/tests/sql_engine.rs",
+        "crates/norn-cell/tests/startup_memory.rs",
         "crates/norn-cell/tests/tables.rs",
         "crates/norn-cell/tests/temporal_read_boundary.rs",
         "crates/norn-cell/tests/value_commitments.rs",
