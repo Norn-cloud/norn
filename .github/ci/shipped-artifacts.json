@@ -68,7 +68,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "eff7935d1b3ea8f8b6d24078c331448edb5fa8f75581c0517464da85b8919506",
+      "sha256": "8aa7a6ef8a395b97f9bfb63478d0d30c4e9c90d2e010864fc7ff0276e1a7229e",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -158,7 +158,7 @@
     },
     {
       "path": "CONTRIBUTING.md",
-      "sha256": "c1cdbbb4222a8cac5126f46c21fdf5296e30381faa4075319b621809fe264749",
+      "sha256": "344b7970094e5d03cc3b4d66e50fd802cc5366b27039349c35880103c57cef9f",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -176,7 +176,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "57e1a69d203413bdd85326599acd45e514e1b48364ae8a70ca1528c79ca1962d",
+      "sha256": "6c61e8daa0af180ac2c8aa0c210799748a4d44f6ac171f34c944a0184a13385b",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -23617,7 +23617,7 @@
     },
     {
       "path": "vendor/zen/core/engine/Cargo.toml",
-      "sha256": "cc3cb2479d5b42ae1694231a782d2f3f44aff0dad275999bdc9b41fd024674b6",
+      "sha256": "361ea6cce1f48de0613933312d0b4a2117f7d90549f839bc265fc67ba3743602",
       "origin": "derived",
       "category": "software",
       "license": "MIT",
@@ -24913,7 +24913,7 @@
     },
     {
       "path": "vendor/zen/core/expression/Cargo.toml",
-      "sha256": "f55aa4faef2d9d17ebc39ed72d7769471039431978168e3720188b4d43b4e84a",
+      "sha256": "c774d978a401dcc8a2446e57cf959d8b999156f0e4c923337d2c439f25d141f2",
       "origin": "derived",
       "category": "software",
       "license": "MIT",
