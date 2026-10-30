@@ -388,9 +388,15 @@ mod tests {
             evidence("Norn-cloud/norn", json!("fork/norn"), HEAD),
             evidence("Norn-cloud/norn", Value::Null, HEAD),
             evidence("fork/norn", json!("fork/norn"), HEAD),
-            evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), &HEAD.to_uppercase()),
         ] {
             assert!(maintainer_approval(&document, HEAD).is_err());
+        }
+        for malformed in ["A".repeat(40), HEAD[..39].to_owned(), String::new()] {
+            let document = evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), &malformed);
+            assert_eq!(
+                maintainer_approval(&document, &malformed),
+                Err("maintainer evidence names no exact head commit".to_owned())
+            );
         }
         assert!(maintainer_approval(&evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), HEAD), OLDER).is_err());
     }
