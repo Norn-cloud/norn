@@ -3225,7 +3225,7 @@
     },
     {
       "path": "crates/norn-checker/tests/check_receipt.rs",
-      "sha256": "fd2df1c98d3b2a50ab9e37dc3767134be27ea1f9c4c538a0000840cd2cd916a3",
+      "sha256": "21d8624b0328738331ba596ebd3ec8fe2cedd880cce1ab137c1a3852b70cc10c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
