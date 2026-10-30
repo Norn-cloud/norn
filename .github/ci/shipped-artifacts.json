@@ -12159,7 +12159,7 @@
     },
     {
       "path": "crates/norn-projections/tests/lifecycle_diagram.rs",
-      "sha256": "ddcec432cfe069eff9afef864ef8ace0d0f7331d72bc712668df2191f691bad9",
+      "sha256": "4deacee33c097a8459094f2f7bad6ac49dd16a98d461a96c19f7dd689f3c567b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

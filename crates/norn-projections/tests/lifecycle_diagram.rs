@@ -12,7 +12,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use norn_ir::ObjectTypeDef;
-use norn_projections::{LIFECYCLE_DIAGRAM_DIR, declared_lifecycle_diagrams, lifecycle_state_diagram};
+use norn_projections::{
+    LIFECYCLE_DIAGRAM_DIR, declared_lifecycle_diagrams, lifecycle_state_diagram,
+};
 
 const UPDATE_ENV: &str = "NORN_PROJECTIONS_UPDATE_GOLDENS";
 
