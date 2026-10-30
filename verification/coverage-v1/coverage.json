@@ -388,6 +388,7 @@
         "crates/norn-kernel/src/refusal.rs",
         "crates/norn-kernel/src/result_reconciliation.rs",
         "crates/norn-kernel/src/snapshot_observe.rs",
+        "crates/norn-kernel/src/version_check.rs",
         "crates/norn-skeleton-guard/Cargo.toml",
         "crates/norn-testkit/Cargo.toml",
         "fixtures/connectors/frappe.connector.json",
@@ -524,7 +525,12 @@
         "tools/norn-ts/fixtures/vertical/support/classifier.builder.ts",
         "tools/norn-ts/fixtures/vertical/support/classifier.source.ts",
         "tools/norn-ts/package.json",
-        "tools/norn-ts/profile/norn-authoring.d.ts"
+        "tools/norn-ts/profile/norn-authoring.d.ts",
+        "verification/kernel-l1/Audit.lean",
+        "verification/kernel-l1/Reference.lean",
+        "verification/kernel-l1/VersionProof.lean",
+        "verification/kernel-l1/version_kani.rs",
+        "verification/kernel-l1/version_verus.rs"
       ]
     },
     {
@@ -2244,6 +2250,9 @@
         "scripts/test_proof_enrollment.py",
         "scripts/validate-executed-test-selectors.py",
         "scripts/verification_attestation.py",
+        "scripts/verify-kernel-l1-aeneas.sh",
+        "scripts/verify-kernel-l1-lean.sh",
+        "scripts/verify-kernel-l1-version-body.py",
         "scripts/verify-promoted-subsystems.sh",
         "scripts/write-verification-result.py",
         "tools/norn-ts/src/builder/access.ts",
