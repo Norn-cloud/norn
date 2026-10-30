@@ -26,4 +26,6 @@ jobs:
           path-to-document: https://github.com/Norn-cloud/norn/blob/main/CONTRIBUTING.md#contributor-licence-agreement--version-1
           branch: cla-signatures
           custom-pr-sign-comment: I have read the Norn CLA v1 and agree to its applicable individual and corporate terms.
+          # The copyright holder does not sign their own CLA, and bots cannot sign.
+          allowlist: Youssef-Tarek-Ali-26,dependabot[bot],github-actions[bot]
           lock-pullrequest-aftermerge: false
