@@ -226,17 +226,24 @@ pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result
                     "merge group commit {commit} has gates that differ from pull request head {pull_head}"
                 ));
             }
-            let pull = pull_requests
+            // Several pull requests can share a head; any approved one admits it.
+            let mut outcome = Err(format!(
+                "no pull request evidence for gate-changing head {pull_head}"
+            ));
+            for pull in pull_requests
                 .iter()
-                .find(|pull| commit_sha(pull, "head_sha").as_deref() == Some(pull_head.as_str()))
-                .ok_or_else(|| {
-                    format!("no pull request evidence for gate-changing head {pull_head}")
-                })?;
-            let mut document = pull.clone();
-            if let Some(map) = document.as_object_mut() {
-                map.insert("repository".to_owned(), MAINTAINED_REPOSITORY.into());
+                .filter(|pull| commit_sha(pull, "head_sha").as_deref() == Some(pull_head.as_str()))
+            {
+                let mut document = pull.clone();
+                if let Some(map) = document.as_object_mut() {
+                    map.insert("repository".to_owned(), MAINTAINED_REPOSITORY.into());
+                }
+                outcome = maintainer_approval(&document, &pull_head);
+                if outcome.is_ok() {
+                    break;
+                }
             }
-            approvers.push(maintainer_approval(&document, &pull_head)?);
+            approvers.push(outcome?);
         }
         commit = previous;
     }
