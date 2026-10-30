@@ -140,10 +140,11 @@ fn parse_context(text: &str) -> Result<ContextInput, AbiError> {
     match parse_json("context", text)? {
         Value::Null => Ok(ContextInput::default()),
         Value::Object(value) => {
-            if let Some(tenant) = value.get("tenant") {
-                if !tenant.is_null() && !tenant.is_object() {
-                    return Err(invalid("context.tenant", "expected a JSON object or null"));
-                }
+            if let Some(tenant) = value.get("tenant")
+                && !tenant.is_null()
+                && !tenant.is_object()
+            {
+                return Err(invalid("context.tenant", "expected a JSON object or null"));
             }
             serde_json::from_value(Value::Object(value))
                 .map_err(|error| invalid("context", error.to_string()))
