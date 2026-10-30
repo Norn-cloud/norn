@@ -942,7 +942,8 @@ fn actual_entity_projection_validates_and_round_trips_as_cedar_json() {
         {"name":"money.amount", "type":{"kind":"decimal", "scale":2}}
     ]))
     .expect("catalog");
-    let projection = norn_projections::project_cedar_schema_with_catalog(&objects, &catalog, &[]);
+    let projection =
+        norn_projections::project_cedar_schema_with_catalog(&objects, &[], &catalog, &[]);
     let projected_json = AuthzSchema::projected_json(&projection.schema).expect("schema JSON");
     AuthzSchema::from_projected_json(&projected_json).expect("schema validates");
     assert_eq!(

@@ -1158,38 +1158,36 @@ fn generated_accepted_expressions_are_total_and_typed() {
             candidates.push(format!("[{a}, {b}][1]"));
         }
     }
-    let env = env_for(SKU);
-    let contexts = contexts();
-    let limits = ResourceLimitProfile::norn_limits_v1();
-    let (mut accepted, mut rejected) = (0_usize, 0_usize);
-    let mut peak = 0_u64;
-    let mut admitted = std::collections::BTreeSet::new();
-    for source in &candidates {
-        let expr = Expression::compile(source).unwrap_or_else(|err| panic!("{source}: {err}"));
-        let Ok(checked) = check_expression_with(&expr, &env, &Type::Json, &limits) else {
-            rejected += 1;
-            continue;
-        };
-        accepted += 1;
-        admitted.insert(source.as_str());
-        let bound = checked.cost().units();
-        assert!(bound <= limits.decide.fuel_units);
-        let inferred = checked.inferred();
-        for context in &contexts {
-            let evaluation = expr
-                .evaluate(context, EvaluationBudget::new(bound))
-                .unwrap_or_else(|err| {
-                    panic!("accepted `{source}` (estimate {bound}) failed at runtime: {err}")
-                });
-            assert!(evaluation.units_used() <= bound);
-            peak = peak.max(evaluation.units_used());
-            let value = evaluation.into_value();
-            assert!(
-                conforms(&value, inferred),
-                "accepted `{source}` returned {value:?}, checked as {inferred}"
-            );
+    // Candidates are independent: workers check interleaved slices, each with
+    // its own environment, and the totals are order-independent.
+    let workers = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let (accepted, rejected, peak, admitted) = std::thread::scope(|scope| {
+        // Spawn every worker before joining any, so they run concurrently.
+        let mut handles = Vec::with_capacity(workers);
+        for worker in 0..workers {
+            let sources: Vec<&str> = candidates
+                .iter()
+                .skip(worker)
+                .step_by(workers)
+                .map(String::as_str)
+                .collect();
+            handles.push(scope.spawn(move || check_generated(&sources)));
         }
-    }
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .fold(
+                (0, 0, 0, std::collections::BTreeSet::new()),
+                |(accepted, rejected, peak, mut admitted), (a, r, p, more)| {
+                    admitted.extend(more);
+                    (accepted + a, rejected + r, peak.max(p), admitted)
+                },
+            )
+    });
     assert!(
         peak > 100_000,
         "the edge contexts should drive some admitted expression near the budget (peak {peak})"
@@ -1212,11 +1210,49 @@ fn generated_accepted_expressions_are_total_and_typed() {
         "sum(flatMap(self.order_lines, [#.quantity, #.amount]))",
     ]
     .into_iter()
-    .filter(|sample| !admitted.contains(sample))
+    .filter(|sample| !admitted.contains(*sample))
     .collect::<Vec<_>>();
     assert!(missing.is_empty(), "not admitted: {missing:?}");
     assert!(accepted > 1_000, "only {accepted} accepted");
     assert!(rejected > 1_000, "only {rejected} rejected");
+}
+
+/// Checks and evaluates `sources` for [`generated_accepted_expressions_are_total_and_typed`]:
+/// accepted and rejected counts, peak units used and the admitted sources.
+fn check_generated(sources: &[&str]) -> (usize, usize, u64, std::collections::BTreeSet<String>) {
+    let env = env_for(SKU);
+    let contexts = contexts();
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let (mut accepted, mut rejected) = (0_usize, 0_usize);
+    let mut peak = 0_u64;
+    let mut admitted = std::collections::BTreeSet::new();
+    for &source in sources {
+        let expr = Expression::compile(source).unwrap_or_else(|err| panic!("{source}: {err}"));
+        let Ok(checked) = check_expression_with(&expr, &env, &Type::Json, &limits) else {
+            rejected += 1;
+            continue;
+        };
+        accepted += 1;
+        admitted.insert(source.to_owned());
+        let bound = checked.cost().units();
+        assert!(bound <= limits.decide.fuel_units);
+        let inferred = checked.inferred();
+        for context in &contexts {
+            let evaluation = expr
+                .evaluate(context, EvaluationBudget::new(bound))
+                .unwrap_or_else(|err| {
+                    panic!("accepted `{source}` (estimate {bound}) failed at runtime: {err}")
+                });
+            assert!(evaluation.units_used() <= bound);
+            peak = peak.max(evaluation.units_used());
+            let value = evaluation.into_value();
+            assert!(
+                conforms(&value, inferred),
+                "accepted `{source}` returned {value:?}, checked as {inferred}"
+            );
+        }
+    }
+    (accepted, rejected, peak, admitted)
 }
 
 // ---------------------------------------------------------------------------

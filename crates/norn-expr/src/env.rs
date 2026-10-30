@@ -906,6 +906,10 @@ struct Derivation<'d, 'e> {
     objects: BTreeMap<&'d str, &'d ObjectTypeDef>,
     interfaces: BTreeMap<&'d str, &'d InterfaceDef>,
     value_records: BTreeMap<String, RecordType>,
+    intersection_members: BTreeMap<String, BTreeSet<String>>,
+    /// Interface property types by declaring site: each ancestor's structured
+    /// property is resolved once, not again for every descendant.
+    interface_property_types: BTreeMap<String, (Type, bool)>,
     record_depth: usize,
     record_nodes_remaining: usize,
 }
@@ -952,6 +956,8 @@ impl<'d, 'e> Derivation<'d, 'e> {
             objects,
             interfaces,
             value_records: BTreeMap::new(),
+            intersection_members: BTreeMap::new(),
+            interface_property_types: BTreeMap::new(),
             record_depth: 0,
             record_nodes_remaining: 4096,
         }
@@ -1017,9 +1023,30 @@ impl<'d, 'e> Derivation<'d, 'e> {
                 .chain(chains.iter().filter_map(|(name, chain)| {
                     let reaches = chain.iter().any(|def| {
                         def.name.as_str() == target
-                            || def.implements.iter().any(|i| i.as_str() == target)
+                            || def
+                                .implements
+                                .iter()
+                                .filter_map(|name| self.interfaces.get(name.as_str()).copied())
+                                .any(|interface| {
+                                    interface_lineage(interface, |name| {
+                                        self.interfaces.get(name.as_str()).copied()
+                                    })
+                                    .is_ok_and(|lineage| {
+                                        lineage.iter().any(|parent| parent.name.as_str() == target)
+                                    })
+                                })
                     });
                     (reaches && *name != target).then_some(*name)
+                }))
+                .chain(self.interfaces.iter().filter_map(|(name, interface)| {
+                    (*name != target
+                        && interface_lineage(interface, |parent| {
+                            self.interfaces.get(parent.as_str()).copied()
+                        })
+                        .is_ok_and(|lineage| {
+                            lineage.iter().any(|parent| parent.name.as_str() == target)
+                        }))
+                    .then_some(*name)
                 }))
                 .collect();
             for holder in holders {
@@ -1034,8 +1061,61 @@ impl<'d, 'e> Derivation<'d, 'e> {
                 }
             }
         }
+        // An intersection target guarantees every member's contract, so it also carries the
+        // inverse roles its members gained above.
+        self.enrich_intersections(&records);
         records.extend(self.value_records);
         records
+    }
+
+    /// Give every intersection record the inverse roles of its members. Merging two members'
+    /// inverses can create a further intersection, so repeat until none is pending.
+    fn enrich_intersections(&mut self, records: &BTreeMap<String, RecordType>) {
+        let mut enriched = BTreeSet::new();
+        loop {
+            let pending: Vec<(String, BTreeSet<String>)> = self
+                .intersection_members
+                .iter()
+                .filter(|(name, _)| !enriched.contains(*name))
+                .map(|(name, members)| (name.clone(), members.clone()))
+                .collect();
+            if pending.is_empty() {
+                break;
+            }
+            for (name, members) in pending {
+                enriched.insert(name.clone());
+                self.enrich_intersection(records, &name, &members);
+            }
+        }
+    }
+
+    /// Add the inverse roles of `members` to the intersection record `name`.
+    fn enrich_intersection(
+        &mut self,
+        records: &BTreeMap<String, RecordType>,
+        name: &str,
+        members: &BTreeSet<String>,
+    ) {
+        let inverses: Vec<(String, Field)> = members
+            .iter()
+            .filter_map(|member| records.get(member.as_str()))
+            .flat_map(|record: &RecordType| record.fields.iter())
+            .filter(|(_, field)| matches!(field.source, FieldSource::Inverse { .. }))
+            .map(|(id, field)| (id.clone(), field.clone()))
+            .collect();
+        for (id, field) in inverses {
+            let Some(record) = self.value_records.get_mut(name) else {
+                continue;
+            };
+            let merged = match record.fields.remove(&id) {
+                Some(previous) if previous != field => self.interface_field_meet(previous, field),
+                Some(previous) => previous,
+                None => field,
+            };
+            if let Some(record) = self.value_records.get_mut(name) {
+                record.fields.insert(id, merged);
+            }
+        }
     }
 
     /// The `extends` chain of `name`, root supertype first. `None` (with an
@@ -1126,30 +1206,257 @@ impl<'d, 'e> Derivation<'d, 'e> {
     fn interface_record(&mut self, def: &'d InterfaceDef) -> RecordType {
         let owner = def.name.as_str();
         let mut fields = BTreeMap::new();
-        for property in &def.properties {
-            let site = format!("{owner}.{}", property.id.as_str());
-            let (ty, nullable) = self.resolve(&site, &property.property_type);
-            let ty = nullable_type(ty, nullable || property.constraints.nullable);
-            let field = Field {
-                ty,
-                source: FieldSource::Property { read_only: false },
+        let lineage =
+            match interface_lineage(def, |name| self.interfaces.get(name.as_str()).copied()) {
+                Ok(lineage) => lineage,
+                Err(name) => {
+                    // A name that resolves came back round: the lineage is a cycle.
+                    let error = if self.interfaces.contains_key(name.as_str()) {
+                        EnvError::Cycle { name: name.0 }
+                    } else {
+                        EnvError::Unresolved {
+                            site: format!("{owner}.extends"),
+                            name: name.0,
+                        }
+                    };
+                    self.errors.push(error);
+                    return RecordType {
+                        kind: RecordKind::Interface,
+                        fields,
+                    };
+                }
             };
-            insert_field(self.errors, owner, &mut fields, property.id.as_str(), field);
-        }
-        for link in &def.links {
-            let ty = self.link_type(owner, link.id.as_str(), &link.target, link.cardinality);
-            let field = Field {
-                ty,
-                source: FieldSource::Link {
-                    required: link.cardinality.required,
-                },
-            };
-            insert_field(self.errors, owner, &mut fields, link.id.as_str(), field);
+        for definition in lineage {
+            let mut own = BTreeMap::new();
+            for property in &definition.properties {
+                // The declaring interface names the site, so two parents' structured
+                // properties with one id get distinct records and are met, not replaced.
+                let site = format!("{}.{}", definition.name.as_str(), property.id.as_str());
+                let cached = self.interface_property_types.get(&site).cloned();
+                let (ty, nullable) = cached.unwrap_or_else(|| {
+                    let resolved = self.resolve(&site, &property.property_type);
+                    self.interface_property_types
+                        .insert(site.clone(), resolved.clone());
+                    resolved
+                });
+                let ty = nullable_type(ty, nullable || property.constraints.nullable);
+                let field = Field {
+                    ty,
+                    source: FieldSource::Property { read_only: false },
+                };
+                insert_field(self.errors, owner, &mut own, property.id.as_str(), field);
+            }
+            for link in &definition.links {
+                let ty = self.link_type(owner, link.id.as_str(), &link.target, link.cardinality);
+                let field = Field {
+                    ty,
+                    source: FieldSource::Link {
+                        required: link.cardinality.required,
+                    },
+                };
+                insert_field(self.errors, owner, &mut own, link.id.as_str(), field);
+            }
+            for (id, field) in own {
+                let field = match fields.remove(&id) {
+                    Some(previous) => self.interface_field_meet(previous, field),
+                    None => field,
+                };
+                fields.insert(id, field);
+            }
         }
         RecordType {
             kind: RecordKind::Interface,
             fields,
         }
+    }
+
+    /// The read type of jointly required interface members. Admission checks
+    /// compatibility separately; enum domains and nullability intersect.
+    fn interface_type_meet(&mut self, first: Type, second: Type) -> Type {
+        match (first, second) {
+            (Type::Optional(first), Type::Optional(second)) => {
+                self.interface_type_meet(*first, *second).optional()
+            }
+            // Narrowing a to-many link to an optional to-one link keeps the to-one side's
+            // optionality: a list never guarantees that a single target is present.
+            (first @ Type::List(_), Type::Optional(second)) => {
+                self.interface_type_meet(first, *second).optional()
+            }
+            (Type::Optional(first), second @ Type::List(_)) => {
+                self.interface_type_meet(*first, second).optional()
+            }
+            (Type::Optional(first), second) => self.interface_type_meet(*first, second),
+            (first, Type::Optional(second)) => self.interface_type_meet(first, *second),
+            (Type::Enum { values: first }, Type::Enum { values: second }) => {
+                Type::enumeration(first.into_iter().filter(|value| second.contains(value)))
+            }
+            (first @ Type::Text { format: Some(_) }, Type::Text { format: None }) => first,
+            (Type::List(first), Type::List(second)) => {
+                self.interface_type_meet(*first, *second).list()
+            }
+            (Type::List(first), second @ Type::Record(_)) => {
+                self.interface_type_meet(*first, second)
+            }
+            (first @ Type::Record(_), Type::List(second)) => {
+                self.interface_type_meet(first, *second)
+            }
+            (Type::Record(first), Type::Record(second)) => {
+                self.interface_record_meet(first, second)
+            }
+            (_, second) => second,
+        }
+    }
+
+    fn interface_field_meet(&mut self, first: Field, mut second: Field) -> Field {
+        second.ty = self.interface_type_meet(first.ty, second.ty);
+        match (&first.source, &mut second.source) {
+            (FieldSource::Link { required: first }, FieldSource::Link { required: second }) => {
+                *second |= *first;
+            }
+            (
+                FieldSource::Property { read_only: first },
+                FieldSource::Property { read_only: second },
+            ) => *second |= *first,
+            _ => {}
+        }
+        second
+    }
+
+    fn record_narrows(&mut self, sub: &str, sup: &str) -> bool {
+        if sub == sup {
+            return true;
+        }
+        if let Some(members) = self.intersection_members.get(sup).cloned() {
+            return members
+                .iter()
+                .all(|member| self.record_narrows(sub, member));
+        }
+        if let Some(members) = self.intersection_members.get(sub).cloned() {
+            return members
+                .iter()
+                .any(|member| self.record_narrows(member, sup));
+        }
+        if let Some(definition) = self.objects.get(sub).copied() {
+            return self.chain(definition.name.as_str()).is_some_and(|lineage| {
+                lineage.iter().any(|owner| {
+                    owner.name.as_str() == sup
+                        || owner.implements.iter().any(|name| {
+                            name.as_str() == sup
+                                || self.interfaces.get(name.as_str()).is_some_and(|interface| {
+                                    interface
+                                        .contract_owners(|parent| {
+                                            self.interfaces.get(parent.as_str()).copied()
+                                        })
+                                        .iter()
+                                        .any(|parent| parent.name.as_str() == sup)
+                                })
+                        })
+                })
+            });
+        }
+        self.interfaces.get(sub).is_some_and(|definition| {
+            definition
+                .contract_owners(|name| self.interfaces.get(name.as_str()).copied())
+                .iter()
+                .any(|parent| parent.name.as_str() == sup)
+        })
+    }
+
+    fn record_contract(&mut self, name: &str) -> Option<RecordType> {
+        if let Some(record) = self.value_records.get(name) {
+            return Some(record.clone());
+        }
+        if let Some(definition) = self.interfaces.get(name).copied() {
+            return Some(self.interface_record(definition));
+        }
+        let definition = self.objects.get(name).copied()?;
+        let chain = self.chain(definition.name.as_str())?;
+        Some(self.object_record(definition.name.as_str(), &chain, &mut Vec::new()))
+    }
+
+    fn interface_record_meet(&mut self, first: String, second: String) -> Type {
+        if self.record_narrows(&first, &second) {
+            return Type::Record(first);
+        }
+        if self.record_narrows(&second, &first) {
+            return Type::Record(second);
+        }
+        let mut members = self
+            .intersection_members
+            .get(&first)
+            .cloned()
+            .unwrap_or_else(|| BTreeSet::from([first.clone()]));
+        members.extend(
+            self.intersection_members
+                .get(&second)
+                .cloned()
+                .unwrap_or_else(|| BTreeSet::from([second.clone()])),
+        );
+        let name = format!(
+            "$intersection:{}",
+            members
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join("&")
+        );
+        if self.value_records.contains_key(&name) {
+            return Type::Record(name);
+        }
+        if self.record_nodes_remaining == 0 {
+            self.errors
+                .push(EnvError::RecordExpansionLimit { site: name });
+            return Type::Json;
+        }
+        self.record_nodes_remaining = self.record_nodes_remaining.saturating_sub(1);
+        self.intersection_members
+            .insert(name.clone(), members.clone());
+        self.value_records.insert(
+            name.clone(),
+            RecordType {
+                kind: RecordKind::Interface,
+                fields: BTreeMap::new(),
+            },
+        );
+        // Meet the flattened base members, never a partial intersection: a nested meet
+        // can reach this record while it is still the empty placeholder.
+        let mut fields: Option<BTreeMap<String, Field>> = None;
+        for member in &members {
+            let Some(record) = self.record_contract(member) else {
+                // Opaque checking admits unresolved targets; never cache the failed placeholder.
+                if !self.opaque_unresolved_refs {
+                    self.errors.push(EnvError::Unresolved {
+                        site: "interface intersection".to_owned(),
+                        name: member.clone(),
+                    });
+                }
+                self.value_records.remove(&name);
+                self.intersection_members.remove(&name);
+                return Type::Json;
+            };
+            fields = Some(match fields {
+                None => record.fields,
+                Some(mut met) => {
+                    for (id, field) in record.fields {
+                        let field = match met.remove(&id) {
+                            Some(previous) => self.interface_field_meet(previous, field),
+                            None => field,
+                        };
+                        met.insert(id, field);
+                    }
+                    met
+                }
+            });
+        }
+        let fields = fields.unwrap_or_default();
+        self.value_records.insert(
+            name.clone(),
+            RecordType {
+                kind: RecordKind::Interface,
+                fields,
+            },
+        );
+        Type::Record(name)
     }
 
     fn property_field(&mut self, owner: &str, property: &Property) -> Field {
@@ -1361,4 +1668,36 @@ fn kind<const N: usize>(name: &str, entries: [(&str, JsonValue); N]) -> JsonValu
         .collect();
     map.insert("kind".to_owned(), string(name));
     JsonValue::Object(map)
+}
+
+/// The complete contract lineage, parents first and this interface last.
+/// Shared ancestors in a diamond occur once, in declared parent order.
+///
+/// # Errors
+/// Returns the first missing or cyclic interface name. The checker supplies
+/// admission diagnostics; consumers must not use a partial lineage.
+pub fn interface_lineage<'a>(
+    definition: &'a InterfaceDef,
+    lookup: impl Fn(&InterfaceName) -> Option<&'a InterfaceDef>,
+) -> Result<Vec<&'a InterfaceDef>, InterfaceName> {
+    let mut pending = vec![(definition, false)];
+    let mut active = std::collections::BTreeSet::new();
+    let mut complete = std::collections::BTreeSet::new();
+    let mut lineage = Vec::new();
+    while let Some((definition, exiting)) = pending.pop() {
+        if exiting {
+            active.remove(&definition.name);
+            complete.insert(&definition.name);
+            lineage.push(definition);
+        } else if !complete.contains(&definition.name) {
+            if !active.insert(&definition.name) {
+                return Err(definition.name.clone());
+            }
+            pending.push((definition, true));
+            for parent in definition.extends.iter().rev() {
+                pending.push((lookup(parent).ok_or_else(|| parent.clone())?, false));
+            }
+        }
+    }
+    Ok(lineage)
 }

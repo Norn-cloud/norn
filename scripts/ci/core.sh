@@ -18,6 +18,11 @@ rest_shards=3
 # Selection comes only from here: every run ignores nextest's configurable
 # default filter and uses the pinned `ci` profile (no retries).
 nextest=(cargo nextest --profile ci)
+# The pinned nextest, installed like the other tools when absent.
+ensure_nextest() {
+  cargo nextest --version 2> /dev/null | grep -qF 'cargo-nextest 0.9.150 ' \
+    || cargo install --locked cargo-nextest --version 0.9.150
+}
 list_shards() {
   local index
   for ((index = 1; index <= ${#heavy[@]}; index++)); do printf 'heavy-%s\n' "$index"; done
@@ -74,10 +79,12 @@ run_phase() {
       ;;
     test)
       select_shard "${2:-all}"
+      ensure_nextest
       "${nextest[@]}" run --no-fail-fast "${selection[@]}"
       ;;
     test-shards)
       # Every test of the full selection is in exactly one shard.
+      ensure_nextest
       select_shard all
       "${nextest[@]}" list "${selection[@]}" --message-format json > "$upstream/all.json"
       local shard
