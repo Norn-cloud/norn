@@ -171,7 +171,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     pub(crate) fn verify_value_history(&self) -> Result<(), CellError> {
-        for receipt in self.receipts()? {
+        for receipt in self.receipt_stream() {
+            let receipt = receipt?;
             for row in receipt.body.written {
                 self.proven_snapshot(&receipt.body.world, &row.object_type, &row.key, row.version)?;
             }

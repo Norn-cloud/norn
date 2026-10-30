@@ -2035,13 +2035,14 @@ impl<E: SqlEngine> CellStore<E> {
     fn verify_definition_history(&self) -> Result<(), CellError> {
         let reader = self.read();
         let versions = reader.installed_definition_versions()?;
-        let receipts = reader.receipts()?;
+        let receipts = reader.receipt_stream();
         let mut next_version = 1_u64;
         let mut version_index = 0_usize;
         let mut active_version = 0_u64;
         let mut previous_install_seq = 0_u64;
 
         for receipt in receipts {
+            let receipt = receipt?;
             if let Some(version) = versions.get(version_index)
                 && version.commit_seq == receipt.body.commit_seq
             {
