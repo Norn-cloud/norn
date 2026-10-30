@@ -736,3 +736,158 @@ fn trusted_policy_rejects_a_gate_change_without_an_approval_comment() {
         "no admin commented",
     );
 }
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "build merge-queue history over independently authored disposable policy test data"
+)]
+fn git_in(fixture: &Fixture, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(fixture.root())
+        .args([
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .expect("git fixture");
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// Rewrite `path` with its manifest record, as a reviewed pull request would.
+fn change(candidate: &mut Fixture, path: &str, data: &[u8]) {
+    let record = candidate
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("record");
+    candidate.write(path, data);
+    candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
+    candidate.save();
+}
+
+/// Queue-style history: base, then one `--no-ff` merge per pull request head,
+/// where each head branches from the base and applies `edit`. Returns the
+/// base, the pull request heads and the group head.
+fn merge_group(
+    edits: &[&dyn Fn(&mut Fixture)],
+) -> (Fixture, String, Vec<String>, String) {
+    let mut candidate = policy_fixture();
+    let base = commit_fixture(&candidate);
+    git_in(&candidate, &["branch", "-M", "queue"]);
+    let mut heads = Vec::new();
+    for (index, edit) in edits.iter().enumerate() {
+        let branch = format!("pr-{index}");
+        git_in(&candidate, &["checkout", "--quiet", "-b", &branch, &base]);
+        edit(&mut candidate);
+        git_in(&candidate, &["add", "."]);
+        git_in(&candidate, &["commit", "--quiet", "--allow-empty", "-m", &branch]);
+        heads.push(git_in(&candidate, &["rev-parse", "HEAD"]));
+        git_in(&candidate, &["checkout", "--quiet", "queue"]);
+        git_in(&candidate, &["merge", "--quiet", "--no-ff", "--no-edit", &branch]);
+    }
+    let head = git_in(&candidate, &["rev-parse", "HEAD"]);
+    (candidate, base, heads, head)
+}
+
+fn gate_edit(candidate: &mut Fixture) {
+    change(candidate, "scripts/ci/core.sh", b"#!/usr/bin/env bash\necho reviewed gate change\n");
+}
+
+/// A pull request that changes no gate file (here, no file at all: every byte
+/// is in the single-line manifest, so two edits of it would conflict).
+fn data_edit(_: &mut Fixture) {}
+
+/// The base-owned lane over a merge group with the workflow-recorded evidence:
+/// each pull request head with an optional `/approve-gates` comment.
+fn group_checked(
+    candidate: &Fixture,
+    base: &str,
+    head: &str,
+    pulls: &[(&str, &str, Option<(&str, &str)>)],
+) -> Vec<String> {
+    let pull_requests: Vec<Value> = pulls
+        .iter()
+        .map(|(sha, repository, approved)| {
+            let comments: Vec<Value> = approved
+                .map(|(commit, permission)| json!({"user":"owner","body":format!("/approve-gates {commit}"),"created_at":"2026-10-30T12:00:00Z","updated_at":"2026-10-30T12:00:00Z","permission":permission}))
+                .into_iter()
+                .collect();
+            json!({"number":1,"head_repository":repository,"head_sha":sha,"comments":comments})
+        })
+        .collect();
+    let evidence = json!({"repository":"Norn-cloud/norn","merge_group":{"base_sha":base,"head_sha":head},"pull_requests":pull_requests});
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("maintainer-approval.json");
+    fs::write(&path, evidence.to_string()).unwrap();
+    let trusted = policy_fixture();
+    norn_skeleton_guard::ci::run_with_evidence(candidate.root(), trusted.root(), Some(&path))
+}
+
+#[test]
+fn merge_group_admits_an_approved_gate_change_behind_data_only_pulls() {
+    let (candidate, base, heads, head) = merge_group(&[&data_edit, &gate_edit]);
+    let pulls = [
+        (heads[0].as_str(), "contributor/norn", None),
+        (heads[1].as_str(), "Norn-cloud/norn", Some((heads[1].as_str(), "admin"))),
+    ];
+    let errors = group_checked(&candidate, &base, &head, &pulls);
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+#[test]
+fn merge_group_without_gate_changes_needs_no_evidence() {
+    let (candidate, base, _, head) = merge_group(&[&data_edit]);
+    assert!(group_checked(&candidate, &base, &head, &[]).is_empty());
+}
+
+#[test]
+fn merge_group_rejects_unapproved_fork_and_stale_gate_changes() {
+    let (candidate, base, heads, head) = merge_group(&[&gate_edit]);
+    let pr = heads[0].as_str();
+    for (pulls, reason) in [
+        (vec![(pr, "Norn-cloud/norn", None)], "no admin commented"),
+        (vec![(pr, "Norn-cloud/norn", Some((pr, "write")))], "no admin commented"),
+        (vec![(pr, "contributor/norn", Some((pr, "admin")))], "only Norn-cloud/norn branches"),
+        (vec![(pr, "Norn-cloud/norn", Some((base.as_str(), "admin")))], "no admin commented"),
+        (vec![], "no pull request evidence"),
+    ] {
+        rejected(&group_checked(&candidate, &base, &head, &pulls), reason);
+    }
+    // Evidence for another group head cannot vouch for the candidate.
+    let approved = [(pr, "Norn-cloud/norn", Some((pr, "admin")))];
+    rejected(&group_checked(&candidate, &base, pr, &approved), "the candidate is");
+}
+
+#[test]
+fn merge_group_rejects_gates_that_differ_from_the_approved_head() {
+    let (mut candidate, base, heads, _) = merge_group(&[&gate_edit]);
+    // An extra gate edit on top of the reviewed merge is not what the admin approved.
+    change(&mut candidate, "scripts/ci/core.sh", b"#!/usr/bin/env bash\necho unreviewed\n");
+    git_in(&candidate, &["commit", "--quiet", "-am", "unreviewed"]);
+    let amended = git_in(&candidate, &["rev-parse", "HEAD"]);
+    let pr = heads[0].as_str();
+    let pulls = [(pr, "Norn-cloud/norn", Some((pr, "admin")))];
+    rejected(&group_checked(&candidate, &base, &amended, &pulls), "is not a two-parent merge");
+    let merged = git_in(&candidate, &["rev-parse", "HEAD~1"]);
+    git_in(&candidate, &["reset", "--quiet", "--soft", &merged]);
+    git_in(&candidate, &["commit", "--quiet", "--amend", "--no-edit"]);
+    let tampered = git_in(&candidate, &["rev-parse", "HEAD"]);
+    rejected(&group_checked(&candidate, &base, &tampered, &pulls), "differ from pull request head");
+}
+
+#[test]
+fn merge_group_rejects_squashed_history() {
+    let mut candidate = policy_fixture();
+    let base = commit_fixture(&candidate);
+    gate_edit(&mut candidate);
+    let head = commit_fixture(&candidate);
+    let pulls = [(head.as_str(), "Norn-cloud/norn", Some((head.as_str(), "admin")))];
+    rejected(&group_checked(&candidate, &base, &head, &pulls), "is not a two-parent merge");
+}
