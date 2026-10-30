@@ -56,11 +56,24 @@ jobs:
           script: |
             const pr = context.payload.pull_request;
             const { owner, repo } = context.repo;
+            // Only decisive reviews need a permission. A reviewer the API does not
+            // know as a user (a bot) has none; any other API failure fails closed.
+            const permissions = new Map();
+            const permission = async (username) => {
+              if (!permissions.has(username)) {
+                const level = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username })
+                  .then(({ data }) => data.permission, (error) => {
+                    if (error.status === 404) return 'none';
+                    throw error;
+                  });
+                permissions.set(username, level);
+              }
+              return permissions.get(username);
+            };
             const reviews = [];
             for (const review of await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: pr.number, per_page: 100 })) {
-              if (!review.user) continue;
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: review.user.login });
-              reviews.push({ user: review.user.login, state: review.state, commit_id: review.commit_id, permission: data.permission });
+              if (!review.user || !['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) continue;
+              reviews.push({ user: review.user.login, state: review.state, commit_id: review.commit_id, permission: await permission(review.user.login) });
             }
             require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify({
               repository: `${owner}/${repo}`,
