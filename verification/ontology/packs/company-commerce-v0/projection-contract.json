@@ -3,7 +3,7 @@
   "packId": "norn.ontology-pack.company-commerce",
   "packVersion": "0.1",
   "canonicalArtifact": "pack.json",
-  "canonicalArtifactSha256": "6be7cc762b7d16ba695b933070e8d191c2da4ffdbcda89d23f531706d189694f",
+  "canonicalArtifactSha256": "6583550e7184a5e513c11a56aef713b53fb891474a78ce7d35fb58aab535577e",
   "canonicalAuthority": "norn_ir_closed_world_checker",
   "projectionMethod": "reviewed_static_v0",
   "reproductionChecker": "verification/ontology/scripts/validate.py",

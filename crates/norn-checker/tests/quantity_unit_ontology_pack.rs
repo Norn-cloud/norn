@@ -85,6 +85,7 @@ fn qudt_is_the_only_mapping_source_and_ucum_stays_reference_only() {
         "v3.4.0@1137205617d03d3d5c8351ea58105b6719c5d6f0"
     );
     assert_eq!(qudt["redistribution"], "reference_only");
+    assert_eq!(qudt["importMode"], "map_only");
 
     let ucum = sources
         .iter()
@@ -92,6 +93,7 @@ fn qudt_is_the_only_mapping_source_and_ucum_stays_reference_only() {
         .expect("UCUM reference pin must exist");
     assert_eq!(ucum["releaseId"], "2.2@2024-06-17");
     assert_eq!(ucum["redistribution"], "reference_only");
+    assert_eq!(ucum["importMode"], "study_only");
     assert!(
         ucum.get("files").is_none(),
         "UCUM content must not be vendored"
