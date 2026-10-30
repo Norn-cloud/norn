@@ -374,11 +374,14 @@ fn inline_layout_base_is_resolved_as_a_referenced_sub_decision() {
 fn invalid_input_is_an_error() {
     assert!(output_of("artifacts-not-json").starts_with("error: invalid artifacts: "));
     assert!(output_of("context-unknown-member").starts_with("error: invalid context: "));
+    let outputs = outputs();
     for case in ["context-array", "context-string", "context-number", "context-boolean"] {
-        assert!(
-            output_of(case).starts_with("error: invalid context: "),
-            "{case}"
-        );
+        let output = outputs
+            .iter()
+            .find(|(name, _, _)| name == case)
+            .map(|(_, _, output)| output)
+            .unwrap_or_else(|| panic!("no case {case}"));
+        assert!(output.starts_with("error: invalid context: "), "{case}");
     }
     for case in [
         "context-tenant-array",
@@ -386,10 +389,12 @@ fn invalid_input_is_an_error() {
         "context-tenant-number",
         "context-tenant-boolean",
     ] {
-        assert!(
-            output_of(case).starts_with("error: invalid context.tenant: "),
-            "{case}"
-        );
+        let output = outputs
+            .iter()
+            .find(|(name, _, _)| name == case)
+            .map(|(_, _, output)| output)
+            .unwrap_or_else(|| panic!("no case {case}"));
+        assert!(output.starts_with("error: invalid context.tenant: "), "{case}");
     }
     assert!(output_of("expression-bad-expected-type").starts_with("error: invalid expectedType: "));
 }
