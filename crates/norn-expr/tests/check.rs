@@ -1162,17 +1162,17 @@ fn generated_accepted_expressions_are_total_and_typed() {
     // its own environment, and the totals are order-independent.
     let workers = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let (accepted, rejected, peak, admitted) = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..workers)
-            .map(|worker| {
-                let sources: Vec<&str> = candidates
-                    .iter()
-                    .skip(worker)
-                    .step_by(workers)
-                    .map(String::as_str)
-                    .collect();
-                scope.spawn(move || check_generated(&sources))
-            })
-            .collect();
+        // Spawn every worker before joining any, so they run concurrently.
+        let mut handles = Vec::with_capacity(workers);
+        for worker in 0..workers {
+            let sources: Vec<&str> = candidates
+                .iter()
+                .skip(worker)
+                .step_by(workers)
+                .map(String::as_str)
+                .collect();
+            handles.push(scope.spawn(move || check_generated(&sources)));
+        }
         handles
             .into_iter()
             .map(|handle| {
