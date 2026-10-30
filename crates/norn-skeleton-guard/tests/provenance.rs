@@ -775,9 +775,7 @@ fn change(candidate: &mut Fixture, path: &str, data: &[u8]) {
 /// Queue-style history: base, then one `--no-ff` merge per pull request head,
 /// where each head branches from the base and applies `edit`. Returns the
 /// base, the pull request heads and the group head.
-fn merge_group(
-    edits: &[&dyn Fn(&mut Fixture)],
-) -> (Fixture, String, Vec<String>, String) {
+fn merge_group(edits: &[&dyn Fn(&mut Fixture)]) -> (Fixture, String, Vec<String>, String) {
     let mut candidate = policy_fixture();
     let base = commit_fixture(&candidate);
     git_in(&candidate, &["branch", "-M", "queue"]);
@@ -787,17 +785,27 @@ fn merge_group(
         git_in(&candidate, &["checkout", "--quiet", "-b", &branch, &base]);
         edit(&mut candidate);
         git_in(&candidate, &["add", "."]);
-        git_in(&candidate, &["commit", "--quiet", "--allow-empty", "-m", &branch]);
+        git_in(
+            &candidate,
+            &["commit", "--quiet", "--allow-empty", "-m", &branch],
+        );
         heads.push(git_in(&candidate, &["rev-parse", "HEAD"]));
         git_in(&candidate, &["checkout", "--quiet", "queue"]);
-        git_in(&candidate, &["merge", "--quiet", "--no-ff", "--no-edit", &branch]);
+        git_in(
+            &candidate,
+            &["merge", "--quiet", "--no-ff", "--no-edit", &branch],
+        );
     }
     let head = git_in(&candidate, &["rev-parse", "HEAD"]);
     (candidate, base, heads, head)
 }
 
 fn gate_edit(candidate: &mut Fixture) {
-    change(candidate, "scripts/ci/core.sh", b"#!/usr/bin/env bash\necho reviewed gate change\n");
+    change(
+        candidate,
+        "scripts/ci/core.sh",
+        b"#!/usr/bin/env bash\necho reviewed gate change\n",
+    );
 }
 
 /// A pull request that changes no gate file (here, no file at all: every byte
@@ -835,7 +843,11 @@ fn merge_group_admits_an_approved_gate_change_behind_data_only_pulls() {
     let (candidate, base, heads, head) = merge_group(&[&data_edit, &gate_edit]);
     let pulls = [
         (heads[0].as_str(), "contributor/norn", None),
-        (heads[1].as_str(), "Norn-cloud/norn", Some((heads[1].as_str(), "admin"))),
+        (
+            heads[1].as_str(),
+            "Norn-cloud/norn",
+            Some((heads[1].as_str(), "admin")),
+        ),
     ];
     let errors = group_checked(&candidate, &base, &head, &pulls);
     assert!(errors.is_empty(), "{errors:?}");
@@ -853,33 +865,55 @@ fn merge_group_rejects_unapproved_fork_and_stale_gate_changes() {
     let pr = heads[0].as_str();
     for (pulls, reason) in [
         (vec![(pr, "Norn-cloud/norn", None)], "no admin commented"),
-        (vec![(pr, "Norn-cloud/norn", Some((pr, "write")))], "no admin commented"),
-        (vec![(pr, "contributor/norn", Some((pr, "admin")))], "only Norn-cloud/norn branches"),
-        (vec![(pr, "Norn-cloud/norn", Some((base.as_str(), "admin")))], "no admin commented"),
+        (
+            vec![(pr, "Norn-cloud/norn", Some((pr, "write")))],
+            "no admin commented",
+        ),
+        (
+            vec![(pr, "contributor/norn", Some((pr, "admin")))],
+            "only Norn-cloud/norn branches",
+        ),
+        (
+            vec![(pr, "Norn-cloud/norn", Some((base.as_str(), "admin")))],
+            "no admin commented",
+        ),
         (vec![], "no pull request evidence"),
     ] {
         rejected(&group_checked(&candidate, &base, &head, &pulls), reason);
     }
     // Evidence for another group head cannot vouch for the candidate.
     let approved = [(pr, "Norn-cloud/norn", Some((pr, "admin")))];
-    rejected(&group_checked(&candidate, &base, pr, &approved), "the candidate is");
+    rejected(
+        &group_checked(&candidate, &base, pr, &approved),
+        "the candidate is",
+    );
 }
 
 #[test]
 fn merge_group_rejects_gates_that_differ_from_the_approved_head() {
     let (mut candidate, base, heads, _) = merge_group(&[&gate_edit]);
     // An extra gate edit on top of the reviewed merge is not what the admin approved.
-    change(&mut candidate, "scripts/ci/core.sh", b"#!/usr/bin/env bash\necho unreviewed\n");
+    change(
+        &mut candidate,
+        "scripts/ci/core.sh",
+        b"#!/usr/bin/env bash\necho unreviewed\n",
+    );
     git_in(&candidate, &["commit", "--quiet", "-am", "unreviewed"]);
     let amended = git_in(&candidate, &["rev-parse", "HEAD"]);
     let pr = heads[0].as_str();
     let pulls = [(pr, "Norn-cloud/norn", Some((pr, "admin")))];
-    rejected(&group_checked(&candidate, &base, &amended, &pulls), "is not a two-parent merge");
+    rejected(
+        &group_checked(&candidate, &base, &amended, &pulls),
+        "is not a two-parent merge",
+    );
     let merged = git_in(&candidate, &["rev-parse", "HEAD~1"]);
     git_in(&candidate, &["reset", "--quiet", "--soft", &merged]);
     git_in(&candidate, &["commit", "--quiet", "--amend", "--no-edit"]);
     let tampered = git_in(&candidate, &["rev-parse", "HEAD"]);
-    rejected(&group_checked(&candidate, &base, &tampered, &pulls), "differ from pull request head");
+    rejected(
+        &group_checked(&candidate, &base, &tampered, &pulls),
+        "differ from pull request head",
+    );
 }
 
 #[test]
@@ -888,6 +922,13 @@ fn merge_group_rejects_squashed_history() {
     let base = commit_fixture(&candidate);
     gate_edit(&mut candidate);
     let head = commit_fixture(&candidate);
-    let pulls = [(head.as_str(), "Norn-cloud/norn", Some((head.as_str(), "admin")))];
-    rejected(&group_checked(&candidate, &base, &head, &pulls), "is not a two-parent merge");
+    let pulls = [(
+        head.as_str(),
+        "Norn-cloud/norn",
+        Some((head.as_str(), "admin")),
+    )];
+    rejected(
+        &group_checked(&candidate, &base, &head, &pulls),
+        "is not a two-parent merge",
+    );
 }

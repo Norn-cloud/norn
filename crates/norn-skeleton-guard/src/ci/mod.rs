@@ -153,7 +153,9 @@ fn commit_sha(value: &serde_json::Value, key: &str) -> Option<String> {
     value
         .get(key)
         .and_then(serde_json::Value::as_str)
-        .filter(|sha| sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        .filter(|sha| {
+            sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
         .map(str::to_owned)
 }
 
@@ -174,22 +176,36 @@ fn commit_sha(value: &serde_json::Value, key: &str) -> Option<String> {
 /// than [`MAX_MERGE_GROUP`], gate files that differ from the approved head, or
 /// a gate-changing pull request without an approval.
 pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result<String, String> {
-    if evidence.get("repository").and_then(serde_json::Value::as_str) != Some(MAINTAINED_REPOSITORY) {
-        return Err(format!("merge group evidence is not for {MAINTAINED_REPOSITORY}"));
+    if evidence
+        .get("repository")
+        .and_then(serde_json::Value::as_str)
+        != Some(MAINTAINED_REPOSITORY)
+    {
+        return Err(format!(
+            "merge group evidence is not for {MAINTAINED_REPOSITORY}"
+        ));
     }
-    let group = evidence.get("merge_group").ok_or("merge group evidence is missing")?;
-    let (Some(base), Some(head)) = (commit_sha(group, "base_sha"), commit_sha(group, "head_sha")) else {
+    let group = evidence
+        .get("merge_group")
+        .ok_or("merge group evidence is missing")?;
+    let (Some(base), Some(head)) = (commit_sha(group, "base_sha"), commit_sha(group, "head_sha"))
+    else {
         return Err("merge group evidence names no exact base and head commits".to_owned());
     };
     let candidate = git::head(root)?;
     if head != candidate {
-        return Err(format!("evidence is for {head}, the candidate is {candidate}"));
+        return Err(format!(
+            "evidence is for {head}, the candidate is {candidate}"
+        ));
     }
     let pull_requests = evidence
         .get("pull_requests")
         .and_then(serde_json::Value::as_array)
         .ok_or("merge group evidence has no pull requests")?;
-    let gates: Vec<&str> = [".github/workflows"].into_iter().chain(GATE_FILES).collect();
+    let gates: Vec<&str> = [".github/workflows"]
+        .into_iter()
+        .chain(GATE_FILES)
+        .collect();
     let mut approvers = Vec::new();
     let mut commit = head;
     for _ in 0..MAX_MERGE_GROUP {
@@ -207,7 +223,9 @@ pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result
             let pull = pull_requests
                 .iter()
                 .find(|pull| commit_sha(pull, "head_sha").as_deref() == Some(pull_head.as_str()))
-                .ok_or_else(|| format!("no pull request evidence for gate-changing head {pull_head}"))?;
+                .ok_or_else(|| {
+                    format!("no pull request evidence for gate-changing head {pull_head}")
+                })?;
             let mut document = pull.clone();
             if let Some(map) = document.as_object_mut() {
                 map.insert("repository".to_owned(), MAINTAINED_REPOSITORY.into());
@@ -216,7 +234,9 @@ pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result
         }
         commit = previous;
     }
-    Err(format!("merge group is longer than {MAX_MERGE_GROUP} commits or misses its base"))
+    Err(format!(
+        "merge group is longer than {MAX_MERGE_GROUP} commits or misses its base"
+    ))
 }
 
 /// The admin who commented `/approve-gates <head>` for the exact candidate commit,

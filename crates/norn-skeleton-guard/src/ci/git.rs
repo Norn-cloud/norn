@@ -86,7 +86,15 @@ pub fn same_paths(root: &Path, a: &str, b: &str, paths: &[&str]) -> Result<bool,
     let status = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["diff", "--quiet", "--no-ext-diff", "--no-textconv", a, b, "--"])
+        .args([
+            "diff",
+            "--quiet",
+            "--no-ext-diff",
+            "--no-textconv",
+            a,
+            b,
+            "--",
+        ])
         .args(paths)
         .status()
         .map_err(|e| format!("git diff: {e}"))?;
