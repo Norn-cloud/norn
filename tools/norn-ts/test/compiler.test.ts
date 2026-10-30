@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { tmpdir } from "node:os"
 import type { FlowDef, Step } from "../src/builder/index.ts"
 import { X, flow, route, succeed, lowerFlow } from "../src/builder/index.ts"
 import { canonicalJson, toJson } from "../src/canonical.ts"
@@ -53,6 +54,39 @@ describe("compiler builder equivalence", () => {
         expect(admitted.admitted).toBe(true)
       }
     })
+  }
+})
+
+test("a rejected batch root cannot change an accepted flow's canonical artifacts", () => {
+  const [accepted, rejected] = compileFiles([
+    join(FLOWS, "terminal-fact.source.ts"),
+    join(TOOL_ROOT, "corpus/reject/ambient-date-random.ts"),
+  ], options("terminal-fact"))
+  if (!accepted?.ok) throw new Error(JSON.stringify(accepted))
+  expect(rejected?.ok).toBe(false)
+  expect(canonicalJson(accepted.artifacts)).toBe(readFileSync(join(FLOWS, "terminal-fact.ir.json"), "utf8"))
+  if (checker) expect(checker.checkArtifactSet(accepted.artifacts).admitted).toBe(true)
+})
+
+test("separate compilations read fresh source after a file changes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "norn-compiler-source-"))
+  try {
+    const file = join(dir, "source.ts")
+    const compiled = []
+    for (const value of [1, 2]) {
+      writeFileSync(file, `import { Effect } from "effect"\nimport { Norn } from "@norn/authoring"\nexport default Norn.flow({ id: "test.fresh_source", version: "1.0.0" }, Effect.gen(function* () { return ${value} }))\n`)
+      const result = compileFile(file, { ...options("fresh-source"), sourceRoot: dir, sourcePath: "source.ts" })
+      if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+      expect(result.definition.body).toHaveLength(1)
+      const [step] = result.definition.body
+      if (step?._tag !== "Succeed") throw new Error("fresh source must compile to Succeed")
+      expect(step.value).toEqual({ _tag: "Literal", value })
+      if (checker) expect(checker.checkArtifactSet(result.artifacts).admitted).toBe(true)
+      compiled.push(canonicalJson(result.artifacts))
+    }
+    expect(compiled[0]).not.toBe(compiled[1])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
