@@ -324,21 +324,39 @@ pub fn first_violation(
         Dependency::Egd(egd) => &egd.body,
     };
     let mut found = Vec::new();
-    extend(&records, &mut meter, body, &mut Binding::new(), &mut Vec::new(), &mut found, false)
-        .map_err(refused)?;
+    extend(
+        &records,
+        &mut meter,
+        body,
+        &mut Binding::new(),
+        &mut Vec::new(),
+        &mut found,
+        false,
+    )
+    .map_err(refused)?;
     for (mut binding, used) in found {
         let violated = match dependency {
             Dependency::Tgd(tgd) => {
                 let mut heads = Vec::new();
-                extend(&records, &mut meter, &tgd.head, &mut binding, &mut Vec::new(), &mut heads, true)
-                    .map_err(refused)?;
+                extend(
+                    &records,
+                    &mut meter,
+                    &tgd.head,
+                    &mut binding,
+                    &mut Vec::new(),
+                    &mut heads,
+                    true,
+                )
+                .map_err(refused)?;
                 heads.is_empty()
             }
             Dependency::Egd(egd) => resolve(&egd.left, &binding) != resolve(&egd.right, &binding),
         };
         if violated {
             return Ok(Some(
-                used.iter().filter_map(|&i| records.get(i).map(|r| r.fact.clone())).collect(),
+                used.iter()
+                    .filter_map(|&i| records.get(i).map(|r| r.fact.clone()))
+                    .collect(),
             ));
         }
     }

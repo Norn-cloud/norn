@@ -2,11 +2,21 @@
 //!
 //! Definitions and mappings lower to a [`Theory`] of closed-world
 //! dependencies; the bounded [`chase`] finds contradictions as concrete
-//! conflicts. The checks are separate obligations (norn#62): this module
-//! starts with **non-vacuity**, a witness that each relation of the theory
-//! can hold a tuple. A relation that cannot is reported with the failing
-//! equation, a minimal set of conflicting rules and the frozen tuple that
-//! triggers them.
+//! conflicts. The checks are separate obligations (norn#62), each with its
+//! own diagnostic:
+//!
+//! - **non-vacuity** ([`check_non_vacuity`]): each relation of a theory can
+//!   hold a tuple; otherwise the failing equation, a minimal rule set and the
+//!   frozen tuple that triggers them;
+//! - **schema compatibility** ([`check_schema_compatibility`]): every source
+//!   relation can be exchanged, and which target constraints the source does
+//!   not guarantee, each with a witness source instance;
+//! - **instance validation** ([`check_instance`]): sample or real data
+//!   against both systems' constraints;
+//! - **mapping totality** ([`check_mapping_totality`]): source relations and
+//!   columns that never reach the target.
+//!
+//! Behavioural equivalence is a separate obligation, not checked here.
 
 mod chase;
 mod exchange;
@@ -89,7 +99,10 @@ fn vacuous(theory: &Theory, relation: &str, conflict: &Conflict) -> Diagnostic {
     finding(
         codes::VACUOUS,
         DiagnosticSeverity::Error,
-        format!("{relation} can never hold a tuple: {}", conflict_message(conflict)),
+        format!(
+            "{relation} can never hold a tuple: {}",
+            conflict_message(conflict)
+        ),
         origin_of(theory, &conflict.egd),
     )
 }

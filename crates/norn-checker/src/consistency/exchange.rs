@@ -34,8 +34,15 @@ impl Exchange<'_> {
     }
 
     fn validate(&self) -> Result<(), ChaseError> {
-        if let Some(egd) = self.mapping.dependencies.iter().find(|d| matches!(d, Dependency::Egd(_))) {
-            return Err(ChaseError::Theory(TheoryError::EgdInMapping(egd.id().to_owned())));
+        if let Some(egd) = self
+            .mapping
+            .dependencies
+            .iter()
+            .find(|d| matches!(d, Dependency::Egd(_)))
+        {
+            return Err(ChaseError::Theory(TheoryError::EgdInMapping(
+                egd.id().to_owned(),
+            )));
         }
         self.merged().validate().map_err(ChaseError::Theory)
     }
@@ -72,7 +79,10 @@ pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) 
             Ok(ChaseOutcome::Conflict(conflict)) => findings.push(finding(
                 codes::INCOMPATIBLE,
                 DiagnosticSeverity::Error,
-                format!("no {relation} tuple can be mapped: {}", conflict_message(&conflict)),
+                format!(
+                    "no {relation} tuple can be mapped: {}",
+                    conflict_message(&conflict)
+                ),
                 origin_of(&merged, &conflict.egd),
             )),
             Err(error) => return vec![refusal(&merged, &error)],
@@ -148,7 +158,11 @@ fn find(parent: &BTreeMap<Key, Key>, mut node: Key) -> Key {
 /// Source instances whose mapping produces every atom of `body`: one mapping
 /// head per atom (renamed apart), unified, with each class frozen to its
 /// constant or a fresh null.
-fn unfoldings(body: &[Atom], mapping: &Theory, budget: ChaseBudget) -> Result<Vec<Vec<Fact>>, ChaseError> {
+fn unfoldings(
+    body: &[Atom],
+    mapping: &Theory,
+    budget: ChaseBudget,
+) -> Result<Vec<Vec<Fact>>, ChaseError> {
     let options: Vec<Vec<(&[Atom], &Atom)>> = body
         .iter()
         .map(|atom| {
@@ -160,7 +174,9 @@ fn unfoldings(body: &[Atom], mapping: &Theory, budget: ChaseBudget) -> Result<Ve
                     Dependency::Egd(_) => None,
                 })
                 .flat_map(|tgd| tgd.head.iter().map(move |head| (tgd.body.as_slice(), head)))
-                .filter(|(_, head)| head.relation == atom.relation && head.terms.len() == atom.terms.len())
+                .filter(|(_, head)| {
+                    head.relation == atom.relation && head.terms.len() == atom.terms.len()
+                })
                 .collect()
         })
         .collect();
@@ -187,7 +203,10 @@ fn unfoldings(body: &[Atom], mapping: &Theory, budget: ChaseBudget) -> Result<Ve
         let mut parent: BTreeMap<Key, Key> = BTreeMap::new();
         for (copy, (atom, (_, head))) in body.iter().zip(&combination).enumerate() {
             for (left, right) in atom.terms.iter().zip(&head.terms) {
-                let (a, b) = (find(&parent, key(left, None)), find(&parent, key(right, Some(copy))));
+                let (a, b) = (
+                    find(&parent, key(left, None)),
+                    find(&parent, key(right, Some(copy))),
+                );
                 // Constants stay roots, so a class holds at most one constant;
                 // two different constants are left apart and caught below.
                 let (a_const, b_const) = (matches!(a, Key::Const(_)), matches!(b, Key::Const(_)));
@@ -201,11 +220,15 @@ fn unfoldings(body: &[Atom], mapping: &Theory, budget: ChaseBudget) -> Result<Ve
                 }
             }
         }
-        let clash = body.iter().zip(&combination).enumerate().any(|(copy, (atom, (_, head)))| {
-            atom.terms.iter().zip(&head.terms).any(|(left, right)| {
-                find(&parent, key(left, None)) != find(&parent, key(right, Some(copy)))
-            })
-        });
+        let clash = body
+            .iter()
+            .zip(&combination)
+            .enumerate()
+            .any(|(copy, (atom, (_, head)))| {
+                atom.terms.iter().zip(&head.terms).any(|(left, right)| {
+                    find(&parent, key(left, None)) != find(&parent, key(right, Some(copy)))
+                })
+            });
         if clash {
             continue;
         }
@@ -240,22 +263,40 @@ fn unfoldings(body: &[Atom], mapping: &Theory, budget: ChaseBudget) -> Result<Ve
 /// against the target constraints. Every finding is an error with the rows
 /// that break the rule.
 #[must_use]
-pub fn check_instance(exchange: &Exchange<'_>, facts: &[Fact], budget: ChaseBudget) -> Vec<Diagnostic> {
+pub fn check_instance(
+    exchange: &Exchange<'_>,
+    facts: &[Fact],
+    budget: ChaseBudget,
+) -> Vec<Diagnostic> {
     if let Err(error) = exchange.validate() {
         return vec![refusal(exchange.mapping, &error)];
     }
     let empty = Theory::default();
     let mut findings = closed_world(exchange.source, &empty, facts, budget);
-    findings.extend(closed_world(exchange.target, exchange.mapping, facts, budget));
+    findings.extend(closed_world(
+        exchange.target,
+        exchange.mapping,
+        facts,
+        budget,
+    ));
     findings
 }
 
 /// Chase `facts` with `derivations` and the EGDs of `constraints` (only nulls
 /// may be equated), then require every TGD of `constraints` to hold as is.
-fn closed_world(constraints: &Theory, derivations: &Theory, facts: &[Fact], budget: ChaseBudget) -> Vec<Diagnostic> {
+fn closed_world(
+    constraints: &Theory,
+    derivations: &Theory,
+    facts: &[Fact],
+    budget: ChaseBudget,
+) -> Vec<Diagnostic> {
     let mut equations = derivations.clone();
     equations.dependencies.extend(
-        constraints.dependencies.iter().filter(|d| matches!(d, Dependency::Egd(_))).cloned(),
+        constraints
+            .dependencies
+            .iter()
+            .filter(|d| matches!(d, Dependency::Egd(_)))
+            .cloned(),
     );
     let model = match chase(&equations, facts, budget) {
         Ok(ChaseOutcome::Model(model)) => model,
@@ -263,20 +304,32 @@ fn closed_world(constraints: &Theory, derivations: &Theory, facts: &[Fact], budg
             return vec![finding(
                 codes::INSTANCE_VIOLATION,
                 DiagnosticSeverity::Error,
-                format!("the data breaks {}: {}", conflict.egd, conflict_message(&conflict)),
+                format!(
+                    "the data breaks {}: {}",
+                    conflict.egd,
+                    conflict_message(&conflict)
+                ),
                 origin_of(&equations, &conflict.egd),
             )];
         }
         Err(error) => return vec![refusal(&equations, &error)],
     };
     let mut findings = Vec::new();
-    for constraint in constraints.dependencies.iter().filter(|d| matches!(d, Dependency::Tgd(_))) {
+    for constraint in constraints
+        .dependencies
+        .iter()
+        .filter(|d| matches!(d, Dependency::Tgd(_)))
+    {
         match first_violation(constraint, &model, budget) {
             Ok(None) => {}
             Ok(Some(matched)) => findings.push(finding(
                 codes::INSTANCE_VIOLATION,
                 DiagnosticSeverity::Error,
-                format!("the data breaks {}: {} has no required match", constraint.id(), render(&matched)),
+                format!(
+                    "the data breaks {}: {} has no required match",
+                    constraint.id(),
+                    render(&matched)
+                ),
                 Some(constraint.origin()),
             )),
             Err(error) => return vec![refusal(constraints, &error)],
@@ -314,17 +367,23 @@ pub fn check_mapping_totality(exchange: &Exchange<'_>, gaps: &BTreeSet<String>) 
             .filter(|(atom, _)| &atom.relation == relation)
             .collect();
         if reads.is_empty() {
-            findings.push(non_total(format!("source relation {relation} is not mapped")));
+            findings.push(non_total(format!(
+                "source relation {relation} is not mapped"
+            )));
             continue;
         }
         for (position, column) in columns.iter().enumerate() {
-            let used = reads.iter().any(|(atom, head)| match atom.terms.get(position) {
-                Some(Term::Const(_)) => true,
-                Some(Term::Var(name)) => head.contains(name.as_str()),
-                None => false,
-            });
+            let used = reads
+                .iter()
+                .any(|(atom, head)| match atom.terms.get(position) {
+                    Some(Term::Const(_)) => true,
+                    Some(Term::Var(name)) => head.contains(name.as_str()),
+                    None => false,
+                });
             if !used && !gaps.contains(&format!("{relation}.{column}")) {
-                findings.push(non_total(format!("{relation}.{column} never reaches the target")));
+                findings.push(non_total(format!(
+                    "{relation}.{column} never reaches the target"
+                )));
             }
         }
     }
@@ -336,5 +395,9 @@ fn non_total(message: String) -> Diagnostic {
 }
 
 fn render(facts: &[Fact]) -> String {
-    facts.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+    facts
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }

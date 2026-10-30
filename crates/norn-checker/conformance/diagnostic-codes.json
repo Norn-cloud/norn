@@ -408,6 +408,34 @@
       "tier": "T3"
     },
     {
+      "code": "consistency.instance.violation",
+      "message": "the data breaks {rule}: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.mapping.non_total",
+      "message": "{element} never reaches the target",
+      "severity": "warning",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.schema.incompatible",
+      "message": "no {relation} tuple can be mapped: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.schema.unpreserved_constraint",
+      "message": "the source admits data that breaks {rule}: {witness}",
+      "severity": "warning",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
       "code": "consistency.theory.malformed",
       "message": "the lowered theory is malformed: {detail}",
       "severity": "error",

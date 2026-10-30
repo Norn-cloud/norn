@@ -2106,7 +2106,7 @@
     },
     {
       "path": "crates/norn-checker/conformance/diagnostic-codes.json",
-      "sha256": "cd096bf9219ea3caf91b297c0bdd9e543239898b981ec9664792d15f2ccc0467",
+      "sha256": "64592bc081e3a1638dc5fe8275282b5beb2144a55465ed762ad81cb0c7be77f6",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -2181,7 +2181,7 @@
     },
     {
       "path": "crates/norn-checker/src/codes.rs",
-      "sha256": "3001569017869a193a907912063545fabc3cad42f03bcf4dbee1cf7730d96a32",
+      "sha256": "a3530ba3c0bb690e97f55185518a91ae7ee3faabf8f19c813d821ce9895e8711",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -2217,7 +2217,7 @@
     },
     {
       "path": "crates/norn-checker/src/consistency.rs",
-      "sha256": "d1fe85b0280ac275299db7f86159478a4ef7e39d44011a362566efaabacea901",
+      "sha256": "42a7fd8a6c96b2fcb03847e227fcd754df60962557a60119a6f0b932e3bc85b4",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -2235,7 +2235,25 @@
     },
     {
       "path": "crates/norn-checker/src/consistency/chase.rs",
-      "sha256": "9bf1947f2c85df7a71c772bbabe6eaaab56fd7d9304838cdcc0320e67753d0c4",
+      "sha256": "77e7b05027005d9366df87c35cc3896fdd5f1a3461c7ce13a847cc1c9dd0d47a",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-checker/src/consistency/exchange.rs",
+      "sha256": "cf6f3f63a7cd839a2b64ac91a4e7384df501a533f1b5095d885a6d6a97ed7972",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -2253,7 +2271,7 @@
     },
     {
       "path": "crates/norn-checker/src/consistency/theory.rs",
-      "sha256": "0ba4642c81a0fda7af3f5f56a5bed1750699962aa3f3502f9f95c0b9aab8a40c",
+      "sha256": "6ff3991a6285d300f3563eb53fe042a6e350d94950bbb0f6486b4d300c6c9eef",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3478,6 +3496,24 @@
     {
       "path": "crates/norn-checker/tests/consistency.rs",
       "sha256": "5122289f0e2a0aae31b513b6572512cd304fc08521b736dd65b25997954a04de",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-checker/tests/consistency_exchange.rs",
+      "sha256": "24a77e945060f0b565f8c975a3ae46cec08827f638f54465531d291223eeec5c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29989,7 +30025,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "a78540ce4649be9ba6f7028e9f2023987fad53d7a9b458159f0d2dd79c6a71d3",
+      "sha256": "5ca70c70e264e70e983f2942634dff6e17636739ca5beb5cccd185b4a5951544",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

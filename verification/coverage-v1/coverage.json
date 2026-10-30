@@ -1506,6 +1506,7 @@
       "sourceFiles": [
         "crates/norn-checker/src/consistency.rs",
         "crates/norn-checker/src/consistency/chase.rs",
+        "crates/norn-checker/src/consistency/exchange.rs",
         "crates/norn-checker/src/consistency/theory.rs",
         "crates/norn-checker/src/lint/mapping.rs",
         "crates/norn-checker/src/mapping.rs",
@@ -1516,6 +1517,7 @@
         "crates/norn-checker/src/mapping/vendor.rs",
         "crates/norn-checker/src/ontology.rs",
         "crates/norn-checker/tests/consistency.rs",
+        "crates/norn-checker/tests/consistency_exchange.rs",
         "crates/norn-ir/src/mapping.rs",
         "crates/norn-ir/src/mapping_evidence.rs",
         "fixtures/ir/metrics/customers-by-region-week.question.json",
