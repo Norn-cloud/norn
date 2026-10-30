@@ -34,36 +34,63 @@ test.skipIf(!checker)("Rust admits the inherited interface contract", () => {
   expect(checked.admitted).toBe(true)
 })
 
-/** TypeScript errors for an implementor of `Located` keyed on `key`. */
-function typeErrors(key: string): ReadonlyArray<string> {
-  const dir = mkdtempSync(join(tmpdir(), "norn-inheritance-"))
-  const file = join(dir, "shelf.ts")
-  writeFileSync(file, `import { Schema } from "effect"
+const parents = `import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-const Named = Norn.interfaceType({
+export const Named = Norn.interfaceType({
   name: "inheritance.Named", title: "Named", version: "0.1.0",
   properties: Schema.Struct({ code: Schema.String }),
 })
-const Located = Norn.interfaceType({
+export const Located = Norn.interfaceType({
   name: "inheritance.Located", title: "Located", version: "0.1.0",
   extends: [Named], properties: Schema.Struct({ site: Schema.String }),
 })
-export const Shelf = Norn.type({
-  name: "inheritance.Shelf", title: "Shelf", version: "0.1.0",
-  implements: [Located], properties: Schema.Struct({ shelf_no: Schema.String }),
-  identity: [{ name: "by_key", properties: ["${key}"] }],
-})
-`)
+`
+
+/** Write `source` to a scratch module and run `inspect` on its path. */
+function withModule<T>(source: string, inspect: (file: string) => T): T {
+  const dir = mkdtempSync(join(tmpdir(), "norn-inheritance-"))
+  const file = join(dir, "shelf.ts")
+  writeFileSync(file, source)
   try {
-    const [report] = new ProfileChecker().check([file])
-    return (report?.diagnostics ?? []).filter((d) => d.code === "NORN-FLOW-TYPE").map((d) => d.message)
+    return inspect(file)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 }
 
-test("an implementor's key may name a grandparent interface's field, and not an unknown one", () => {
-  expect(typeErrors("code")).toEqual([])
-  expect(typeErrors("site")).toEqual([])
-  expect(typeErrors("colour").length).toBeGreaterThan(0)
+/** TypeScript errors for `value` typed as `Located`'s effective properties. */
+function typeErrors(value: string): ReadonlyArray<string> {
+  const source = `${parents}type Fields = NonNullable<(typeof Located)["__types"]>["type"]
+export const fields: Fields = ${value}
+`
+  return withModule(source, (file) => {
+    const [report] = new ProfileChecker().check([file])
+    return (report?.diagnostics ?? []).filter((d) => d.code === "NORN-FLOW-TYPE").map((d) => d.message)
+  })
+}
+
+test("an interface's type carries its grandparent's properties", () => {
+  expect(typeErrors(`{ code: "c", site: "s" }`)).toEqual([])
+  expect(typeErrors(`{ site: "s" }`).length).toBeGreaterThan(0)
+}, 60_000)
+
+/** Whether Rust admits an implementor of `Located` declaring `properties`, keyed on `code`. */
+function implementorAdmitted(properties: string): boolean {
+  const source = `${parents}export const Shelf = Norn.type({
+  name: "inheritance.Shelf", title: "Shelf", version: "0.1.0",
+  implements: [Located], properties: Schema.Struct({ ${properties} }),
+  identity: [{ name: "by_code", properties: ["code"] }],
+})
+`
+  return withModule(source, (file) => {
+    const result = compileDefinitions(file, { ...options, sourcePath: "shelf.ts" })
+    if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+    return checker!.checkArtifactSet(JSON.parse(JSON.stringify(result.artifacts))).admitted
+  })
+}
+
+test.skipIf(!checker)("Rust admits an implementor only when it declares the inherited properties", () => {
+  expect(implementorAdmitted("code: Schema.String, site: Schema.String")).toBe(true)
+  // TypeScript also accepts the key when `code` is only inherited; admission is the authority.
+  expect(implementorAdmitted("site: Schema.String")).toBe(false)
 }, 60_000)
