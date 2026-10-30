@@ -1501,7 +1501,8 @@
         "An inferred-ontology-to-transition negative integration test remains open; the authoritative field validator is intentionally limited to type/required plus exact finite string enums, and direct RelationIR does not yet implement association-object/through semantics.",
         "The Lean file proves declared compact reference semantics for evidence separation and RelationIR binding/cardinality only; no correspondence, OWL soundness, or completeness theorem connects it to the Rust implementation or general OWL semantics.",
         "The current single authority-file writer serializes cardinality candidate-set checks; a future per-owner parallel topology must introduce an equivalent relation-kind/index consistency owner.",
-        "Legacy unversioned relation mutation is retained for migration and pre-reset tests, checks only immutable identity plus endpoint existence, is not credited as authoritative RelationIR enforcement, and must be migrated or disabled before public production."
+        "Legacy unversioned relation mutation is retained for migration and pre-reset tests, checks only immutable identity plus endpoint existence, is not credited as authoritative RelationIR enforcement, and must be migrated or disabled before public production.",
+        "Temporal analytical tables check supplied ontology-bound rows only. Their tests do not authenticate source receipts, authorize exports, or extend the formal ontology claims to analytics."
       ],
       "sourceFiles": [
         "crates/norn-checker/src/lint/mapping.rs",
@@ -1514,6 +1515,11 @@
         "crates/norn-checker/src/ontology.rs",
         "crates/norn-ir/src/mapping.rs",
         "crates/norn-ir/src/mapping_evidence.rs",
+        "crates/norn-metrics/Cargo.toml",
+        "crates/norn-metrics/src/lib.rs",
+        "crates/norn-metrics/src/temporal.rs",
+        "crates/norn-metrics/tests/demand.source.ts",
+        "crates/norn-metrics/tests/temporal.rs",
         "fixtures/ir/metrics/customers-by-region-week.question.json",
         "fixtures/ir/metrics/sales-by-store-day.question.json",
         "fixtures/ir/synthetic-contact.source_schema.json",
