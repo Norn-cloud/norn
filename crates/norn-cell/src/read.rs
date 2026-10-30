@@ -1616,11 +1616,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 params![world, concrete_type],
                 |row| row.get(0),
             )?.ok_or_else(|| CellError::Engine("marking snapshot count query returned no row".to_owned()))?;
-            let property_rows: i64 = self.conn.query_optional(
-                &marking_property_rows_sql(&root.table),
-                params![world, concrete_type, property],
-                |row| row.get(0),
-            )?.ok_or_else(|| CellError::Engine("current marking count query returned no row".to_owned()))?;
+            let property_rows: i64 = self
+                .conn
+                .query_optional(
+                    &marking_property_rows_sql(&root.table),
+                    params![world, concrete_type, property],
+                    |row| row.get(0),
+                )?
+                .ok_or_else(|| {
+                    CellError::Engine("current marking count query returned no row".to_owned())
+                })?;
             if actual != snapshots || actual != property_rows {
                 return Ok(None);
             }
@@ -4295,16 +4300,19 @@ mod link_candidate_index_tests {
             details.iter().all(|detail| !detail.contains("CORRELATED")),
             "no correlated subquery: {details:?}"
         );
+        // Every table is reached by a keyed search, whichever join order SQLite picks,
+        // so the work is linear in the driving rows.
+        for table in ["o ", "ms ", "m "] {
+            assert!(
+                details
+                    .iter()
+                    .any(|detail| detail.starts_with(&format!("SEARCH {table}"))),
+                "{table}is searched by key: {details:?}"
+            );
+        }
         assert!(
-            details.iter().any(|detail| detail.starts_with("SEARCH ms")
-                && detail.contains("_norn_marking_subject/identity")),
-            "subjects resolve through the identity index: {details:?}"
-        );
-        assert!(
-            details
-                .iter()
-                .any(|detail| detail.starts_with("SEARCH m ") && detail.contains("PRIMARY KEY")),
-            "current rows are sought by primary key: {details:?}"
+            details.iter().all(|detail| !detail.starts_with("SCAN")),
+            "no full scan: {details:?}"
         );
     }
 
