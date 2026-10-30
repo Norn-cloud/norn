@@ -2200,6 +2200,8 @@ export interface components {
          */
         NornIrInterfaceDef: {
             description?: string;
+            /** @description Parent contracts. All members, constraints, markings and invariants apply. */
+            extends?: components["schemas"]["NornIrInterfaceName"][];
             /**
              * @description Invariants every implementing object type satisfies, in addition to
              *     its own and inherited invariants. Omitted when empty.

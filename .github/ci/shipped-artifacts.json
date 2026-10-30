@@ -6855,7 +6855,7 @@
     },
     {
       "path": "crates/norn-ir/schema/artifact_envelope.schema.json",
-      "sha256": "39ec30e53aa4fee1981ea7df53d2f86ac5a5486e164893ab38ae6cdbed33179c",
+      "sha256": "057b715fe0a545812f781fcd9bb8ec13cd20a3f7fbbf6cb332736e973aef92cc",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -7293,7 +7293,7 @@
     },
     {
       "path": "crates/norn-ir/schema/entity.schema.json",
-      "sha256": "01eee4a98f7ca4221d34514ef064a4290f7270218af42ac31259271c530ec599",
+      "sha256": "67c915f6c7a1ced6006d238ba84fae74ceb78e742a14bd0b9a64d790d18b63e6",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -7658,7 +7658,7 @@
     },
     {
       "path": "crates/norn-ir/schema/interface_def.schema.json",
-      "sha256": "01e2f037aebea2e4bb497edf07a1a0ef5935e40622bca86329cf2aded8052f9b",
+      "sha256": "9f94255f821991edec2cfacc3375d62181b632ce5fa8cf49aa5547ff534cc7cc",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -9042,7 +9042,7 @@
     },
     {
       "path": "crates/norn-ir/src/entity_v2/interface.rs",
-      "sha256": "e43643ade69ca19d786662aa40abcd86658d84cdf5a295e31734296744e44785",
+      "sha256": "8a12f30bf6e0d8b1c262e8506c2ce29e110eb7dcda167840c023ab79fdd6c475",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18048,7 +18048,7 @@
     },
     {
       "path": "packages/norn-sdk/src/generated/norn-api.ts",
-      "sha256": "2c602137be29293c12abac5a9e0e1dc10cfe868c56a15738628f1025867c3be8",
+      "sha256": "95d4518f21f9a8394aa26d8e943e5c5cf5c81c23ea399ac5df63adf11a5ed57b",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -18745,7 +18745,7 @@
     },
     {
       "path": "sdks/openapi/norn-api.openapi.json",
-      "sha256": "ae04b0517809fe5d94bd508677f362c329521977595e254c1c9aa7d3d3ff30b9",
+      "sha256": "4b1c70772045ca956430e7f42628d91ffead10d563fd6ca1c253dc3fd6f6fafb",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
