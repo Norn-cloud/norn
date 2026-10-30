@@ -1674,7 +1674,7 @@
     },
     {
       "path": "crates/norn-cell/tests/startup_memory.rs",
-      "sha256": "bb9ace31c558b9ea63dfc936bb3e2eb1584c01e48f3d172b104a5793826acc7e",
+      "sha256": "efaf09c668b500699472905c06a2778e21e11cd362bc80f22e17d912cc87480a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

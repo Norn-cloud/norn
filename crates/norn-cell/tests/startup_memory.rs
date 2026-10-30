@@ -7,7 +7,10 @@
 )]
 
 //! Explicit large-ledger regression: a fresh process must reopen history larger
-//! than its entire address-space limit. Run on Boat with --ignored --nocapture.
+//! than its entire address-space limit. Both tests share `NORN_STARTUP_MEMORY_CELL`,
+//! so run them on Boat as two processes, the seed first:
+//! `--ignored --exact seed_large_startup_ledger --nocapture`, then, under the
+//! address-space cap, `--ignored --exact startup_verification_reopens_large_ledger_under_one_gib`.
 
 use norn_cell::{CellStore, CommitBatch, MAIN_WORLD, Model, StoreOptions};
 use norn_ir::runtime_object;
