@@ -422,7 +422,7 @@ mod tests {
         ] {
             assert!(maintainer_approval(&document, HEAD).is_err());
         }
-        for malformed in ["A".repeat(40), HEAD[..39].to_owned(), String::new()] {
+        for malformed in ["A".repeat(40), "1".repeat(39), String::new()] {
             let document = evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), &malformed);
             assert_eq!(
                 maintainer_approval(&document, &malformed),
