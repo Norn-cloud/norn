@@ -483,9 +483,11 @@ declare module "@norn/authoring" {
       readonly sources: ReadonlyArray<OntologySourceSpec>
       readonly terms: ReadonlyArray<{
         readonly termId: string; readonly label: string; readonly definition: string
-        readonly termKind: "class" | "property" | "value_object" | "concept_scheme_root"
+        readonly termKind: "class" | "property" | "value_object" | "concept_scheme_root" | "action" | "predicate"
         readonly status: "active" | "deprecated" | "superseded"; readonly semanticAuthority: "semantic_only"
         readonly parentTermId?: string; readonly supersededBy?: string
+        /** The class a property or action belongs to. */
+        readonly domainTermId?: string
       }>
       readonly mappings: ReadonlyArray<{
         readonly mappingId: string; readonly termId: string; readonly sourceId: string; readonly externalIri: string

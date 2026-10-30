@@ -17,6 +17,26 @@ const PACK_VERSION: &str = "0.1";
 /// `import` from.
 const REDISTRIBUTABLE_LICENSES: [&str; 3] = ["MIT", "Apache-2.0", "CC-BY-4.0"];
 const IMPORT_MODES: [&str; 3] = ["import", "map_only", "study_only"];
+const TERM_KINDS: [&str; 6] = [
+    "class",
+    "property",
+    "value_object",
+    "concept_scheme_root",
+    "action",
+    "predicate",
+];
+/// Term kinds that take one closed promotion shape; the others are
+/// vocabulary handles (members, operations, conditions) and take none.
+const SHAPED_KINDS: [&str; 3] = ["class", "value_object", "concept_scheme_root"];
+/// Term kinds that belong to a class and must name it in `domainTermId`.
+const DOMAIN_KINDS: [&str; 2] = ["property", "action"];
+
+/// The terms of one pack: status and kind by term id.
+#[derive(Debug, Default)]
+struct PackTerms {
+    statuses: BTreeMap<String, String>,
+    kinds: BTreeMap<String, String>,
+}
 
 #[derive(Debug, Clone)]
 struct RegistryTerm {
@@ -450,7 +470,7 @@ pub(crate) fn validate_ontology_pack_payload(
     validate_mappings(
         pack.get("mappings"),
         &source_ids,
-        &terms,
+        &terms.statuses,
         diagnostics,
         artifact_id,
     );
@@ -785,14 +805,15 @@ fn validate_terms(
     value: Option<&JsonValue>,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
-) -> BTreeMap<String, String> {
+) -> PackTerms {
     let Some(terms) = non_empty_array(value, "payload.terms", diagnostics, artifact_id, PACK_CODE)
     else {
-        return BTreeMap::new();
+        return PackTerms::default();
     };
     let mut statuses = BTreeMap::new();
     let mut kinds = BTreeMap::new();
     let mut parents = BTreeMap::new();
+    let mut domains = Vec::new();
     let mut supersessions = Vec::new();
 
     for (index, term) in terms.iter().enumerate() {
@@ -812,7 +833,26 @@ fn validate_terms(
             status,
             parent,
             superseded_by,
+            domain,
         } = validate_term_declaration(term, &path, diagnostics, artifact_id);
+        if let Some(kind) = term_kind.as_deref() {
+            match &domain {
+                Some(_) if SHAPED_KINDS.contains(&kind) => diagnostics.push(diagnostic(
+                    PACK_CODE,
+                    format!("a {kind} term has no domainTermId"),
+                    format!("{path}.domainTermId"),
+                    artifact_id,
+                )),
+                Some(domain) => domains.push((domain.clone(), path.clone())),
+                None if DOMAIN_KINDS.contains(&kind) => diagnostics.push(diagnostic(
+                    PACK_CODE,
+                    format!("a {kind} term names the class it belongs to in domainTermId"),
+                    format!("{path}.domainTermId"),
+                    artifact_id,
+                )),
+                None => {}
+            }
+        }
         if let (Some(term_id), Some(term_kind)) = (term_id.as_ref(), term_kind) {
             kinds.insert(term_id.clone(), term_kind);
         }
@@ -857,8 +897,20 @@ fn validate_terms(
         diagnostics,
         artifact_id,
     );
+    for (domain, path) in domains {
+        if statuses.get(&domain).map(String::as_str) != Some("active")
+            || kinds.get(&domain).map(String::as_str) != Some("class")
+        {
+            diagnostics.push(diagnostic(
+                PACK_CODE,
+                format!("domainTermId '{domain}' must resolve to an active class term in the pack"),
+                format!("{path}.domainTermId"),
+                artifact_id,
+            ));
+        }
+    }
 
-    statuses
+    PackTerms { statuses, kinds }
 }
 
 fn compatible_parent_kinds(child: &str, parent: &str) -> bool {
@@ -866,6 +918,8 @@ fn compatible_parent_kinds(child: &str, parent: &str) -> bool {
         (child, parent),
         ("class", "class")
             | ("property", "property")
+            | ("action", "action")
+            | ("predicate", "predicate")
             | ("value_object", "value_object" | "concept_scheme_root")
     )
 }
@@ -938,7 +992,7 @@ fn validate_mappings(
 
 fn validate_shapes(
     value: Option<&JsonValue>,
-    terms: &BTreeMap<String, String>,
+    terms: &PackTerms,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
@@ -988,7 +1042,7 @@ fn validate_shapes(
         validate_shape_term(
             shape,
             &path,
-            terms,
+            &terms.statuses,
             &mut shaped_terms,
             diagnostics,
             artifact_id,
@@ -1011,8 +1065,22 @@ fn validate_shapes(
         validate_shape_fields(shape.get("fields"), &path, diagnostics, artifact_id);
     }
 
-    for (term_id, status) in terms {
-        if status == "active" && !shaped_terms.contains(term_id) {
+    for (term_id, kind) in &terms.kinds {
+        if !SHAPED_KINDS.contains(&kind.as_str()) && shaped_terms.contains(term_id) {
+            diagnostics.push(diagnostic(
+                PACK_CODE,
+                format!("a {kind} term '{term_id}' takes no closed shape"),
+                "payload.shapes",
+                artifact_id,
+            ));
+        }
+    }
+    for (term_id, status) in &terms.statuses {
+        let shaped_kind = terms
+            .kinds
+            .get(term_id)
+            .is_none_or(|kind| SHAPED_KINDS.contains(&kind.as_str()));
+        if status == "active" && shaped_kind && !shaped_terms.contains(term_id) {
             diagnostics.push(diagnostic(
                 PACK_CODE,
                 format!("active term '{term_id}' requires one closed shape"),
@@ -2025,6 +2093,7 @@ struct TermDeclaration {
     status: Option<String>,
     parent: Option<String>,
     superseded_by: Option<String>,
+    domain: Option<String>,
 }
 
 fn validate_term_identity(
@@ -2044,6 +2113,7 @@ fn validate_term_identity(
             "semanticAuthority",
             "parentTermId",
             "supersededBy",
+            "domainTermId",
         ],
         path,
         diagnostics,
@@ -2097,7 +2167,7 @@ fn validate_term_declaration(
     let term_kind = require_literal(
         term,
         "termKind",
-        &["class", "property", "value_object", "concept_scheme_root"],
+        &TERM_KINDS,
         format!("{path}.termKind"),
         diagnostics,
         artifact_id,
@@ -2138,12 +2208,21 @@ fn validate_term_declaration(
         artifact_id,
         PACK_CODE,
     );
+    let domain = optional_string(
+        term,
+        "domainTermId",
+        format!("{path}.domainTermId"),
+        diagnostics,
+        artifact_id,
+        PACK_CODE,
+    );
     TermDeclaration {
         term_id,
         term_kind,
         status,
         parent,
         superseded_by,
+        domain,
     }
 }
 

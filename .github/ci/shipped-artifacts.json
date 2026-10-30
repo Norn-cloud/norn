@@ -2991,7 +2991,7 @@
     },
     {
       "path": "crates/norn-checker/src/ontology.rs",
-      "sha256": "18fd686ba3a496d1d99a01366714c3d89abb1de21f77aca76110fdf4e0421f3c",
+      "sha256": "7205922444ee366aaf5e12532b8e7039bcd93b00f148f33ac52a0cf93d7cd4f6",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3996,7 +3996,7 @@
     },
     {
       "path": "crates/norn-checker/tests/ontology_pack.rs",
-      "sha256": "b8e97ca6b294a8cc02789dea5733c26df09f1d9399b292f28aa35414f2d5de5f",
+      "sha256": "416a1ba730764e36bac755eca679b4f9a9be9cac5b372edf05a4ee49cdae9a02",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -8952,7 +8952,7 @@
     },
     {
       "path": "crates/norn-ir/src/business_pack.rs",
-      "sha256": "d5903ad3534f357526cdef26355cfe3fc58c5f65036dabadee22847927dae61a",
+      "sha256": "fe94deeecee29b0d6ffab89be1dcb470a966bfca2241f65a616347180acf06f7",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -22771,7 +22771,7 @@
     },
     {
       "path": "tools/norn-ts/profile/norn-authoring.d.ts",
-      "sha256": "60c0869c558e8206d31dba755b418737b98b0429de333c8f045dd26088ad553f",
+      "sha256": "3693bc2cbe3442814929a440d34558e60becc54e7e8d0abb31d2846b50d1acfc",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -23059,7 +23059,7 @@
     },
     {
       "path": "tools/norn-ts/src/builder/ontology-pack.ts",
-      "sha256": "cd23aef796d89d4c109ecb0af72755de50285abc424dade5e66c6e6630117b62",
+      "sha256": "1ce70e84c1bb92a1c65dab7dc8a45d9441d23e50ea42c3138217d0b808f2b6be",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -23221,7 +23221,7 @@
     },
     {
       "path": "tools/norn-ts/src/compiler/definitions.ts",
-      "sha256": "b7c03943a2d37ef84f91a579ddd49b2c321fda3e186385769cba5e2be66bbe32",
+      "sha256": "9290ae6b62a06d5296ab14c2956750bb6726d5966a02c4ebf60e7c230f12884a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
