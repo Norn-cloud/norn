@@ -9,7 +9,7 @@ use std::fmt;
 use norn_kernel::{
     Command, CommandId, CommitId, Decider, Decision, DependencyToken, Effect, Entropy,
     EnvelopeLimits, FreshnessPolicy, Generation, IdempotencyKey, InputIdentity, LogicalTime,
-    Observations, OwnerVersion, StepError, Timer, TimerId, World, WorldId, step,
+    Observations, OwnerVersion, StepError, Timer, TimerId, World, WorldId, replay, step,
 };
 use serde::{Deserialize, Serialize};
 
@@ -162,6 +162,27 @@ fn rejection_produces_no_transition() {
         Some("input not allowed in Draft".to_owned())
     );
     assert_eq!(s0, d.initial_state());
+}
+
+#[test]
+fn replay_is_fold_of_evolve_over_step_events() {
+    let d = Approval;
+    let mut state = d.initial_state();
+    let mut ledger = Vec::new();
+    for (input, now) in [(Input::Submit, 10), (Input::Approve, 20)] {
+        let out = step(&d, &state, &input, &obs(now), &EnvelopeLimits::V1).unwrap();
+        ledger.extend(out.events);
+        state = out.state;
+    }
+    assert_eq!(replay(&d, &ledger), state);
+    assert_eq!(replay(&d, &[]), d.initial_state());
+    assert_eq!(
+        state,
+        State {
+            status: Status::Approved,
+            submitted_at: Some(LogicalTime::from_millis(10)),
+        }
+    );
 }
 
 #[test]

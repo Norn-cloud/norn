@@ -5,9 +5,9 @@ use std::convert::Infallible;
 
 use norn_kernel::limits::{NORN_LIMITS_PROFILE_ID, NORN_LIMITS_V1_SHA256, NORN_LIMITS_V1_VERSION};
 use norn_kernel::{
-    Decider, Decision, DecisionOf, Entropy, EnvelopeLimits, IngressLimit, IngressLimitExceeded,
-    LimitProfileRef, LogicalTime, Observations, ResourceLimitProfile, SliceLimits, SliceMeter,
-    StepError, StepOf, check_envelope_bytes, step,
+    Decider, Decision, DecisionOf, Entropy, EnvelopeKind, EnvelopeLimits, IngressLimit,
+    IngressLimitExceeded, LimitProfileRef, LogicalTime, Observations, ResourceLimitProfile,
+    SliceLimits, SliceMeter, StepError, StepOf, check_envelope_bytes, step,
 };
 
 /// One selected slice record as a reader sees it before appending it.
@@ -186,6 +186,22 @@ fn slice_meter_charges_nothing_on_refusal_and_stays_refused() {
     assert_eq!(
         (huge.kind, huge.actual),
         (IngressLimit::SliceBytes, u64::MAX)
+    );
+}
+
+#[test]
+fn over_envelope_decision_is_refused_by_step_with_zero_effects() {
+    let decider = PerRecord::default();
+    let profile = ResourceLimitProfile::norn_limits_v1();
+    // 33 tiny records: the slice is fine, the decision emits 33 events.
+    let source = vec![record(1, 0); 33];
+    assert_eq!(
+        turn(&decider, &profile, &source),
+        Err(TurnError::Step(StepError::EnvelopeExceeded {
+            kind: EnvelopeKind::Events,
+            limit: 32,
+            actual: 33,
+        }))
     );
 }
 

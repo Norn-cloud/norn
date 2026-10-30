@@ -1,5 +1,6 @@
 #![allow(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::indexing_slicing,
     clippy::pedantic,
     reason = "integration-test crate: fixture helpers unwrap and index"
