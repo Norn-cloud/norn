@@ -28,6 +28,7 @@ pub mod artifact_set;
 pub mod codes;
 pub mod connector_path;
 pub mod definitions_diff;
+pub mod deontic;
 mod diagnostic;
 pub mod entity_artifacts;
 pub mod entity_instance;
@@ -133,6 +134,7 @@ pub mod sealing;
 mod source_commands;
 pub mod source_schema;
 pub mod typed_roots;
+pub mod ui_interaction;
 pub mod verification;
 pub mod widget_ux;
 

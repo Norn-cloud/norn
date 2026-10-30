@@ -355,7 +355,7 @@ class DefinitionCompiler {
   }
 
   private sourceSchema(call: ts.CallExpression): SS.SourceSchemaDef {
-    const m = this.meta(call, ["id", "title", "version", "source", "observedAt", "adapter", "rawMetadata", "datasets", "fields", "constraints"])
+    const m = this.meta(call, ["id", "title", "version", "source", "observedAt", "adapter", "rawMetadata", "datasets", "fields", "constraints", "codeSets"])
     const need = (key: string): ts.Expression => this.member(m, key, call)
     this.closedRecord(need("source"), ["system", "instance", "version"], ["system", "instance"])
     this.closedRecord(need("adapter"), ["name", "version"], ["name", "version"])
@@ -364,6 +364,11 @@ class DefinitionCompiler {
     for (const node of this.list(need("fields"))) {
       const field = this.closedRecord(node, ["dataset", "name", "ordinal", "nativeType", "typeCandidate", "required", "markings"], ["dataset", "name", "ordinal", "nativeType", "typeCandidate"])
       this.closedRecord(field.get("typeCandidate")!, ["type", "origin"], ["type", "origin"])
+    }
+    const codeSets = m.get("codeSets")
+    for (const node of codeSets ? this.list(codeSets) : []) {
+      const set = this.closedRecord(node, ["id", "dataset", "field", "origin", "values"], ["id", "dataset", "field", "origin", "values"])
+      for (const value of this.list(set.get("values")!)) this.closedRecord(value, ["value", "label"], ["value"])
     }
     const constraints = m.get("constraints")
     for (const node of constraints ? this.list(constraints) : []) {
@@ -547,7 +552,7 @@ class DefinitionCompiler {
       return this.string(e.arguments[0]!)
     }
     if (ts.isCallExpression(e) && this.id(e) === "@norn/authoring#Norn.expression") {
-      const schema = this.schemas.closed(this.schemas.read(e.arguments[0]!), true)
+      const schema = this.schemas.expressionInput(this.schemas.read(e.arguments[0]!))
       const body = e.arguments[1]
       if (!body || (!ts.isArrowFunction(body) && !ts.isFunctionExpression(body))) throw new CompileError("NORN-FLOW-CAPTURE", "use an inline expression callback", e)
       const syntax = new SyntaxCompiler(this.profile, this.program, e.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT)
