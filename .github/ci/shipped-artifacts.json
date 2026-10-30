@@ -31,6 +31,24 @@
       "connector": null
     },
     {
+      "path": ".config/nextest.toml",
+      "sha256": "d1275f280279153d46b3057afa0a890de683ad0364c850cd3afc81564761c913",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": ".gitattributes",
       "sha256": "1a1dbe176bc233b499d35a57db7513f2941c99ab9759f177830c9149be99005b",
       "origin": "authored",
@@ -86,7 +104,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "867c469d94f199271d4293970d750e476c6b769b6759b95e3fedd9564ab2d053",
+      "sha256": "cb80dea64baac45b1fe8b8ce2e18262a686319ee4c742d1949e2aba14e1b1636",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12699,7 +12717,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/src/ci/mod.rs",
-      "sha256": "727edecb7cb19ea29ecf38e41141b4a7c12dc728eece17aedc08e7fe0e431d60",
+      "sha256": "081e54b26dc14b2011fb1ba9440e73943b61181cd4b15076eae8b7fa9333fd2b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12771,7 +12789,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/tests/provenance.rs",
-      "sha256": "757574028477a3aed6332157b20521975f98752199a9daae7109c475a62ebb13",
+      "sha256": "016c02c0037e9359b198fd9cec375de24f29dc013d823db03df1012931a88bb9",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18511,7 +18529,7 @@
     },
     {
       "path": "scripts/ci/core.sh",
-      "sha256": "dc6cbfb55c9f418b9903b2d111973d3935f140b2c0a3c1a64bfca9d12a096913",
+      "sha256": "b70f91fea9dc41f2ee038a89e6a4ac709a5e165add3b856f12b68a16d629cbff",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29989,7 +30007,7 @@
     },
     {
       "path": "verification/coverage-v1/validate.py",
-      "sha256": "d807f285f80d50b3cb7f5f871a9af485c20cf6dca1243d9c991a45bb4e35d086",
+      "sha256": "63b7f23b31f4dc5b0e623266daf220fed56bede46619b49b905e3bc06f572bb8",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
