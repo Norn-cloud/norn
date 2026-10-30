@@ -2268,6 +2268,8 @@
         "tools/norn-code/recognizer.py",
         "tools/norn-code/syntax.py",
         "tools/norn-code/tests/test_recognizer.py",
+        "tools/norn-code/tests/test_xstate.py",
+        "tools/norn-code/xstate.py",
         "tools/norn-ts/src/builder/access.ts",
         "tools/norn-ts/src/builder/action.ts",
         "tools/norn-ts/src/builder/budget.ts",
