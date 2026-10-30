@@ -369,7 +369,10 @@ mod tests {
             format!("lgtm {exact}"),
             "/approve-gates".to_owned(),
         ] {
-            assert!(approval(&[comment("owner", &body, "admin")]).is_err(), "{body}");
+            assert!(
+                approval(&[comment("owner", &body, "admin")]).is_err(),
+                "{body}"
+            );
         }
         let mut edited = comment("owner", &exact, "admin");
         edited["updated_at"] = json!("2026-10-30T12:05:00Z");

@@ -685,12 +685,22 @@ fn trusted_policy_admits_a_gate_change_an_admin_approved_on_its_exact_head() {
 fn trusted_policy_rejects_an_approval_of_a_stale_head() {
     let (candidate, older, head) = gate_change_candidate();
     rejected(
-        &trusted_with(&candidate, "Norn-cloud/norn", &head, Some((&older, "admin"))),
+        &trusted_with(
+            &candidate,
+            "Norn-cloud/norn",
+            &head,
+            Some((&older, "admin")),
+        ),
         "no admin commented",
     );
     // Evidence recorded for the older head cannot vouch for the candidate checkout.
     rejected(
-        &trusted_with(&candidate, "Norn-cloud/norn", &older, Some((&older, "admin"))),
+        &trusted_with(
+            &candidate,
+            "Norn-cloud/norn",
+            &older,
+            Some((&older, "admin")),
+        ),
         "the candidate is",
     );
 }
@@ -708,7 +718,12 @@ fn trusted_policy_rejects_an_approval_from_a_non_admin() {
 fn trusted_policy_rejects_a_fork_gate_change_even_with_an_exact_head_approval() {
     let (candidate, _, head) = gate_change_candidate();
     rejected(
-        &trusted_with(&candidate, "contributor/norn", &head, Some((&head, "admin"))),
+        &trusted_with(
+            &candidate,
+            "contributor/norn",
+            &head,
+            Some((&head, "admin")),
+        ),
         "only Norn-cloud/norn branches",
     );
 }
