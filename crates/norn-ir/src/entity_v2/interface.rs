@@ -9,7 +9,7 @@
 //! of the type whose target and cardinality narrow the requirement's
 //! (T1-ONT-1d, #2514).
 //!
-//! Interfaces are flat: an interface does not extend another. Every rule
+//! Interfaces may extend other interfaces. Every rule
 //! (names, conformance, conflicting requirements) is a `norn-checker`
 //! diagnostic, not a decode error.
 
@@ -54,6 +54,9 @@ impl InterfaceName {
 pub struct InterfaceDef {
     /// Unique name, across interfaces and object types.
     pub name: InterfaceName,
+    /// Parent contracts. All members, constraints, markings and invariants apply.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extends: Vec<InterfaceName>,
     #[serde(
         default,
         deserialize_with = "present_non_null",
@@ -79,6 +82,37 @@ pub struct InterfaceDef {
     /// its own and inherited invariants. Omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariants: Vec<Invariant>,
+}
+
+impl InterfaceDef {
+    /// Owners of an admitted contract, parents first, each name once.
+    /// This is a data projection, not admission: missing definitions are
+    /// omitted and repeated names stop traversal. Validate the complete
+    /// artifact set before using the projected contract.
+    #[must_use]
+    pub fn contract_owners<'a>(
+        &'a self,
+        lookup: impl Fn(&InterfaceName) -> Option<&'a Self>,
+    ) -> Vec<&'a Self> {
+        let mut pending = vec![(self, false)];
+        let mut seen = std::collections::BTreeSet::new();
+        let mut owners = Vec::new();
+        while let Some((definition, exiting)) = pending.pop() {
+            if exiting {
+                owners.push(definition);
+            } else if seen.insert(&definition.name) {
+                pending.push((definition, true));
+                pending.extend(
+                    definition
+                        .extends
+                        .iter()
+                        .rev()
+                        .filter_map(|name| lookup(name).map(|parent| (parent, false))),
+                );
+            }
+        }
+        owners
+    }
 }
 
 /// One required property of an interface: an id, a type an implementing
