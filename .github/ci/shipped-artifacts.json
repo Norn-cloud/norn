@@ -23023,7 +23023,7 @@
     },
     {
       "path": "tools/norn-ts/test/compiler.test.ts",
-      "sha256": "b6b5ed9c01c50d96f8998e02068c383dd9541ddbd757b053724c72407976fe92",
+      "sha256": "48b26d781b6524d2f8253c257da69776accc13175c419f1ab3bf126c9e3abc51",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

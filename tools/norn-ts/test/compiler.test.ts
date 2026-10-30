@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { tmpdir } from "node:os"
 import type { FlowDef, Step } from "../src/builder/index.ts"
 import { X, flow, route, succeed, lowerFlow } from "../src/builder/index.ts"
 import { canonicalJson, toJson } from "../src/canonical.ts"
@@ -69,7 +68,7 @@ test("a rejected batch root cannot change an accepted flow's canonical artifacts
 })
 
 test("separate compilations read fresh source after a file changes", () => {
-  const dir = mkdtempSync(join(tmpdir(), "norn-compiler-source-"))
+  const dir = mkdtempSync(join(TOOL_ROOT, "fixtures/compiler/fresh-source-"))
   try {
     const file = join(dir, "source.ts")
     const compiled = []
