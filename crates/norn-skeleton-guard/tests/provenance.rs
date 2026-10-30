@@ -439,6 +439,7 @@ fn policy_fixture() -> Fixture {
     fixture.add(".github/workflows/core.yml", b"on: pull_request\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
     for path in [
         "scripts/ci/core.sh",
+        ".config/nextest.toml",
         "scripts/ci/validate-runner-policy.py",
         "scripts/proof_enrollment.py",
         "verification/coverage-v1/validate.py",

@@ -10,8 +10,9 @@ type Obligations = BTreeMap<String, BTreeSet<String>>;
 const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 
 /// Gate files pinned to the trusted base, besides every workflow.
-const GATE_FILES: [&str; 8] = [
+const GATE_FILES: [&str; 9] = [
     "scripts/ci/core.sh",
+    ".config/nextest.toml",
     "scripts/ci/validate-runner-policy.py",
     "scripts/proof_enrollment.py",
     "verification/coverage-v1/validate.py",

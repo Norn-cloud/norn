@@ -88,7 +88,8 @@ PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 GATE_PROFILES = {"fast", "full"}
 QUINT_APALACHE_HARNESS = ROOT / "scripts/quint_apalache.py"
 NEGATIVE_CANARIES = ROOT / "verification/coverage-v1/negative_canaries.py"
-PROFILE_JOBS = {"fast": "core", "full": "core"}
+# `full` verification runs as a `phase` job of the sharded full gate.
+PROFILE_JOBS = {"fast": "core", "full": "phase"}
 # Nominal wall-clock of everything in a profile's job except its slowest
 # Quint/Apalache check: setup, tool bootstrap, and every other gate at typical
 # speed. Observed 2026-09-30 (#2830): fast setup ~2.5 min plus non-kernel gates
@@ -389,7 +390,10 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     require("run: bash scripts/ci/core.sh" in source, "full public-core gate must run on every candidate")
     runner = (ROOT / "scripts/ci/core.sh").read_text()
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
-    require("cargo test --locked --workspace" in runner, "full workspace tests must run")
+    require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,
+            "full workspace tests must run")
+    require("cargo test --locked --workspace --doc" in runner, "workspace doctests must run")
+    require("test-shards" in runner, "test shards must be proved to cover the full test set")
     require("cargo clippy --locked --workspace --all-targets -- -D warnings" in runner, "full workspace clippy must run")
 
 
