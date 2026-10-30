@@ -49,6 +49,24 @@
       "connector": null
     },
     {
+      "path": ".github/ci/frontier.json",
+      "sha256": "fcaa45277766f8c0fac2c72e0c5c98ff5647f83c278391a0059ee7a17d0a3996",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": ".github/dependabot.yml",
       "sha256": "a066ff9022425aad825754c9a01f8a6059f1e57c2e22f5cd2e8b14d706e536a4",
       "origin": "authored",
@@ -18258,6 +18276,24 @@
       "connector": null
     },
     {
+      "path": "scripts/ci/frontier.py",
+      "sha256": "00971b9271f82d98b2e9efe35d18ac7e8766d5a7a9630fb90d2c594b0fc8f94c",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "scripts/ci/validate-runner-policy.py",
       "sha256": "adbbffe54b0f8798797969e1cdf3d8e30979cef86843208cc4ba21cf60520c76",
       "origin": "authored",
@@ -29467,7 +29503,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "2b228a329a022f89d949f24b5bfd0c8803c23c02bbe059bc66a849f372132638",
+      "sha256": "7fdfcdfa5414f3f3c24e7f6c1abdfd77276a4fcb3235db86992378137d37f6a9",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
