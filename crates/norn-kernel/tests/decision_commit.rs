@@ -2215,7 +2215,7 @@ fn a_create_is_not_redirected_through_an_absent_subtype_read() {
 fn lean_l1_lifecycle_corpus_matches_real_commit() {
     let types = types();
     let catalog = TypeCatalog::new(&types);
-    let corpus = include_str!("../../../knowledge/verification/kernel-l1/corpus.tsv");
+    let corpus = include_str!("../../../verification/kernel-l1/corpus.tsv");
     let mut count = 0;
     for line in corpus
         .lines()

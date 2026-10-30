@@ -11691,7 +11691,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/decision_commit.rs",
-      "sha256": "33ad83d7a49f4745292b1c248dd5bd4bd598d67031b3c6c5503e0c804717a199",
+      "sha256": "ee14e9bd3491a2f052b73ba91d5b0fd6a37342805daba817deda2f16284683ce",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29773,7 +29773,7 @@
     },
     {
       "path": "verification/kernel-l1/version_kani.rs",
-      "sha256": "d987c2a81690d905dcf6d3bbd4b12a17e721e3c16eeb207bbfa9c95d77094247",
+      "sha256": "73a4ebe42e027d4069084a16e33e428bbf3aef777ef901346c7a856c394a2abd",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

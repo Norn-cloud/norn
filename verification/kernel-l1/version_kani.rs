@@ -1,5 +1,5 @@
 //! Kani checks the production version successor, not a handwritten copy.
-#[path = "../../../crates/norn-kernel/src/version_check.rs"]
+#[path = "../../crates/norn-kernel/src/version_check.rs"]
 mod version_check;
 
 #[kani::proof]
