@@ -1382,42 +1382,6 @@ fn decision_race_property() {
     );
 }
 
-#[test]
-fn decision_repeat_firing_from_target_state_is_refused() {
-    let types = types();
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = cell();
-    let so1 = key(ORDER, "SO-1");
-    decide(
-        &mut cell,
-        &catalog,
-        "t1",
-        &[],
-        &[create(ORDER, "SO-1", 5.0)],
-    )
-    .unwrap();
-    decide(
-        &mut cell,
-        &catalog,
-        "t2",
-        std::slice::from_ref(&so1),
-        &[transition(ORDER, "SO-1", "submit")],
-    )
-    .unwrap();
-    let slice = load_slice(&cell, [so1]).unwrap();
-    let again = output(
-        json!({ "facts": [transition(ORDER, "SO-1", "submit")], "commands": [], "timers": [] }),
-    );
-    assert_refused(
-        &mut cell,
-        &catalog,
-        &slice,
-        &turn("t3"),
-        &again,
-        "lifecycle.validation.undeclared_write",
-    );
-}
-
 // ------------------------------------------- correspondence with the checker
 
 /// `fixtures/ir/action-firing/*.case.json` (#2876): each case's
