@@ -1955,6 +1955,8 @@ impl<E: SqlEngine> CellStore<E> {
             }
             export_journal::init(&conn)?;
             crate::payload_storage::init(&conn)?;
+            // Before the model's indexes name `p:` columns of an older file.
+            crate::migration::upgrade_raw_property_columns(&conn, &model)?;
             for statement in model.schema().statements() {
                 conn.execute_batch(statement)?;
             }

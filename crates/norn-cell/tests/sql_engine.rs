@@ -695,7 +695,7 @@ fn full_range_integers_round_trip_without_crossing_the_seam_as_integers() {
     let object_storage = verifier
         .query_row(
             &format!(
-                "SELECT typeof(\"amount\"), CAST(\"amount\" AS TEXT) FROM {} WHERE {} = ?1 AND {} = ?2",
+                "SELECT typeof(\"p:amount\"), CAST(\"p:amount\" AS TEXT) FROM {} WHERE {} = ?1 AND {} = ?2",
                 quote_identifier(&object_table),
                 quote_identifier(WORLD_COLUMN),
                 quote_identifier(ID_COLUMN),
@@ -730,7 +730,7 @@ fn full_range_integers_round_trip_without_crossing_the_seam_as_integers() {
         corruptor
             .execute(
                 &format!(
-                    "UPDATE {} SET \"amount\" = ?1 WHERE {} = ?2 AND {} = ?3",
+                    "UPDATE {} SET \"p:amount\" = ?1 WHERE {} = ?2 AND {} = ?3",
                     quote_identifier(&object_table),
                     quote_identifier(WORLD_COLUMN),
                     quote_identifier(ID_COLUMN),
@@ -869,7 +869,9 @@ fn wide_integer_projections_split_before_the_statement_limit() {
     use norn_cell::reactive::{BudgetedRead, DecodeBudget, ReactiveLimits};
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD};
     use norn_ir::RuntimeValue as Value;
-    use norn_projections::sqlite_ddl::{ID_COLUMN, WORLD_COLUMN, quote_identifier};
+    use norn_projections::sqlite_ddl::{
+        ID_COLUMN, WORLD_COLUMN, property_column_name, quote_identifier,
+    };
     use serde_json::json;
     use std::collections::BTreeMap;
 
@@ -901,7 +903,10 @@ fn wide_integer_projections_split_before_the_statement_limit() {
     );
     let reactive_projection_bytes: usize = property_ids
         .iter()
-        .map(|property| format!("COALESCE(octet_length({}), 8)", quote_identifier(property)).len())
+        .map(|property| {
+            let column = quote_identifier(&property_column_name(property));
+            format!("COALESCE(octet_length({column}), 8)").len()
+        })
         .sum();
     let reactive_suffix = format!(
         " FROM {} WHERE {} = ?1 AND {} = ?2",

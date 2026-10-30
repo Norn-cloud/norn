@@ -14,7 +14,7 @@ use norn_projections::sqlite_ddl::{
     ID_COLUMN, SCOPE_COLUMN, TYPE_COLUMN, WORLD_COLUMN, quote_identifier,
 };
 use norn_projections::sqlite_ddl::{LinkTable, ObjectTable, PropertyColumn, SqliteDdlInput};
-use norn_projections::{SqliteSchema, project_sqlite_ddl};
+use norn_projections::{SqliteSchema, project_logical_sqlite_ddl, project_sqlite_ddl};
 use serde::{Deserialize, Serialize};
 
 use crate::codec::hash_json;
@@ -57,13 +57,14 @@ fn binding_property_index_name(table: &str, property: &str, direction: &str) -> 
 fn binding_property_index_statement(
     table: &str,
     property: &str,
+    column: &str,
     descending: bool,
     root_owned: bool,
 ) -> String {
     let direction = if descending { "DESC" } else { "ASC" };
     let mut columns = vec![
         quote_identifier(WORLD_COLUMN),
-        format!("{} {direction}", quote_identifier(property)),
+        format!("{} {direction}", quote_identifier(column)),
         format!("{} ASC", quote_identifier(ID_COLUMN)),
     ];
     if root_owned {
@@ -125,11 +126,11 @@ fn append_binding_indexes(
                 property: index.property_id.clone(),
             });
         };
-        if column_name.is_none() {
+        let Some(column_name) = column_name else {
             return Err(CellError::OutOfRange(
                 "binding property index requires a physical column",
             ));
-        }
+        };
         if index.sort
             && (owner_name != root
                 || !matches!(
@@ -151,6 +152,7 @@ fn append_binding_indexes(
             let statement = binding_property_index_statement(
                 &table_name,
                 &index.property_id,
+                &column_name,
                 false,
                 owner_is_root,
             );
@@ -167,6 +169,7 @@ fn append_binding_indexes(
                 let statement = binding_property_index_statement(
                     &table_name,
                     &index.property_id,
+                    &column_name,
                     true,
                     owner_is_root,
                 );
@@ -240,6 +243,7 @@ pub struct Model {
     /// self-referential catalog.
     effective_objects: BTreeMap<String, EffectiveObjectType>,
     effective_links: BTreeMap<String, Vec<EffectiveLink>>,
+    ddl_sql: String,
     ddl_hash: String,
     definitions_hash: String,
 }
@@ -295,7 +299,12 @@ impl Model {
         }
         let binding_indexes = canonical_binding_indexes(binding_indexes);
         append_binding_indexes(&mut schema, &types, &binding_indexes)?;
-        let ddl_hash = hash_json(&schema.to_sql())?;
+        // Identity is the logical rendering, so physical column naming never
+        // changes a recorded DDL hash, export record, or definition version.
+        let mut logical = project_logical_sqlite_ddl(input)?;
+        append_binding_indexes(&mut logical, &types, &binding_indexes)?;
+        let ddl_sql = logical.to_sql();
+        let ddl_hash = hash_json(&ddl_sql)?;
         let definitions_hash = hash_json(&ReplayDefinitions {
             object_types: defs
                 .iter()
@@ -348,6 +357,7 @@ impl Model {
             binding_indexes,
             effective_objects,
             effective_links,
+            ddl_sql,
             ddl_hash,
             definitions_hash,
         })
@@ -418,7 +428,15 @@ impl Model {
         &self.schema
     }
 
-    /// Norn1 hash of the projected DDL; recorded in the file and checked on
+    /// The logical DDL ([`project_logical_sqlite_ddl`] plus binding
+    /// indexes): the schema's identity, exported as `ddlSql`. Never executed;
+    /// [`Self::schema`] holds the physical statements.
+    #[must_use]
+    pub fn ddl_sql(&self) -> &str {
+        &self.ddl_sql
+    }
+
+    /// Norn1 hash of [`Self::ddl_sql`]; recorded in the file and checked on
     /// reopen.
     #[must_use]
     pub fn ddl_hash(&self) -> &str {

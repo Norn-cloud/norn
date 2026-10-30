@@ -3,7 +3,7 @@
 //!
 //! | table | row | written by |
 //! | --- | --- | --- |
-//! | `_norn_meta` | store format and the model's DDL hash | open |
+//! | `_norn_meta` | store format, the model's DDL hash, and the property-column layout | open |
 //! | `_norn_ledger` | one event, hash-chained to the previous one | commit |
 //! | `_norn_receipt` | one commit: ledger span and head, request hash, consumption, written versions, idempotency key | commit |
 //! | `_norn_outbox` | one command id: its latest generation, its recorded result, and the commit that consumed it (unconsumed rows are the `perform` queue, in enqueue order) | commit; perform |
