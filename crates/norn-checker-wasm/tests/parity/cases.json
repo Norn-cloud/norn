@@ -585,7 +585,7 @@
       "call": "checkArtifactSet",
       "artifactsText": "[]",
       "context": {
-        "tenant": []
+        "tenant": ["tenant_acme", "acme"]
       }
     },
     {
