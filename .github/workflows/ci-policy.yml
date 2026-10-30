@@ -156,26 +156,10 @@ jobs:
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest@0.9.150
-      # Proof tools (checksum-pinned by the bootstrap scripts, which skip what
-      # is already installed). Only main saves them; every run may restore.
-      - if: matrix.phase == 'formal'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            target/verification-tools
-            target/ontology-tools
-          key: proof-tools-${{ hashFiles('scripts/bootstrap-verification-tools.sh', 'scripts/bootstrap-ontology-tools.sh', 'scripts/bootstrap-rust-extraction-tools.sh') }}
       # The proof tool checks use ripgrep, which the runner image lacks.
       - if: matrix.phase == 'formal'
         run: sudo apt-get install --yes --no-install-recommends ripgrep
       - run: bash scripts/ci/core.sh ${{ matrix.phase }}
-      - if: matrix.phase == 'formal' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            target/verification-tools
-            target/ontology-tools
-          key: proof-tools-${{ hashFiles('scripts/bootstrap-verification-tools.sh', 'scripts/bootstrap-ontology-tools.sh', 'scripts/bootstrap-rust-extraction-tools.sh') }}
   # The single required verdict: every planned job ran and passed.
   full:
     needs: [core, plan, test, phase]
