@@ -3441,7 +3441,7 @@
     },
     {
       "path": "crates/norn-checker/tests/definition_catalog.rs",
-      "sha256": "8188d6b61512b6cfbf3dfe29d43d7d0e3e94ae5ea69a9287f9775ce2f220e5b4",
+      "sha256": "d06cac865944153c3ffb25d1aaaf39f7090ed819fce6dd814baa5a72712c9f85",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

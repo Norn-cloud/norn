@@ -93,9 +93,9 @@ fn types_properties_links_and_transitions_bind_their_declaring_artifact() {
         .iter()
         .find(|row| row.at.member.id() == "property:commerce.SalesOrder#status")
         .expect("status is a property row");
-    let states = status.lifecycle.as_ref().expect("status owns a lifecycle");
+    let machine = status.lifecycle.as_ref().expect("status owns a lifecycle");
     assert_eq!(
-        states.states,
+        machine.states,
         [
             "draft",
             "submitted",
@@ -106,7 +106,7 @@ fn types_properties_links_and_transitions_bind_their_declaring_artifact() {
             "cancelled"
         ]
     );
-    assert_eq!(states.initial, ["draft"]);
+    assert_eq!(machine.initial, ["draft"]);
     assert!(!status.computed);
     assert!(catalog.contains(&order_member(Member::State {
         type_name: "commerce.SalesOrder".to_owned(),
