@@ -109,6 +109,10 @@ def extract(sources, revision='working-tree'):
                 for spec in walk(node):
                     if spec.type == 'import_specifier' and spelling(spec.child_by_field_name('name')) == 'createMachine':
                         bindings.add(spelling(spec.child_by_field_name('alias') or spec.child_by_field_name('name')))
+        commonjs = [n for n in walk(tree) if n.type == 'call_expression' and spelling(n.child_by_field_name('function')) == 'require' and any(string(c) == 'xstate' for c in n.child_by_field_name('arguments').named_children)]
+        if commonjs:
+            unknown.append({'reason': 'commonjs_xstate_binding_requires_semantic_resolution', 'evidence': asdict(evidence(path, data, revision, commonjs[0].start_point.row + 1))})
+            continue
         uses_xstate = bool(bindings) or any(
             (n.type == 'import_statement' and string(n.child_by_field_name('source')) == 'xstate') or
             (n.type == 'call_expression' and spelling(n.child_by_field_name('function')) == 'require' and
