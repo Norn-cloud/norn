@@ -49,6 +49,24 @@
       "connector": null
     },
     {
+      "path": ".github/ci/frontier.json",
+      "sha256": "286bb9b1de7565091568bd8d94b1ccf4188582c9d93723e51affba5b5c622fc0",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": ".github/dependabot.yml",
       "sha256": "a066ff9022425aad825754c9a01f8a6059f1e57c2e22f5cd2e8b14d706e536a4",
       "origin": "authored",
@@ -157,6 +175,42 @@
       "connector": null
     },
     {
+      "path": "AGENTS.md",
+      "sha256": "35583ce533799533ece2e90fc4d6680dd70fa4f61a5d9e97176e8910cec9faf1",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "CLAUDE.md",
+      "sha256": "336cc4fbf19beaada7ccf9986414fa91851a8d7a07dfb3ccbe800a69eed0ab49",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "CODE_OF_CONDUCT.md",
       "sha256": "40e5b7590df07711cc502459214891e235456195bdad62ee9212514239df8fc6",
       "origin": "authored",
@@ -194,7 +248,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "6c61e8daa0af180ac2c8aa0c210799748a4d44f6ac171f34c944a0184a13385b",
+      "sha256": "16ea272834d1a8a7b56cbfb551968cffd33a2ea3e553484c529eed914670a00b",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -1278,7 +1332,7 @@
     },
     {
       "path": "crates/norn-cell/src/read.rs",
-      "sha256": "93bb5d5f83e68644198b46ca277ed0a6a672cb8d28247284fad1fbcccd8be494",
+      "sha256": "286b9ccfb2613d41d45827b2c01de39fb47379460b92613f547a80b18ddeed81",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1314,7 +1368,7 @@
     },
     {
       "path": "crates/norn-cell/src/store.rs",
-      "sha256": "e0c0f4b3d14ea2bf5e082e185feb911a8fdaf4b987353369c0059fc5a071a4e3",
+      "sha256": "42be58a5ee4ab0e41fe98dc5440f7b0d3fdaff6941c164d846793e3dd53c4af4",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1332,7 +1386,7 @@
     },
     {
       "path": "crates/norn-cell/src/system.rs",
-      "sha256": "785cffe65d72666020a5577c7b30077fd7ea1f1a04751d3276f2a073a070185a",
+      "sha256": "9cc6c38adfd860ab835cfe51e077218b90b0eb8d0fc25904dc623085d89791e9",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1350,7 +1404,7 @@
     },
     {
       "path": "crates/norn-cell/src/write.rs",
-      "sha256": "50750e060144f1458a87cd5fccc1f6acfc2e65605a3006f7058042fe4d0a7f04",
+      "sha256": "d55f467849a5e6a4a37a3a59bf3b23ece0c3948094b0c2d0cae1ffd407b6a281",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1548,7 +1602,7 @@
     },
     {
       "path": "crates/norn-cell/tests/markings.rs",
-      "sha256": "20affc12c076b32852486982cb3b2564277c8f98b812c02d585c168855f1fe9d",
+      "sha256": "6cb3180db0c452f2610521b101bb7ed5b8975949daa16af6cc0d9b7b40571b94",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18474,6 +18528,24 @@
       "connector": null
     },
     {
+      "path": "scripts/ci/frontier.py",
+      "sha256": "17ce832fcaf1de699e82f43b2bd6cc900175718d0bcd6a36f2ef46490c69280c",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "scripts/ci/validate-runner-policy.py",
       "sha256": "f2d5a8438a0278eb49d6730ea4fc7e0f6e8016b8318ccf69a679df1504b3c650",
       "origin": "authored",
@@ -29791,7 +29863,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "b95e3377550caf6aa3579106846dd332a40c4744eca9372f66c85e4e1b30ee3f",
+      "sha256": "e2a44df3d124e387a7285746136445215f5811ff841e8ac8fe77040e2a3df396",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
