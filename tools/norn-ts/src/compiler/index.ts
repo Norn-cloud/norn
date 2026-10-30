@@ -442,6 +442,10 @@ export class SyntaxCompiler {
           return B.X.unsafeZen(text, valueSchema(this.checker, this.checker.getTypeFromTypeNode(e.typeArguments[0]), e, new Set(), this.schemaBudget))
         }
         if (id === "@norn/authoring#Norn.byteLength") return B.X.call("len", this.data(e.arguments[0]!, env))
+        if (id === "@norn/authoring#Norn.parseDate" || id === "@norn/authoring#Norn.parseTimestamp") {
+          if (e.arguments.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "temporal conversion needs exactly one argument", e)
+          return B.X.call(id.endsWith("parseDate") ? "date" : "timestamp", this.data(e.arguments[0]!, env))
+        }
         if (id === "@norn/authoring#Norn.dateBefore") return B.X.call("dateBefore", ...e.arguments.map((a) => this.data(a, env)))
         if (ts.isPropertyAccessExpression(e.expression)) {
           const receiver = this.data(e.expression.expression, env), name = e.expression.name.text
