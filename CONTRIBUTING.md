@@ -25,9 +25,10 @@ writes its failure, so before merging a gate change, confirm that the latest
 changed.
 After any new push, approve again.
 
-The merge queue re-runs `trusted-policy` on each group's head commit. A
-gate-changing pull request lands only if the queue's merge leaves its workflows
-and gate files exactly as at its approved head; otherwise it fails closed.
+In the merge queue, `Trusted merge group` (which always runs from the default
+branch) writes `trusted-policy` on each group's head commit. A gate-changing
+pull request lands only if the queue's merge leaves its workflows and gate
+files exactly as at its approved head; otherwise it fails closed.
 
 Agents post `/approve-gates` from the owner account only after a Sol review has
 approved that exact head SHA. Record the Sol verdict on the pull request. Never

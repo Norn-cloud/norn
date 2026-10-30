@@ -932,3 +932,24 @@ fn merge_group_rejects_squashed_history() {
         "is not a two-parent merge",
     );
 }
+
+#[test]
+fn merge_group_admits_exactly_the_longest_walk_and_rejects_a_longer_one() {
+    for (merges, admitted) in [(64, true), (65, false)] {
+        let mut edits: Vec<&dyn Fn(&mut Fixture)> = vec![&data_edit; merges - 1];
+        edits.push(&gate_edit);
+        let (candidate, base, heads, head) = merge_group(&edits);
+        let pr = heads[merges - 1].as_str();
+        let errors = group_checked(
+            &candidate,
+            &base,
+            &head,
+            &[(pr, "Norn-cloud/norn", Some((pr, "admin")))],
+        );
+        if admitted {
+            assert!(errors.is_empty(), "{errors:?}");
+        } else {
+            rejected(&errors, "longer than 64 merges");
+        }
+    }
+}
