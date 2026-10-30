@@ -33,7 +33,7 @@ def literal(node):
                 raise Unsupported('computed config, spread or method')
             key_node = pair.child_by_field_name('key')
             key = string(key_node) if key_node.type == 'string' else spelling(key_node)
-            if key_node.type not in {'string', 'property_identifier'} or key in result:
+            if key is None or key_node.type not in {'string', 'property_identifier'} or key in result:
                 raise Unsupported('computed or duplicate key')
             result[key] = literal(pair.child_by_field_name('value'))
         return result
@@ -66,7 +66,7 @@ def machine(config, source):
     if not isinstance(states, dict) or not states or not isinstance(config.get('initial'), str) or config['initial'] not in states:
         raise Unsupported('missing states or invalid initial')
     identity = config.get('id')
-    if not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', identity):
+    if not isinstance(identity, str) or not re.fullmatch(r'[A-Z][A-Za-z0-9]*', identity):
         raise Unsupported('machine needs an authoring-safe id')
     terminal, transitions = [], []
     for state, spec in states.items():
@@ -134,7 +134,7 @@ def extract(sources, revision='working-tree'):
                     raise Unsupported('factory form requires semantic resolution')
                 if tree.has_error or ambiguous:
                     raise Unsupported('syntax error or ambiguous factory binding')
-                args = node.child_by_field_name('arguments').named_children
+                args = [arg for arg in node.child_by_field_name('arguments').named_children if arg.type != 'comment']
                 if len(args) != 1:
                     raise Unsupported('implementations argument needs semantic analysis')
                 facts.append(asdict(machine(literal(args[0]), source)))
