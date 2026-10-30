@@ -80,6 +80,7 @@ pub mod table_analysis;
 pub use metric::check_metrics_and_questions;
 pub mod naming_series;
 pub mod object_types;
+pub mod obligations;
 #[allow(
     missing_docs,
     clippy::pedantic,
@@ -132,6 +133,7 @@ pub mod sealing;
 mod source_commands;
 pub mod source_schema;
 pub mod typed_roots;
+pub mod ui_interaction;
 pub mod verification;
 pub mod widget_ux;
 
