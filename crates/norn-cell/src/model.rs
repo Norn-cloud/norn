@@ -189,9 +189,9 @@ fn append_binding_indexes(
 struct ReplayDefinitions<'a> {
     object_types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     property_types: BTreeMap<&'a str, &'a PropertyTypeDef>,
-    /// Only interfaces with invariants affect the model hash. Omitting this
-    /// field when empty preserves legacy object/property-only hashes while all
-    /// interfaces remain available to commit admission and snapshots.
+    /// Inheritance models pin all interface contracts, including owners with no
+    /// invariants of their own. Flat models retain the invariant-only hash so
+    /// existing object/property-only histories keep their identity.
     #[serde(skip_serializing_if = "Option::is_none")]
     interfaces: Option<BTreeMap<&'a str, &'a InterfaceDef>>,
     /// Query access paths projected from admitted widget bindings. Omitting
@@ -307,9 +307,11 @@ impl Model {
                 .map(|def| (def.name.as_str(), def))
                 .collect(),
             interfaces: {
+                let has_interface_inheritance =
+                    interfaces.iter().any(|def| !def.extends.is_empty());
                 let invariant_interfaces: BTreeMap<_, _> = interfaces
                     .iter()
-                    .filter(|def| !def.invariants.is_empty())
+                    .filter(|def| has_interface_inheritance || !def.invariants.is_empty())
                     .map(|def| (def.name.as_str(), def))
                     .collect();
                 (!invariant_interfaces.is_empty()).then_some(invariant_interfaces)
@@ -426,9 +428,9 @@ impl Model {
     }
 
     /// Norn1 hash of object, property-type, and invariant-bearing interface
-    /// definitions, indexed by name. Interfaces without invariants remain
-    /// available through [`Self::interfaces`] and snapshots but are omitted
-    /// from the hash to preserve legacy model identity. Includes semantics
+    /// definitions, indexed by name. Models using interface inheritance pin all
+    /// interfaces; flat models omit invariant-free interfaces to retain existing
+    /// history identities. All interfaces remain in snapshots. Includes semantics
     /// absent from projected DDL. Definition-list order is irrelevant; order
     /// within definitions is retained.
     #[must_use]
@@ -761,15 +763,30 @@ impl Model {
     /// Whether the admitted `object_type` is `ancestor` or a subtype of it.
     ///
     /// This schema query includes the type itself and transitive object-type
-    /// inheritance. It returns `false` if either name is absent from the model,
+    /// inheritance and interface ancestry. It returns `false` if either name is absent from the model,
     /// including when both names are the same unknown type. Read projections
     /// can use it to match declared type ranges against concrete record types;
     /// it does not check record existence, scope, or authorization.
     #[must_use]
     pub fn is_a(&self, object_type: &str, ancestor: &str) -> bool {
-        self.types
+        self.types.get(object_type).is_some_and(|entry| {
+            entry.chain.iter().any(|name| name.as_str() == ancestor)
+                || self.interface_aliases(object_type).contains(&ancestor)
+        })
+    }
+
+    /// Interface aliases of the checker-admitted effective contract.
+    pub(crate) fn interface_aliases(&self, object_type: &str) -> Vec<&str> {
+        self.effective_objects
             .get(object_type)
-            .is_some_and(|entry| entry.chain.iter().any(|name| name.as_str() == ancestor))
+            .into_iter()
+            .flat_map(|definition| {
+                definition
+                    .interfaces
+                    .iter()
+                    .map(norn_ir::InterfaceName::as_str)
+            })
+            .collect()
     }
 
     /// The table of `object_type`.

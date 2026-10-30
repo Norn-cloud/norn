@@ -2215,15 +2215,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             }));
         };
         let mut names: Vec<String> = self.model.chain(&concrete)?.to_vec();
-        for name in self.model.chain(&concrete)? {
-            names.extend(
-                self.model
-                    .def(name)?
-                    .implements
-                    .iter()
-                    .map(|interface| interface.as_str().to_owned()),
-            );
-        }
+        names.extend(
+            self.model
+                .interface_aliases(&concrete)
+                .into_iter()
+                .map(str::to_owned),
+        );
 
         // The read admits stored interface targets as well as concrete types.
         // Capture those same aliases even for an empty edge range.
@@ -2697,15 +2694,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             return Ok(Vec::new());
         };
         let mut names: Vec<String> = self.model.chain(&concrete)?.to_vec();
-        for name in self.model.chain(&concrete)? {
-            names.extend(
-                self.model
-                    .def(name)?
-                    .implements
-                    .iter()
-                    .map(|interface| interface.as_str().to_owned()),
-            );
-        }
+        names.extend(
+            self.model
+                .interface_aliases(&concrete)
+                .into_iter()
+                .map(str::to_owned),
+        );
         let rows = self.conn.query(
             &format!(
                 "SELECT \"link_table\", \"source\", \"target\", \"link\", \"source_type\", \"target_type\" FROM \"{LINK_VERSIONS}\" WHERE \"world\" = ?1 AND (\"source\" = ?2 OR \"target\" = ?2) ORDER BY \"link_table\", \"source\", \"target\""
