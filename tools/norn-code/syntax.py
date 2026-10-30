@@ -1,5 +1,5 @@
 """Non-executing TypeScript/JavaScript syntax substrate."""
-import json
+import re
 from tree_sitter import Language, Parser
 import tree_sitter_typescript
 
@@ -10,9 +10,11 @@ def parse(data: bytes, tsx=False):
 
 
 def walk(node):
-    yield node
-    for child in node.named_children:
-        yield from walk(child)
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        yield current
+        stack.extend(reversed(current.named_children))
 
 
 def spelling(node):
@@ -22,10 +24,15 @@ def spelling(node):
 def string(node):
     if node is None or node.type != "string":
         return None
-    text = spelling(node)
-    # Decode escapes without evaluating source.
-    if text.startswith('"'):
-        return json.loads(text)
-    if "\\" not in text:
-        return text[1:-1]
-    return None
+    text = spelling(node)[1:-1]
+    escapes = {'n': '\n', 'r': '\r', 't': '\t', 'b': '\b', 'f': '\f', 'v': '\v', '0': '\0'}
+    def decode(match):
+        value = match.group(1)
+        if value.startswith('x'):
+            return chr(int(value[1:], 16))
+        if value.startswith('u'):
+            return chr(int(value[2:-1] if value.startswith('u{') else value[1:], 16))
+        if value in {'\n', '\r', '\r\n'}:
+            return ''
+        return escapes.get(value, value)
+    return re.sub(r'\\(x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|\r\n|[\s\S])', decode, text)

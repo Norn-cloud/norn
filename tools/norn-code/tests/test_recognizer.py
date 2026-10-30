@@ -60,12 +60,25 @@ class RecognizerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 collect(root)
 
-
-if __name__ == '__main__':
-    unittest.main()
-
 class DecoratorTests(unittest.TestCase):
     def test_bound_decorator(self):
         report = analyze({'x.py': b'from odoo import api as a\n@a.constrains("amount")\ndef check(): pass\n'})
         self.assertEqual(report['recognized'][1]['signal'], 'decorator:odoo.api.constrains')
         self.assertEqual(report['recognized'][1]['evidence']['line'], 2)
+
+
+class RobustnessTests(unittest.TestCase):
+    def test_relative_import_is_local(self):
+        self.assertEqual(analyze({'x.py': b'from .odoo import api\n@api.constrains("x")\ndef f(): pass'})['recognized'], [])
+
+    def test_deep_expression_does_not_stop_scan(self):
+        report = analyze({'x.ts': b'const x = ' + b'a + ' * 2000 + b'a; import "effect";'})
+        self.assertEqual(report['recognized'][0]['framework'], 'effect')
+
+    def test_escaped_import_does_not_hide_later_import(self):
+        report = analyze({'x.ts': b'import "\\x66s"; import "effect";'})
+        self.assertEqual(report['recognized'][0]['framework'], 'effect')
+
+
+if __name__ == '__main__':
+    unittest.main()
