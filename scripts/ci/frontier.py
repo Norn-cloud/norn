@@ -27,12 +27,14 @@ SCHEMA = "norn.ci-frontier/v1"
 WORKFLOW = ".github/workflows/ci-policy.yml"
 GATES = {"core", "trusted-policy"}
 RESAMPLES = 2000
-# Log or annotation substring -> cause. First match wins; order is specific to general.
+RUNNER = "ubuntu-24.04"
+# Every substring present in one log or annotation -> cause. First match wins.
 CAUSES = [
-    ("recent account payments have failed", "harness-billing"),
-    ("exceeds timeout-minutes budget", "known-norn#9"),
-    ("Diff in /", "known-norn#8"),
-    ("public-cut .github/workflows/ci-policy.yml", "scratch-workflow-edit"),
+    (("recent account payments have failed",), "harness-billing"),
+    (("exceeds timeout-minutes budget",), "known-norn#9"),
+    (("Diff in /", "/crates/norn-skeleton-guard/src/ci/mod.rs:203:"), "known-norn#8"),
+    (("Diff in /",), "fmt-other"),
+    (("public-cut .github/workflows/ci-policy.yml",), "scratch-workflow-edit"),
 ]
 
 
@@ -53,8 +55,8 @@ def classify(job):
     texts = [a["message"] for a in gh(f"check-runs/{job['id']}/annotations")]
     if any(s["conclusion"] == "failure" for s in job["steps"]):
         texts.append(gh(f"actions/jobs/{job['id']}/logs", raw=True))
-    for needle, cause in CAUSES:
-        if any(needle in text for text in texts):
+    for needles, cause in CAUSES:
+        if any(all(n in text for n in needles) for text in texts):
             return cause
     return "harness-other" if not job["steps"] else "unknown"
 
@@ -62,7 +64,8 @@ def classify(job):
 def row(run_id):
     run = gh(f"actions/runs/{run_id}")
     jobs = [j for j in gh(f"actions/runs/{run_id}/jobs")["jobs"] if j["conclusion"] != "skipped"]
-    if run["path"] != WORKFLOW or run["status"] != "completed" or len(jobs) != 1 or jobs[0]["name"] not in GATES:
+    if (run["path"].split("@", 1)[0] != WORKFLOW or run["status"] != "completed" or len(jobs) != 1
+            or jobs[0]["name"] not in GATES or jobs[0]["labels"] != [RUNNER]):
         raise SystemExit(f"run {run_id}: expected one completed Public core gate job")
     # A rerun keeps the first attempt's created_at, which would inflate its queue time.
     if run["run_attempt"] != 1:
@@ -109,14 +112,18 @@ def series(rows):
         groups.setdefault((r["ref"], r["head_sha"], r["gate"]), []).append(r)
     out = []
     for (ref, sha, gate), rs in sorted(groups.items()):
-        measured = [r for r in rs if not r["cause"].startswith("harness")]
+        # Cancelled and harness-refused rows stay as evidence but carry no verdict.
+        measured = [r for r in rs if r["conclusion"] in ("success", "failure")
+                    and not r["cause"].startswith("harness")]
         causes = {}
         for r in rs:
             causes[r["cause"]] = causes.get(r["cause"], 0) + 1
         steps = {}
         for r in measured:
             for s in r["steps"]:
-                steps.setdefault(s["name"], []).append(s)
+                steps.setdefault(s["name"], [])
+                if s["conclusion"] != "skipped":
+                    steps[s["name"]].append(s)
         verdicts = {r["conclusion"] for r in measured}
         out.append({
             "ref": ref, "head_sha": sha, "gate": gate, "n": len(rs), "n_measured": len(measured),
@@ -127,9 +134,11 @@ def series(rows):
             "verdict_s": dist([r["verdict_s"] for r in measured]) if measured else None,
             "queue_s": dist([r["queue_s"] for r in measured]) if measured else None,
             "wall_s": dist([r["wall_s"] for r in measured]) if measured else None,
-            "steps": {name: {"n": len(ss), "p50_s": pct([s["s"] for s in ss], 0.5),
-                             "p95_s": pct([s["s"] for s in ss], 0.95),
-                             "fail_rate": round(sum(s["conclusion"] == "failure" for s in ss) / len(ss), 3)}
+            "steps": {name: {"n": len(ss), "skipped": len(measured) - len(ss),
+                             "p50_s": pct([s["s"] for s in ss], 0.5) if ss else None,
+                             "p95_s": pct([s["s"] for s in ss], 0.95) if ss else None,
+                             "fail_rate": round(sum(s["conclusion"] == "failure" for s in ss) / len(ss), 3)
+                             if ss else None}
                       for name, ss in steps.items()},
         })
     return out
@@ -138,7 +147,7 @@ def series(rows):
 def document(rows):
     rows = sorted(rows, key=lambda r: (r["created_at"], r["run_id"]))
     return {"schema": SCHEMA, "repo": REPO, "workflow": "Public core",
-            "runner": "ubuntu-24.04 GitHub-hosted (public repository: $0)",
+            "runner": f"{RUNNER} GitHub-hosted (public repository: $0)",
             "rows": rows, "series": series(rows)}
 
 
