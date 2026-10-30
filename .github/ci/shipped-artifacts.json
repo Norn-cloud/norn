@@ -11871,7 +11871,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/decider.rs",
-      "sha256": "db566481d7927b259ee611e7ad058b5191940995da515d9449f2978dbc4ffbbd",
+      "sha256": "c22ac6fa4c06629c890b54a63ba492b19bd0df752b14313cad5a66793aafb8be",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11889,7 +11889,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/decision_commit.rs",
-      "sha256": "ee14e9bd3491a2f052b73ba91d5b0fd6a37342805daba817deda2f16284683ce",
+      "sha256": "fc66d7b1f65594f66078c930ebd59cbd9afcba6ee7d841d8879405afffa48933",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11997,7 +11997,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/psm_action_transition.rs",
-      "sha256": "56d368e76fa67daeac4c22a5ab015c914c610fee90d54b35c90b09862d69ba99",
+      "sha256": "d9b7d1d2a1fff5a0c4e45f342dd9c689633b261c6e095e754de1325abb59bd2a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12069,25 +12069,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/refusal_taxonomy.rs",
-      "sha256": "f227a1e317496ccfa101ce63fb588c142b5573cc5bca1618e7daf04caab30a25",
-      "origin": "authored",
-      "category": "code",
-      "license": "Apache-2.0",
-      "sources": [],
-      "analyzed_sources": [],
-      "parents": [],
-      "rights_evidence": [
-        {
-          "path": "NOTICE",
-          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
-        }
-      ],
-      "notices": [],
-      "connector": null
-    },
-    {
-      "path": "crates/norn-kernel/tests/refusal_wrappers.rs",
-      "sha256": "84d15c0087c1d4f7093b53db0a3079522c06aad614435b08f4ca563eb9b97fe9",
+      "sha256": "89be5e7dcd2abdb2e096bcb1e31948e7eba1326e79886150fafdce8e57451cfa",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29791,7 +29773,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "3384c824d769fb237bc2b8531c66d6cb6e41e147ab440ddbcb37476030016ad4",
+      "sha256": "b95e3377550caf6aa3579106846dd332a40c4744eca9372f66c85e4e1b30ee3f",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
