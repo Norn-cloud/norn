@@ -808,13 +808,15 @@ fn hash_serde_json(value: &serde_json::Value) -> Result<String, CanonicalJsonErr
 }
 
 impl ArtifactRef {
-    /// The reference of one artifact's semantic envelope projection.
+    /// The Norn1 reference of one artifact's semantic envelope projection,
+    /// with strings and object keys NFC-normalized by canonical hashing.
     ///
     /// # Errors
     ///
-    /// [`ReceiptError`] if the envelope cannot be hashed.
+    /// [`ReceiptError`] if the semantic projection cannot be hashed.
     pub fn of(artifact: &ArtifactEnvelope) -> Result<Self, ReceiptError> {
-        let value = semantic_artifact_projection(artifact_value(artifact)?);
+        let value = artifact_value(artifact)?;
+        let value = semantic_artifact_projection(value);
         Ok(Self {
             artifact_id: artifact.artifact_id.clone(),
             version: artifact.version.clone(),

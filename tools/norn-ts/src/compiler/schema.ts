@@ -404,7 +404,13 @@ export class SchemaProjection {
     return this.closedAt(schema, nullable)
   }
 
-  private closedAt(schema: SchemaNode, nullable: boolean): S.ValueSchema {
+  /** Wire types for syntax-only expressions; Rust derives semantic types from the real context. */
+  expressionInput(schema: SchemaNode): S.ValueSchema {
+    this.bounded(schema)
+    return this.closedAt(schema, true, true)
+  }
+
+  private closedAt(schema: SchemaNode, nullable: boolean, temporalWire = false): S.ValueSchema {
     this.guard(schema.node)
     switch (schema.kind) {
       case "string":
@@ -420,13 +426,13 @@ export class SchemaProjection {
       case "literals":
         return S.text(schema.values)
       case "array":
-        return S.array(this.closedAt(schema.items, nullable))
+        return S.array(this.closedAt(schema.items, nullable, temporalWire))
       case "struct": {
         const fields: Record<string, S.ValueSchema> = Object.create(null) as Record<string, S.ValueSchema>
         const optional: string[] = []
         for (const f of schema.fields) {
           if (f.name in fields) throw projection(`duplicate member ${f.name}`, f.node)
-          fields[f.name] = this.closedAt(f.schema, nullable)
+          fields[f.name] = this.closedAt(f.schema, nullable, temporalWire)
           if (f.optional) optional.push(f.name)
         }
         return S.record(fields, optional)
@@ -435,12 +441,13 @@ export class SchemaProjection {
         const members = this.flatten(schema)
         if (nullable && members.length === 2 && members.some((m) => m.kind === "null")) {
           const nonNull = members.find((m) => m.kind !== "null")!
-          return S.nullable(this.closedAt(nonNull, nullable))
+          return S.nullable(this.closedAt(nonNull, nullable, temporalWire))
         }
         if (members.every((m) => m.kind === "literals")) return S.text([...new Set(members.flatMap((m) => (m.kind === "literals" ? m.values : [])))])
         throw projection("closed schemas have no unions: use a literal union, or Schema.optionalKey for an absent member", schema.node)
       }
       case "value-type":
+        if (temporalWire && (schema.type.kind === "timestamp" || schema.type.kind === "date")) return S.text()
         throw projection(`Norn.${schema.type.kind === "ref" ? "ref" : schema.type.kind} projects to EntityIR properties only; closed schemas have no ${schema.type.kind} type yet`, schema.node)
     }
   }
