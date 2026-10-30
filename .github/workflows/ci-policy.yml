@@ -139,3 +139,26 @@ jobs:
               description: 'Base-owned policy over candidate data',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
+  # A pull request whose head fails trusted-policy (for example after its
+  # approval is revoked) leaves the merge queue, so no queued group built from
+  # it can still land on an earlier success.
+  dequeue:
+    needs: trusted-policy
+    if: always() && needs.trusted-policy.result == 'failure'
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
+            const { repository } = await github.graphql(
+              'query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id mergeQueueEntry { id } } } }',
+              { owner: context.repo.owner, repo: context.repo.repo, number });
+            if (!repository.pullRequest.mergeQueueEntry) return;
+            await github.graphql('mutation($id: ID!) { dequeuePullRequest(input: { id: $id }) { clientMutationId } }', { id: repository.pullRequest.id });
+            core.notice(`Removed #${number} from the merge queue: trusted-policy failed on its head.`);
