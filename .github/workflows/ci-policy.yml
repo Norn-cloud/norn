@@ -52,7 +52,7 @@ jobs:
           key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}
       - run: bash scripts/ci/core.sh cheap
   # The full gate: `core.sh all` split into parallel jobs. The plan comes from
-  # core.sh itself, so CI runs exactly its shards and phases.
+  # core.sh itself, so CI runs exactly its shards and phases (all but formal).
   plan:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     runs-on: ubuntu-24.04
@@ -156,9 +156,6 @@ jobs:
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest@0.9.150
-      # The proof tool checks use ripgrep, which the runner image lacks.
-      - if: matrix.phase == 'formal'
-        run: sudo apt-get install --yes --no-install-recommends ripgrep
       - run: bash scripts/ci/core.sh ${{ matrix.phase }}
   # The single required verdict: every planned job ran and passed.
   full:
@@ -284,3 +281,26 @@ jobs:
               description: 'Base-owned policy over candidate data',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
+  # A pull request whose head fails trusted-policy (for example after its
+  # approval is revoked) leaves the merge queue, so no queued group built from
+  # it can still land on an earlier success.
+  dequeue:
+    needs: trusted-policy
+    if: always() && needs.trusted-policy.result == 'failure'
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
+            const { repository } = await github.graphql(
+              'query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id mergeQueueEntry { id } } } }',
+              { owner: context.repo.owner, repo: context.repo.repo, number });
+            if (!repository.pullRequest.mergeQueueEntry) return;
+            await github.graphql('mutation($id: ID!) { dequeuePullRequest(input: { id: $id }) { clientMutationId } }', { id: repository.pullRequest.id });
+            core.notice(`Removed #${number} from the merge queue: trusted-policy failed on its head.`);
