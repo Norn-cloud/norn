@@ -12,6 +12,21 @@ can merge, CLA Assistant checks agreement to the terms below. Sign only for
 yourself or an organisation you are authorised to represent. Never sign for
 another contributor. GitHub records your account, agreement version and assent.
 
+## Changing workflows and CI gates
+
+Fork pull requests are data-only: `trusted-policy` rejects any change to
+`.github/workflows/` or to the gate files it pins. A `Norn-cloud/norn` branch may
+change them once an admin comments `/approve-gates <full 40-character head SHA>`
+on the pull request. Then re-run `trusted-policy`, because a comment doesn't
+trigger it. Only an unedited comment that names the exact current head counts.
+After any new push, approve again.
+
+Agents post `/approve-gates` from the owner account only after a Sol review has
+approved that exact head SHA. Record the Sol verdict on the pull request. Never
+post it for a head Sol has not approved, and never edit an earlier comment to
+change its SHA. `trusted-policy` checks only the admin comment, not the Sol
+review, so this rule binds agents rather than the gate.
+
 ## Contributor licence agreement — version 1
 
 These terms cover original code, documentation and other material you intentionally
