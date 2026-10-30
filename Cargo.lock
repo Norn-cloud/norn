@@ -299,9 +299,9 @@ dependencies = [
 
 [[package]]
 name = "cedar-policy"
-version = "4.13.0"
+version = "4.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e4f5e46c425491b7133eecb3030d82d27301b84bfa08533c59a6902cca7eb80"
+checksum = "4a3951fe28ea48b72e618fc7104b5953389b496f06813da3d9038c0da6735982"
 dependencies = [
  "cedar-policy-core",
  "cedar-policy-formatter",
@@ -320,9 +320,9 @@ dependencies = [
 
 [[package]]
 name = "cedar-policy-core"
-version = "4.13.0"
+version = "4.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a30d11033d59b262bbb380d8bb5dc5c3dd2dd2281675c558ef4fd8a161ce669"
+checksum = "292bc6f7f897fcdfe5291a2fe74e2446817c7b8e01fce0977805877a23943f5b"
 dependencies = [
  "chrono",
  "educe",
@@ -348,9 +348,9 @@ dependencies = [
 
 [[package]]
 name = "cedar-policy-formatter"
-version = "4.13.0"
+version = "4.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a2c8dc671e62597c85caa11694365b76050abcd9f2177f0520ccac0580f9a41"
+checksum = "3bb1d7ab0eecb543e4586b556d72343699663093d951169eeedd2e6ec6fca06c"
 dependencies = [
  "cedar-policy-core",
  "itertools 0.15.0",
@@ -604,9 +604,9 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "educe"
-version = "0.7.6"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e451fac8dd8dece16234604bf1efce6e90fddd8ab6ad4d66eec0eca5160959dd"
+checksum = "1ebdb1f8f8d2815bbe7b369a7da10343c82026a4503b68bd1279ba557611e96d"
 dependencies = [
  "enum-ordinalize",
  "proc-macro2",
@@ -1617,7 +1617,7 @@ dependencies = [
  "norn-canonical",
  "proptest",
  "rust_decimal",
- "schemars 1.2.2",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "sha2",
@@ -2387,9 +2387,9 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
+checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
 dependencies = [
  "dyn-clone",
  "ref-cast",
@@ -2400,9 +2400,9 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d98c67716b46af2f0b8cf752abc930f6f9aecfbf671ecfb531db8a31dbe4e2ba"
+checksum = "e1c3a92094fa7d61aa124645844facb6b554dfc797136d0f5fd1f890e2bffc69"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2552,7 +2552,7 @@ dependencies = [
  "indexmap 2.14.0",
  "jiff",
  "schemars 0.9.0",
- "schemars 1.2.2",
+ "schemars 1.2.3",
  "serde_core",
  "serde_json",
  "serde_with_macros",
@@ -2674,11 +2674,11 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
-version = "0.27.2"
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.28.0",
 ]
 
 [[package]]
@@ -2686,6 +2686,18 @@ name = "strum_macros"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -3524,7 +3536,7 @@ dependencies = [
  "smallvec",
  "strsim",
  "strum",
- "strum_macros",
+ "strum_macros 0.27.2",
  "thiserror 1.0.69",
  "toml 0.8.23",
  "wasm-bindgen-test",
