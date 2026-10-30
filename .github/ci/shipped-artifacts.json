@@ -104,7 +104,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "056c52aadaaf77656bc71c71d1a619e2d92b2516f24d5b81a3cc53b67ba5c5b8",
+      "sha256": "1793464a1bb4225ada0e84e25680b6457af95ed189aa052efa28cb878b4e4c75",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
