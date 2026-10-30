@@ -283,7 +283,7 @@ mod tests {
                 "source": {"artifactId": "erpnext.SalesOrder.entity", "pointer": "/invariants/0"}
             }],
             "conclusion": {
-                "modality": "always",
+                "modality": "never",
                 "response": laws[0]["payload"]["response"]
             },
             "source": {"artifactId": "erpnext.no_unpaid_ship.law", "pointer": "/payload"},
