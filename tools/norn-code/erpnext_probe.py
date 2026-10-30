@@ -20,6 +20,7 @@ def main():
     parser.add_argument('--port-tool', type=Path, required=True)
     parser.add_argument('--codegraph', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--mapping', type=Path, help='private provisional canon mapping')
     args = parser.parse_args()
     revision = subprocess.check_output(['git', '-C', str(args.root), 'rev-parse', 'HEAD'], text=True).strip()
     if revision != args.revision:
@@ -34,6 +35,12 @@ def main():
     graph = graph_module.CodeGraphRust(args.codegraph, args.output / 'scratch').extract(sources)
     facts = adapter.FrappeRules(sources, graph, revision).report()
     (args.output / 'facts.json').write_text(json.dumps(facts, sort_keys=True))
+    if args.mapping:
+        from contracts import project
+        contracts = project(facts, json.loads(args.mapping.read_text()))
+        contracts['mapping_status'] = 'provisional_pending_lane_g'
+        contracts['source_revision'] = revision
+        (args.output / 'contracts.json').write_text(json.dumps(contracts, sort_keys=True))
     (args.output / 'graph.json').write_text(json.dumps(graph, sort_keys=True))
     hashes = {path: hashlib.sha256(raw).hexdigest() for path, raw in sources.items()}
     (args.output / 'source-hashes.json').write_text(json.dumps(hashes, sort_keys=True))

@@ -34,7 +34,7 @@ def project(report, mapping):
     if report.get('format') != 'norn.code-ontology/1':
         raise ValueError('expected norn.code-ontology/1')
     vocabulary = set(mapping['vocabulary'])
-    if not vocabulary or any(not isinstance(t, str) or not re.fullmatch(r'[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+', t) for t in vocabulary):
+    if not vocabulary or any(not isinstance(t, str) or not re.fullmatch(r'[a-z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+', t) for t in vocabulary):
         raise ValueError('canon vocabulary must contain qualified terms')
     def canon(value):
         if value not in vocabulary:
