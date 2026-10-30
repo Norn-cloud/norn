@@ -104,8 +104,11 @@ fn a_double_quoted_name_that_matches_no_column_is_an_error() {
     let dir = tempfile::tempdir().expect("tempdir");
     for engine in [
         NativeEngine::open_in_memory().expect("open"),
-        NativeEngine::open(&dir.path().join("cell.sqlite"), norn_cell::StoreOptions::default())
-            .expect("open file"),
+        NativeEngine::open(
+            &dir.path().join("cell.sqlite"),
+            norn_cell::StoreOptions::default(),
+        )
+        .expect("open file"),
     ] {
         engine
             .execute_batch("CREATE TABLE item (\"p:weight\" INTEGER)")
@@ -114,7 +117,9 @@ fn a_double_quoted_name_that_matches_no_column_is_an_error() {
             .execute("INSERT INTO item VALUES (?1)", &[SqlValue::Integer(7)])
             .expect("insert");
         let error = engine
-            .query_row("SELECT \"weight\" FROM item", &[], |row| row.get::<String>(0))
+            .query_row("SELECT \"weight\" FROM item", &[], |row| {
+                row.get::<String>(0)
+            })
             .expect_err("a stale column name must not read back as text");
         assert!(error.to_string().contains("no such column"), "{error}");
         engine
