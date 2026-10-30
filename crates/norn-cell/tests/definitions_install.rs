@@ -4445,6 +4445,158 @@ const RESERVED_PROPERTY_IDS: [&str; 11] = [
     "_target",
 ];
 
+/// Every SQLite keyword (<https://sqlite.org/lang_keywords.html>), lowercased
+/// to fit the property id grammar.
+const SQLITE_KEYWORDS: [&str; 147] = [
+    "abort",
+    "action",
+    "add",
+    "after",
+    "all",
+    "alter",
+    "always",
+    "analyze",
+    "and",
+    "as",
+    "asc",
+    "attach",
+    "autoincrement",
+    "before",
+    "begin",
+    "between",
+    "by",
+    "cascade",
+    "case",
+    "cast",
+    "check",
+    "collate",
+    "column",
+    "commit",
+    "conflict",
+    "constraint",
+    "create",
+    "cross",
+    "current",
+    "current_date",
+    "current_time",
+    "current_timestamp",
+    "database",
+    "default",
+    "deferrable",
+    "deferred",
+    "delete",
+    "desc",
+    "detach",
+    "distinct",
+    "do",
+    "drop",
+    "each",
+    "else",
+    "end",
+    "escape",
+    "except",
+    "exclude",
+    "exclusive",
+    "exists",
+    "explain",
+    "fail",
+    "filter",
+    "first",
+    "following",
+    "for",
+    "foreign",
+    "from",
+    "full",
+    "generated",
+    "glob",
+    "group",
+    "groups",
+    "having",
+    "if",
+    "ignore",
+    "immediate",
+    "in",
+    "index",
+    "indexed",
+    "initially",
+    "inner",
+    "insert",
+    "instead",
+    "intersect",
+    "into",
+    "is",
+    "isnull",
+    "join",
+    "key",
+    "last",
+    "left",
+    "like",
+    "limit",
+    "match",
+    "materialized",
+    "natural",
+    "no",
+    "not",
+    "nothing",
+    "notnull",
+    "null",
+    "nulls",
+    "of",
+    "offset",
+    "on",
+    "or",
+    "order",
+    "others",
+    "outer",
+    "over",
+    "partition",
+    "plan",
+    "pragma",
+    "preceding",
+    "primary",
+    "query",
+    "raise",
+    "range",
+    "recursive",
+    "references",
+    "regexp",
+    "reindex",
+    "release",
+    "rename",
+    "replace",
+    "restrict",
+    "returning",
+    "right",
+    "rollback",
+    "row",
+    "rows",
+    "savepoint",
+    "select",
+    "set",
+    "table",
+    "temp",
+    "temporary",
+    "then",
+    "ties",
+    "to",
+    "transaction",
+    "trigger",
+    "unbounded",
+    "union",
+    "unique",
+    "update",
+    "using",
+    "vacuum",
+    "values",
+    "view",
+    "virtual",
+    "when",
+    "where",
+    "window",
+    "with",
+    "without",
+];
+
 fn reserved_value(id: &str, generation: u32) -> Value {
     Value::String(format!("{id}-{generation}"))
 }
@@ -4565,6 +4717,74 @@ fn property_ids_naming_rowid_aliases_and_system_columns_store_read_write_and_ind
         .to_vec();
     expected.extend(RESERVED_PROPERTY_IDS.map(|id| format!("p:{id}")));
     assert_eq!(table_columns(&engine, "o:defs.Item"), expected);
+}
+
+#[test]
+fn sqlite_keywords_as_property_ids_store_read_write_and_index_in_generated_columns() {
+    // Chunks stay under the per-table column budget, so every keyword gets a
+    // physical column instead of overflowing into JSON.
+    for (chunk_index, chunk) in SQLITE_KEYWORDS.chunks(50).enumerate() {
+        let properties: Vec<serde_json::Value> = chunk
+            .iter()
+            .map(|id| json!({"id":id, "type":{"kind":"text"}}))
+            .collect();
+        let definition = serde_json::from_value(json!({
+            "name":"defs.Item",
+            "properties":properties,
+            "identity":[{"name":"by_keywords", "properties":[chunk[0], chunk[1]]}]
+        }))
+        .expect("object type decodes");
+        let model = Model::from_definitions_with_binding_indexes(
+            &[definition],
+            &[],
+            &[],
+            &[BindingIndexSpec {
+                object_type: "defs.Item".to_owned(),
+                property_id: chunk[2].to_owned(),
+                sort: true,
+                filter: true,
+            }],
+        )
+        .expect("keyword property ids project");
+        let put = |generation: u32| FactWriteRow::Put {
+            object_type: "defs.Item".to_owned(),
+            key: "keywords".to_owned(),
+            values: chunk
+                .iter()
+                .map(|id| ((*id).to_owned(), reserved_value(id, generation)))
+                .collect(),
+        };
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory
+            .path()
+            .join(format!("keywords-{chunk_index}.sqlite"));
+        let mut store =
+            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("opens");
+        store.commit(&batch(put(1), 1)).expect("creates");
+        store.commit(&batch(put(2), 2)).expect("replaces");
+        drop(store);
+
+        let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopens");
+        let object = store
+            .read()
+            .object(MAIN_WORLD, "defs.Item", "keywords")
+            .expect("reads")
+            .expect("object exists");
+        for id in chunk {
+            assert_eq!(object.values.get(*id), Some(&reserved_value(id, 2)), "{id}");
+        }
+        let key = [chunk[0], chunk[1]].map(|id| (id.to_owned(), reserved_value(id, 2)));
+        binding_lookups(&store, &key, chunk[2]);
+        drop(store);
+
+        let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine opens");
+        let property_columns: Vec<String> = table_columns(&engine, "o:defs.Item")
+            .into_iter()
+            .filter(|column| !column.starts_with('_'))
+            .collect();
+        let expected: Vec<String> = chunk.iter().map(|id| format!("p:{id}")).collect();
+        assert_eq!(property_columns, expected);
+    }
 }
 
 #[test]

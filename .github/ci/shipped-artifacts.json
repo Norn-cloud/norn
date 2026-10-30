@@ -1458,7 +1458,7 @@
     },
     {
       "path": "crates/norn-cell/tests/definitions_install.rs",
-      "sha256": "e4284d1230164cfa43ab0a33287309d01f516c94bb93f746fdd0c6952f22c973",
+      "sha256": "f704eab41ae54e72038291f3f0306826c01510bceebe4f526f16f6d1c6cc83fd",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
