@@ -43,6 +43,7 @@
 //! through a [`CellHost`] or returns a typed [`DecisionRefusal`] with nothing
 //! committed.
 
+#![forbid(unsafe_code)]
 // Deterministic core policy (#3299); host adapters retain their own arithmetic/collections.
 #![deny(
     clippy::float_arithmetic,
@@ -68,6 +69,7 @@ pub mod quantity;
 pub mod refusal;
 pub mod result_reconciliation;
 pub mod snapshot_observe;
+mod version_check;
 // Hosts and the dependency-bounded reference harness share the input codec
 // contract used to bind exact observation continuation payloads.
 pub use commit_check::{

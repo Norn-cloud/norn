@@ -40,7 +40,10 @@ fn put(rows: &mut Rows, count: usize, row: Vec<SqlValue>) -> Result<(), CellErro
     clippy::too_many_lines,
     reason = "one startup fold covers every normalized quantity cache"
 )]
-pub(crate) fn verify<S: SqlEngine>(engine: &S, receipts: &[Receipt]) -> Result<(), CellError> {
+pub(crate) fn verify<S: SqlEngine>(
+    engine: &S,
+    receipts: impl IntoIterator<Item = Result<Receipt, CellError>>,
+) -> Result<(), CellError> {
     super::clock_floor(engine)?;
     let mut ledgers = BTreeMap::<(String, String), Ledger>::new();
     let mut heads = Rows::new();
@@ -51,6 +54,7 @@ pub(crate) fn verify<S: SqlEngine>(engine: &S, receipts: &[Receipt]) -> Result<(
     let mut timers = Rows::new();
     let mut floor = 0;
     for receipt in receipts {
+        let receipt = receipt?;
         if receipt.body.logical_time < floor {
             return Err(QuantityError::Corrupt.into());
         }
