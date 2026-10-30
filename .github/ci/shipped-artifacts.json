@@ -12357,7 +12357,7 @@
     },
     {
       "path": "crates/norn-projections/tests/interop_exports.rs",
-      "sha256": "0e4cb3116aba6219abfb6b3866c86bc0b27a72019c9aa52223b9c7902ad1d46a",
+      "sha256": "eb5fd159bfae556ba08ac4b87a350c33e29578b95975fd661b2461d148e82ec4",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12375,7 +12375,7 @@
     },
     {
       "path": "crates/norn-projections/tests/lifecycle_diagram.rs",
-      "sha256": "7484dac69733516782f8e1eec68fa1802509c9bf51bd6b8aadcd698ff3b62a9e",
+      "sha256": "4deacee33c097a8459094f2f7bad6ac49dd16a98d461a96c19f7dd689f3c567b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
