@@ -38,6 +38,15 @@ fn admits_only_point_in_time_rows_and_chronological_holdouts() {
     let (train, test) = table.split(150).expect("holdout");
     assert_eq!((train.len(), test.len()), (1, 1));
     assert!(table.split(103).is_err(), "boundary label is unavailable");
+    let mut correction = row(100, 103);
+    correction.outcome.recorded_at = 160;
+    let corrected = plan
+        .materialize(300, 50, vec![correction, row(200, 203)])
+        .expect("late correction is known at extraction");
+    assert!(
+        corrected.split(150).is_err(),
+        "training cannot use a backdated correction learned after the boundary"
+    );
     assert_eq!(
         (table.as_of(), table.source_head(), table.rows().len()),
         (300, 50, 2)
