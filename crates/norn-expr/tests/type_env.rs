@@ -572,3 +572,197 @@ fn structured_property_members_have_closed_expression_types() {
     );
     assert!(!members.contains_key("unknown"));
 }
+
+#[test]
+fn interface_lineage_is_closed_deduplicated_and_available_to_expressions() {
+    let model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],
+        "interfaces":[
+            {"name":"test.Root","properties":[{"id":"code","type":{"kind":"text"}}]},
+            {"name":"test.Left","extends":["test.Root"]},
+            {"name":"test.Right","extends":["test.Root"]},
+            {"name":"test.Diamond","extends":["test.Left","test.Right"]}
+        ],
+        "objectTypes":[{"name":"test.Source","links":[{"id":"owner","target":"test.Root",
+            "cardinality":{"to":"one","from":"many"},"inverse":"sources"}]}]
+    }))
+    .unwrap();
+    let lookup = |name: &InterfaceName| {
+        model
+            .interfaces
+            .iter()
+            .find(|definition| &definition.name == name)
+    };
+    let lineage = norn_expr::env::interface_lineage(&model.interfaces[3], lookup).unwrap();
+    assert_eq!(
+        lineage
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["test.Root", "test.Left", "test.Right", "test.Diamond"]
+    );
+    let env = model.env();
+    let record = env.record("test.Diamond").expect("derived interface");
+    assert_eq!(record.fields["code"].ty, Type::text());
+    assert!(record.fields.contains_key("sources"));
+}
+
+#[test]
+fn interface_parent_read_contracts_intersect_independently_of_parent_order() {
+    let mut model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],"objectTypes":[],
+        "interfaces":[
+            {"name":"test.Left","properties":[{"id":"state","type":{"kind":"enum","values":[{"value":"a"},{"value":"b"}]}}]},
+            {"name":"test.Right","properties":[{"id":"state","type":{"kind":"enum","values":[{"value":"b"},{"value":"c"}]},"constraints":{"nullable":true}}]},
+            {"name":"test.Both","extends":["test.Left","test.Right"]}
+        ]
+    })).unwrap();
+    let first = model.env();
+    model.interfaces[2].extends.reverse();
+    let second = model.env();
+    assert_eq!(first.record("test.Both"), second.record("test.Both"));
+    assert_eq!(
+        first.record("test.Both").unwrap().fields["state"].ty,
+        Type::enumeration(["b"])
+    );
+}
+
+#[test]
+fn inherited_interface_link_intersections_keep_every_guaranteed_target_field() {
+    let mut model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],"objectTypes":[],
+        "interfaces":[
+            {"name":"test.TargetA","properties":[{"id":"alpha","type":{"kind":"text"}}]},
+            {"name":"test.TargetB","properties":[{"id":"beta","type":{"kind":"integer"}}]},
+            {"name":"test.Left","links":[{"id":"owner","target":"test.TargetA","cardinality":{"to":"one","from":"many","required":true}}]},
+            {"name":"test.Right","links":[{"id":"owner","target":"test.TargetB","cardinality":{"to":"one","from":"many","required":true}}]},
+            {"name":"test.Both","extends":["test.Left","test.Right"]}
+        ]
+    })).unwrap();
+    let first = model.env();
+    model.interfaces[4].extends.reverse();
+    let second = model.env();
+    assert_eq!(first.record("test.Both"), second.record("test.Both"));
+    let Type::Record(target) = &first.record("test.Both").unwrap().fields["owner"].ty else {
+        panic!("required reference")
+    };
+    let fields = &first.record(target).unwrap().fields;
+    assert_eq!(fields["alpha"].ty, Type::text());
+    assert_eq!(fields["beta"].ty, Type::Integer);
+}
+
+#[test]
+fn narrowing_an_inherited_to_many_link_to_an_optional_to_one_keeps_it_optional() {
+    let model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],"objectTypes":[],
+        "interfaces":[
+            {"name":"test.Target","properties":[{"id":"code","type":{"kind":"text"}}]},
+            {"name":"test.Parent","links":[{"id":"owner","target":"test.Target","cardinality":{"to":"many","from":"many"}}]},
+            {"name":"test.Child","extends":["test.Parent"],
+             "links":[{"id":"owner","target":"test.Target","cardinality":{"to":"one","from":"many","required":false}}]}
+        ]
+    }))
+    .unwrap();
+    let env = model.env();
+    let owner = &env.record("test.Child").expect("child interface").fields["owner"].ty;
+    assert!(
+        matches!(owner, Type::Optional(inner) if matches!(**inner, Type::Record(_))),
+        "an optional to-one link must stay optional: {owner:?}"
+    );
+}
+
+#[test]
+fn an_intersection_of_inherited_link_targets_keeps_their_inverse_roles() {
+    let model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],
+        "interfaces":[
+            {"name":"test.TargetA","properties":[{"id":"alpha","type":{"kind":"text"}}]},
+            {"name":"test.TargetB","properties":[{"id":"beta","type":{"kind":"integer"}}]},
+            {"name":"test.Left","links":[{"id":"owner","target":"test.TargetA","cardinality":{"to":"one","from":"many","required":true}}]},
+            {"name":"test.Right","links":[{"id":"owner","target":"test.TargetB","cardinality":{"to":"one","from":"many","required":true}}]},
+            {"name":"test.Both","extends":["test.Left","test.Right"]}
+        ],
+        "objectTypes":[{"name":"test.Source","links":[{"id":"source_of","target":"test.TargetA",
+            "cardinality":{"to":"one","from":"many"},"inverse":"sources"}]}]
+    }))
+    .unwrap();
+    let env = model.env();
+    assert!(
+        env.record("test.TargetA")
+            .unwrap()
+            .fields
+            .contains_key("sources")
+    );
+    let Type::Record(target) = &env.record("test.Both").unwrap().fields["owner"].ty else {
+        panic!("required reference")
+    };
+    let fields = &env.record(target).unwrap().fields;
+    assert!(fields.contains_key("alpha") && fields.contains_key("beta"));
+    assert!(
+        fields.contains_key("sources"),
+        "every combined target satisfies test.TargetA, so its inverse role is readable: {fields:?}"
+    );
+}
+
+#[test]
+fn intersections_created_while_merging_inverses_get_their_own_inverse_roles() {
+    let model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],
+        "interfaces":[
+            {"name":"test.TargetA","properties":[{"id":"alpha","type":{"kind":"text"}}]},
+            {"name":"test.TargetB","properties":[{"id":"beta","type":{"kind":"integer"}}]},
+            {"name":"test.Left","links":[{"id":"owner","target":"test.TargetA","cardinality":{"to":"one","from":"many","required":true}}]},
+            {"name":"test.Right","links":[{"id":"owner","target":"test.TargetB","cardinality":{"to":"one","from":"many","required":true}}]},
+            {"name":"test.Both","extends":["test.Left","test.Right"]}
+        ],
+        "objectTypes":[
+            {"name":"test.SourceA","links":[{"id":"to_a","target":"test.TargetA","cardinality":{"to":"one","from":"many"},"inverse":"sources"}]},
+            {"name":"test.SourceB","links":[{"id":"to_b","target":"test.TargetB","cardinality":{"to":"one","from":"many"},"inverse":"sources"}]},
+            {"name":"test.Note","links":[{"id":"about","target":"test.SourceA","cardinality":{"to":"one","from":"many"},"inverse":"notes"}]}
+        ]
+    }))
+    .unwrap();
+    let env = model.env();
+    let Type::Record(owner) = &env.record("test.Both").unwrap().fields["owner"].ty else {
+        panic!("required reference")
+    };
+    let Type::List(sources) = &env.record(owner).unwrap().fields["sources"].ty else {
+        panic!("both targets expose a to-many inverse named sources")
+    };
+    let Type::Record(source) = &**sources else {
+        panic!("inverse elements are records")
+    };
+    let fields = &env.record(source).unwrap().fields;
+    assert!(
+        fields.contains_key("notes"),
+        "every combined source is a test.SourceA, so its inverse role is readable: {fields:?}"
+    );
+}
+
+#[test]
+fn structured_properties_inherited_from_two_parents_keep_both_parents_members() {
+    let mut model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],"objectTypes":[],
+        "interfaces":[
+            {"name":"test.Left","properties":[{"id":"address","type":{"kind":"record","members":[
+                {"id":"city","type":{"kind":"text"}}]}}]},
+            {"name":"test.Right","properties":[{"id":"address","type":{"kind":"record","members":[
+                {"id":"city","type":{"kind":"text"}},{"id":"zip","type":{"kind":"text"}}]}}]},
+            {"name":"test.Both","extends":["test.Left","test.Right"]}
+        ]
+    }))
+    .unwrap();
+    let first = model.env();
+    model.interfaces[2].extends.reverse();
+    let second = model.env();
+    for env in [&first, &second] {
+        let Type::Record(address) = &env.record("test.Both").unwrap().fields["address"].ty else {
+            panic!("a structured property is a record")
+        };
+        let members = &env.record(address).unwrap().fields;
+        assert!(
+            members.contains_key("city") && members.contains_key("zip"),
+            "both parents' members are guaranteed: {members:?}"
+        );
+    }
+}
