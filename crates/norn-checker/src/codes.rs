@@ -679,6 +679,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "required property id {property} is declared twice",
     ),
     entry(
+        "interface.validation.invalid_inheritance",
+        Tier::T3,
+        "interface parent contract is repeated, missing, cyclic or incompatible",
+    ),
+    entry(
         "interface.validation.invalid_link_id",
         Tier::T2,
         "required link id {link} must match [a-z][a-z0-9_]* without the reserved extension separator \"__\"",

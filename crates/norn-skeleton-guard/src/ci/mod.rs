@@ -9,6 +9,22 @@ type Obligations = BTreeMap<String, BTreeSet<String>>;
 /// The only repository whose own branches may change workflows or gate files.
 const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 
+/// Gate files pinned to the trusted base, besides every workflow.
+const GATE_FILES: [&str; 9] = [
+    "scripts/ci/core.sh",
+    ".config/nextest.toml",
+    "scripts/ci/validate-runner-policy.py",
+    "scripts/proof_enrollment.py",
+    "verification/coverage-v1/validate.py",
+    "scripts/verify-promoted-subsystems.sh",
+    "scripts/check-proof-holes.py",
+    "crates/norn-skeleton-guard/baseline.json",
+    "crates/norn-checker/tests/non_code_literals.baseline.json",
+];
+
+/// The longest merge-queue group the trusted lane walks; longer groups fail closed.
+const MAX_MERGE_GROUP: usize = 64;
+
 /// Validate every workflow using only candidate data, plus exact provenance.
 /// A fork never runs on a self-hosted runner or receives a repository secret.
 #[must_use]
@@ -59,16 +75,7 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
             )),
         }
     }
-    for path in [
-        "scripts/ci/core.sh",
-        "scripts/ci/validate-runner-policy.py",
-        "scripts/proof_enrollment.py",
-        "verification/coverage-v1/validate.py",
-        "scripts/verify-promoted-subsystems.sh",
-        "scripts/check-proof-holes.py",
-        "crates/norn-skeleton-guard/baseline.json",
-        "crates/norn-checker/tests/non_code_literals.baseline.json",
-    ] {
+    for path in GATE_FILES {
         match (
             std::fs::read(base.join(path)),
             std::fs::read(root.join(path)),
@@ -130,12 +137,122 @@ fn contract_errors(contract: Vec<String>, approval: Option<Result<String, String
     }
 }
 
-/// [`maintainer_approval`] of the evidence file for the candidate checkout's HEAD.
+/// [`maintainer_approval`] of the evidence file for the candidate checkout's HEAD,
+/// or [`merge_group_approval`] when the evidence describes a merge-queue group.
 fn approval_of(evidence: &Path, root: &Path) -> Result<String, String> {
     let bytes = std::fs::read(evidence).map_err(|error| format!("maintainer evidence: {error}"))?;
-    let document =
+    let document: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|error| format!("maintainer evidence: {error}"))?;
+    if document.get("merge_group").is_some() {
+        return merge_group_approval(&document, root);
+    }
     maintainer_approval(&document, &git::head(root)?)
+}
+
+/// A full lowercase commit SHA from `value[key]`.
+fn commit_sha(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|sha| {
+            sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
+        .map(str::to_owned)
+}
+
+/// The approvers of a merge-queue group's gate changes.
+///
+/// The candidate checkout is the group's head commit. Walking first parents
+/// from it down to the group's base, every step must be a two-parent merge
+/// `(previous, pull request head)`, which is how the queue builds groups with
+/// the merge method. A step that changes a workflow or gate file must leave
+/// them exactly as at that pull request's head, and that head must carry an
+/// unedited admin `/approve-gates <head>` comment ([`maintainer_approval`]).
+/// Steps that change no gate file need no evidence. So the landing gates are
+/// always the trusted base's or an approved head's, never an unreviewed merge.
+///
+/// # Errors
+/// Returns why the group is not admitted: malformed evidence, a candidate
+/// that is not the group head, a step that is not such a merge, a group longer
+/// than 64 merges, gate files that differ from the approved head, or
+/// a gate-changing pull request without an approval.
+pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result<String, String> {
+    if evidence
+        .get("repository")
+        .and_then(serde_json::Value::as_str)
+        != Some(MAINTAINED_REPOSITORY)
+    {
+        return Err(format!(
+            "merge group evidence is not for {MAINTAINED_REPOSITORY}"
+        ));
+    }
+    let group = evidence
+        .get("merge_group")
+        .ok_or("merge group evidence is missing")?;
+    let (Some(base), Some(head)) = (commit_sha(group, "base_sha"), commit_sha(group, "head_sha"))
+    else {
+        return Err("merge group evidence names no exact base and head commits".to_owned());
+    };
+    let candidate = git::head(root)?;
+    if head != candidate {
+        return Err(format!(
+            "evidence is for {head}, the candidate is {candidate}"
+        ));
+    }
+    let pull_requests = evidence
+        .get("pull_requests")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("merge group evidence has no pull requests")?;
+    let gates: Vec<&str> = [".github/workflows"]
+        .into_iter()
+        .chain(GATE_FILES)
+        .collect();
+    let mut approvers = Vec::new();
+    let mut commit = head;
+    for _ in 0..MAX_MERGE_GROUP {
+        if commit == base {
+            return Ok(approvers.join(", "));
+        }
+        let [previous, pull_head] =
+            <[String; 2]>::try_from(git::parents(root, &commit)?).map_err(|parents| {
+                format!(
+                    "merge group commit {commit} is not a two-parent merge ({} parents)",
+                    parents.len()
+                )
+            })?;
+        if !git::same_paths(root, &previous, &commit, &gates)? {
+            if !git::same_paths(root, &pull_head, &commit, &gates)? {
+                return Err(format!(
+                    "merge group commit {commit} has gates that differ from pull request head {pull_head}"
+                ));
+            }
+            // Several pull requests can share a head; any approved one admits it.
+            let mut outcome = Err(format!(
+                "no pull request evidence for gate-changing head {pull_head}"
+            ));
+            for pull in pull_requests
+                .iter()
+                .filter(|pull| commit_sha(pull, "head_sha").as_deref() == Some(pull_head.as_str()))
+            {
+                let mut document = pull.clone();
+                if let Some(map) = document.as_object_mut() {
+                    map.insert("repository".to_owned(), MAINTAINED_REPOSITORY.into());
+                }
+                outcome = maintainer_approval(&document, &pull_head);
+                if outcome.is_ok() {
+                    break;
+                }
+            }
+            approvers.push(outcome?);
+        }
+        commit = previous;
+    }
+    if commit == base {
+        return Ok(approvers.join(", "));
+    }
+    Err(format!(
+        "merge group is longer than {MAX_MERGE_GROUP} merges or misses its base"
+    ))
 }
 
 /// The admin who commented `/approve-gates <head>` for the exact candidate commit,
@@ -166,11 +283,8 @@ pub fn maintainer_approval(
             "only {MAINTAINED_REPOSITORY} branches may change workflows or gates"
         ));
     }
-    let head = text(evidence, "head_sha")
-        .filter(|sha| {
-            sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-        })
-        .ok_or("maintainer evidence names no exact head commit")?;
+    let head =
+        commit_sha(evidence, "head_sha").ok_or("maintainer evidence names no exact head commit")?;
     if head != candidate_head {
         return Err(format!(
             "evidence is for {head}, the candidate is {candidate_head}"

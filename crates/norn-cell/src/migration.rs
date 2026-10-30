@@ -685,17 +685,20 @@ fn effective_invariant_signature(
                     "object type `{object_type}` references missing interface `{interface_name}`"
                 ))
             })?;
-            for invariant in &interface.invariants {
-                signature.insert(
-                    (
-                        "interface".to_owned(),
-                        interface_name.to_owned(),
-                        invariant.id.as_str().to_owned(),
-                    ),
-                    invariant.clone(),
-                );
+            for owner in interface.contract_owners(|name| interfaces.get(name.as_str()).copied()) {
+                for invariant in &owner.invariants {
+                    signature.insert(
+                        (
+                            "interface".to_owned(),
+                            owner.name.as_str().to_owned(),
+                            invariant.id.as_str().to_owned(),
+                        ),
+                        invariant.clone(),
+                    );
+                }
             }
         }
+
         current = definition
             .extends
             .as_ref()

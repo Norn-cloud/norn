@@ -765,6 +765,13 @@
       "tier": "T2"
     },
     {
+      "code": "interface.validation.invalid_inheritance",
+      "message": "interface parent contract is repeated, missing, cyclic or incompatible",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
       "code": "interface.validation.invalid_link_id",
       "message": "required link id {link} must match [a-z][a-z0-9_]* without the reserved extension separator \"__\"",
       "severity": "error",
