@@ -68,7 +68,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "cb506d00e3696073fb585b493f329262b13075c669ec9b480da31fe680810b14",
+      "sha256": "09391b56efdfb159c327a867a3f8305cade30a43a987830dc527bb503721f9ff",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -104,7 +104,7 @@
     },
     {
       "path": ".github/workflows/codeql.yml",
-      "sha256": "40c832fdd9af4986832e68bf56f6bcbb845f29a8d6eea2a89c06d3a584c7c335",
+      "sha256": "ff4649b738a3911711c558bb1e95abea344a7d226c73c2d7ce5a62f1768569f2",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
