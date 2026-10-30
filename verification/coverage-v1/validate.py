@@ -386,7 +386,22 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}", action) is not None, f"workflow action must be content-pinned: {action}")
     for trigger in ("pull_request", "pull_request_target", "push", "merge_group"):
         require(re.search(rf"^  {trigger}:", source, re.MULTILINE) is not None, f"missing required trigger {trigger}")
-    require("run: bash scripts/ci/core.sh" in source, "full public-core gate must run on every candidate")
+    # CI partitions core.sh across jobs; a prefix match also accepts the cheap
+    # phase alone, or a different shard command after the first is removed.
+    required_lines = (
+        "      - run: bash scripts/ci/core.sh cheap",
+        '        run: echo "plan=$(bash scripts/ci/core.sh plan)" >> "$GITHUB_OUTPUT"',
+        "      - run: bash scripts/ci/core.sh test ${{ matrix.shard }}",
+        "      - run: bash scripts/ci/core.sh ${{ matrix.phase }}",
+        "        shard: ${{ fromJSON(needs.plan.outputs.plan).shard }}",
+        "        phase: ${{ fromJSON(needs.plan.outputs.plan).phase }}",
+        "    needs: [core, plan, test, phase]",
+        '          RESULTS: ${{ join(needs.*.result, \' \') }}',
+        '            [ "$result" = success ] || { echo "a full-gate job ended $result: $RESULTS"; exit 1; }',
+        '          [ "$(echo $RESULTS | wc -w)" -eq 4 ]',
+    )
+    for line in required_lines:
+        require(line in source.splitlines(), f"full public-core gate is missing: {line.strip()}")
     runner = (ROOT / "scripts/ci/core.sh").read_text()
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
     require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,

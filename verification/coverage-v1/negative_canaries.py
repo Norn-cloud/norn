@@ -461,8 +461,13 @@ def central_obligation_closure_canaries() -> None:
 def workflow_canaries() -> None:
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
     mutations = [
-        ("missing full-core gate", "run: bash scripts/ci/core.sh", "run: echo skipped"),
-        ("floating action", "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "actions/checkout@v4"),
+        ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
+        ("missing test shards", "run: bash scripts/ci/core.sh test ${{ matrix.shard }}", "run: echo skipped"),
+        ("missing phases", "run: bash scripts/ci/core.sh ${{ matrix.phase }}", "run: echo skipped"),
+        ("missing shard matrix", "shard: ${{ fromJSON(needs.plan.outputs.plan).shard }}", "shard: [rest-1]"),
+        ("missing phase matrix", "phase: ${{ fromJSON(needs.plan.outputs.plan).phase }}", "phase: [cheap]"),
+        ("missing full verdict dependency", "needs: [core, plan, test, phase]", "needs: [core, plan, test]"),
+        ("floating action", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4"),
         ("floating Rust toolchain", "toolchain: 1.98.0", "toolchain: stable"),
         ("insufficient proof timeout", "timeout-minutes: 110", "timeout-minutes: 20"),
     ]
