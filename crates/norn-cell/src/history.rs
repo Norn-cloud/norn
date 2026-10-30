@@ -70,6 +70,39 @@ fn materialize_historical_values(
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// Resolve the last committed incarnation at an explicit ledger cursor.
+    /// The indexed lookup includes deletions; it cannot resurrect an older live
+    /// value through a tombstone. The selected immutable preimage is authenticated
+    /// and charged before decoding. Authorization belongs to the exporting host.
+    ///
+    /// # Errors
+    /// Invalid cursor, corrupt/missing proof, or engine failure.
+    pub fn object_at_commit_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        commit_seq: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<crate::reactive::BudgetedRead, CellError> {
+        let root = self.root_type(object_type).unwrap_or(object_type);
+        let version: Option<i64> = self.conn.query_optional(
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND \"commit_seq\" <= ?4 ORDER BY \"commit_seq\" DESC, \"version\" DESC LIMIT 1"),
+            params![world, root, key, to_i64(commit_seq, "historical cursor")?],
+            |row| row.get(0),
+        )?;
+        let Some(version) = version else {
+            return Ok(crate::reactive::BudgetedRead::Missing);
+        };
+        self.object_at_version_with_budget(
+            world,
+            object_type,
+            key,
+            to_u64(version, "historical version")?,
+            budget,
+        )
+    }
+
     fn proven_snapshot(
         &self,
         world: &str,

@@ -60,6 +60,69 @@ fn modified(before: &str, after: &str, before_version: u64, after_version: u64) 
 }
 
 #[test]
+fn cursor_selects_latest_committed_incarnation_including_tombstones() {
+    use norn_cell::reactive::BudgetedRead;
+    let mut store = CellStore::open_in_memory(model()).expect("store");
+    let first = store
+        .commit(&batch(vec![put("proof.Item", "item", "one")]))
+        .expect("first")
+        .receipt()
+        .body
+        .commit_seq;
+    let second = store
+        .commit(&batch(vec![put("proof.Item", "item", "two")]))
+        .expect("second")
+        .receipt()
+        .body
+        .commit_seq;
+    let deleted = store
+        .commit(&batch(vec![FactWriteRow::Delete {
+            object_type: "proof.Item".into(),
+            key: "item".into(),
+        }]))
+        .expect("delete")
+        .receipt()
+        .body
+        .commit_seq;
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let mut budget = DecodeBudget::new(&limits);
+    for (cursor, expected) in [(first, "one"), (second, "two")] {
+        let BudgetedRead::Found(record) = store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", cursor, &mut budget)
+            .expect("proof")
+        else {
+            panic!("historical live value missing")
+        };
+        assert_eq!(record.values["value"], Value::from(expected));
+    }
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", 0, &mut budget)
+            .expect("before creation"),
+        BudgetedRead::Missing
+    ));
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", deleted, &mut budget)
+            .expect("tombstone"),
+        BudgetedRead::Missing
+    ));
+    let mut zero = limits;
+    zero.max_candidate_bytes_per_commit = 0;
+    let mut budget = DecodeBudget::new(&zero);
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", first, &mut budget)
+            .expect("budget"),
+        BudgetedRead::Exhausted
+    ));
+}
+
+#[test]
 fn commitments_capture_each_materialized_version_and_survive_restart() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
