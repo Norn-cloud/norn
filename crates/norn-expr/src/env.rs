@@ -907,6 +907,9 @@ struct Derivation<'d, 'e> {
     interfaces: BTreeMap<&'d str, &'d InterfaceDef>,
     value_records: BTreeMap<String, RecordType>,
     intersection_members: BTreeMap<String, BTreeSet<String>>,
+    /// Interface property types by declaring site: each ancestor's structured
+    /// property is resolved once, not again for every descendant.
+    interface_property_types: BTreeMap<String, (Type, bool)>,
     record_depth: usize,
     record_nodes_remaining: usize,
 }
@@ -954,6 +957,7 @@ impl<'d, 'e> Derivation<'d, 'e> {
             interfaces,
             value_records: BTreeMap::new(),
             intersection_members: BTreeMap::new(),
+            interface_property_types: BTreeMap::new(),
             record_depth: 0,
             record_nodes_remaining: 4096,
         }
@@ -1222,7 +1226,12 @@ impl<'d, 'e> Derivation<'d, 'e> {
                 // The declaring interface names the site, so two parents' structured
                 // properties with one id get distinct records and are met, not replaced.
                 let site = format!("{}.{}", definition.name.as_str(), property.id.as_str());
-                let (ty, nullable) = self.resolve(&site, &property.property_type);
+                let cached = self.interface_property_types.get(&site).cloned();
+                let (ty, nullable) = cached.unwrap_or_else(|| {
+                    let resolved = self.resolve(&site, &property.property_type);
+                    self.interface_property_types.insert(site.clone(), resolved.clone());
+                    resolved
+                });
                 let ty = nullable_type(ty, nullable || property.constraints.nullable);
                 let field = Field {
                     ty,

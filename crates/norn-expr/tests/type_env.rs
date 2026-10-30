@@ -766,3 +766,23 @@ fn structured_properties_inherited_from_two_parents_keep_both_parents_members() 
         );
     }
 }
+
+#[test]
+fn many_children_share_an_ancestors_structured_property_records() {
+    // More descendants than the record-expansion budget: each must reuse the
+    // parent's declaring-site record instead of expanding it again.
+    let mut interfaces = vec![serde_json::json!({"name":"test.Root","properties":[
+        {"id":"address","type":{"kind":"record","members":[{"id":"city","type":{"kind":"text"}}]}}]})];
+    interfaces.extend((0..4200).map(|index| {
+        serde_json::json!({"name": format!("test.Child{index}"), "extends": ["test.Root"]})
+    }));
+    let model: Model = serde_json::from_value(serde_json::json!({
+        "propertyTypes":[],"extensions":[],"objectTypes":[],"interfaces": interfaces
+    }))
+    .unwrap();
+    let env = model.env();
+    let Type::Record(address) = &env.record("test.Child4199").unwrap().fields["address"].ty else {
+        panic!("the inherited structured property is a record")
+    };
+    assert!(env.record(address).unwrap().fields.contains_key("city"));
+}
