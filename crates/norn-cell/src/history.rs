@@ -171,7 +171,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     pub(crate) fn verify_value_history(&self) -> Result<(), CellError> {
-        for receipt in self.receipts()? {
+        for receipt in self.receipt_stream() {
+            let receipt = receipt?;
             for row in receipt.body.written {
                 self.proven_snapshot(&receipt.body.world, &row.object_type, &row.key, row.version)?;
             }
@@ -1186,11 +1187,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         sources: &mut Vec<Value>,
         include_inputs: bool,
     ) -> Result<(), CellError> {
-        let length: Option<i64> = self.conn.query_optional(
-            "SELECT octet_length(record) FROM _norn_export_journal WHERE commit_seq = ?1",
-            params![to_i64(entry.commit_seq, "commit seq")?],
-            |row| row.get(0),
-        )?;
+        let length = crate::export::record_decode_bytes(self.conn, entry.commit_seq)?;
         if length.is_none_or(|length| length > 1024 * 1024) {
             return Ok(());
         }
@@ -1202,8 +1199,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some((hash, encoded)) = row else {
             return Ok(());
         };
-        let record: ExportRecord =
-            serde_json::from_str(&encoded).map_err(|_invalid| unproven_event())?;
+        let record = crate::payload_storage::decode_export(self.conn, &encoded, entry.commit_seq)
+            .map_err(|_invalid| unproven_event())?;
         if record.hash()? != hash
             || &record.receipt != receipt
             || hash_json(&record.batch)? != receipt.body.request_hash
@@ -1589,24 +1586,7 @@ pub(crate) fn restore_input<E: SqlEngine>(
             if existing.iter().any(|run| !runs.contains(run)) {
                 return Err(mismatch());
             }
-            for run in &runs {
-                if run.command_id != command.command_id
-                    || run.generation > command.generation
-                    || run.attempt == 0
-                {
-                    return Err(mismatch());
-                }
-                if existing.contains(run) {
-                    continue;
-                }
-                if run.consumed_commit_seq.is_some() {
-                    return Err(mismatch());
-                }
-                store.conn.execute(
-                    &format!("INSERT INTO \"{RUN}\" (\"command_id\", \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, ?4, NULL)"),
-                    params![run.command_id, to_i64(run.generation, "generation")?, to_i64(run.attempt, "attempt")?, canonical_json(&run.outcome)?],
-                ).map_err(|_invalid| mismatch())?;
-            }
+            restore_run_history(store, record, &command, &runs, &existing)?;
             let current: Vec<_> = runs
                 .iter()
                 .filter(|run| run.generation == command.generation)
@@ -1620,9 +1600,16 @@ pub(crate) fn restore_input<E: SqlEngine>(
             {
                 return Err(mismatch());
             }
+            let world = crate::payload_storage::receipt_world(&store.conn, head.commit_seq)?;
+            let encoded_result = crate::payload_storage::encode_result(
+                &store.conn,
+                &record.batch.scope,
+                &world,
+                result.as_ref().ok_or_else(mismatch)?,
+            )?;
             store.conn.execute(
                 "UPDATE \"_norn_outbox\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3",
-                params![canonical_json(&result)?, command.command_id, to_i64(command.generation, "generation")?],
+                params![encoded_result, command.command_id, to_i64(command.generation, "generation")?],
             )?;
         }
     }
@@ -1633,6 +1620,45 @@ pub(crate) fn restore_input<E: SqlEngine>(
         != record.consumed_input.as_ref()
     {
         return Err(mismatch());
+    }
+    Ok(())
+}
+
+fn restore_run_history<E: SqlEngine>(
+    store: &mut CellStore<E>,
+    record: &ExportRecord,
+    command: &crate::OutboxCommand,
+    runs: &[crate::RunRecord],
+    existing: &[crate::RunRecord],
+) -> Result<(), CellError> {
+    let seq = record.receipt.body.commit_seq;
+    let mismatch = || CellError::HistoricalValueUnproven(format!("consumed input at commit {seq}"));
+    for run in runs {
+        if run.command_id != command.command_id
+            || run.generation > command.generation
+            || run.attempt == 0
+        {
+            return Err(mismatch());
+        }
+        if existing.contains(run) {
+            continue;
+        }
+        if run.consumed_commit_seq.is_some() {
+            return Err(mismatch());
+        }
+        let world =
+            crate::payload_storage::command_world(&store.conn, &run.command_id, run.generation)?
+                .ok_or_else(mismatch)?;
+        let encoded_outcome = crate::payload_storage::encode_result(
+            &store.conn,
+            &record.batch.scope,
+            &world,
+            &run.outcome,
+        )?;
+        store.conn.execute(
+            &format!("INSERT INTO \"{RUN}\" (\"command_id\", \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, ?4, NULL)"),
+            params![run.command_id, to_i64(run.generation, "generation")?, to_i64(run.attempt, "attempt")?, encoded_outcome],
+        ).map_err(|_invalid| mismatch())?;
     }
     Ok(())
 }
