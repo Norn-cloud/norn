@@ -128,6 +128,8 @@
     "tool-toolkit": "Tool / Toolkit (effect/unstable/ai) -> ActionIR projection -> MCP/OpenAPI (T7-EFX-5)"
   },
   "admitted": [
+    { "symbol": "@norn/authoring#Norn.parseDate", "probe": "norn.Norn.parseDate", "row": "ontology", "use": "call", "context": "any" },
+    { "symbol": "@norn/authoring#Norn.parseTimestamp", "probe": "norn.Norn.parseTimestamp", "row": "ontology", "use": "call", "context": "any" },
     { "symbol": "@norn/authoring#Norn.dateBefore", "probe": "norn.Norn.dateBefore", "row": "ontology", "use": "call", "context": "any" },
     { "symbol": "@norn/authoring#Norn.byteLength", "probe": "norn.Norn.byteLength", "row": "ontology", "use": "call", "context": "any" },
     { "symbol": "@norn/authoring#Norn.evaluate", "probe": "norn.Norn.evaluate", "row": "ontology", "use": "call", "context": "any" },
