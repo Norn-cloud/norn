@@ -91,13 +91,11 @@ impl<'m, 'a> CommitModel<'m, 'a> {
         if concrete == ty {
             return true;
         }
-        self.catalog.ancestry(concrete).iter().any(|def| {
-            def.name == *ty
-                || def
-                    .implements
-                    .iter()
-                    .any(|name| name.as_str() == ty.as_str())
-        })
+        self.catalog
+            .ancestry(concrete)
+            .iter()
+            .any(|def| def.name == *ty)
+            || self.catalog.implements(concrete, ty.as_str())
     }
 
     /// The nearest declaration of `link` on `source`'s lineage (a subtype may
