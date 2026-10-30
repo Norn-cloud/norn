@@ -68,7 +68,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "18abbb0ce9e9c73fb2e34f129c7ec1eeec0b0948aa38d872889d92e03a8fe5a1",
+      "sha256": "8aa7a6ef8a395b97f9bfb63478d0d30c4e9c90d2e010864fc7ff0276e1a7229e",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -105,6 +105,24 @@
     {
       "path": ".github/workflows/codeql.yml",
       "sha256": "8388bb6695d2c892a8980c10eb97f2a5b21fa2bdbdbd11883287a8aadd9eb572",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": ".github/workflows/trusted-merge-group.yml",
+      "sha256": "71d952e30345e185fe231ef913a7ef748dc355d10336cb8435f099ea75da8907",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -158,7 +176,7 @@
     },
     {
       "path": "CONTRIBUTING.md",
-      "sha256": "0b7f45014301b6c78a1ecf56edb47a4a84b8e721445bca6c477e0c611491eb08",
+      "sha256": "1107c60d925da66b9cabcb303843e5a7a626a07f44c92a9b640d4ebd9bbaafc3",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12627,7 +12645,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/src/ci/mod.rs",
-      "sha256": "791ec1ad2bb626f509f6490ee89758bfa96b76b53dd9f4b15af631e8051622b7",
+      "sha256": "e115919070b406c5d5dbbe904c352679aa68b2c4b81f55e38e4a382ed0c37b73",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12699,7 +12717,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/tests/provenance.rs",
-      "sha256": "c947701199fc63ae0d22dc6e57c6d98bf9c2e184e403b07e5d2cb5b2a4260c90",
+      "sha256": "15493d25991063b865ff84634123656c839d59459d62084a10c8b4b6b1029594",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

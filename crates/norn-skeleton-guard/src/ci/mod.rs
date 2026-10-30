@@ -173,7 +173,7 @@ fn commit_sha(value: &serde_json::Value, key: &str) -> Option<String> {
 /// # Errors
 /// Returns why the group is not admitted: malformed evidence, a candidate
 /// that is not the group head, a step that is not such a merge, a group longer
-/// than [`MAX_MERGE_GROUP`], gate files that differ from the approved head, or
+/// than 64 merges, gate files that differ from the approved head, or
 /// a gate-changing pull request without an approval.
 pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result<String, String> {
     if evidence
@@ -239,8 +239,11 @@ pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result
         }
         commit = previous;
     }
+    if commit == base {
+        return Ok(approvers.join(", "));
+    }
     Err(format!(
-        "merge group is longer than {MAX_MERGE_GROUP} commits or misses its base"
+        "merge group is longer than {MAX_MERGE_GROUP} merges or misses its base"
     ))
 }
 

@@ -38,10 +38,8 @@ jobs:
     # An edit re-runs when either the new or the previous body mentions the
     # command, so removing an approval re-evaluates and fails closed. `contains`
     # also covers bodies the gate accepts after trimming.
-    # A merge-queue group re-runs it on the group's head commit, the commit
-    # that lands on main.
     if: >-
-      github.event_name == 'pull_request_target' || github.event_name == 'merge_group' ||
+      github.event_name == 'pull_request_target' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
       (contains(github.event.comment.body, '/approve-gates') ||
       (github.event.action == 'edited' && contains(github.event.changes.body.from, '/approve-gates'))))
@@ -50,27 +48,19 @@ jobs:
     # always() reporter then writes failure, so a stale approval run can never
     # publish success after a revocation.
     concurrency:
-      group: trusted-policy-${{ github.event.pull_request.number || github.event.issue.number || github.event.merge_group.head_sha }}
+      group: trusted-policy-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       # A comment event carries the issue, not the pull request: read the PR
-      # from the API, taking base and head from the same snapshot. A merge
-      # group is checked at its head commit against its base.
+      # from the API, taking base and head from the same snapshot.
       - name: Resolve the pull request
         id: pr
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           retries: 3
           script: |
-            const group = context.payload.merge_group;
-            if (group) {
-              core.setOutput('base_sha', group.base_sha);
-              core.setOutput('head_sha', group.head_sha);
-              core.setOutput('head_repository', `${context.repo.owner}/${context.repo.repo}`);
-              return;
-            }
             const event = context.payload.pull_request;
             const number = event ? event.number : context.payload.issue.number;
             const { data } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number });
@@ -89,8 +79,6 @@ jobs:
           ref: ${{ steps.pr.outputs.head_sha }}
           path: candidate
           persist-credentials: false
-          # The gate walks a merge group's merges down to its base.
-          fetch-depth: ${{ github.event_name == 'merge_group' && '0' || '1' }}
       # Workflow and gate changes need a same-repository head and an unedited
       # `/approve-gates <head sha>` comment from an admin; re-run this job after
       # commenting. Without this evidence such changes fail closed; data-only PRs
@@ -101,6 +89,7 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: Number('${{ steps.pr.outputs.number }}') });
             // A commenter the API does not know as a user (a bot) has no
             // permission; any other API failure fails closed.
             const permissions = new Map();
@@ -115,35 +104,17 @@ jobs:
               }
               return permissions.get(username);
             };
-            const approvals = async (pr) => {
-              const comments = [];
-              for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
-                if (!comment.user || !(comment.body || '').trim().startsWith('/approve-gates')) continue;
-                comments.push({ user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
-              }
-              return { number: pr.number, head_repository: pr.head.repo ? pr.head.repo.full_name : null, head_sha: pr.head.sha, comments };
-            };
-            const write = (evidence) => require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify(evidence));
-            const group = context.payload.merge_group;
-            if (group) {
-              // Each queued pull request is the second parent of one merge on the
-              // first-parent path from the group head to its base. The gate walks
-              // the same path in git and decides; this only records approvals.
-              const pull_requests = [];
-              let sha = group.head_sha;
-              for (let step = 0; sha !== group.base_sha && step < 64; step++) {
-                const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: sha });
-                if (commit.parents.length !== 2) break;
-                const head = commit.parents[1].sha;
-                const { data: pulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: head });
-                for (const pr of pulls.filter((pr) => pr.head.sha === head)) pull_requests.push(await approvals(pr));
-                sha = commit.parents[0].sha;
-              }
-              write({ repository: `${owner}/${repo}`, merge_group: { base_sha: group.base_sha, head_sha: group.head_sha }, pull_requests });
-              return;
+            const comments = [];
+            for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
+              if (!comment.user || !(comment.body || '').trim().startsWith('/approve-gates')) continue;
+              comments.push({ user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
             }
-            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: Number('${{ steps.pr.outputs.number }}') });
-            write({ repository: `${owner}/${repo}`, ...await approvals(pr) });
+            require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify({
+              repository: `${owner}/${repo}`,
+              head_repository: pr.head.repo ? pr.head.repo.full_name : null,
+              head_sha: pr.head.sha,
+              comments
+            }));
       - name: Validate candidate as data with base-owned policy
         run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
       - name: Report trusted policy on the exact PR head
@@ -155,9 +126,7 @@ jobs:
             // If resolution failed there is no validated head: look it up again so
             // the failure still replaces any earlier success on that head.
             let sha = '${{ steps.pr.outputs.head_sha }}';
-            if (!sha && context.payload.merge_group) {
-              sha = context.payload.merge_group.head_sha;
-            } else if (!sha) {
+            if (!sha) {
               const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
               sha = (await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number })).data.head.sha;
             }
