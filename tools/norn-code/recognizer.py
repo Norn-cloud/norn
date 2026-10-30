@@ -89,9 +89,10 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                     if isinstance(node, ast.Import):
                         for alias in node.names:
                             aliases[alias.asname or alias.name.split('.')[0]] = alias.name
-                    elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                    elif isinstance(node, ast.ImportFrom):
                         for alias in node.names:
-                            aliases[alias.asname or alias.name] = node.module + '.' + alias.name
+                            aliases[alias.asname or alias.name] = (node.module + '.' + alias.name) if node.module and node.level == 0 else 'local'
+
                 for node in ast.walk(tree):
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                         for decorator in node.decorator_list:
@@ -144,7 +145,9 @@ def collect(root: Path):
     if not root.is_dir():
         raise ValueError('source root must be a directory')
     sources = {}
-    for directory, dirs, files in os.walk(root, followlinks=False):
+    def traversal_error(error):
+        raise error
+    for directory, dirs, files in os.walk(root, followlinks=False, onerror=traversal_error):
         dirs[:] = sorted(d for d in dirs if d not in SKIP)
         for name in [*dirs, *sorted(files)]:
             path = Path(directory) / name
