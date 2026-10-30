@@ -18277,7 +18277,7 @@
     },
     {
       "path": "scripts/ci/frontier.py",
-      "sha256": "c695a4fe25fc15023ede3597304f4163c1326bbfb1b387a30c6f3f26a4c073d5",
+      "sha256": "c9036f494d85a7dce69d5c071977778c3be9db71e5afa1c5825145ba062bd3ef",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

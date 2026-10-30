@@ -145,7 +145,8 @@ def series(rows):
             "steps": {name: {"n": len(ss), "skipped": len(measured) - len(ss),
                              "p50_s": pct([s["s"] for s in ss], 0.5) if ss else None,
                              "p95_s": pct([s["s"] for s in ss], 0.95) if ss else None,
-                             "fail_rate": round(sum(s["conclusion"] == "failure" for s in ss) / len(ss), 3)
+                             # A timeout cancels the running step; that is a failure.
+                             "fail_rate": round(sum(s["conclusion"] in ("failure", "cancelled") for s in ss) / len(ss), 3)
                              if ss else None}
                       for name, ss in steps.items()},
         })
