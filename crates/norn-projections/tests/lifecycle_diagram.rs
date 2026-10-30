@@ -11,10 +11,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use norn_ir::{ObjectTypeDef, PropertyType};
+use norn_ir::ObjectTypeDef;
 use norn_projections::{
-    LIFECYCLE_DIAGRAM_DIR, declared_lifecycle_diagrams, lifecycle_diagram_path,
-    lifecycle_state_diagram,
+    LIFECYCLE_DIAGRAM_DIR, declared_lifecycle_diagrams, lifecycle_state_diagram,
 };
 
 const UPDATE_ENV: &str = "NORN_PROJECTIONS_UPDATE_GOLDENS";
@@ -24,37 +23,6 @@ fn purchase_order() -> ObjectTypeDef {
         "../../../fixtures/ir/entity-v2/object-types/purchase-order.object-type.json"
     ))
     .expect("fixture decodes")
-}
-
-#[test]
-fn a_lifecycle_renders_as_a_state_diagram() {
-    let order = purchase_order();
-    let PropertyType::Enum { values } = &order.properties[1].property_type else {
-        panic!("status is an enum");
-    };
-    let states: Vec<&str> = values.iter().map(|value| value.value.as_str()).collect();
-    assert_eq!(
-        lifecycle_state_diagram(&states, &order.lifecycles[0]),
-        "stateDiagram-v2
-    state \"draft\" as s0
-    state \"submitted\" as s1
-    state \"approved\" as s2
-    state \"rejected\" as s3
-    state \"received\" as s4
-    state \"cancelled\" as s5
-    [*] --> s0
-    s0 --> s1 : submit
-    s1 --> s2 : approve
-    s1 --> s3 : reject
-    s3 --> s0 : revise
-    s2 --> s4 : receive
-    s0 --> s5 : cancel
-    s1 --> s5 : cancel
-    s2 --> s5 : cancel
-    s4 --> [*]
-    s5 --> [*]
-"
-    );
 }
 
 #[test]
@@ -148,32 +116,6 @@ fn lifecycle_diagram_artifacts_match_their_goldens() {
             .map(|path| (*path).to_owned())
             .collect::<BTreeSet<_>>(),
         "every golden is generated"
-    );
-}
-
-#[test]
-fn a_diagram_artifact_is_titled_and_renders_the_transition_list() {
-    let order = purchase_order();
-    let diagrams = declared_lifecycle_diagrams(&order);
-    let payment = &diagrams[1];
-    assert_eq!(
-        payment.path,
-        lifecycle_diagram_path("commerce.PurchaseOrder", "payment_status")
-    );
-    assert_eq!(
-        payment.mermaid,
-        "---
-title: commerce.PurchaseOrder payment_status lifecycle
----
-stateDiagram-v2
-    state \"unpaid\" as s0
-    state \"paid\" as s1
-    state \"refunded\" as s2
-    [*] --> s0
-    s0 --> s1 : pay
-    s1 --> s2 : refund
-    s2 --> [*]
-"
     );
 }
 

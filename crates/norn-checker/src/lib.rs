@@ -28,6 +28,7 @@ pub mod artifact_set;
 pub mod codes;
 pub mod connector_path;
 pub mod definitions_diff;
+pub mod deontic;
 mod diagnostic;
 pub mod entity_artifacts;
 pub mod entity_instance;
