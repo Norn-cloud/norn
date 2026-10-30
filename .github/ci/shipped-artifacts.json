@@ -29539,7 +29539,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "2b228a329a022f89d949f24b5bfd0c8803c23c02bbe059bc66a849f372132638",
+      "sha256": "32e1c324c607fd243578f81975139f73e2248056f800c0b1a950b73a6bfc5ad4",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
