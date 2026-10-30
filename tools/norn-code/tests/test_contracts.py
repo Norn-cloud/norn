@@ -57,3 +57,15 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(result['effects']['reads'], ['finance.invoice.amount'])
         for key in ['dependencies', 'ordering', 'atomicity', 'permission_coverage']:
             self.assertEqual(result[key], [])
+
+    def test_mapped_external_call_and_vocabulary_gate(self):
+        facts, mapping = self.inputs()
+        mapping['vocabulary'].append('systems.ledger.post')
+        mapping['calls'] = {'private_ledger_call': 'systems.ledger.post'}
+        facts['facts'][-1]['target'] = 'private_ledger_call'
+        result = project(facts, mapping)['contracts'][1]
+        self.assertEqual(result['effects']['calls'], ['systems.ledger.post'])
+        self.assertEqual(result['coverage']['mapped'], 2)
+        mapping['calls']['private_ledger_call'] = 'unadmitted.term'
+        with self.assertRaises(ValueError):
+            project(facts, mapping)

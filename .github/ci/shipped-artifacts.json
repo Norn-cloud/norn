@@ -19036,7 +19036,7 @@
     },
     {
       "path": "tools/norn-code/tests/test_contracts.py",
-      "sha256": "d0cadb16946c93b4ca8d951e8ce0763b53223ce97b871101926564d66e8b56bd",
+      "sha256": "c27e251e71afd0a2c26a0e89786bbb44535716d2fd231cf1535a5e28524139a8",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
