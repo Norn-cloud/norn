@@ -963,6 +963,20 @@ impl<'d, 'e> Derivation<'d, 'e> {
         }
     }
 
+    /// Each resolvable interface's lineage names, itself included.
+    fn interface_ancestry(&self) -> BTreeMap<&'d str, BTreeSet<&'d str>> {
+        self.interfaces
+            .iter()
+            .filter_map(|(name, interface)| {
+                interface_lineage(interface, |parent| {
+                    self.interfaces.get(parent.as_str()).copied()
+                })
+                .ok()
+                .map(|lineage| (*name, lineage.iter().map(|def| def.name.as_str()).collect()))
+            })
+            .collect()
+    }
+
     fn run(mut self) -> BTreeMap<String, RecordType> {
         let mut records = BTreeMap::new();
         for ext in self.defs.extensions {
@@ -1001,19 +1015,16 @@ impl<'d, 'e> Derivation<'d, 'e> {
             records.insert(name.to_owned(), record);
         }
 
-        // Each resolvable interface's lineage names, computed once for the
-        // inverse-role holder search below.
-        let ancestry: BTreeMap<&'d str, BTreeSet<&'d str>> = self
-            .interfaces
+        // Computed once for the inverse-role holder search below, and only when
+        // some link has an inverse.
+        let ancestry = if declared_links
             .iter()
-            .filter_map(|(name, interface)| {
-                interface_lineage(interface, |parent| {
-                    self.interfaces.get(parent.as_str()).copied()
-                })
-                .ok()
-                .map(|lineage| (*name, lineage.iter().map(|def| def.name.as_str()).collect()))
-            })
-            .collect();
+            .any(|declared| declared.link.inverse.is_some())
+        {
+            self.interface_ancestry()
+        } else {
+            BTreeMap::new()
+        };
         let inherits = |interface: &str, target: &str| {
             ancestry
                 .get(interface)
