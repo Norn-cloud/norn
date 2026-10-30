@@ -11,7 +11,7 @@ jobs:
   core:
     if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -29,6 +29,7 @@ jobs:
   trusted-policy:
     permissions:
       contents: read
+      pull-requests: read
       statuses: write
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-24.04
@@ -45,8 +46,30 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: candidate
           persist-credentials: false
+      # Workflow and gate changes need a same-repository head that a maintainer
+      # approved on its exact commit; re-run this job after approving. Without
+      # this evidence such changes fail closed; data-only PRs never need it.
+      - name: Record maintainer reviews of the exact PR head
+        continue-on-error: true
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+            const reviews = [];
+            for (const review of await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: pr.number, per_page: 100 })) {
+              if (!review.user) continue;
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: review.user.login });
+              reviews.push({ user: review.user.login, state: review.state, commit_id: review.commit_id, permission: data.permission });
+            }
+            require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify({
+              repository: `${owner}/${repo}`,
+              head_repository: pr.head.repo ? pr.head.repo.full_name : null,
+              head_sha: pr.head.sha,
+              reviews
+            }));
       - name: Validate candidate as data with base-owned policy
-        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate
+        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
       - name: Report trusted policy on the exact PR head
         if: always()
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8

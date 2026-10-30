@@ -68,7 +68,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "26932646e17ac2dc2d43c55c9c727a488bbe139279dc7369a5a876c27af03559",
+      "sha256": "fa74415ee33cb12b874a1c26ef7ed3c01ab7588d1e13fd9669368ea4665059bb",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -86,7 +86,7 @@
     },
     {
       "path": ".github/workflows/cla.yml",
-      "sha256": "dce76706dc92cd859cd384a860234cb2dfb03c23efd18b79aa6e0fad882af448",
+      "sha256": "56b5ac0c3e661074ae8c83743ddb9f48906cf917254723f25156f4276dc6e550",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12393,7 +12393,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/src/bin/xtask.rs",
-      "sha256": "6a5a10c88648d814e323ab8780429db173e03aafa08074b43b73fd2ee9a4dd0d",
+      "sha256": "996c9efb86fb05c0a8c3dcaf7a56058857cf182f5963c79983a5f3bb4d54b8c1",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12411,7 +12411,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/src/ci/git.rs",
-      "sha256": "325ec2d7d0fcfa5f88aba02e28d4931968294af900dea26dff3e2d867316e0e0",
+      "sha256": "7871971d397dc5de69bb474caf56a51b8d62be2e7f00838bfcd346f1251e6cea",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12429,7 +12429,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/src/ci/mod.rs",
-      "sha256": "d4c7ebd0c20782d9ace857139e8a71c4de516a387c0ef2c873c2a0d16a3fee0f",
+      "sha256": "0787c41623b478227d7896fa357028a738ebec4b195621ccf6eae16b36c9f822",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12501,7 +12501,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/tests/provenance.rs",
-      "sha256": "26e9465676afbdfe22e27e5646a7d10533a9c364d9d33a3bec2e89fa78a6e409",
+      "sha256": "7acfe60bc2ce6a0eafb868abc9618dace4f3381baee4a8cab98504fdb302ab58",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18259,7 +18259,7 @@
     },
     {
       "path": "scripts/ci/validate-runner-policy.py",
-      "sha256": "adbbffe54b0f8798797969e1cdf3d8e30979cef86843208cc4ba21cf60520c76",
+      "sha256": "ad9ff68a5dd2845bc9cde347a3373c792889cfe8fc957745381528dbc2572140",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

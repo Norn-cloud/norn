@@ -6,10 +6,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 type Obligations = BTreeMap<String, BTreeSet<String>>;
 
+/// The only repository whose own branches may change workflows or gate files.
+const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
+
 /// Validate every workflow using only candidate data, plus exact provenance.
 /// A fork never runs on a self-hosted runner or receives a repository secret.
 #[must_use]
 pub fn run(root: &Path, base: &Path) -> Vec<String> {
+    trusted(root, base, None)
+}
+
+/// [`run`] for the trusted lane: workflow and gate contract changes are admitted
+/// only with `evidence` of a maintainer approval of the exact candidate commit
+/// (see [`maintainer_approval`]). Every other check is unchanged.
+#[must_use]
+pub fn trusted(root: &Path, base: &Path, evidence: Option<&Path>) -> Vec<String> {
     let mut errors = provenance::check_against(root, base).errors();
     if !errors.is_empty() {
         return errors;
@@ -33,8 +44,9 @@ pub fn run(root: &Path, base: &Path) -> Vec<String> {
         Err(error) => return vec![error],
     };
     let new: BTreeSet<_> = current.iter().filter(workflow).collect();
+    let mut contract = Vec::new();
     if old != new {
-        errors.push("workflow inventory differs from the trusted base".to_owned());
+        contract.push("workflow inventory differs from the trusted base".to_owned());
     }
     for path in old.intersection(&new) {
         match (
@@ -42,7 +54,7 @@ pub fn run(root: &Path, base: &Path) -> Vec<String> {
             std::fs::read(root.join(path)),
         ) {
             (Ok(before), Ok(after)) if before == after => {}
-            _ => errors.push(format!(
+            _ => contract.push(format!(
                 "{path}: workflow contract differs from the trusted base"
             )),
         }
@@ -62,11 +74,15 @@ pub fn run(root: &Path, base: &Path) -> Vec<String> {
             std::fs::read(root.join(path)),
         ) {
             (Ok(before), Ok(after)) if before == after => {}
-            _ => errors.push(format!(
+            _ => contract.push(format!(
                 "{path}: gate contract differs from the trusted base"
             )),
         }
     }
+    let approval = evidence
+        .filter(|_| !contract.is_empty())
+        .map(|path| approval_of(path, root));
+    errors.extend(contract_errors(contract, approval));
     let files = match git::tracked(root) {
         Ok(files) => files,
         Err(error) => return vec![error],
@@ -99,6 +115,92 @@ pub fn run(root: &Path, base: &Path) -> Vec<String> {
         }
     }
     errors
+}
+
+/// Contract changes stay errors unless a maintainer approved the exact head.
+fn contract_errors(contract: Vec<String>, approval: Option<Result<String, String>>) -> Vec<String> {
+    match approval {
+        _ if contract.is_empty() => contract,
+        Some(Ok(_)) => Vec::new(),
+        Some(Err(reason)) => contract
+            .into_iter()
+            .chain([format!("maintainer path: {reason}")])
+            .collect(),
+        None => contract,
+    }
+}
+
+/// [`maintainer_approval`] of the evidence file for the candidate checkout's HEAD.
+fn approval_of(evidence: &Path, root: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(evidence).map_err(|error| format!("maintainer evidence: {error}"))?;
+    let document = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("maintainer evidence: {error}"))?;
+    maintainer_approval(&document, &git::head(root)?)
+}
+
+/// The maintainer who approved the exact candidate commit, from the API evidence
+/// that the base-owned trusted workflow records (`repository`, `head_repository`,
+/// `head_sha`, and `reviews` in API order with each reviewer's `permission`).
+/// Fork heads stay data-only: they never change workflows or gates, approved or not.
+///
+/// # Errors
+/// Returns why the candidate is not admitted: a fork or unknown head repository,
+/// evidence for another commit, an outstanding maintainer change request, or no
+/// maintainer approval whose commit is the candidate head.
+pub fn maintainer_approval(
+    evidence: &serde_json::Value,
+    candidate_head: &str,
+) -> Result<String, String> {
+    let text = |value: &serde_json::Value, key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    if text(evidence, "repository").as_deref() != Some(MAINTAINED_REPOSITORY)
+        || text(evidence, "head_repository").as_deref() != Some(MAINTAINED_REPOSITORY)
+    {
+        return Err(format!(
+            "only {MAINTAINED_REPOSITORY} branches may change workflows or gates"
+        ));
+    }
+    let head = text(evidence, "head_sha")
+        .filter(|sha| sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        .ok_or("maintainer evidence names no exact head commit")?;
+    if head != candidate_head {
+        return Err(format!(
+            "evidence is for {head}, the candidate is {candidate_head}"
+        ));
+    }
+    // As on GitHub, each reviewer's latest approval, change request or
+    // dismissal decides; comments do not.
+    let mut decisive = BTreeMap::new();
+    for review in evidence
+        .get("reviews")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("maintainer evidence has no reviews")?
+    {
+        let (Some(user), Some(state)) = (text(review, "user"), text(review, "state")) else {
+            return Err("maintainer evidence has a malformed review".to_owned());
+        };
+        if matches!(state.as_str(), "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED") {
+            let maintainer = matches!(text(review, "permission").as_deref(), Some("admin" | "write"));
+            decisive.insert(user, (state, text(review, "commit_id"), maintainer));
+        }
+    }
+    if let Some((user, _)) = decisive
+        .iter()
+        .find(|(_, (state, _, maintainer))| *maintainer && state == "CHANGES_REQUESTED")
+    {
+        return Err(format!("maintainer {user} requested changes"));
+    }
+    decisive
+        .into_iter()
+        .find(|(_, (state, commit, maintainer))| {
+            *maintainer && state == "APPROVED" && commit.as_deref() == Some(head.as_str())
+        })
+        .map(|(user, _)| user)
+        .ok_or_else(|| format!("no maintainer approved the exact head {head}"))
 }
 
 fn retained_obligations(root: &Path, base: &Path) -> Result<(), String> {
@@ -236,7 +338,71 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::compare_artifact_variants;
+    use super::{compare_artifact_variants, contract_errors, maintainer_approval};
+    use serde_json::{Value, json};
+
+    const HEAD: &str = "1111111111111111111111111111111111111111";
+    const OLDER: &str = "2222222222222222222222222222222222222222";
+
+    fn review(user: &str, state: &str, commit: &str, permission: &str) -> Value {
+        json!({"user": user, "state": state, "commit_id": commit, "permission": permission})
+    }
+
+    fn approval(reviews: &[Value]) -> Result<String, String> {
+        let evidence = json!({"repository": "Norn-cloud/norn", "head_repository": "Norn-cloud/norn", "head_sha": HEAD, "reviews": reviews});
+        maintainer_approval(&evidence, HEAD)
+    }
+
+    #[test]
+    fn maintainer_approval_needs_write_permission_on_the_exact_head() {
+        let approved = review("maintainer", "APPROVED", HEAD, "write");
+        assert_eq!(approval(&[approved]), Ok("maintainer".to_owned()));
+        assert_eq!(approval(&[review("owner", "APPROVED", HEAD, "admin")]), Ok("owner".to_owned()));
+        for (commit, permission) in [(HEAD, "read"), (HEAD, "triage"), (HEAD, "none"), (OLDER, "admin")] {
+            assert!(approval(&[review("someone", "APPROVED", commit, permission)]).is_err());
+        }
+        assert!(approval(&[review("maintainer", "COMMENTED", HEAD, "write")]).is_err());
+    }
+
+    #[test]
+    fn maintainer_approval_follows_each_reviewers_latest_decision() {
+        let approved = review("maintainer", "APPROVED", HEAD, "write");
+        let comment = review("maintainer", "COMMENTED", HEAD, "write");
+        assert!(approval(&[approved.clone(), comment]).is_ok());
+        for later in ["DISMISSED", "CHANGES_REQUESTED"] {
+            assert!(approval(&[approved.clone(), review("maintainer", later, HEAD, "write")]).is_err());
+        }
+        let blocking = review("other", "CHANGES_REQUESTED", OLDER, "admin");
+        assert!(approval(&[approved.clone(), blocking]).is_err());
+        assert!(approval(&[approved, review("reader", "CHANGES_REQUESTED", HEAD, "read")]).is_ok());
+    }
+
+    #[test]
+    fn maintainer_approval_binds_repository_and_candidate() {
+        let reviews = [review("maintainer", "APPROVED", HEAD, "write")];
+        let evidence = |repository: &str, head_repository: Value, head: &str| {
+            json!({"repository": repository, "head_repository": head_repository, "head_sha": head, "reviews": reviews})
+        };
+        assert!(maintainer_approval(&evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), HEAD), HEAD).is_ok());
+        for document in [
+            evidence("Norn-cloud/norn", json!("fork/norn"), HEAD),
+            evidence("Norn-cloud/norn", Value::Null, HEAD),
+            evidence("fork/norn", json!("fork/norn"), HEAD),
+            evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), &HEAD.to_uppercase()),
+        ] {
+            assert!(maintainer_approval(&document, HEAD).is_err());
+        }
+        assert!(maintainer_approval(&evidence("Norn-cloud/norn", json!("Norn-cloud/norn"), HEAD), OLDER).is_err());
+    }
+
+    #[test]
+    fn contract_changes_need_an_approval() {
+        let contract = || vec!["scripts/ci/core.sh: gate contract differs from the trusted base".to_owned()];
+        assert_eq!(contract_errors(contract(), None), contract());
+        assert!(contract_errors(contract(), Some(Ok("maintainer".to_owned()))).is_empty());
+        assert_eq!(contract_errors(contract(), Some(Err("fork".to_owned()))).len(), 2);
+        assert!(contract_errors(Vec::new(), Some(Err("fork".to_owned()))).is_empty());
+    }
 
     const IR: &str = "pub enum ArtifactKind { Entity, SourceSchema, Law }";
     const PROOF: &str = "let authority_bearing kind =\n  match kind with\n  | ArtifactKind_Entity\n  | ArtifactKind_Law -> true\n  | ArtifactKind_SourceSchema -> false\nlet next = ()\n";
