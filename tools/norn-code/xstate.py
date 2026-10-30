@@ -63,7 +63,7 @@ def machine(config, source):
     if set(config) - {'id', 'initial', 'states'}:
         raise Unsupported('machine behavior beyond flat states')
     states = config.get('states')
-    if not isinstance(states, dict) or not states or config.get('initial') not in states:
+    if not isinstance(states, dict) or not states or not isinstance(config.get('initial'), str) or config['initial'] not in states:
         raise Unsupported('missing states or invalid initial')
     identity = config.get('id')
     if not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', identity):
@@ -72,7 +72,7 @@ def machine(config, source):
     for state, spec in states.items():
         if not isinstance(spec, dict) or set(spec) - {'type', 'on'}:
             raise Unsupported('nested state or executable state behavior')
-        if spec.get('type') not in {None, 'final'}:
+        if spec.get('type') not in (None, 'final'):
             raise Unsupported('non-atomic state')
         events = spec.get('on', {})
         if not isinstance(events, dict):
@@ -88,7 +88,7 @@ def machine(config, source):
             if not isinstance(transition, dict) or set(transition) - {'target', 'guard', 'cond'}:
                 raise Unsupported('transition behavior or ordered alternatives')
             guard = transition.get('guard', transition.get('cond'))
-            if ('guard' in transition and 'cond' in transition) or (guard is not None and not isinstance(guard, str)):
+            if ('guard' in transition and 'cond' in transition) or (guard is not None and (not isinstance(guard, str) or not guard)):
                 raise Unsupported('non-symbolic guard')
             target = transition.get('target')
             if not isinstance(target, str) or target not in states or target == state:
@@ -109,15 +109,29 @@ def extract(sources, revision='working-tree'):
                 for spec in walk(node):
                     if spec.type == 'import_specifier' and spelling(spec.child_by_field_name('name')) == 'createMachine':
                         bindings.add(spelling(spec.child_by_field_name('alias') or spec.child_by_field_name('name')))
-        if not bindings:
+        uses_xstate = bool(bindings) or any(
+            (n.type == 'import_statement' and string(n.child_by_field_name('source')) == 'xstate') or
+            (n.type == 'call_expression' and spelling(n.child_by_field_name('function')) == 'require' and
+             any(string(c) == 'xstate' for c in n.child_by_field_name('arguments').named_children))
+            for n in walk(tree))
+        if not uses_xstate:
             continue
+        candidates = 0
         # A compiler semantic pass is not wired yet. Refuse ambiguous bindings.
         ambiguous = any(n.type == 'identifier' and spelling(n) in bindings and n.parent.type not in {'import_specifier', 'call_expression'} for n in walk(tree))
         for node in walk(tree):
-            if node.type != 'call_expression' or spelling(node.child_by_field_name('function')) not in bindings:
+            if node.type != 'call_expression':
                 continue
+            fn = node.child_by_field_name('function')
+            direct = spelling(fn) in bindings
+            member = fn and fn.type == 'member_expression' and spelling(fn.child_by_field_name('property')) == 'createMachine'
+            if not (direct or member or spelling(fn) == 'createMachine'):
+                continue
+            candidates += 1
             source = asdict(evidence(path, data, revision, node.start_point.row + 1))
             try:
+                if not direct:
+                    raise Unsupported('factory form requires semantic resolution')
                 if tree.has_error or ambiguous:
                     raise Unsupported('syntax error or ambiguous factory binding')
                 args = node.child_by_field_name('arguments').named_children
@@ -126,6 +140,8 @@ def extract(sources, revision='working-tree'):
                 facts.append(asdict(machine(literal(args[0]), source)))
             except Unsupported as error:
                 unknown.append({'reason': str(error), 'evidence': source})
+        if not candidates:
+            unknown.append({'reason': 'no_supported_literal_machine', 'evidence': asdict(evidence(path, data, revision))})
     return {'schema_version': 'norn-code-lifecycle/1', 'extracted': facts, 'unknown': unknown,
             'coverage': {'extracted': len(facts), 'unknown': len(unknown)},
             'evidence_level': 'analyzed', 'parity': 'unverified'}
@@ -137,9 +153,9 @@ def authoring(fact, predicates):
     rows = []
     for i, transition in enumerate(fact['transitions']):
         guard = transition['guard']
-        if guard and guard not in predicates:
+        if guard is not None and guard not in predicates:
             raise Unsupported('unmapped guard: ' + guard)
-        guards = ', guards: [Norn.unsafeZen<boolean>(' + quote(predicates[guard]) + ')]' if guard else ''
+        guards = ', guards: [Norn.unsafeZen<boolean>(' + quote(predicates[guard]) + ')]' if guard is not None else ''
         rows.append('{ id: ' + quote('event_' + str(i)) + ', description: ' + quote(transition['event']) + ', from: [' + quote(transition['source']) + '], to: ' + quote(transition['target']) + guards + ' }')
     return '\n'.join([
         'import { Schema } from "effect"', 'import { Norn } from "@norn/authoring"',

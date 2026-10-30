@@ -48,3 +48,20 @@ class XStateTests(unittest.TestCase):
         report = extract({'x.ts': (PREFIX + 'function f(machine) { return machine(' + CONFIG + '); }').encode()})
         self.assertEqual(report['extracted'], [])
         self.assertEqual(len(report['unknown']), 1)
+
+    def test_malformed_literals_are_gaps(self):
+        for config in [CONFIG.replace("initial:'draft'", 'initial:{}'),
+                       CONFIG.replace("type:'final'", 'type:{}'),
+                       CONFIG.replace("guard:'allowed'", "guard:''")]:
+            self.assertEqual(self.report(config)['extracted'], [])
+            self.assertEqual(len(self.report(config)['unknown']), 1)
+
+    def test_unsupported_factory_forms_are_not_silent(self):
+        for source in ["import * as X from 'xstate'; X.createMachine(" + CONFIG + ")",
+                       "const X = require('xstate'); X.createMachine(" + CONFIG + ")",
+                       "import { setup } from 'xstate'; setup({}).createMachine(" + CONFIG + ")"]:
+            result = extract({'x.ts': source.encode()})
+            self.assertEqual(len(result['unknown']), 1)
+        result = extract({'x.ts': (PREFIX + 'machine(' + CONFIG + '); X.createMachine(' + CONFIG + ');').encode()})
+        self.assertEqual(len(result['extracted']), 1)
+        self.assertEqual(len(result['unknown']), 1)
