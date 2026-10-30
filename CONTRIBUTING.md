@@ -17,8 +17,9 @@ another contributor. GitHub records your account, agreement version and assent.
 Fork pull requests are data-only: `trusted-policy` rejects any change to
 `.github/workflows/` or to the gate files it pins. A `Norn-cloud/norn` branch may
 change them once an admin comments `/approve-gates <full 40-character head SHA>`
-on the pull request. Then re-run `trusted-policy`, because a comment doesn't
-trigger it. Only an unedited comment that names the exact current head counts.
+on the pull request. Posting, editing or deleting a `/approve-gates` comment
+re-runs `trusted-policy` for that pull request. Only an unedited comment that
+names the exact current head counts.
 After any new push, approve again.
 
 Agents post `/approve-gates` from the owner account only after a Sol review has

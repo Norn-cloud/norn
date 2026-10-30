@@ -2,6 +2,9 @@ name: Public core
 on:
   pull_request:
   pull_request_target:
+  # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.
+  issue_comment:
+    types: [created, edited, deleted]
   push:
   merge_group:
   workflow_dispatch:
@@ -9,7 +12,7 @@ permissions:
   contents: read
 jobs:
   core:
-    if: github.event_name != 'pull_request_target'
+    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     steps:
@@ -32,19 +35,36 @@ jobs:
       issues: read
       pull-requests: read
       statuses: write
-    if: github.event_name == 'pull_request_target'
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/approve-gates'))
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      # A comment event carries the issue, not the pull request: read the PR
+      # from the API. A pull_request_target run keeps its event's base SHA.
+      - name: Resolve the pull request
+        id: pr
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const event = context.payload.pull_request;
+            const number = event ? event.number : context.payload.issue.number;
+            const { data } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number });
+            core.setOutput('number', String(data.number));
+            core.setOutput('base_sha', event ? event.base.sha : data.base.sha);
+            core.setOutput('head_sha', data.head.sha);
+            core.setOutput('head_repository', data.head.repo ? data.head.repo.full_name : '');
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ steps.pr.outputs.base_sha }}
           path: trusted
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ steps.pr.outputs.head_repository }}
+          ref: ${{ steps.pr.outputs.head_sha }}
           path: candidate
           persist-credentials: false
       # Workflow and gate changes need a same-repository head and an unedited
@@ -56,8 +76,8 @@ jobs:
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
-            const pr = context.payload.pull_request;
             const { owner, repo } = context.repo;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: Number('${{ steps.pr.outputs.number }}') });
             // A commenter the API does not know as a user (a bot) has no
             // permission; any other API failure fails closed.
             const permissions = new Map();
@@ -93,7 +113,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: context.payload.pull_request.head.sha,
+              sha: '${{ steps.pr.outputs.head_sha }}',
               state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
               context: 'trusted-policy',
               description: 'Base-owned policy over candidate data',
