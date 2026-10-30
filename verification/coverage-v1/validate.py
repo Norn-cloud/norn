@@ -389,7 +389,10 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     require("run: bash scripts/ci/core.sh" in source, "full public-core gate must run on every candidate")
     runner = (ROOT / "scripts/ci/core.sh").read_text()
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
-    require("cargo test --locked --workspace" in runner, "full workspace tests must run")
+    require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,
+            "full workspace tests must run")
+    require("cargo test --locked --workspace --doc" in runner, "workspace doctests must run")
+    require("test-shards" in runner, "test shards must be proved to cover the full test set")
     require("cargo clippy --locked --workspace --all-targets -- -D warnings" in runner, "full workspace clippy must run")
 
 
