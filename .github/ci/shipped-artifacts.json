@@ -12627,7 +12627,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/src/ci/mod.rs",
-      "sha256": "db7a76ec05968005534869b6d4f2fd241a77cc2d501458fc7c82ac77a8d70440",
+      "sha256": "ade2066ba2ee25fe873872151daef2cffe3e323f2dc0f7df4e789cfb87edd68a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

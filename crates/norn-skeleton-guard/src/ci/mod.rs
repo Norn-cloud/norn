@@ -260,14 +260,16 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
     let expected = syntax
         .items
         .into_iter()
-        .find_map(|item| match item {
-            syn::Item::Enum(item) if item.ident == "ArtifactKind" => Some(
+        .find_map(|item| {
+            let syn::Item::Enum(item) = item else {
+                return None;
+            };
+            (item.ident == "ArtifactKind").then(|| {
                 item.variants
                     .into_iter()
                     .map(|variant| variant.ident.to_string())
-                    .collect::<BTreeSet<_>>(),
-            ),
-            _ => None,
+                    .collect::<BTreeSet<_>>()
+            })
         })
         .ok_or("ArtifactKind enum missing")?;
     if proof.contains("(*") || proof.contains("*)") {
