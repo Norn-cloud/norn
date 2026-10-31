@@ -1,0 +1,39 @@
+//! Filters a stream by a predicate.
+use crate::container::{DrainContainer, SizableContainer, PushInto};
+use crate::progress::Timestamp;
+use crate::Container;
+use crate::dataflow::channels::pact::Pipeline;
+use crate::dataflow::Stream;
+use crate::dataflow::operators::generic::operator::Operator;
+
+/// Extension trait for filtering.
+pub trait Filter<C: DrainContainer> {
+    /// Returns a new instance of `self` containing only records satisfying `predicate`.
+    ///
+    /// # Examples
+    /// ```
+    /// use timely::dataflow::operators::{ToStream, Inspect};
+    /// use timely::dataflow::operators::vec::Filter;
+    ///
+    /// timely::example(|scope| {
+    ///     (0..10).to_stream(scope)
+    ///            .filter(|x| *x % 2 == 0)
+    ///            .inspect(|x| println!("seen: {:?}", x));
+    /// });
+    /// ```
+    fn filter<P: FnMut(&C::Item<'_>)->bool+'static>(self, predicate: P) -> Self;
+}
+
+impl<T: Timestamp, C: Container + SizableContainer + DrainContainer> Filter<C> for Stream<'_, T, C>
+where
+    for<'a> C: PushInto<C::Item<'a>>
+{
+    fn filter<P: FnMut(&C::Item<'_>)->bool+'static>(self, mut predicate: P) -> Self {
+        self.unary(Pipeline, "Filter", move |_,_| move |input, output| {
+            input.for_each_time(|time, data| {
+                output.session(&time)
+                      .give_iterator(data.flat_map(|d| d.drain()).filter(&mut predicate));
+            });
+        })
+    }
+}

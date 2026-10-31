@@ -2,6 +2,33 @@
   "version": 2,
   "software_sources": [
     {
+      "id": "software.columnation",
+      "revision": "0e4fe371ac319826dc7a460c704fda54c52a471a",
+      "license": "MIT",
+      "evidence": {
+        "path": "welldb/patches/PATCHES.md",
+        "sha256": "df56df63a6208e1cbdd449d3c7933ce303bea85018554cfad92bd8831148c222"
+      }
+    },
+    {
+      "id": "software.differential-dataflow",
+      "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+      "license": "MIT",
+      "evidence": {
+        "path": "welldb/patches/PATCHES.md",
+        "sha256": "df56df63a6208e1cbdd449d3c7933ce303bea85018554cfad92bd8831148c222"
+      }
+    },
+    {
+      "id": "software.timely",
+      "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+      "license": "MIT",
+      "evidence": {
+        "path": "welldb/patches/PATCHES.md",
+        "sha256": "df56df63a6208e1cbdd449d3c7933ce303bea85018554cfad92bd8831148c222"
+      }
+    },
+    {
       "id": "software.zen",
       "revision": "44530255a36df637edc86f6d29495c342805e21b",
       "license": "MIT",
