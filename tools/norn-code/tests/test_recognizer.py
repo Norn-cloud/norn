@@ -109,5 +109,12 @@ class ClassScopeTests(unittest.TestCase):
         self.assertFalse(any(m['signal'].startswith('decorator:') for m in analyze({'x.py':source})['recognized']))
 
 
+class OverflowTests(unittest.TestCase):
+    def test_oversized_unicode_escape_is_a_file_gap(self):
+        result = analyze({'bad.ts':b'import "\\u{FFFFFFFFFFFFFFFF}";', 'good.ts':b'import "effect";'})
+        self.assertEqual(result['recognized'][0]['framework'], 'effect')
+        self.assertEqual(result['unknown'][0]['evidence']['file'], 'bad.ts')
+
+
 if __name__ == '__main__':
     unittest.main()

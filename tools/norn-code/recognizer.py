@@ -162,7 +162,7 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                             package = string(args.named_children[0])
                             if package:
                                 emit(package, 'import:' + package, .9, node.start_point.row + 1)
-        except (ValueError, SyntaxError, TypeError, AttributeError, IndexError, RecursionError) as error:
+        except (ValueError, SyntaxError, TypeError, AttributeError, IndexError, RecursionError, OverflowError) as error:
             unknown.append({'reason': 'unreadable_syntax', 'evidence': asdict(evidence(path, data, revision)), 'detail': type(error).__name__})
     matched_paths = {m.evidence.file for m in matches}
     diagnosed_paths = {u['evidence']['file'] for u in unknown}
