@@ -2,7 +2,7 @@
 
 # Guarantees
 
-What Norn claims about its kernel and runtime, and how strongly each claim is backed. Every row comes from the verification coverage registry; a claim cannot appear here without its recorded evidence.
+What Norn claims about its kernel and runtime, and how strongly each claim is backed. Every row comes from the verification coverage registry and reports exactly the statuses and evidence artifacts recorded there, including rows that have none.
 
 > **Claim policy:** Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.
 

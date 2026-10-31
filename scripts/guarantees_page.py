@@ -3,7 +3,8 @@
 
 The registry is the only source: every claim appears with the evidence level
 the registry records for each layer, and nothing appears without it. Run with
---check to fail when the committed page differs from a fresh render.
+--check to fail when the committed page differs from a fresh render
+(test_guarantees_page.py also asserts this).
 """
 
 from __future__ import annotations
@@ -72,7 +73,7 @@ def render(registry: dict) -> str:
         "# Guarantees",
         "",
         "What Norn claims about its kernel and runtime, and how strongly each claim is backed. "
-        "Every row comes from the verification coverage registry; a claim cannot appear here without its recorded evidence.",
+        "Every row comes from the verification coverage registry and reports exactly the statuses and evidence artifacts recorded there, including rows that have none.",
         "",
         f"> **Claim policy:** {registry['claimPolicy']}",
         "",
