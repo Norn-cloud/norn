@@ -547,6 +547,24 @@ def validate_timeout_budgets(
             )
 
 
+def validate_selector_gate_order(
+    registrations: list[tuple[str, str]], gates: list[dict[str, Any]]
+) -> None:
+    positions = {gate_id: index for index, (_, gate_id) in enumerate(registrations)}
+    for profile, selector_gate in (
+        ("full", "verification-executed-test-selectors"),
+        ("fast", "verification-executed-test-selectors-fast"),
+    ):
+        require(selector_gate in positions, f"missing selector validator: {selector_gate}")
+        for gate in gates:
+            if gate["evidenceKind"] == "rust-tests" and gate["profile"] == profile:
+                require(
+                    gate["id"] in positions
+                    and positions[gate["id"]] < positions[selector_gate],
+                    f"{selector_gate}: producing gate {gate['id']} must run first",
+                )
+
+
 def validate_claim_evidence_shape(
     subsystem_id: str,
     claim_id: str,
@@ -1067,6 +1085,8 @@ def validate(
         "promoted gate profiles must match the runner registrations; "
         f"runner={runner_profiles}, manifest={manifest_profiles}",
     )
+
+    validate_selector_gate_order(runner_registrations, gates)
 
     validate_timeout_budgets(gates, formal_path=formal_workflow_path)
     # Archived UPE gate IDs are historical, never promoted current evidence.
