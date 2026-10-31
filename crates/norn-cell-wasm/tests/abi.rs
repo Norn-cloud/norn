@@ -499,7 +499,10 @@ fn shared_admission_uses_interface_invariants_and_exact_put_values() {
         "commit.unrepresentable_property"
     );
     assert_eq!(verdict["refusal"]["property"], "amount");
-    assert_eq!(verdict["refusal"]["message"], "commit.unrepresentable_property: amount");
+    assert_eq!(
+        verdict["refusal"]["message"],
+        "commit.unrepresentable_property: amount"
+    );
 }
 
 #[test]
