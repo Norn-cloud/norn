@@ -395,7 +395,7 @@ class DefinitionCompiler {
       const files = source.get("files")
       for (const file of files ? this.list(files) : []) this.closedRecord(file, ["path", "sha256"], ["path", "sha256"])
     }
-    for (const node of this.list(need("terms"))) this.closedRecord(node, ["termId", "label", "definition", "termKind", "status", "semanticAuthority", "parentTermId", "supersededBy"], ["termId", "label", "definition", "termKind", "status", "semanticAuthority"])
+    for (const node of this.list(need("terms"))) this.closedRecord(node, ["termId", "label", "definition", "termKind", "status", "semanticAuthority", "parentTermId", "supersededBy", "domainTermId"], ["termId", "label", "definition", "termKind", "status", "semanticAuthority"])
     for (const node of this.list(need("mappings"))) this.closedRecord(node, ["mappingId", "termId", "sourceId", "externalIri", "relation", "justification", "evidenceRefs", "confidenceBasisPoints", "reviewedBy", "reviewedAt", "supersededByMappingId", "ratifiedBy", "ratifiedAt"], ["mappingId", "termId", "sourceId", "externalIri", "relation", "justification", "evidenceRefs", "confidenceBasisPoints", "reviewedBy", "reviewedAt"])
     for (const node of this.list(need("shapes"))) {
       const shape = this.closedRecord(node, ["shapeId", "termId", "closed", "fields"], ["shapeId", "termId", "closed", "fields"])

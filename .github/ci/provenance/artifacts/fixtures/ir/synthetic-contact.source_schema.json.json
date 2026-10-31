@@ -1,0 +1,22 @@
+{
+  "sha256": "8495fa6b287d7a568e4f064e7a6d6dbccd00d4aa7b5c236678ed1993ead15fda",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/norn-ts/fixtures/core/contact.source.ts",
+    "scripts/ci/core.sh",
+    "tools/norn-ts/src/builder/source-schema.ts",
+    "tools/norn-ts/src/compiler/definitions.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
