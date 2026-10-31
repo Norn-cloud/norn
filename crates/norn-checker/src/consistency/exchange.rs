@@ -168,7 +168,8 @@ fn unpreserved(
             .filter(|fact| source.contains(fact.relation.as_str()))
             .collect();
         // Source data is concrete: each of the witness's nulls is its own
-        // value, distinct from every other.
+        // value, distinct from every other and from every constant in play.
+        let prefix = fresh_prefix(&[source_side, &equations, &single(constraint)], &witness);
         let grounded: Vec<Fact> = witness
             .iter()
             .map(|fact| Fact {
@@ -177,7 +178,7 @@ fn unpreserved(
                     .values
                     .iter()
                     .map(|value| match value {
-                        Value::Null(id) => Value::Const(format!("\u{0}witness:{id}")),
+                        Value::Null(id) => Value::Const(format!("{prefix}{id}")),
                         Value::Const(_) => value.clone(),
                     })
                     .collect(),
@@ -556,6 +557,42 @@ fn maps_into(atoms: &[&Atom], target: &[&Atom], fixed: &[&str]) -> Result<bool, 
         ChaseOutcome::Model(model) => model.contains(&identity),
         ChaseOutcome::Conflict(_) => false,
     })
+}
+
+fn single(dependency: &Dependency) -> Theory {
+    Theory {
+        dependencies: vec![dependency.clone()],
+    }
+}
+
+/// A prefix no constant of `theories` or `facts` starts with, so
+/// `{prefix}{id}` never equals a real constant and distinct ids stay
+/// distinct.
+fn fresh_prefix(theories: &[&Theory], facts: &[Fact]) -> String {
+    let mut constants: BTreeSet<&str> = facts
+        .iter()
+        .flat_map(|fact| &fact.values)
+        .filter_map(|value| match value {
+            Value::Const(text) => Some(text.as_str()),
+            Value::Null(_) => None,
+        })
+        .collect();
+    for dependency in theories.iter().flat_map(|theory| &theory.dependencies) {
+        let sides = match dependency {
+            Dependency::Egd(egd) => vec![&egd.left, &egd.right],
+            Dependency::Tgd(_) => Vec::new(),
+        };
+        for term in dependency.atoms().flat_map(|atom| &atom.terms).chain(sides) {
+            if let Term::Const(text) = term {
+                constants.insert(text.as_str());
+            }
+        }
+    }
+    let mut prefix = "\u{0}witness:".to_owned();
+    while constants.iter().any(|text| text.starts_with(&prefix)) {
+        prefix.push('#');
+    }
+    prefix
 }
 
 fn non_total(message: String) -> Diagnostic {

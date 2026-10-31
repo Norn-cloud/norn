@@ -592,3 +592,39 @@ fn a_mapping_unknown_value_is_not_a_false_unpreserved_witness() {
     let data = [fact("SA", &["x"]), fact("SB", &["x", "acme"])];
     assert!(check_instance(&exchange, &data, ChaseBudget::default()).is_empty());
 }
+
+#[test]
+fn a_grounded_witness_never_collides_with_a_real_constant() {
+    // Sol on #70: a target constant spelled like a grounding value must not
+    // satisfy the constraint by accident.
+    let schema = BTreeMap::from([("S".to_owned(), vec!["x".to_owned()])]);
+    let source = Theory::default();
+    let mapping = Theory {
+        dependencies: vec![tgd(
+            "map.s",
+            &[atom("S", &[var("x")])],
+            &[atom("R", &[var("x")])],
+        )],
+    };
+    let target = Theory {
+        dependencies: vec![tgd(
+            "canon.r_needs_marker",
+            &[atom("R", &[var("x")])],
+            &[atom("R", &[konst("\u{0}witness:0")])],
+        )],
+    };
+    let exchange = Exchange {
+        source_schema: &schema,
+        source: &source,
+        mapping: &mapping,
+        target: &target,
+    };
+    let findings = check_schema_compatibility(&exchange, ChaseBudget::default());
+    assert_eq!(codes_of(&findings), [codes::UNPRESERVED], "{findings:?}");
+    // The same holds for concrete data.
+    let data = [fact("S", &["x"])];
+    assert_eq!(
+        codes_of(&check_instance(&exchange, &data, ChaseBudget::default())),
+        [codes::INSTANCE_VIOLATION]
+    );
+}
