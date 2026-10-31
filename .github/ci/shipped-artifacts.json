@@ -576,7 +576,7 @@
     },
     {
       "path": "crates/norn-api/tests/clock.rs",
-      "sha256": "73dd29608f602c50f709e2ee155ccd23bc0d2dc726f18e422ca05081ef727f83",
+      "sha256": "b3368e65cbe9325f377ebf4cc0e07980f20f6de593f902066b2cc5b580a29565",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29953,7 +29953,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "a08df13afa1023f3f44c5f2b587412dbf8d97547480eef827b612f27bb5dafad",
+      "sha256": "14c51c1b8f19373c9e4526bfb3997dd408daaaa4cf81990a4c1b13f303edf8ed",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
