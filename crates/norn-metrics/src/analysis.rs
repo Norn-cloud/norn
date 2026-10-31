@@ -390,3 +390,74 @@ fn fit(pairs: &[(f64, f64)], alpha: f64) -> Result<OlsReport, AnalysisError> {
     }
     Ok(report)
 }
+
+/// Fixed chronological holdout with approximate predictions and centered scores.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForecastReport {
+    /// Source cursor claimed by the admitted table (host authentication required).
+    pub source_head: u64,
+    /// Strict boundary before which training labels must already be known.
+    pub boundary: i64,
+    /// OLS fitted only on the training partition.
+    pub fit: OlsReport,
+    /// Number of held-out observations.
+    pub evaluation_n: u32,
+    /// Held-out root mean squared error, in outcome units.
+    pub rmse: f64,
+    /// Training-mean baseline evaluated on the same holdout.
+    pub baseline_rmse: f64,
+    /// (object identity, prediction time, prediction, observed outcome).
+    pub predictions: Vec<(String, i64, f64, f64)>,
+}
+
+/// Train a simple ontology-bound demand model and evaluate a future holdout.
+/// Training labels are embargoed by both valid and recorded time. This method
+/// does no hyperparameter search, fitting on held-out outcomes or promotion.
+///
+/// # Errors
+/// Invalid split, unsupported numeric profile, degenerate fit or non-finite scores.
+pub fn forecast(table: &TemporalTable, boundary: i64) -> Result<ForecastReport, AnalysisError> {
+    profile(table, 0.05)?;
+    let (train, test) = table
+        .split(boundary)
+        .map_err(|_error| AnalysisError::Data("invalid chronological split"))?;
+    let pairs = train
+        .iter()
+        .map(|r| pair(r))
+        .collect::<Result<Vec<_>, _>>()?;
+    let fitted = fit(&pairs, 0.05)?;
+    let n_train = count(pairs.len())?;
+    let (origin_x, origin_y) = *pairs
+        .first()
+        .ok_or(AnalysisError::Data("empty training set"))?;
+    let centered_x = pairs.iter().map(|p| p.0 - origin_x).sum::<f64>() / n_train;
+    let centered_y = pairs.iter().map(|p| p.1 - origin_y).sum::<f64>() / n_train;
+    let mut predictions = Vec::with_capacity(test.len());
+    let mut squared_error = 0.0;
+    let mut baseline_error = 0.0;
+    for row in &test {
+        let (x, y) = pair(row)?;
+        let centered_prediction = centered_y + fitted.slope * ((x - origin_x) - centered_x);
+        let prediction = origin_y + centered_prediction;
+        squared_error += ((y - origin_y) - centered_prediction).powi(2);
+        baseline_error += ((y - origin_y) - centered_y).powi(2);
+        predictions.push((row.key.clone(), row.at, prediction, y));
+    }
+    let n = count(test.len())?;
+    let rmse = (squared_error / n).sqrt();
+    let baseline_rmse = (baseline_error / n).sqrt();
+    if !rmse.is_finite() || !baseline_rmse.is_finite() {
+        return Err(AnalysisError::Data("non-finite forecast evaluation"));
+    }
+    Ok(ForecastReport {
+        source_head: table.source_head(),
+        boundary,
+        fit: fitted,
+        evaluation_n: u32::try_from(test.len())
+            .map_err(|_error| AnalysisError::Data("sample bound"))?,
+        rmse,
+        baseline_rmse,
+        predictions,
+    })
+}
