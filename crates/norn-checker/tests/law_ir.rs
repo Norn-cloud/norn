@@ -310,4 +310,13 @@ fn composition_pack_member_kinds_follow_the_canonical_enum() {
                 .any(|code| code == "business_pack.validation.invalid_payload")
         );
     }
+    values.last_mut().expect("pack")["payload"]["artifacts"][0]
+        .as_object_mut()
+        .expect("member")
+        .remove("kind");
+    assert!(
+        run(values, &entities())
+            .iter()
+            .any(|code| code == "business_pack.validation.invalid_payload")
+    );
 }

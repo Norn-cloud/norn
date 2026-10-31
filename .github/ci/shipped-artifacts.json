@@ -3816,7 +3816,7 @@
     },
     {
       "path": "crates/norn-checker/tests/law_ir.rs",
-      "sha256": "a08e4a83e420d1a90deb99a6993b97d1dbd8532b1aa2225e62ec30924e528488",
+      "sha256": "f363d9a67588d030ad0981e3dcef71d5ff5a872fc9664948d749be5e9b52e78c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
