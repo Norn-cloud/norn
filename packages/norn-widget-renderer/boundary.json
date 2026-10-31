@@ -1,0 +1,7 @@
+{
+  "name": "@norn/widget-renderer",
+  "ring": "Two",
+  "allowed_norn": [],
+  "dev_only_norn": [],
+  "third_party": []
+}
