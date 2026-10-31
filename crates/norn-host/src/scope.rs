@@ -132,8 +132,16 @@ mod tests {
         ] {
             assert!(cell.admit(org, env).is_err());
         }
-        assert_eq!(cell.admit(None, None).expect_err("missing").code, "scope.missing");
-        assert_eq!(cell.admit(Some("other"), Some("dev")).expect_err("cross scope").code, "scope.denied");
+        assert_eq!(
+            cell.admit(None, None).expect_err("missing").code,
+            "scope.missing"
+        );
+        assert_eq!(
+            cell.admit(Some("other"), Some("dev"))
+                .expect_err("cross scope")
+                .code,
+            "scope.denied"
+        );
         assert!(scope("", "dev").admit(Some(""), Some("dev")).is_err());
     }
 

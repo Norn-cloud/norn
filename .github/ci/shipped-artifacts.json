@@ -266,7 +266,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "4bc2c308012749587620888846b50d9c259609adb74eb0a1be8ae5c85058f3b5",
+      "sha256": "8561a667fdad1e80b66f0929f08a237575b65d1025f14f91e6bbc2491112b46b",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -6908,7 +6908,7 @@
     },
     {
       "path": "crates/norn-host/src/scope.rs",
-      "sha256": "17374b3dd68c52747c72d7ad39e94cac2370062bd0b29ebebbb47ee3bc49e100",
+      "sha256": "f32149f2dfd47a89a8f25c39c2dab5181515b43ff0967c83c6347d8f390f5c70",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
