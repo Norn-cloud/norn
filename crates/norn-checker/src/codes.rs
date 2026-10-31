@@ -2086,6 +2086,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "ontology instance does not conform to its term at {path}: {detail}",
     ),
     entry(
+        "ontology_link.validation.invalid_payload",
+        Tier::T2,
+        "ontology link is invalid at {path}: {detail}",
+    ),
+    entry(
         "ontology_pack.validation.invalid_payload",
         Tier::T2,
         "ontology pack is invalid at {path}: {detail}",

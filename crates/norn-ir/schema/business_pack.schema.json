@@ -1,10 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "BusinessPackPayload",
-  "description": "The payload of a `business_pack` artifact: a composition pack\n(`packKind: \"composition\"`, or omitted by IR `0.1` packs; `provides`,\n`artifacts`) or an ontology pack (`packKind: \"ontology\"`; `sources`,\n`terms`, `mappings`, `shapes`).",
+  "description": "The payload of a `business_pack` artifact: a composition pack\n(`packKind: \"composition\"`, or omitted by IR `0.1` packs; `provides`,\n`artifacts`), an ontology pack (`packKind: \"ontology\"`; `sources`,\n`terms`, `mappings`, `shapes`) or a link pack (`packKind: \"link\"`;\n`fromPack`, `toPack`, `correspondences`, `residuals`).",
   "oneOf": [
     {
       "$ref": "#/$defs/OntologyPackRoot"
+    },
+    {
+      "$ref": "#/$defs/OntologyLinkRoot"
     },
     {
       "$ref": "#/$defs/CompositionPackRoot"
@@ -61,6 +64,31 @@
         "artifacts"
       ]
     },
+    "CorrespondenceRelation": {
+      "description": "How a source term relates to its target terms.",
+      "oneOf": [
+        {
+          "description": "Same meaning and extension.",
+          "type": "string",
+          "const": "equivalent"
+        },
+        {
+          "description": "Every instance of the source term is an instance of the target term.",
+          "type": "string",
+          "const": "subsumed_by"
+        },
+        {
+          "description": "Every instance of the target term is an instance of the source term.",
+          "type": "string",
+          "const": "subsumes"
+        },
+        {
+          "description": "The source term's value is a function of the target terms.",
+          "type": "string",
+          "const": "derived"
+        }
+      ]
+    },
     "IrVersion01": {
       "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
       "type": "string",
@@ -97,6 +125,45 @@
         }
       ]
     },
+    "LinkResidual": {
+      "description": "A source term the link does not map.",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/ResidualReason"
+        },
+        "termId": {
+          "description": "An active term of `fromPack`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "termId",
+        "reason",
+        "note"
+      ]
+    },
+    "LinkedPack": {
+      "description": "One linked pack, pinned by its artifact id and exact artifact version.",
+      "type": "object",
+      "properties": {
+        "packId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "packId",
+        "version"
+      ]
+    },
     "MappingRelation": {
       "description": "SKOS-style mapping relations.",
       "type": "string",
@@ -106,6 +173,67 @@
         "broad_match",
         "narrow_match",
         "related_match"
+      ]
+    },
+    "OntologyLinkKind": {
+      "description": "The only `packKind` literal of a link pack.",
+      "type": "string",
+      "enum": [
+        "link"
+      ]
+    },
+    "OntologyLinkRoot": {
+      "description": "A link pack: checked correspondences from the terms of one ontology pack\n(`fromPack`) to the terms of another (`toPack`). Every active term of the\nsource pack is accounted for, by a correspondence or a residual\n(registry rule).",
+      "type": "object",
+      "properties": {
+        "correspondences": {
+          "description": "Non-empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TermCorrespondence"
+          }
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "fromPack": {
+          "description": "The pack whose terms are mapped.",
+          "$ref": "#/$defs/LinkedPack"
+        },
+        "packId": {
+          "description": "In the opaque `norn.link.*` namespace (checker rule).",
+          "type": "string"
+        },
+        "packKind": {
+          "$ref": "#/$defs/OntologyLinkKind"
+        },
+        "packVersion": {
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "residuals": {
+          "description": "Source terms with no correspondence, and why.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkResidual"
+          }
+        },
+        "toPack": {
+          "description": "The pack the terms map into.",
+          "$ref": "#/$defs/LinkedPack"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "packId",
+        "packVersion",
+        "packKind",
+        "fromPack",
+        "toPack",
+        "correspondences"
       ]
     },
     "OntologyMapping": {
@@ -520,6 +648,26 @@
         "version"
       ]
     },
+    "ResidualReason": {
+      "description": "Why a source term has no correspondence (norn-platform#2986; lead\nruling 2026-10-31 for `non_conforming`).",
+      "oneOf": [
+        {
+          "description": "Detail specific to the source system; the canon drops it.",
+          "type": "string",
+          "const": "system_specific"
+        },
+        {
+          "description": "The target lacks a term for it; the canon should grow one.",
+          "type": "string",
+          "const": "canon_gap"
+        },
+        {
+          "description": "Source behaviour that breaks a target law (editing posted data in\nplace). The law holds; the link flags the behaviour and never maps it.",
+          "type": "string",
+          "const": "non_conforming"
+        }
+      ]
+    },
     "SemanticAuthority": {
       "description": "Ontology terms are semantic only: they never grant mutation authority.",
       "type": "string",
@@ -576,6 +724,71 @@
       "enum": [
         "reference_only",
         "vendored"
+      ]
+    },
+    "TermCorrespondence": {
+      "description": "One checked correspondence from a source-pack term to target-pack terms.",
+      "type": "object",
+      "properties": {
+        "confidenceBasisPoints": {
+          "description": "0 through 10000 (checker rule).",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "correspondenceId": {
+          "description": "Unique within the link.",
+          "type": "string"
+        },
+        "evidenceRefs": {
+          "description": "Non-empty; at least one names a mapped source of `fromPack`'s\nmanifest (`source.*`), the others are absolute HTTPS IRIs.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fromTermId": {
+          "description": "An active term of `fromPack`.",
+          "type": "string"
+        },
+        "justification": {
+          "type": "string"
+        },
+        "relation": {
+          "$ref": "#/$defs/CorrespondenceRelation"
+        },
+        "reviewedAt": {
+          "description": "UTC RFC 3339.",
+          "type": "string"
+        },
+        "reviewedBy": {
+          "type": "string"
+        },
+        "rulingRef": {
+          "description": "The ruling that settled a divergence this correspondence resolves.",
+          "type": "string"
+        },
+        "toTermIds": {
+          "description": "Active terms of `toPack`: exactly one, or one or more for `derived`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transformRef": {
+          "description": "The `mapping` artifact that executes a `derived` correspondence, when\none exists. The correspondence is semantic either way.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "correspondenceId",
+        "fromTermId",
+        "relation",
+        "toTermIds",
+        "justification",
+        "evidenceRefs",
+        "confidenceBasisPoints",
+        "reviewedBy",
+        "reviewedAt"
       ]
     },
     "WholeNumber": {
