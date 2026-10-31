@@ -172,5 +172,8 @@ fn executable_unicode_spelling_has_a_distinct_protected_identity() {
     let composed = report("é");
     let decomposed = report("e\u{301}");
     assert_eq!(composed.artifact, decomposed.artifact);
-    assert_ne!(composed.artifact_exact_digest, decomposed.artifact_exact_digest);
+    assert_ne!(
+        composed.artifact_exact_digest,
+        decomposed.artifact_exact_digest
+    );
 }

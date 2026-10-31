@@ -25,7 +25,7 @@ pub enum Unknown {
 pub struct TableReport {
     /// Exact artifact id, version and Norn1 content digest.
     pub artifact: ArtifactRef,
-    /// Exact typed-envelope commitment; preserves executable Unicode spelling.
+    /// Exact normalized-envelope commitment; preserves executable Unicode spelling.
     pub artifact_exact_digest: String,
     /// Stable table node identity inside that artifact.
     pub node_id: String,
