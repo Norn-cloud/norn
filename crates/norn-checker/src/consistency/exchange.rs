@@ -362,10 +362,14 @@ fn closed_world(
 
 /// Mapping totality: a warning for every source relation no mapping reads
 /// and every source column whose value never reaches the target, unless it
-/// is a declared gap (`Relation` or `Relation.column`). A constant in a
-/// mapping body counts as a use of its column.
+/// is a declared gap (`Relation` or `Relation.column`). A constant, or a
+/// variable that occurs twice in a mapping body (a join or filter), counts as
+/// a use of its column. A mapping containing an EGD is refused.
 #[must_use]
 pub fn check_mapping_totality(exchange: &Exchange<'_>, gaps: &BTreeSet<String>) -> Vec<Diagnostic> {
+    if let Err(error) = exchange.validate() {
+        return vec![refusal(exchange.mapping, &error)];
+    }
     let mut findings = Vec::new();
     let tgds: Vec<_> = exchange
         .mapping
@@ -383,8 +387,18 @@ pub fn check_mapping_totality(exchange: &Exchange<'_>, gaps: &BTreeSet<String>) 
         let reads: Vec<(&Atom, BTreeSet<&str>)> = tgds
             .iter()
             .flat_map(|tgd| {
-                let head = super::theory::variables(&tgd.head);
-                tgd.body.iter().map(move |atom| (atom, head.clone()))
+                // A variable used as a join or filter (twice in the body)
+                // selects what reaches the target, like a constant does.
+                let mut used = super::theory::variables(&tgd.head);
+                let mut seen = BTreeSet::new();
+                for term in tgd.body.iter().flat_map(|atom| &atom.terms) {
+                    if let Term::Var(name) = term
+                        && !seen.insert(name.as_str())
+                    {
+                        used.insert(name.as_str());
+                    }
+                }
+                tgd.body.iter().map(move |atom| (atom, used.clone()))
             })
             .filter(|(atom, _)| &atom.relation == relation)
             .collect();

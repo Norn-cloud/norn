@@ -361,6 +361,10 @@ fn a_mapping_with_an_equation_is_refused() {
         codes_of(&check_instance(&exchange, &[], ChaseBudget::default())),
         [codes::MALFORMED]
     );
+    assert_eq!(
+        codes_of(&check_mapping_totality(&exchange, &BTreeSet::new())),
+        [codes::MALFORMED]
+    );
 }
 
 #[test]
@@ -454,4 +458,39 @@ fn an_unpreserved_witness_is_the_verified_source_instance() {
         "{}",
         findings[0].message
     );
+}
+
+#[test]
+fn join_columns_count_as_mapped() {
+    // CodeRabbit on #70: `S(id, fk), R(fk, name) -> T(id, name)` uses both
+    // `fk` columns to select what reaches the target.
+    let schema = BTreeMap::from([
+        ("S".to_owned(), vec!["id".to_owned(), "fk".to_owned()]),
+        (
+            "R".to_owned(),
+            vec!["fk".to_owned(), "name".to_owned(), "note".to_owned()],
+        ),
+    ]);
+    let (source, target) = (Theory::default(), Theory::default());
+    let mapping = Theory {
+        dependencies: vec![tgd(
+            "map.join",
+            &[
+                atom("S", &[var("id"), var("fk")]),
+                atom("R", &[var("fk"), var("name"), var("note")]),
+            ],
+            &[atom("T", &[var("id"), var("name")])],
+        )],
+    };
+    let exchange = Exchange {
+        source_schema: &schema,
+        source: &source,
+        mapping: &mapping,
+        target: &target,
+    };
+    let messages: Vec<String> = check_mapping_totality(&exchange, &BTreeSet::new())
+        .into_iter()
+        .map(|f| f.message)
+        .collect();
+    assert_eq!(messages, ["R.note never reaches the target"]);
 }
