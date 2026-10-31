@@ -838,3 +838,60 @@ fn omitted_optional_sources_skip_link_target_authorization_but_present_sources_d
         }
     }
 }
+
+#[test]
+fn create_link_consumes_only_fields_without_a_declared_scalar_property() {
+    for stored in [false, true] {
+        let mut definitions = types();
+        if !stored {
+            definitions[1]
+                .properties
+                .retain(|property| property.id.as_str() != "season_code");
+        }
+        definitions[1].links.push(
+            serde_json::from_value(json!({
+                "id":"season", "target":"fashion.Season", "cardinality":{"to":"one","from":"many"}
+            }))
+            .expect("link"),
+        );
+        let catalog = TypeCatalog::new(&definitions);
+        let mut create = action();
+        create.derive.clear();
+        create.preconditions.clear();
+        create.create_links = vec![
+            serde_json::from_value(json!({
+                "link":"season", "targetType":"fashion.Season", "targetIdField":"season_code"
+            }))
+            .expect("binding"),
+        ];
+        let mut call = invocation(&create);
+        call.input = object(
+            json!({"code":"C26","season_code":"SS26","brand":"NORN","label":"public input"}),
+        );
+        let mut host = cell().with_types(definitions.clone());
+        let outcome = commit_action(&mut host, &catalog, &call, &Allow);
+        assert!(
+            matches!(outcome, Ok(ActionOutcome::Committed { .. })),
+            "{outcome:?}"
+        );
+        let target = FactKey::new("fashion.Collection", "C26");
+        let state = host.load(&target).expect("stored object");
+        assert_eq!(
+            state
+                .values
+                .as_ref()
+                .expect("object values")
+                .contains_key("season_code"),
+            stored
+        );
+        assert!(
+            host.load_link(&LinkKey::new(
+                target,
+                "season",
+                FactKey::new("fashion.Season", "SS26")
+            ))
+            .expect("stored link")
+            .exists()
+        );
+    }
+}
