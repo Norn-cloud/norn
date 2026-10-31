@@ -3,7 +3,7 @@ set -euo pipefail
 # `all` runs every phase, in this order, in one checkout. CI runs each phase as
 # its own job and the `test` phase as the shards below; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
-phases=(cheap test doctest features wasm clippy doc guards integration formal provenance)
+phases=(cheap test doctest features wasm clippy doc guards integration welldb formal provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
@@ -65,7 +65,7 @@ use_jsonschema() {
   python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1
 }
 run_phase() {
-  if [[ $1 != cheap && $1 != test-shards && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
+  if [[ $1 != cheap && $1 != test-shards && $1 != welldb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
     cheap)
       cargo metadata --locked --format-version 1 > /dev/null
@@ -162,6 +162,13 @@ PY
       "$upstream/openapi-venv/bin/python" -m pip install --disable-pip-version-check --no-input openapi-spec-validator==0.9.0
       "$upstream/openapi-venv/bin/python" -m openapi_spec_validator sdks/openapi/norn-api.openapi.json
       git diff --exit-code -- sdks/openapi/norn-api.openapi.json packages/norn-sdk/src/generated/norn-api.ts
+      ;;
+    welldb)
+      (cd welldb && cargo fmt --all -- --check
+        cargo test --workspace --locked
+        cargo test --locked -p welldb-ivm --no-default-features
+        cargo clippy --workspace --all-targets --locked -- -D warnings
+        cargo clippy --locked -p welldb-ivm --all-targets --no-default-features -- -D warnings)
       ;;
     formal)
       export CI=true
