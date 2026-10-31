@@ -6,7 +6,7 @@
     reason = "synthetic policy fixtures"
 )]
 
-use norn_skeleton_guard::ci::provenance::{self, MANIFEST};
+use norn_skeleton_guard::ci::provenance::{self, CONTROL, LEGACY_MANIFEST, MANIFEST, RECORDS};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
@@ -67,13 +67,21 @@ impl Fixture {
         json!({"id":"toy-upstream","revision":"1.2.3","evidence":self.reference(path)})
     }
     fn save(&self) {
+        if self.root().join(CONTROL).exists() {
+            fs::remove_dir_all(self.root().join(CONTROL)).unwrap();
+        }
         self.write(
             MANIFEST,
-            &serde_json::to_vec(
-                &json!({"version":1,"software_sources":self.software,"artifacts":self.records}),
-            )
-            .unwrap(),
+            &serde_json::to_vec(&json!({"version":2,"software_sources":self.software})).unwrap(),
         );
+        for record in &self.records {
+            let mut body = record.clone();
+            let path = body.as_object_mut().unwrap().remove("path").unwrap();
+            self.write(
+                &format!("{RECORDS}{}.json", path.as_str().unwrap()),
+                &serde_json::to_vec(&body).unwrap(),
+            );
+        }
     }
     fn report(&self) -> provenance::Report {
         self.save();
@@ -142,8 +150,101 @@ fn unknown_ambiguous_and_cyclic_ancestry_fails_closed() {
     f.derived("a", "b", "generated");
     f.derived("b", "a", "generated");
     f.rejects("cyclic ancestry");
-    f.records.push(f.records[0].clone());
-    f.rejects("duplicate artifact");
+}
+
+/// #121 transition: the version-1 manifest still reads, alone.
+#[test]
+fn legacy_manifest_reads_until_migrated_but_never_beside_records() {
+    let mut f = Fixture::new();
+    f.add("crates/a/src/lib.rs", b"// a", "code");
+    let legacy = |f: &Fixture| {
+        f.write(
+            LEGACY_MANIFEST,
+            &serde_json::to_vec(
+                &json!({"version":1,"software_sources":f.software,"artifacts":f.records}),
+            )
+            .unwrap(),
+        );
+    };
+    f.save();
+    legacy(&f);
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.errors().iter().any(|e| e.contains("both")),
+        "{:?}",
+        r.errors()
+    );
+    fs::remove_dir_all(f.root().join(CONTROL)).unwrap();
+    let r = provenance::check_distribution(f.root());
+    assert!(r.errors().is_empty(), "{:?}", r.errors());
+    // Typed parsing keeps version 1's duplicate-field refusal.
+    let mut bytes =
+        serde_json::to_vec(&json!({"version":1,"software_sources":[],"artifacts":f.records}))
+            .unwrap();
+    let at = bytes.windows(9).position(|w| w == b"\"origin\":").unwrap();
+    bytes.splice(at..at, br#""origin":"upstream","#.iter().copied());
+    f.write(LEGACY_MANIFEST, &bytes);
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.errors().iter().any(|e| e.contains("duplicate field")),
+        "{:?}",
+        r.errors()
+    );
+    f.records.push(f.records[1].clone());
+    legacy(&f);
+    let r = provenance::check_distribution(f.root());
+    assert!(r.errors().iter().any(|e| e.contains("duplicate artifact")));
+}
+
+/// #121: each refusal the single manifest gave survives per-file records.
+#[test]
+fn per_file_records_refuse_wrong_hash_missing_and_unlisted() {
+    let mut f = Fixture::new();
+    let i = f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.passes();
+    f.records[i]["sha256"] = json!("0".repeat(64));
+    f.rejects("content hash drift");
+    let mut f = Fixture::new();
+    f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.save();
+    fs::remove_file(f.root().join(format!("{RECORDS}crates/a/src/lib.rs.json"))).unwrap();
+    let r = provenance::check_distribution(f.root());
+    assert!(r.rejected_paths["crates/a/src/lib.rs"][0].contains("missing shipped-artifact"));
+    let mut f = Fixture::new();
+    f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.save();
+    fs::remove_file(f.root().join("crates/a/src/lib.rs")).unwrap();
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.rejected_paths["crates/a/src/lib.rs"]
+            .iter()
+            .any(|e| e.contains("missing artifact"))
+    );
+    let f = Fixture::new();
+    f.save();
+    for stray in [
+        format!("{CONTROL}extra.json"),
+        format!("{RECORDS}LICENSE.yaml"),
+    ] {
+        f.write(&stray, b"{}");
+        let r = provenance::check_distribution(f.root());
+        assert!(
+            r.rejected_paths[&stray]
+                .iter()
+                .any(|e| e.contains("unknown provenance control"))
+        );
+        fs::remove_file(f.root().join(&stray)).unwrap();
+    }
+    // The path is the record's file name, never a field it can claim.
+    f.write(
+        &format!("{RECORDS}LICENSE.json"),
+        &serde_json::to_vec(&f.records[0]).unwrap(),
+    );
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.rejected_paths[&format!("{RECORDS}LICENSE.json")][0]
+            .contains("malformed provenance record")
+    );
 }
 
 #[test]
@@ -413,7 +514,6 @@ fn strict_records_reject_unknown_fields_categories_origins_and_directory_claims(
         ("category", json!("unknown")),
         ("origin", json!("unknown")),
         ("bypass", json!(true)),
-        ("path", json!("folder/../LICENSE")),
     ] {
         let mut f = Fixture::new();
         f.records[0][field] = value;

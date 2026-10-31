@@ -213,7 +213,7 @@
           "$ref": "#/$defs/IrVersion01"
         },
         "shapes": {
-          "description": "Non-empty; one closed promotion shape per active term.",
+          "description": "Non-empty; one closed promotion shape per active shaped term.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/OntologyShape"
@@ -316,11 +316,19 @@
           "type": "string"
         },
         "files": {
-          "description": "Required (non-empty) for vendored sources.",
+          "description": "Required (non-empty) for vendored sources. A source the pack imports\nor maps from is content-pinned: by these hashes or by a commit or\nhash in `releaseId` (checker rule).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/OntologySourceFile"
           }
+        },
+        "importMode": {
+          "description": "How the pack uses the source (norn#56 source manifest).",
+          "$ref": "#/$defs/SourceImportMode"
+        },
+        "importer": {
+          "description": "The importer that read the source. Required for `import` (checker\nrule); a reviewed hand mapping has none.",
+          "$ref": "#/$defs/SourceImporter"
         },
         "license": {
           "type": "string"
@@ -353,11 +361,12 @@
         "retrievedAt",
         "canonicalUrl",
         "license",
-        "redistribution"
+        "redistribution",
+        "importMode"
       ]
     },
     "OntologySourceFile": {
-      "description": "A hash-pinned file of a vendored source.",
+      "description": "A hash-pinned file of a source: a repository path for vendored files,\nor the absolute HTTPS URL of the pinned bytes otherwise.",
       "type": "object",
       "properties": {
         "path": {
@@ -379,6 +388,10 @@
       "type": "object",
       "properties": {
         "definition": {
+          "type": "string"
+        },
+        "domainTermId": {
+          "description": "The active class term a `property` or `action` term belongs to\n(required on those, optional on `predicate`, absent on shaped kinds;\nchecker rule).",
           "type": "string"
         },
         "label": {
@@ -417,13 +430,27 @@
       ]
     },
     "OntologyTermKind": {
-      "description": "What an ontology term denotes.",
-      "type": "string",
-      "enum": [
-        "class",
-        "property",
-        "value_object",
-        "concept_scheme_root"
+      "description": "What an ontology term denotes. `class`, `value_object` and\n`concept_scheme_root` terms take one closed promotion shape; `property`,\n`action` and `predicate` terms are vocabulary handles and take none.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "class",
+            "property",
+            "value_object",
+            "concept_scheme_root"
+          ]
+        },
+        {
+          "description": "A business operation on its domain class (posting an invoice).",
+          "type": "string",
+          "const": "action"
+        },
+        {
+          "description": "A condition over canon state, such as an admission refusal.",
+          "type": "string",
+          "const": "predicate"
+        }
       ]
     },
     "OntologyTermStatus": {
@@ -513,6 +540,34 @@
         "term_ref",
         "external_identifier",
         "category_ref"
+      ]
+    },
+    "SourceImportMode": {
+      "description": "How a pack uses one of its sources.\n\n`import` takes content into the pack's own terms, so its licence must\npermit redistribution. `map_only` only maps Norn terms to the source; no\nsource content enters the pack (the clean-room mode for copyleft and\nAPI-terms sources). `study_only` informs review; no mapping may cite it.",
+      "type": "string",
+      "enum": [
+        "import",
+        "map_only",
+        "study_only"
+      ]
+    },
+    "SourceImporter": {
+      "description": "The importer that read a source: an id and its strict version.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "A lowercase dotted identifier (`norn.importers.frappe`).",
+          "type": "string"
+        },
+        "version": {
+          "description": "A strict semantic version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
       ]
     },
     "SourceRedistribution": {
