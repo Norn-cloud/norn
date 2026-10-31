@@ -278,12 +278,13 @@ pub enum CellError {
         /// The column.
         column: String,
     },
-    /// The file was created for a different object model.
+    /// The file was created for a different object model, or its physical
+    /// property columns match neither the raw nor the generated layout.
     #[error("store schema mismatch: file has {found}, model is {expected}")]
     SchemaMismatch {
-        /// The model's DDL hash.
+        /// The model's DDL hash or column layout.
         expected: String,
-        /// The file's DDL hash.
+        /// The file's DDL hash or column layout.
         found: String,
     },
     /// The file is bound to another value of an identity key (for example the

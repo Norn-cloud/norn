@@ -32,5 +32,5 @@ pub use lineage::{
 };
 pub use sqlite_ddl::{
     LinkTable, ObjectTable, PropertyColumn, SqliteDdlError, SqliteDdlInput, SqliteSchema,
-    ValueEncoding, project_sqlite_ddl,
+    ValueEncoding, project_logical_sqlite_ddl, project_sqlite_ddl,
 };
