@@ -667,7 +667,7 @@ fn seed_migration_budget_rows(fixture: MigrationBudgetRows<'_>) -> NativeEngine 
     for column in &columns {
         if column == ID_COLUMN {
             insert_values.push("?1".to_owned());
-        } else if distinct_names && column == "name" {
+        } else if distinct_names && column == "p:name" {
             insert_values.push(format!("{} || ?2", quote_identifier(column)));
         } else {
             insert_values.push(quote_identifier(column));
@@ -3264,9 +3264,9 @@ fn added_identity_index_uses_a_rowid_bounded_query_without_sorting_before_limit(
         .clone()
         .expect("identity grouping query was captured");
     assert!(
-        sql.contains("SELECT \"_rowid_\" AS _migration_rowid")
-            && sql.contains("ORDER BY \"_rowid_\" LIMIT ?1"),
-        "identity preflight did not select the unshadowed rowid alias: {sql}"
+        sql.contains("SELECT \"rowid\" AS _migration_rowid")
+            && sql.contains("ORDER BY \"rowid\" LIMIT ?1"),
+        "a `rowid` property column (`p:rowid`) must not shadow the hidden rowid: {sql}"
     );
     assert!(
         !plan
@@ -3639,7 +3639,7 @@ fn migration_byte_budgets_cover_multiple_rows_below_the_do_row_limit() {
                 false,
             )
         } else {
-            ("name", payload, true)
+            ("p:name", payload, true)
         };
         let engine = seed_migration_budget_rows(MigrationBudgetRows {
             path: &path,
@@ -4429,6 +4429,527 @@ fn record_defaults_backfill_exact_numbers_in_columns_and_overflow() {
         let expected = Value::from_json_text(r#"{"amount":1.25}"#).expect("exact expected record");
         assert_eq!(object.values.get("zz_record"), Some(&expected));
     }
+}
+
+const RESERVED_PROPERTY_IDS: [&str; 11] = [
+    "rowid",
+    "oid",
+    "_rowid_",
+    "_world",
+    "_id",
+    "_type",
+    "_version",
+    "_scope",
+    "_overflow",
+    "_source",
+    "_target",
+];
+
+/// Every SQLite keyword (<https://sqlite.org/lang_keywords.html>), lowercased
+/// to fit the property id grammar.
+const SQLITE_KEYWORDS: [&str; 147] = [
+    "abort",
+    "action",
+    "add",
+    "after",
+    "all",
+    "alter",
+    "always",
+    "analyze",
+    "and",
+    "as",
+    "asc",
+    "attach",
+    "autoincrement",
+    "before",
+    "begin",
+    "between",
+    "by",
+    "cascade",
+    "case",
+    "cast",
+    "check",
+    "collate",
+    "column",
+    "commit",
+    "conflict",
+    "constraint",
+    "create",
+    "cross",
+    "current",
+    "current_date",
+    "current_time",
+    "current_timestamp",
+    "database",
+    "default",
+    "deferrable",
+    "deferred",
+    "delete",
+    "desc",
+    "detach",
+    "distinct",
+    "do",
+    "drop",
+    "each",
+    "else",
+    "end",
+    "escape",
+    "except",
+    "exclude",
+    "exclusive",
+    "exists",
+    "explain",
+    "fail",
+    "filter",
+    "first",
+    "following",
+    "for",
+    "foreign",
+    "from",
+    "full",
+    "generated",
+    "glob",
+    "group",
+    "groups",
+    "having",
+    "if",
+    "ignore",
+    "immediate",
+    "in",
+    "index",
+    "indexed",
+    "initially",
+    "inner",
+    "insert",
+    "instead",
+    "intersect",
+    "into",
+    "is",
+    "isnull",
+    "join",
+    "key",
+    "last",
+    "left",
+    "like",
+    "limit",
+    "match",
+    "materialized",
+    "natural",
+    "no",
+    "not",
+    "nothing",
+    "notnull",
+    "null",
+    "nulls",
+    "of",
+    "offset",
+    "on",
+    "or",
+    "order",
+    "others",
+    "outer",
+    "over",
+    "partition",
+    "plan",
+    "pragma",
+    "preceding",
+    "primary",
+    "query",
+    "raise",
+    "range",
+    "recursive",
+    "references",
+    "regexp",
+    "reindex",
+    "release",
+    "rename",
+    "replace",
+    "restrict",
+    "returning",
+    "right",
+    "rollback",
+    "row",
+    "rows",
+    "savepoint",
+    "select",
+    "set",
+    "table",
+    "temp",
+    "temporary",
+    "then",
+    "ties",
+    "to",
+    "transaction",
+    "trigger",
+    "unbounded",
+    "union",
+    "unique",
+    "update",
+    "using",
+    "vacuum",
+    "values",
+    "view",
+    "virtual",
+    "when",
+    "where",
+    "window",
+    "with",
+    "without",
+];
+
+fn reserved_value(id: &str, generation: u32) -> Value {
+    Value::String(format!("{id}-{generation}"))
+}
+
+fn put_reserved(generation: u32) -> FactWriteRow {
+    FactWriteRow::Put {
+        object_type: "defs.Item".to_owned(),
+        key: "reserved".to_owned(),
+        values: RESERVED_PROPERTY_IDS
+            .iter()
+            .map(|id| ((*id).to_owned(), reserved_value(id, generation)))
+            .collect(),
+    }
+}
+
+fn binding_lookups(store: &CellStore, key: &[(String, Value)], sort_property: &str) {
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let mut budget = DecodeBudget::new(&limits);
+    let (rows, complete) = store
+        .read()
+        .binding_key_rows_with_budget(MAIN_WORLD, "org_demo/dev", "defs.Item", key, 1, &mut budget)
+        .expect("identity key lookup");
+    assert!(complete);
+    assert_eq!(rows.len(), 1, "identity key index finds the object");
+    let mut budget = DecodeBudget::new(&limits);
+    let candidate_bytes = budget.remaining_bytes();
+    let candidate = store
+        .read()
+        .binding_sorted_candidate_after_with_budget(
+            MAIN_WORLD,
+            "defs.Item",
+            sort_property,
+            false,
+            None,
+            &mut budget,
+            candidate_bytes,
+        )
+        .expect("binding sort index is usable")
+        .expect("candidate fits");
+    assert_eq!(
+        candidate.identity.map(|(_, object_type)| object_type),
+        Some("defs.Item".to_owned())
+    );
+}
+
+fn table_columns(engine: &NativeEngine, table: &str) -> Vec<String> {
+    engine
+        .query(
+            "SELECT \"name\" FROM pragma_table_info(?1) ORDER BY \"cid\"",
+            &[SqlValue::from(table)],
+        )
+        .expect("table columns")
+        .into_iter()
+        .map(|row| match row.first() {
+            Some(SqlValue::Text(name)) => name.clone(),
+            other => panic!("column name: {other:?}"),
+        })
+        .collect()
+}
+
+fn index_sql(engine: &NativeEngine, index: &str) -> String {
+    engine
+        .query_row(
+            "SELECT \"sql\" FROM \"sqlite_master\" WHERE \"name\" = ?1",
+            &[SqlValue::from(index)],
+            |row| row.get::<String>(0),
+        )
+        .expect("index exists")
+}
+
+#[test]
+fn property_ids_naming_rowid_aliases_and_system_columns_store_read_write_and_index() {
+    let properties: Vec<serde_json::Value> = RESERVED_PROPERTY_IDS
+        .iter()
+        .map(|id| json!({"id":id, "type":{"kind":"text"}}))
+        .collect();
+    let definition = serde_json::from_value(json!({
+        "name":"defs.Item",
+        "properties":properties,
+        "identity":[{"name":"by_rowid", "properties":["rowid", "_id"]}]
+    }))
+    .expect("object type decodes");
+    let model = Model::from_definitions_with_binding_indexes(
+        &[definition],
+        &[],
+        &[],
+        &[BindingIndexSpec {
+            object_type: "defs.Item".to_owned(),
+            property_id: "oid".to_owned(),
+            sort: true,
+            filter: true,
+        }],
+    )
+    .expect("reserved property ids project");
+    let directory = tempfile::tempdir().expect("temp directory");
+    let path = directory.path().join("reserved.sqlite");
+    let mut store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("opens");
+    store.commit(&batch(put_reserved(1), 1)).expect("creates");
+    store.commit(&batch(put_reserved(2), 2)).expect("replaces");
+    drop(store);
+
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopens");
+    let object = store
+        .read()
+        .object(MAIN_WORLD, "defs.Item", "reserved")
+        .expect("reads")
+        .expect("object exists");
+    for id in RESERVED_PROPERTY_IDS {
+        assert_eq!(object.values.get(id), Some(&reserved_value(id, 2)), "{id}");
+    }
+    let key = ["rowid", "_id"].map(|id| (id.to_owned(), reserved_value(id, 2)));
+    binding_lookups(&store, &key, "oid");
+    drop(store);
+
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine opens");
+    let mut expected = ["_world", "_id", "_type", "_scope", "_version"]
+        .map(str::to_owned)
+        .to_vec();
+    expected.extend(RESERVED_PROPERTY_IDS.map(|id| format!("p:{id}")));
+    assert_eq!(table_columns(&engine, "o:defs.Item"), expected);
+}
+
+#[test]
+fn sqlite_keywords_as_property_ids_store_read_write_and_index_in_generated_columns() {
+    // Chunks stay under the per-table column budget, so every keyword gets a
+    // physical column instead of overflowing into JSON.
+    for (chunk_index, chunk) in SQLITE_KEYWORDS.chunks(50).enumerate() {
+        let properties: Vec<serde_json::Value> = chunk
+            .iter()
+            .map(|id| json!({"id":id, "type":{"kind":"text"}}))
+            .collect();
+        let definition = serde_json::from_value(json!({
+            "name":"defs.Item",
+            "properties":properties,
+            "identity":[{"name":"by_keywords", "properties":[chunk[0], chunk[1]]}]
+        }))
+        .expect("object type decodes");
+        let model = Model::from_definitions_with_binding_indexes(
+            &[definition],
+            &[],
+            &[],
+            &[BindingIndexSpec {
+                object_type: "defs.Item".to_owned(),
+                property_id: chunk[2].to_owned(),
+                sort: true,
+                filter: true,
+            }],
+        )
+        .expect("keyword property ids project");
+        let put = |generation: u32| FactWriteRow::Put {
+            object_type: "defs.Item".to_owned(),
+            key: "keywords".to_owned(),
+            values: chunk
+                .iter()
+                .map(|id| ((*id).to_owned(), reserved_value(id, generation)))
+                .collect(),
+        };
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory
+            .path()
+            .join(format!("keywords-{chunk_index}.sqlite"));
+        let mut store =
+            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("opens");
+        store.commit(&batch(put(1), 1)).expect("creates");
+        store.commit(&batch(put(2), 2)).expect("replaces");
+        drop(store);
+
+        let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopens");
+        let object = store
+            .read()
+            .object(MAIN_WORLD, "defs.Item", "keywords")
+            .expect("reads")
+            .expect("object exists");
+        for id in chunk {
+            assert_eq!(object.values.get(*id), Some(&reserved_value(id, 2)), "{id}");
+        }
+        let key = [chunk[0], chunk[1]].map(|id| (id.to_owned(), reserved_value(id, 2)));
+        binding_lookups(&store, &key, chunk[2]);
+        drop(store);
+
+        let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine opens");
+        let property_columns: Vec<String> = table_columns(&engine, "o:defs.Item")
+            .into_iter()
+            .filter(|column| !column.starts_with('_'))
+            .collect();
+        let expected: Vec<String> = chunk.iter().map(|id| format!("p:{id}")).collect();
+        assert_eq!(property_columns, expected);
+    }
+}
+
+#[test]
+fn mixed_or_incomplete_property_column_layouts_are_refused_and_left_untouched() {
+    let definition = serde_json::from_value(json!({
+        "name":"defs.Item",
+        "properties":[
+            {"id":"name", "type":{"kind":"text"}},
+            {"id":"code", "type":{"kind":"text"}},
+            {"id":"note", "type":{"kind":"text"}, "constraints":{"nullable":true}}
+        ],
+        "identity":[{"name":"by_code", "properties":["code"]}]
+    }))
+    .expect("object type decodes");
+    let model = Model::from_definitions(&[definition], &[]).expect("model projects");
+    let directory = tempfile::tempdir().expect("temp directory");
+    // Mixed: one raw column beside two generated ones. Incomplete: the raw
+    // layout with a property column missing.
+    let cases: [(&str, &[&str]); 2] = [
+        (
+            "mixed",
+            &["ALTER TABLE \"o:defs.Item\" RENAME COLUMN \"p:name\" TO \"name\""],
+        ),
+        (
+            "incomplete",
+            &[
+                "ALTER TABLE \"o:defs.Item\" RENAME COLUMN \"p:name\" TO \"name\"",
+                "ALTER TABLE \"o:defs.Item\" RENAME COLUMN \"p:code\" TO \"code\"",
+                "ALTER TABLE \"o:defs.Item\" DROP COLUMN \"p:note\"",
+            ],
+        ),
+    ];
+    for (case, edits) in cases {
+        let path = directory.path().join(format!("{case}.sqlite"));
+        drop(CellStore::open(&path, model.clone(), StoreOptions::default()).expect("creates"));
+        let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine opens");
+        for edit in edits {
+            engine.execute_batch(edit).expect("edits the layout");
+        }
+        engine
+            .execute_batch("DELETE FROM \"_norn_meta\" WHERE \"key\" = 'property_columns'")
+            .expect("drops the layout marker");
+        let before = table_columns(&engine, "o:defs.Item");
+        drop(engine);
+
+        let refused = CellStore::open(&path, model.clone(), StoreOptions::default());
+        assert!(
+            matches!(refused, Err(CellError::SchemaMismatch { .. })),
+            "{case}: {:?}",
+            refused.err()
+        );
+        let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine opens");
+        assert_eq!(
+            table_columns(&engine, "o:defs.Item"),
+            before,
+            "{case}: no rename kept"
+        );
+        let marker = engine
+            .query(
+                "SELECT \"value\" FROM \"_norn_meta\" WHERE \"key\" = 'property_columns'",
+                &[],
+            )
+            .expect("reads meta");
+        assert!(
+            marker.is_empty(),
+            "{case}: the layout marker is not written"
+        );
+    }
+}
+
+#[test]
+fn raw_named_property_columns_are_renamed_on_open_with_data_and_indexes() {
+    let definition = serde_json::from_value(json!({
+        "name":"defs.Item",
+        "properties":[
+            {"id":"name", "type":{"kind":"text"}},
+            {"id":"code", "type":{"kind":"text"}},
+            {"id":"note", "type":{"kind":"text"}, "constraints":{"nullable":true}}
+        ],
+        "identity":[{"name":"by_code", "properties":["code"]}]
+    }))
+    .expect("object type decodes");
+    let model = Model::from_definitions_with_binding_indexes(
+        &[definition],
+        &[],
+        &[],
+        &[BindingIndexSpec {
+            object_type: "defs.Item".to_owned(),
+            property_id: "name".to_owned(),
+            sort: true,
+            filter: true,
+        }],
+    )
+    .expect("model projects");
+    let directory = tempfile::tempdir().expect("temp directory");
+    let path = directory.path().join("legacy.sqlite");
+    let mut store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("opens");
+    let values = |code: &str| {
+        BTreeMap::from([
+            ("name".to_owned(), Value::String(format!("name {code}"))),
+            ("code".to_owned(), Value::String(code.to_owned())),
+            ("note".to_owned(), Value::String(format!("note {code}"))),
+        ])
+    };
+    let write = |key: &str, code: &str| FactWriteRow::Put {
+        object_type: "defs.Item".to_owned(),
+        key: key.to_owned(),
+        values: values(code),
+    };
+    store
+        .commit(&batch(write("legacy", "A-1"), 1))
+        .expect("commits");
+    let head = store.read().verify_ledger().expect("ledger verifies");
+    drop(store);
+
+    // Rewrite the file into the raw-id layout older binaries created.
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine opens");
+    for id in ["name", "code", "note"] {
+        engine
+            .execute_batch(&format!(
+                "ALTER TABLE \"o:defs.Item\" RENAME COLUMN \"p:{id}\" TO \"{id}\""
+            ))
+            .expect("restores the raw column name");
+    }
+    engine
+        .execute_batch("DELETE FROM \"_norn_meta\" WHERE \"key\" = 'property_columns'")
+        .expect("drops the layout marker");
+    assert!(index_sql(&engine, "o:defs.Item/key:by_code").ends_with("\"_world\", \"code\")"));
+    drop(engine);
+
+    let mut store = CellStore::open(&path, model, StoreOptions::default()).expect("upgrades");
+    assert_eq!(store.read().verify_ledger().expect("ledger verifies"), head);
+    let object = store
+        .read()
+        .object(MAIN_WORLD, "defs.Item", "legacy")
+        .expect("reads")
+        .expect("object survives");
+    assert_eq!(object.values, values("A-1"));
+    binding_lookups(
+        &store,
+        &[("code".to_owned(), Value::String("A-1".to_owned()))],
+        "name",
+    );
+    store
+        .commit(&batch(write("fresh", "B-2"), 2))
+        .expect("writes after upgrade");
+    assert!(
+        store.commit(&batch(write("duplicate", "A-1"), 3)).is_err(),
+        "the renamed identity index still enforces uniqueness"
+    );
+    drop(store);
+
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine opens");
+    let columns = table_columns(&engine, "o:defs.Item");
+    assert!(
+        ["p:name", "p:code", "p:note"]
+            .iter()
+            .all(|column| columns.iter().any(|found| found == column))
+            && !columns
+                .iter()
+                .any(|found| ["name", "code", "note"].contains(&found.as_str())),
+        "{columns:?}"
+    );
+    assert!(index_sql(&engine, "o:defs.Item/key:by_code").ends_with("\"_world\", \"p:code\")"));
+    assert!(index_sql(&engine, "o:defs.Item/binding-property/name/asc").contains("\"p:name\" ASC"));
 }
 
 #[test]
