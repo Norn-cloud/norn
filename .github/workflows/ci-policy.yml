@@ -13,6 +13,12 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# A newer push to a pull request cancels the run of its older head. Every other
+# event (merge-queue groups, main, the comment and trusted lanes) gets a group
+# of its own, so concurrency never cancels or holds it back.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   core:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
@@ -53,6 +59,8 @@ jobs:
       - run: bash scripts/ci/core.sh cheap
   # The full gate: `core.sh all` split into parallel jobs. The plan comes from
   # core.sh itself, so CI runs exactly its shards and phases (all but formal).
+  # Tests narrow on pull requests (the affected packages' tests), the full
+  # set in the merge queue and on main.
   plan:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     runs-on: ubuntu-24.04
@@ -63,13 +71,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - id: plan
-        run: echo "plan=$(bash scripts/ci/core.sh plan)" >> "$GITHUB_OUTPUT"
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+        run: |
+          if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE"); else plan=$(bash scripts/ci/core.sh plan); fi
+          echo "plan=$plan" >> "$GITHUB_OUTPUT"
+          echo "$plan"
   test:
     needs: plan
+    if: fromJSON(needs.plan.outputs.plan).shard[0] != null
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
+      NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}
+      NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -111,6 +128,7 @@ jobs:
       - run: bash scripts/ci/core.sh test ${{ matrix.shard }}
   phase:
     needs: plan
+    if: fromJSON(needs.plan.outputs.plan).phase[0] != null
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     strategy:
@@ -158,7 +176,8 @@ jobs:
         with:
           tool: nextest@0.9.150
       - run: bash scripts/ci/core.sh ${{ matrix.phase }}
-  # The single required verdict: every planned job ran and passed.
+  # The single required verdict: every planned job ran and passed, and outside
+  # pull requests the plan was the full one.
   full:
     needs: [core, plan, test, phase]
     if: always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
@@ -166,12 +185,22 @@ jobs:
     timeout-minutes: 5
     steps:
       - env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          EVENT: ${{ github.event_name }}
+          PLAN: ${{ needs.plan.outputs.plan }}
+          CORE: ${{ needs.core.result }}
+          PLANNED: ${{ needs.plan.result }}
+          TEST: ${{ needs.test.result }}
+          PHASE: ${{ needs.phase.result }}
         run: |
-          for result in $RESULTS; do
-            [ "$result" = success ] || { echo "a full-gate job ended $result: $RESULTS"; exit 1; }
-          done
-          [ "$(echo $RESULTS | wc -w)" -eq 4 ]
+          set -euo pipefail
+          # A job may be skipped only when the plan gave it nothing to run.
+          ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
+          [ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
+          mode=$(jq -er .mode <<<"$PLAN")
+          [ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+          ran "$TEST" "$(jq -er '.shard | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
+          ran "$PHASE" "$(jq -er '.phase | length' <<<"$PLAN")" || { echo "phase ended $PHASE"; exit 1; }
+          echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
   trusted-policy:
     # Write access serves only the last step, which removes a failing pull
     # request from the merge queue. No step runs candidate code.

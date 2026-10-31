@@ -36,10 +36,13 @@ select_shard() {
     all) return ;;
     heavy-*) [[ $index =~ ^[1-9][0-9]*$ && $index -le ${#heavy[@]} ]] && selection+=(-E "${heavy[index - 1]}") && return ;;
     rest-*)
-      [[ $index =~ ^[1-9][0-9]*$ && $index -le rest_shards ]] || { printf 'unknown test shard: %s\n' "$1" >&2; exit 2; }
+      # A pull request plan may split the rest into fewer parts.
+      local parts=${NORN_CI_REST_SHARDS:-$rest_shards}
+      [[ $parts =~ ^[1-9][0-9]*$ && $parts -le rest_shards ]] || { printf 'bad NORN_CI_REST_SHARDS: %s\n' "$parts" >&2; exit 2; }
+      [[ $index =~ ^[1-9][0-9]*$ && $index -le parts ]] || { printf 'unknown test shard: %s\n' "$1" >&2; exit 2; }
       expression='not ('
       for filter in "${heavy[@]}"; do expression+="$separator($filter)"; separator=' | '; done
-      selection+=(-E "$expression)" --partition "hash:$index/$rest_shards")
+      selection+=(-E "$expression)" --partition "hash:$index/$parts")
       return ;;
   esac
   printf 'unknown test shard: %s\n' "$1" >&2
@@ -79,6 +82,25 @@ run_phase() {
       ;;
     test)
       select_shard "${2:-all}"
+      # A pull request plan narrows each shard to the affected packages; the
+      # merge queue and main always run every test.
+      if [[ -n ${NORN_CI_PACKAGES:-} ]]; then
+        local package packages='' separator='' index narrowed=''
+        for package in $NORN_CI_PACKAGES; do
+          [[ $package =~ ^[a-z0-9_-]+$ ]] || { printf 'bad package: %s\n' "$package" >&2; exit 2; }
+          packages+="${separator}package(=$package)"; separator=' | '
+        done
+        for index in "${!selection[@]}"; do
+          if [[ ${selection[index]} == -E ]]; then selection[index + 1]="(${selection[index + 1]}) & ($packages)"; narrowed=1; fi
+        done
+        [[ -n $narrowed ]] || selection+=(-E "$packages")
+        # Build only the reached packages instead of the whole workspace.
+        if [[ ${selection[0]} == --workspace ]]; then
+          selection=("${selection[@]:1}")
+          for package in $NORN_CI_PACKAGES; do selection+=(-p "$package"); done
+        fi
+        selection+=(--no-tests=pass)
+      fi
       ensure_nextest
       "${nextest[@]}" run --no-fail-fast "${selection[@]}"
       ;;
@@ -178,20 +200,80 @@ PY
       git archive HEAD | tar -x -C "$upstream/distribution"
       cargo xtask ci provenance --root "$upstream/distribution" --distribution --base-root "$PWD"
       ;;
-    *) printf 'Usage: %s [all|plan|shards|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
+    *) printf 'Usage: %s [all|plan [--affected BASE]|shards|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
 }
 case "${1:-all}" in
-  # CI's job plan: every test shard, and every other phase except `cheap`
-  # (the `core` job), plus the shard partition proof. `formal` stays a Boat
-  # gate: on hosted runners its Apalache server stalls without a verdict
-  # (Norn-cloud/norn-platform#3541).
+  # CI's job plan. The full plan (merge queue, main, manual runs): every test
+  # shard, and every other phase except `cheap` (the `core` job), plus the
+  # shard partition proof. `formal` stays a Boat gate: on hosted runners its
+  # Apalache server stalls without a verdict (Norn-cloud/norn-platform#3541).
+  # `plan --affected BASE` (pull requests): tests narrow, the full set in the
+  # queue. Only the non-heavy tests of the packages a change can reach (by
+  # workspace reverse dependencies, dev-dependencies included; every package
+  # when a change is outside the workspace crates, other than Markdown outside
+  # crates and the provenance manifest), with the skeleton guard always, and
+  # no other phase.
   plan)
-    [[ $# -le 1 ]] || run_phase usage
     others=()
     for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test || $phase == formal ]] || others+=("$phase"); done
-    python3 -c 'import json, sys; print(json.dumps({"shard": sys.argv[1].split(), "phase": sys.argv[2].split() + ["test-shards"]}))' \
-      "$(list_shards | tr '\n' ' ')" "${others[*]}"
+    case "${2:-}" in
+      '') [[ $# -le 1 ]] || run_phase usage; changed='' ;;
+      --affected) [[ $# -eq 3 && $3 =~ ^[0-9a-f]{40}$ ]] || run_phase usage; changed=$(git diff --name-only "$3" HEAD --) || exit 2 ;;
+      *) run_phase usage ;;
+    esac
+    NORN_CI_CHANGED=$changed python3 - "${2:-full}" "$(list_shards | tr '\n' ' ')" "${others[*]}" "$rest_shards" <<'PY'
+import json, os, sys, tomllib
+from pathlib import Path
+mode, shards, phases, rest = sys.argv[1:]
+rest = int(rest)
+def done(plan):
+    print(json.dumps(plan))
+    sys.exit(0)
+if mode == "full":
+    done({"mode": "full", "shard": shards.split(), "phase": phases.split() + ["test-shards"], "packages": "", "rest_shards": rest})
+changed = [line for line in os.environ["NORN_CI_CHANGED"].splitlines() if line]
+root = Path(".")
+workspace = tomllib.loads((root / "Cargo.toml").read_text())
+shared = workspace["workspace"].get("dependencies", {})
+members = {m.rstrip("/"): tomllib.loads((root / m / "Cargo.toml").read_text()) for m in workspace["workspace"]["members"]}
+names = {path: manifest["package"]["name"] for path, manifest in members.items()}
+known = set(names.values())
+def target(key, spec):
+    if isinstance(spec, dict) and spec.get("workspace"):
+        spec = shared.get(key, {})
+    return spec.get("package", key) if isinstance(spec, dict) else key
+users = {name: set() for name in known}
+for path, manifest in members.items():
+    tables = [manifest] + [t for t in manifest.get("target", {}).values() if isinstance(t, dict)]
+    for table in tables:
+        for kind in ("dependencies", "dev-dependencies", "build-dependencies"):
+            for key, spec in table.get(kind, {}).items():
+                if target(key, spec) in known:
+                    users[target(key, spec)].add(names[path])
+touched, outside = set(), []
+for path in changed:
+    owner = max((m for m in names if path.startswith(m + "/")), key=len, default=None)
+    if owner:
+        touched.add(names[owner])
+    # The provenance manifest changes with every file; core checks it.
+    elif path != ".github/ci/shipped-artifacts.json" and not (
+            path.endswith(".md") and (path.startswith("docs/") or "/" not in path)):
+        outside.append(path)
+reached, stack = set(touched) | {"norn-skeleton-guard"}, list(touched)
+while stack:
+    for user in users[stack.pop()]:
+        if user not in reached:
+            reached.add(user)
+            stack.append(user)
+if outside:
+    reached, reason = known, f"{len(outside)} changed paths outside workspace crates, e.g. {outside[0]}"
+else:
+    reason = f"changed: {', '.join(sorted(touched)) or 'Markdown only'}"
+parts = rest if "norn-cell" in reached else 1
+done({"mode": "affected", "shard": [f"rest-{i}" for i in range(1, parts + 1)], "phase": [],
+      "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
+PY
     ;;
   all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do run_phase "$phase"; done ;;
   shards) list_shards ;;

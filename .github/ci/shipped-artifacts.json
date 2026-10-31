@@ -104,7 +104,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "23ea5520d2d19f069426233a142849a8b5101fe767abf87b0e6ee60d1a9b96e1",
+      "sha256": "f64ffe9c52c3a4aba3791299cab3b83dce28937d3d7049f6ebe06e58ce79c04a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18529,7 +18529,7 @@
     },
     {
       "path": "scripts/ci/core.sh",
-      "sha256": "b70f91fea9dc41f2ee038a89e6a4ac709a5e165add3b856f12b68a16d629cbff",
+      "sha256": "43a173a01b74962b6408bd2bc1628ae24b259b7dac93619acf62248429deec63",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
