@@ -436,7 +436,9 @@ echo "$plan"''',
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
         require(len(checkouts) == 1 and "if" not in checkouts[0]
                 and not checkouts[0].get("continue-on-error")
-                and checkouts[0].get("with") == {"persist-credentials": False, "fetch-depth": 0},
+                and checkouts[0].get("with") == {"persist-credentials": False, "fetch-depth": 0}
+                and checkouts[0]["with"]["persist-credentials"] is False
+                and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
         require(len([step for step in job_steps if "run" in step]) == 1,
                 f"{name}: unexpected executable preparation step")

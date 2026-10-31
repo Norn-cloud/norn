@@ -498,7 +498,9 @@ def workflow_context_canaries(source: str) -> None:
             raise AssertionError(f"workflow context mutation passed: {label}")
 
         for name in ("core", "plan", "test", "phase"):
-            for key, value in (("ref", "main"), ("repository", "other/repository"), ("path", "other-checkout")):
+            for key, value in (("ref", "main"), ("repository", "other/repository"),
+                               ("path", "other-checkout"), ("persist-credentials", True),
+                               ("persist-credentials", 0), ("fetch-depth", False)):
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["steps"][0]["with"][key] = value
                 rejected(f"{name} checkout {key}", document)
