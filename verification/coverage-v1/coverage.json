@@ -2542,7 +2542,7 @@
           "runtime": "tested",
           "model": "bounded_model_checked",
           "proof": "reference_proved",
-          "residual": "The kernel commit check refuses an unbalanced posting group per unit and layer for every type that declares an accounting leg (tested). The Lean reference proves the admission check exact and the law inherited by every workflow of post and reverse steps; it is not a refinement proof of the Rust check, i128 arithmetic or storage.",
+          "residual": "The kernel commit check refuses a posting group that does not net to zero in each unit, for every type that declares an accounting leg (tested; the cited tests use one balance layer, so cross-layer cancellation is enforced by the check but not separately tested). The Lean reference proves the admission check exact and the law inherited by every workflow of post and reverse steps; it is not a refinement proof of the Rust check, i128 arithmetic or storage.",
           "evidence": {
             "runtime": [
               {
