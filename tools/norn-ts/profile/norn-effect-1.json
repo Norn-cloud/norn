@@ -145,6 +145,7 @@
     { "symbol": "@norn/authoring#Norn.access", "probe": "norn.Norn.access", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.decision", "probe": "norn.Norn.decision", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.sourceSchema", "probe": "norn.Norn.sourceSchema", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.ontologyPack", "probe": "norn.Norn.ontologyPack", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.markings", "probe": "norn.Norn.markings", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.connector", "probe": "norn.Norn.connector", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.mapping", "probe": "norn.Norn.mapping", "row": "ontology", "use": "call", "context": "definition" },

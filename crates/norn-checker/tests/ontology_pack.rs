@@ -98,6 +98,255 @@ fn ontology_pack_rejects_floating_external_releases() {
     }
 }
 
+fn source_index(candidate: &serde_json::Value, source_id: &str) -> usize {
+    candidate["payload"]["sources"]
+        .as_array()
+        .expect("sources must be an array")
+        .iter()
+        .position(|source| source["sourceId"] == source_id)
+        .expect("source must exist")
+}
+
+fn assert_source_diagnostic(
+    candidate: serde_json::Value,
+    path: &str,
+    message: &str,
+) -> Vec<norn_ir::Diagnostic> {
+    let diagnostics = validate_fixture(candidate).expect_err("source manifest must be rejected");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.path.as_deref() == Some(path) && diagnostic.message.contains(message)
+        }),
+        "expected '{message}' at {path}: {diagnostics:#?}"
+    );
+    diagnostics
+}
+
+#[test]
+fn source_manifest_requires_a_closed_import_mode() {
+    let index = source_index(&fixture_json(), "source.schema-org");
+    for replacement in [None, Some(serde_json::json!("copy"))] {
+        let mut candidate = fixture_json();
+        let source = candidate["payload"]["sources"][index]
+            .as_object_mut()
+            .expect("source must be an object");
+        match replacement {
+            None => {
+                source.remove("importMode");
+            }
+            Some(value) => {
+                source.insert("importMode".to_owned(), value);
+            }
+        }
+        let path = format!("payload.sources[{index}].importMode");
+        let message = if source.contains_key("importMode") {
+            "one of"
+        } else {
+            "required"
+        };
+        assert_source_diagnostic(candidate, &path, message);
+    }
+}
+
+#[test]
+fn imported_source_names_its_importer_and_has_a_redistributable_license() {
+    let index = source_index(&fixture_json(), "source.norn-synthetic-taxonomy");
+
+    let mut candidate = fixture_json();
+    candidate["payload"]["sources"][index]
+        .as_object_mut()
+        .expect("source must be an object")
+        .remove("importer");
+    assert_source_diagnostic(
+        candidate,
+        &format!("payload.sources[{index}].importer"),
+        "must name its importer",
+    );
+
+    let mut candidate = fixture_json();
+    candidate["payload"]["sources"][index]["license"] = serde_json::json!("GPL-3.0");
+    candidate["payload"]["sources"][index]["redistribution"] = serde_json::json!("reference_only");
+    assert_source_diagnostic(
+        candidate,
+        &format!("payload.sources[{index}].license"),
+        "map it instead",
+    );
+
+    for (field, value, message) in [
+        ("name", "Frappe", "lowercase dotted identifier"),
+        ("name", "norn..frappe", "lowercase dotted identifier"),
+        ("name", ".frappe", "lowercase dotted identifier"),
+        ("name", "frappe", "lowercase dotted identifier"),
+        ("version", "latest", "strict semantic version"),
+        ("version", "1.2", "strict semantic version"),
+        ("version", "01.2.3", "strict semantic version"),
+        ("version", "1.0.0-01", "strict semantic version"),
+    ] {
+        let mut candidate = fixture_json();
+        candidate["payload"]["sources"][index]["importer"][field] = serde_json::json!(value);
+        assert_source_diagnostic(
+            candidate,
+            &format!("payload.sources[{index}].importer.{field}"),
+            message,
+        );
+    }
+}
+
+#[test]
+fn importer_versions_follow_semver_with_prerelease_and_build() {
+    let index = source_index(&fixture_json(), "source.norn-synthetic-taxonomy");
+    for version in ["1.0.0-rc.1", "1.0.0+build.7", "0.1.0-alpha.0+sha.5114f85"] {
+        let mut candidate = fixture_json();
+        candidate["payload"]["sources"][index]["importer"]["version"] = serde_json::json!(version);
+        validate_fixture(candidate).expect("a strict SemVer importer version is valid");
+    }
+}
+
+#[test]
+fn reference_only_file_pins_are_absolute_https_urls() {
+    let index = source_index(&fixture_json(), "source.schema-org");
+    let mut candidate = fixture_json();
+    candidate["payload"]["sources"][index]["files"][0]["path"] =
+        serde_json::json!("verification/ontology/schema.jsonld");
+    assert_source_diagnostic(
+        candidate,
+        &format!("payload.sources[{index}].files[0].path"),
+        "absolute HTTPS URL",
+    );
+}
+
+#[test]
+fn mapped_source_is_content_pinned_by_file_or_release_hash() {
+    let index = source_index(&fixture_json(), "source.schema-org");
+    let mut unpinned = fixture_json();
+    unpinned["payload"]["sources"][index]
+        .as_object_mut()
+        .expect("source must be an object")
+        .remove("files");
+    assert_source_diagnostic(
+        unpinned.clone(),
+        &format!("payload.sources[{index}].releaseId"),
+        "content-pinned",
+    );
+
+    unpinned["payload"]["sources"][index]["releaseId"] =
+        serde_json::json!("30.0@0f0c97a4f666b2f8563573fe48453782fd51b87a504523cf0c9aff6a71c3eec4");
+    validate_fixture(unpinned).expect("a hash-pinned release id is a content pin");
+}
+
+#[test]
+fn mapping_cannot_cite_a_study_only_source() {
+    let mut candidate = fixture_json();
+    let index = source_index(&candidate, "source.schema-org");
+    candidate["payload"]["sources"][index]["importMode"] = serde_json::json!("study_only");
+    let mapping = candidate["payload"]["mappings"]
+        .as_array()
+        .expect("mappings must be an array")
+        .iter()
+        .position(|mapping| mapping["sourceId"] == "source.schema-org")
+        .expect("a schema.org mapping must exist");
+    assert_source_diagnostic(
+        candidate,
+        &format!("payload.mappings[{mapping}].sourceId"),
+        "study_only",
+    );
+}
+
+fn vocabulary_term(term_id: &str, kind: &str, domain: Option<&str>) -> serde_json::Value {
+    let mut term = serde_json::json!({
+        "termId": term_id,
+        "label": term_id,
+        "definition": "A vocabulary handle used by test mutations.",
+        "termKind": kind,
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+    });
+    if let Some(domain) = domain {
+        term["domainTermId"] = serde_json::json!(domain);
+    }
+    term
+}
+
+fn with_terms(terms: &[serde_json::Value]) -> serde_json::Value {
+    let mut candidate = fixture_json();
+    candidate["payload"]["terms"]
+        .as_array_mut()
+        .expect("terms must be an array")
+        .extend(terms.iter().cloned());
+    candidate
+}
+
+fn expect_term_diagnostic(candidate: serde_json::Value, message: &str) {
+    let diagnostics = validate_fixture(candidate).expect_err("vocabulary rule must refuse");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains(message)),
+        "expected '{message}': {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn action_property_and_predicate_handles_need_no_shape() {
+    validate_fixture(with_terms(&[
+        vocabulary_term(
+            "norn.commerce.order.place",
+            "action",
+            Some("norn.commerce.order"),
+        ),
+        vocabulary_term(
+            "norn.commerce.order.total",
+            "property",
+            Some("norn.commerce.order"),
+        ),
+        vocabulary_term("norn.commerce.guard.order.empty", "predicate", None),
+    ]))
+    .expect("vocabulary handles validate without shapes");
+}
+
+#[test]
+fn members_and_operations_name_an_active_class_domain() {
+    expect_term_diagnostic(
+        with_terms(&[vocabulary_term("norn.commerce.order.place", "action", None)]),
+        "names the class it belongs to",
+    );
+    expect_term_diagnostic(
+        with_terms(&[vocabulary_term(
+            "norn.commerce.order.total",
+            "property",
+            Some("norn.commerce.order.place"),
+        )]),
+        "must resolve to an active class term",
+    );
+    expect_term_diagnostic(
+        with_terms(&[vocabulary_term(
+            "norn.commerce.order.kind",
+            "class",
+            Some("norn.commerce.order"),
+        )]),
+        "has no domainTermId",
+    );
+}
+
+#[test]
+fn vocabulary_handles_take_no_closed_shape() {
+    let mut candidate = with_terms(&[vocabulary_term(
+        "norn.commerce.guard.order.empty",
+        "predicate",
+        None,
+    )]);
+    candidate["payload"]["shapes"]
+        .as_array_mut()
+        .expect("shapes must be an array")
+        .push(serde_json::json!({
+            "shapeId": "shape.guard.order.empty",
+            "termId": "norn.commerce.guard.order.empty",
+            "closed": true,
+            "fields": [{"fieldId": "x", "valueType": "string", "minCount": 0, "maxCount": 1}]
+        }));
+    expect_term_diagnostic(candidate, "takes no closed shape");
+}
+
 #[test]
 fn commerce_pack_covers_schema_classes_and_order_item_cardinality() {
     let candidate = fixture_json();

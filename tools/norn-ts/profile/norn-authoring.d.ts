@@ -471,6 +471,51 @@ declare module "@norn/authoring" {
     }
     function sourceSchema(meta: SourceSchemaSpec): { readonly _tag: "NornSourceSchema" }
 
+    /** One source-manifest entry (norn#56): pinned release, licence, redistribution, import mode, importer and checksums. */
+    interface OntologySourceSpec {
+      readonly sourceId: string
+      readonly releaseId: string
+      readonly releasedAt: string
+      readonly retrievedAt: string
+      readonly canonicalUrl: string
+      readonly license: string
+      readonly redistribution: "reference_only" | "vendored"
+      readonly importMode: "import" | "map_only" | "study_only"
+      readonly importer?: { readonly name: string; readonly version: string }
+      readonly files?: ReadonlyArray<{ readonly path: string; readonly sha256: string }>
+    }
+    /** A closed-world, semantic-only ontology pack; lowers to a `business_pack` artifact with `packKind: "ontology"`. */
+    interface OntologyPackSpec {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      readonly sources: ReadonlyArray<OntologySourceSpec>
+      readonly terms: ReadonlyArray<{
+        readonly termId: string; readonly label: string; readonly definition: string
+        readonly termKind: "class" | "property" | "value_object" | "concept_scheme_root" | "action" | "predicate"
+        readonly status: "active" | "deprecated" | "superseded"; readonly semanticAuthority: "semantic_only"
+        readonly parentTermId?: string; readonly supersededBy?: string
+        /** The class a property or action belongs to. */
+        readonly domainTermId?: string
+      }>
+      readonly mappings: ReadonlyArray<{
+        readonly mappingId: string; readonly termId: string; readonly sourceId: string; readonly externalIri: string
+        readonly relation: "exact_match" | "close_match" | "broad_match" | "narrow_match" | "related_match"
+        readonly justification: string; readonly evidenceRefs: ReadonlyArray<string>; readonly confidenceBasisPoints: number
+        readonly reviewedBy: string; readonly reviewedAt: string
+        readonly supersededByMappingId?: string; readonly ratifiedBy?: string; readonly ratifiedAt?: string
+      }>
+      readonly shapes: ReadonlyArray<{
+        readonly shapeId: string; readonly termId: string; readonly closed: true
+        readonly fields: ReadonlyArray<{
+          readonly fieldId: string
+          readonly valueType: "string" | "boolean" | "integer" | "decimal" | "date_time" | "iri" | "term_ref" | "external_identifier" | "category_ref"
+          readonly targetTermId?: string; readonly minCount: number; readonly maxCount: number
+        }>
+      }>
+    }
+    function ontologyPack(meta: OntologyPackSpec): { readonly _tag: "NornOntologyPack" }
+
     /** Opaque mapping definition; the syntax compiler lowers the call. */
     interface MappingDefinition {
       readonly _tag: "NornMapping"

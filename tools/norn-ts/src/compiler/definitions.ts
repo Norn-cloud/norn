@@ -20,6 +20,7 @@ import * as A from "../builder/action.ts"
 import * as P from "../builder/access.ts"
 import * as E from "../builder/entity.ts"
 import * as SS from "../builder/source-schema.ts"
+import * as OP from "../builder/ontology-pack.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
 import * as R from "../builder/rule.ts"
@@ -33,7 +34,7 @@ import { SchemaProjection } from "./schema.ts"
 import { CompileError } from "./types.ts"
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -54,6 +55,7 @@ export type DefinitionsResult =
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> }
 
 const SOURCE_SCHEMA = "@norn/authoring#Norn.sourceSchema"
+const ONTOLOGY_PACK = "@norn/authoring#Norn.ontologyPack"
 const MARKINGS = "@norn/authoring#Norn.markings"
 const TYPE = "@norn/authoring#Norn.type"
 const INTERFACE = "@norn/authoring#Norn.interfaceType"
@@ -64,7 +66,7 @@ const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
 const FLOW = "@norn/authoring#Norn.flow"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
@@ -128,6 +130,7 @@ export function compileDefinitionFiles(
         : def._tag === "Mapping" ? M.lowerMapping(def, envelopeOptions)
         : def._tag === "Law" ? L.lowerLaw(def, envelopeOptions)
         : def._tag === "SourceSchema" ? SS.lowerSourceSchema(def, envelopeOptions)
+        : def._tag === "OntologyPack" ? OP.lowerOntologyPack(def, envelopeOptions)
         : def._tag === "Markings" ? E.lowerMarkings(def, envelopeOptions)
         : E.lowerEntity(def, envelopeOptions)
       if (built.ok) {
@@ -235,6 +238,7 @@ class DefinitionCompiler {
         if (!init || !ts.isCallExpression(init) || id === undefined || !DEFINITION_CALLS.has(id)) continue
         const def =
           id === SOURCE_SCHEMA ? this.sourceSchema(init)
+          : id === ONTOLOGY_PACK ? this.ontologyPack(init)
           : id === MARKINGS ? this.markings(init)
           : id === TYPE ? this.objectType(init)
           : id === INTERFACE ? this.interfaceType(init)
@@ -378,6 +382,27 @@ class DefinitionCompiler {
     }
     const data = Object.fromEntries([...m].map(([key, node]) => [key, this.json(node)]))
     return SS.sourceSchema({ ...data as unknown as SS.SourceSchemaSpec, at: this.at(call) })
+  }
+
+  /** Closed records at every level; identifier, pin, licence and reference rules are the Rust ontology checker's. */
+  private ontologyPack(call: ts.CallExpression): OP.OntologyPackDef {
+    const m = this.meta(call, ["id", "title", "version", "sources", "terms", "mappings", "shapes"])
+    const need = (key: string): ts.Expression => this.member(m, key, call)
+    for (const node of this.list(need("sources"))) {
+      const source = this.closedRecord(node, ["sourceId", "releaseId", "releasedAt", "retrievedAt", "canonicalUrl", "license", "redistribution", "importMode", "importer", "files"], ["sourceId", "releaseId", "releasedAt", "retrievedAt", "canonicalUrl", "license", "redistribution", "importMode"])
+      const importer = source.get("importer")
+      if (importer) this.closedRecord(importer, ["name", "version"], ["name", "version"])
+      const files = source.get("files")
+      for (const file of files ? this.list(files) : []) this.closedRecord(file, ["path", "sha256"], ["path", "sha256"])
+    }
+    for (const node of this.list(need("terms"))) this.closedRecord(node, ["termId", "label", "definition", "termKind", "status", "semanticAuthority", "parentTermId", "supersededBy", "domainTermId"], ["termId", "label", "definition", "termKind", "status", "semanticAuthority"])
+    for (const node of this.list(need("mappings"))) this.closedRecord(node, ["mappingId", "termId", "sourceId", "externalIri", "relation", "justification", "evidenceRefs", "confidenceBasisPoints", "reviewedBy", "reviewedAt", "supersededByMappingId", "ratifiedBy", "ratifiedAt"], ["mappingId", "termId", "sourceId", "externalIri", "relation", "justification", "evidenceRefs", "confidenceBasisPoints", "reviewedBy", "reviewedAt"])
+    for (const node of this.list(need("shapes"))) {
+      const shape = this.closedRecord(node, ["shapeId", "termId", "closed", "fields"], ["shapeId", "termId", "closed", "fields"])
+      for (const field of this.list(shape.get("fields")!)) this.closedRecord(field, ["fieldId", "valueType", "targetTermId", "minCount", "maxCount"], ["fieldId", "valueType", "minCount", "maxCount"])
+    }
+    const data = Object.fromEntries([...m].map(([key, node]) => [key, this.json(node)]))
+    return OP.ontologyPack({ ...data as unknown as OP.OntologyPackSpec, at: this.at(call) })
   }
 
   private markings(call: ts.CallExpression): E.MarkingsDef {

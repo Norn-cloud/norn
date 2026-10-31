@@ -1,0 +1,21 @@
+{
+  "sha256": "311375517fc722a8fc00aa938dda99503914d58786ceb5977ba03664b2457f38",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "verification/ontology/packs/company-commerce-v0/pack.json",
+    "verification/ontology/packs/company-commerce-v0/ontology.owl.ttl",
+    "verification/ontology/packs/company-commerce-v0/shapes.shacl.ttl"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

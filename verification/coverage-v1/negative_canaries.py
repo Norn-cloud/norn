@@ -14,6 +14,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 GATES = Path(__file__).with_name("promoted-gates.json")
@@ -458,11 +460,113 @@ def central_obligation_closure_canaries() -> None:
     )
 
 
+def workflow_verdict_canaries(source: str) -> None:
+    workflow = yaml.safe_load(source)
+    verdict = next(step["run"] for step in workflow["jobs"]["full"]["steps"] if "run" in step)
+    full_plan = {"mode": "full", "shard": ["rest-1"], "phase": ["clippy"]}
+    affected = {"mode": "affected", "shard": ["rest-1"], "phase": []}
+    passed = dict.fromkeys(("CORE", "PLANNED", "TEST", "PHASE"), "success")
+    cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
+    cases.append(("pull_request", affected, {**passed, "PHASE": "skipped"}, True))
+    cases.extend((event, affected, {**passed, "PHASE": "skipped"}, False)
+                 for event in ("push", "merge_group", "workflow_dispatch"))
+    cases.extend(("merge_group", full_plan, {**passed, key: result}, False)
+                 for key in passed for result in ("failure", "cancelled", "skipped"))
+    cases.append(("pull_request", affected, {**passed, "TEST": "skipped", "PHASE": "skipped"}, False))
+    for index, (event, plan, results, accepted) in enumerate(cases):
+        environment = {**os.environ, **results, "EVENT": event, "PLAN": json.dumps(plan)}
+        result = subprocess.run(["bash", "-c", verdict], cwd=ROOT, env=environment,
+                                capture_output=True, text=True, timeout=10, check=False)
+        if (result.returncode == 0) != accepted:
+            raise AssertionError(f"workflow verdict case {index} had unexpected status {result.returncode}")
+
+
+def workflow_context_canaries(source: str) -> None:
+    workflow = yaml.safe_load(source)
+    if True in workflow:
+        workflow["on"] = workflow.pop(True)
+    validator = load_module("norn_workflow_context_canary", VALIDATOR)
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+        candidate.write_text(yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8")
+        validator.validate_workflow_integrity([], formal_path=candidate)
+
+        def rejected(label: str, document: dict[str, Any]) -> None:
+            candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([], formal_path=candidate)
+            except validator.InvalidCoverage:
+                return
+            raise AssertionError(f"workflow context mutation passed: {label}")
+
+        for name in ("core", "plan", "test", "phase"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["steps"].insert(-1, {
+                "uses": "actions/github-script@" + "a" * 40,
+                "with": {"script": "core.exportVariable('NORN_CI_PACKAGES', 'norn-canonical')"},
+            })
+            rejected(f"{name} additional pinned preparation action", document)
+            for key, value in (("ref", "main"), ("repository", "other/repository"),
+                               ("path", "other-checkout"), ("persist-credentials", True),
+                               ("persist-credentials", 0), ("fetch-depth", False)):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["steps"][0]["with"][key] = value
+                rejected(f"{name} checkout {key}", document)
+            for key in ("BASH_ENV", "BASH_FUNC_exit%%", "LD_PRELOAD", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE"):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
+                rejected(f"{name} step environment {key}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["steps"][2]["with"]["bun-version"] = "latest"
+        rejected("altered preparation action inputs", document)
+        for location in ("workflow", "job", "step"):
+            document = copy.deepcopy(workflow)
+            target = (document if location == "workflow" else document["jobs"]["full"]
+                      if location == "job" else document["jobs"]["full"]["steps"][0])
+            target.setdefault("env", {})["BASH_ENV"] = "/tmp/early-success"
+            rejected(f"{location} inherited BASH_ENV", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["env"]["BASH_FUNC_cargo%%"] = "() { return 0; }"
+        rejected("job environment cannot replace gate commands", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["full"]["steps"].insert(0, {"run": "echo BASH_ENV=/tmp/early-success >> $GITHUB_ENV"})
+        rejected("verdict preparation can change the shell environment", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["steps"].insert(-1, {"run": "echo NORN_CI_PACKAGES=norn-canonical >> $GITHUB_ENV"})
+        rejected("test preparation can override plan inputs", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["core"]["steps"].append(document["jobs"]["core"]["steps"].pop(0))
+        rejected("candidate checkout after the gate", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["phase"]["env"]["NORN_CI_BASE"] = "HEAD"
+        rejected("unbound shrink-only baseline", document)
+        candidate.write_text(source.replace("      - run: bash scripts/ci/core.sh cheap",
+                                            "      - run: echo ignored\n        run: bash scripts/ci/core.sh cheap", 1), encoding="utf-8")
+        expect_coverage_validator_rejection("duplicate workflow run key", formal_workflow_path=candidate)
+
+
 def workflow_canaries() -> None:
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
+    workflow_verdict_canaries(source)
+    workflow_context_canaries(source)
     mutations = [
-        ("missing full-core gate", "run: bash scripts/ci/core.sh", "run: echo skipped"),
-        ("floating action", "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "actions/checkout@v4"),
+        ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
+        ("missing test shards", "run: bash scripts/ci/core.sh test ${{ matrix.shard }}", "run: echo skipped"),
+        ("missing phases", "run: bash scripts/ci/core.sh ${{ matrix.phase }}", "run: echo skipped"),
+        ("missing shard matrix", "shard: ${{ fromJSON(needs.plan.outputs.plan).shard }}", "shard: [rest-1]"),
+        ("missing phase matrix", "phase: ${{ fromJSON(needs.plan.outputs.plan).phase }}", "phase: [cheap]"),
+        ("missing full verdict dependency", "needs: [core, plan, test, phase]", "needs: [core, plan, test]"),
+        ("disabled planned tests", "if: fromJSON(needs.plan.outputs.plan).shard[0] != null", "if: false"),
+        ("disabled planned phases", "if: fromJSON(needs.plan.outputs.plan).phase[0] != null", "if: false"),
+        ("wrong affected base", "github.event.pull_request.base.sha || ''", "github.sha || ''"),
+        ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
+        ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
+        ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
+        ("forged core verdict", "CORE: ${{ needs.core.result }}", "CORE: success"),
+        ("missing full-plan assertion", '[ "$mode" = full ]', 'true'),
+        ("planned skipped job accepted", '[ "$2" -eq 0 ]', 'true'),
+        ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request')", "!cancelled()"),
+        ("floating action", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4"),
         ("floating Rust toolchain", "toolchain: 1.98.0", "toolchain: stable"),
         ("insufficient proof timeout", "timeout-minutes: 110", "timeout-minutes: 20"),
     ]
@@ -478,6 +582,36 @@ def workflow_canaries() -> None:
             "name: Public core\n", "name: Public core\nenv:\n  toolchain: 1.98.0\n", 1)
         candidate.write_text(decoy, encoding="utf-8")
         expect_coverage_validator_rejection("decoy toolchain key", formal_workflow_path=candidate)
+        command = "bash scripts/ci/core.sh test ${{ matrix.shard }}"
+        decoy = source.replace("run: " + command, "run: echo skipped", 1).replace(
+            "name: Public core\n", "name: 'Public core " + command + "'\n", 1)
+        candidate.write_text(decoy, encoding="utf-8")
+        expect_coverage_validator_rejection("decoy shard command", formal_workflow_path=candidate)
+        for option in ("if: false", "continue-on-error: true"):
+            candidate.write_text(source.replace(
+                "      - run: " + command,
+                "      - " + option + "\n        run: " + command, 1), encoding="utf-8")
+            expect_coverage_validator_rejection("disabled shard step: " + option,
+                                               formal_workflow_path=candidate)
+
+    shell_mutations = (
+        source.replace("      - run: " + command,
+                       "      - shell: /usr/bin/true {0}\n        run: " + command, 1),
+        source.replace("  test:\n", "  test:\n    defaults:\n      run:\n        shell: /usr/bin/true {0}\n", 1),
+        source.replace("jobs:\n", "defaults:\n  run:\n    shell: /usr/bin/true {0}\njobs:\n", 1),
+        source.replace("      - env:\n          EVENT:",
+                       "      - shell: /usr/bin/true {0}\n        env:\n          EVENT:", 1),
+    )
+    shell_mutations += tuple(mutation.replace("shell: /usr/bin/true {0}",
+                                               "working-directory: /tmp/other-checkout")
+                             for mutation in shell_mutations[:3])
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+        for index, mutation in enumerate(shell_mutations):
+            if mutation == source:
+                raise AssertionError("shell override mutation target drifted")
+            candidate.write_text(mutation, encoding="utf-8")
+            expect_coverage_validator_rejection(f"shell override {index}", formal_workflow_path=candidate)
 
 
 def counterexampled(run: quint_apalache.QuintRun) -> bool:
