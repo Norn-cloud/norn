@@ -1,11 +1,15 @@
 {
   "sha256": "54f23218ee05de8c06536f2be16a34cbb8574f0427e3be539c6d29675d1199ba",
-  "origin": "authored",
-  "category": "code",
+  "origin": "derived",
+  "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "Cargo.lock",
+    "crates/norn-cell-wasm/tests/law_traces.rs",
+    "crates/norn-testkit/src/cell_host.rs"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",
