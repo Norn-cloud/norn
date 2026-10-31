@@ -769,7 +769,9 @@ impl Defined<'_> {
                 None
             }
         };
-        if let Some(JsonValue::Object(properties)) = root.input_schema.get("properties") {
+        if matches!(program, ActionEffectProgram::UpsertInputObject { .. })
+            && let Some(JsonValue::Object(properties)) = root.input_schema.get("properties")
+        {
             for property in properties.keys().filter(|property| {
                 self.effective_object_type
                     .as_ref()

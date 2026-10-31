@@ -1890,6 +1890,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "naming series is invalid: {detail}",
     ),
     entry(
+        "object_type.validation.protected_owned_row_field",
+        Tier::T3,
+        "kernel-owned row metadata cannot be protected: {detail}",
+    ),
+    entry(
         "object_type.validation.invalid_owned_collection",
         Tier::T3,
         "owned collection {collection} is invalid: {reason}",

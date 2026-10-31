@@ -35,7 +35,8 @@ use norn_kernel::{
     CommitView, DecisionTurn, DueTimer, FactEvent, FactKey, FactMutation, FactSlice, FactState,
     FactVersion, FactWrite, LinkKey, LinkState, LogicalTime, Observed, OwnedRowsCommitProof,
     Performed, TurnEnvelopeLimits, TurnEnvelopeMeter, TypeCatalog, World, check_commit,
-    commit_action, commit_action_with_limits, commit_action_with_meter, commit_decision_with_meter,
+    commit_action, commit_action_with_limits, commit_action_with_meter, commit_decision,
+    commit_decision_with_meter,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
@@ -4042,7 +4043,7 @@ fn protected_properties_refuse_action_input_and_accept_rule_output() {
         "op":"create","objectType":ORDER,"key":"PROTECTED","values":{"so_number":"rule-created"}
     }],"commands":[],"timers":[]}))
     .unwrap();
-    norn_kernel::commit_decision(
+    commit_decision(
         &mut cell,
         &catalog,
         &FactSlice::new(),
@@ -4056,7 +4057,7 @@ fn protected_properties_refuse_action_input_and_accept_rule_output() {
     let slice = norn_kernel::load_slice(&cell, [key.clone()]).unwrap();
     let mut rule_turn = action_call.turn.clone();
     rule_turn.id = "protected-rule-update".to_owned();
-    norn_kernel::commit_decision(&mut cell, &catalog, &slice, &rule_turn, &output).unwrap();
+    commit_decision(&mut cell, &catalog, &slice, &rule_turn, &output).unwrap();
     assert_eq!(
         cell.load(&key).unwrap().values.unwrap().get("so_number"),
         Some(&JsonValue::String("rule-updated".to_owned()))
