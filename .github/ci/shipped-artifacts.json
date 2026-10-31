@@ -18709,7 +18709,7 @@
     },
     {
       "path": "scripts/ci/core.sh",
-      "sha256": "d99ec6a9ab33ac5fa20dfc95ef7422f8a1116810584590c6ee782d5b173fdc81",
+      "sha256": "fc835a0d319febfba811e7495bc53e6f9898f2f84afa8adcb1f3df3dbbfc0b3c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30205,7 +30205,7 @@
     },
     {
       "path": "verification/coverage-v1/negative_canaries.py",
-      "sha256": "8455410af39c77a5870c09e063c2666612aaa5894360057bfccae712e485198f",
+      "sha256": "ab8db07cdb8f6512318cba5286418ca7f37954f2ab1f596b9379f451ac2d7aac",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30277,7 +30277,7 @@
     },
     {
       "path": "verification/coverage-v1/validate.py",
-      "sha256": "7e8b18ba34412d5887dcf9cae157b9b57b32e21926524c0b417e258b299ed3f7",
+      "sha256": "8f54bf03f71dd3c6f1b3c5e5ef1167d768441cc62c8b1a5daca737ad0010612b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
