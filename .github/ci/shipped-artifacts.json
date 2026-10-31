@@ -4212,7 +4212,7 @@
     },
     {
       "path": "crates/norn-checker/tests/registry_packs.rs",
-      "sha256": "b876871be28c9a353741e7af4e7f55abb344733db7afd83c9f178c58f0f6bed1",
+      "sha256": "c4e7124aaba4136bb03287f7e7b360fbfe375ee97ab134d80883d41484f47810",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18638,7 +18638,7 @@
     },
     {
       "path": "registry/packs/odoo/odoo.link.ts",
-      "sha256": "15683232122ac2dc564f7e359f75f9ae843070476c244fcd66df0e97b2f9c807",
+      "sha256": "b3ec23219b5f17ce4877d7ae865ead9c9a64615cc1daaa3d2ef7d5f71af6b528",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18656,7 +18656,7 @@
     },
     {
       "path": "registry/packs/odoo/odoo.pack.ts",
-      "sha256": "af8e288eed39140890a62ce038e07d993f2dfd6eb3d655ce15b7c74b47631c20",
+      "sha256": "7f937c4a19185d2ddb305c8f0aca7ec4300d14fe78009efe19d77d5594599e47",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
