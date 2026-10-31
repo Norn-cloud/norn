@@ -18637,7 +18637,7 @@
     },
     {
       "path": "registry/packs/shopify/shopify.link.ts",
-      "sha256": "749cfa1f604332bb3e05a229c92ec05855b08ca383787af3f408c13bb571ad2a",
+      "sha256": "aae8148cbaba3728bde2180082b47cbadd5d459077faabc070aef7e475d06006",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
