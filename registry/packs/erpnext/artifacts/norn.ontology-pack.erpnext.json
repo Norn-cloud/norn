@@ -1,0 +1,869 @@
+{
+  "artifactId": "norn.ontology-pack.erpnext",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "ERPNext v16 system pack (map-only)",
+  "namespace": "norn.ontology",
+  "payload": {
+    "mappings": [
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/accounts/doctype/sales_invoice/sales_invoice.json"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/accounts/doctype/sales_invoice/sales_invoice.json",
+        "justification": "The term names this DocType of the pinned release.",
+        "mappingId": "map.norn.erpnext.sales.invoice",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.erpnext",
+        "termId": "norn.erpnext.sales.invoice"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/accounts/doctype/payment_entry/payment_entry.json"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/accounts/doctype/payment_entry/payment_entry.json",
+        "justification": "The term names this DocType of the pinned release.",
+        "mappingId": "map.norn.erpnext.payment.entry",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.erpnext",
+        "termId": "norn.erpnext.payment.entry"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/accounts/doctype/journal_entry/journal_entry.json"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/accounts/doctype/journal_entry/journal_entry.json",
+        "justification": "The term names this DocType of the pinned release.",
+        "mappingId": "map.norn.erpnext.journal.entry",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.erpnext",
+        "termId": "norn.erpnext.journal.entry"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/selling/doctype/customer/customer.json"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/selling/doctype/customer/customer.json",
+        "justification": "The term names this DocType of the pinned release.",
+        "mappingId": "map.norn.erpnext.customer",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.erpnext",
+        "termId": "norn.erpnext.customer"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/buying/doctype/supplier/supplier.json"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/buying/doctype/supplier/supplier.json",
+        "justification": "The term names this DocType of the pinned release.",
+        "mappingId": "map.norn.erpnext.supplier",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.erpnext",
+        "termId": "norn.erpnext.supplier"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/stock/doctype/item/item.json"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/stock/doctype/item/item.json",
+        "justification": "The term names this DocType of the pinned release.",
+        "mappingId": "map.norn.erpnext.item",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.erpnext",
+        "termId": "norn.erpnext.item"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/stock/doctype/stock_entry/stock_entry.json"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/stock/doctype/stock_entry/stock_entry.json",
+        "justification": "The term names this DocType of the pinned release.",
+        "mappingId": "map.norn.erpnext.stock.entry",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.erpnext",
+        "termId": "norn.erpnext.stock.entry"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/selling/doctype/sales_order/sales_order.json"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/selling/doctype/sales_order/sales_order.json",
+        "justification": "The term names this DocType of the pinned release.",
+        "mappingId": "map.norn.erpnext.sales.order",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.erpnext",
+        "termId": "norn.erpnext.sales.order"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/stock/doctype/delivery_note/delivery_note.json"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/stock/doctype/delivery_note/delivery_note.json",
+        "justification": "The term names this DocType of the pinned release.",
+        "mappingId": "map.norn.erpnext.delivery.note",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.erpnext",
+        "termId": "norn.erpnext.delivery.note"
+      }
+    ],
+    "packId": "norn.ontology-pack.erpnext",
+    "packKind": "ontology",
+    "packVersion": "0.1",
+    "shapes": [
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.sales.invoice",
+        "termId": "norn.erpnext.sales.invoice"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.sales.invoice.item",
+        "termId": "norn.erpnext.sales.invoice.item"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.payment.entry",
+        "termId": "norn.erpnext.payment.entry"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.payment.entry.reference",
+        "termId": "norn.erpnext.payment.entry.reference"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.journal.entry",
+        "termId": "norn.erpnext.journal.entry"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.customer",
+        "termId": "norn.erpnext.customer"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.supplier",
+        "termId": "norn.erpnext.supplier"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.item",
+        "termId": "norn.erpnext.item"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.stock.entry",
+        "termId": "norn.erpnext.stock.entry"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.sales.order",
+        "termId": "norn.erpnext.sales.order"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.erpnext.delivery.note",
+        "termId": "norn.erpnext.delivery.note"
+      }
+    ],
+    "sources": [
+      {
+        "canonicalUrl": "https://github.com/frappe/erpnext/tree/9cd11b19575bfc34f092a24f6c8b368c4dd69481",
+        "files": [
+          {
+            "path": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/license.txt",
+            "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/accounts/doctype/sales_invoice/sales_invoice.json",
+            "sha256": "e4071fb4132dc9d09141fd497c8faea1ff6e9dbf871aa09e6c662a6b61e7dff7"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/accounts/doctype/payment_entry/payment_entry.json",
+            "sha256": "581265e6553a59a0869e1cdbcbf8d2f98e1277b863a98c9505d2625c697469ab"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/accounts/doctype/journal_entry/journal_entry.json",
+            "sha256": "b39f1ecd2cc9efe0d07533c3a972042c58c455ba686c2c316168bb70f41c6f65"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/selling/doctype/customer/customer.json",
+            "sha256": "53856fc52b4e0d29dc7799adcbc02deb66493ef92d68edd62948b0153c0adfc9"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/buying/doctype/supplier/supplier.json",
+            "sha256": "53369432db835eae9630fc3cd32acd8268ae9813d023bc98642929e4ae129952"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/stock/doctype/item/item.json",
+            "sha256": "d869d14cc80331d592f542d4322a64a5a33413ef9e70cbc945f453141a597276"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/stock/doctype/stock_entry/stock_entry.json",
+            "sha256": "7d0e5e4cbc3961fa2f4d6c4606fc106b2550c83e38859e50db3d6852972301f5"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/selling/doctype/sales_order/sales_order.json",
+            "sha256": "5b360da5a8be64e16b4dd088284acef88d13ce919d2ef3d79fa7bbc0326135ef"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/frappe/erpnext/9cd11b19575bfc34f092a24f6c8b368c4dd69481/erpnext/stock/doctype/delivery_note/delivery_note.json",
+            "sha256": "e4cc791d46a22559538ee613980066c8470c6b6597ed6dd3be0cc2b19f3a6a87"
+          }
+        ],
+        "importMode": "map_only",
+        "importer": {
+          "name": "norn.importers.frappe",
+          "version": "0.1.0"
+        },
+        "license": "GPL-3.0-only",
+        "redistribution": "reference_only",
+        "releaseId": "version-16@9cd11b19575bfc34f092a24f6c8b368c4dd69481",
+        "releasedAt": "2026-10-28",
+        "retrievedAt": "2026-10-31",
+        "sourceId": "source.erpnext"
+      }
+    ],
+    "terms": [
+      {
+        "definition": "ERPNext's document for billing a customer; with is_return it is a credit note.",
+        "label": "Sales Invoice",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice",
+        "termKind": "class"
+      },
+      {
+        "definition": "One billed line of a Sales Invoice.",
+        "label": "Sales Invoice Item",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.item",
+        "termKind": "class"
+      },
+      {
+        "definition": "ERPNext's document for money received, paid or moved between own accounts.",
+        "label": "Payment Entry",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry",
+        "termKind": "class"
+      },
+      {
+        "definition": "The part of a Payment Entry applied to one invoice, order or journal entry.",
+        "label": "Payment Entry Reference",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.reference",
+        "termKind": "class"
+      },
+      {
+        "definition": "ERPNext's manually entered accounting voucher of debit and credit lines.",
+        "label": "Journal Entry",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.journal.entry",
+        "termKind": "class"
+      },
+      {
+        "definition": "A party ERPNext sells to.",
+        "label": "Customer",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.customer",
+        "termKind": "class"
+      },
+      {
+        "definition": "A party ERPNext buys from.",
+        "label": "Supplier",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.supplier",
+        "termKind": "class"
+      },
+      {
+        "definition": "A product or service ERPNext buys, sells or stocks.",
+        "label": "Item",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.item",
+        "termKind": "class"
+      },
+      {
+        "definition": "ERPNext's document for moving, consuming or producing stock.",
+        "label": "Stock Entry",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.stock.entry",
+        "termKind": "class"
+      },
+      {
+        "definition": "ERPNext's confirmed order from a customer.",
+        "label": "Sales Order",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.order",
+        "termKind": "class"
+      },
+      {
+        "definition": "ERPNext's document for goods shipped to a customer.",
+        "label": "Delivery Note",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.delivery.note",
+        "termKind": "class"
+      },
+      {
+        "definition": "The customer field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "customer (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.customer",
+        "termKind": "property"
+      },
+      {
+        "definition": "The posting_date field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "posting_date (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.posting.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "The due_date field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "due_date (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.due.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "The currency field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "currency (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.currency",
+        "termKind": "property"
+      },
+      {
+        "definition": "The net_total field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "net_total (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.net.total",
+        "termKind": "property"
+      },
+      {
+        "definition": "The total_taxes_and_charges field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "total_taxes_and_charges (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.total.taxes",
+        "termKind": "property"
+      },
+      {
+        "definition": "The grand_total field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "grand_total (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.grand.total",
+        "termKind": "property"
+      },
+      {
+        "definition": "The outstanding_amount field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "outstanding_amount (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.outstanding.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "The status field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "status (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "The is_return field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "is_return (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.is.return",
+        "termKind": "property"
+      },
+      {
+        "definition": "The update_stock field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "update_stock (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.update.stock",
+        "termKind": "property"
+      },
+      {
+        "definition": "The is_pos field of sales.invoice.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "is_pos (sales.invoice)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.is.pos",
+        "termKind": "property"
+      },
+      {
+        "definition": "The item_code field of sales.invoice.item.",
+        "domainTermId": "norn.erpnext.sales.invoice.item",
+        "label": "item_code (sales.invoice.item)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.item.item.code",
+        "termKind": "property"
+      },
+      {
+        "definition": "The qty field of sales.invoice.item.",
+        "domainTermId": "norn.erpnext.sales.invoice.item",
+        "label": "qty (sales.invoice.item)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.item.qty",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount field of sales.invoice.item.",
+        "domainTermId": "norn.erpnext.sales.invoice.item",
+        "label": "amount (sales.invoice.item)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.item.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "The payment_type field of payment.entry.",
+        "domainTermId": "norn.erpnext.payment.entry",
+        "label": "payment_type (payment.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.payment.type",
+        "termKind": "property"
+      },
+      {
+        "definition": "The party field of payment.entry.",
+        "domainTermId": "norn.erpnext.payment.entry",
+        "label": "party (payment.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.party",
+        "termKind": "property"
+      },
+      {
+        "definition": "The posting_date field of payment.entry.",
+        "domainTermId": "norn.erpnext.payment.entry",
+        "label": "posting_date (payment.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.posting.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "The paid_from_account_currency field of payment.entry.",
+        "domainTermId": "norn.erpnext.payment.entry",
+        "label": "paid_from_account_currency (payment.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.currency",
+        "termKind": "property"
+      },
+      {
+        "definition": "The paid_amount field of payment.entry.",
+        "domainTermId": "norn.erpnext.payment.entry",
+        "label": "paid_amount (payment.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.paid.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "The unallocated_amount field of payment.entry.",
+        "domainTermId": "norn.erpnext.payment.entry",
+        "label": "unallocated_amount (payment.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.unallocated.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "The reference_name field of payment.entry.reference.",
+        "domainTermId": "norn.erpnext.payment.entry.reference",
+        "label": "reference_name (payment.entry.reference)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.reference.reference.name",
+        "termKind": "property"
+      },
+      {
+        "definition": "The allocated_amount field of payment.entry.reference.",
+        "domainTermId": "norn.erpnext.payment.entry.reference",
+        "label": "allocated_amount (payment.entry.reference)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.reference.allocated.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "The voucher_type field of journal.entry.",
+        "domainTermId": "norn.erpnext.journal.entry",
+        "label": "voucher_type (journal.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.journal.entry.voucher.type",
+        "termKind": "property"
+      },
+      {
+        "definition": "The total_debit field of journal.entry.",
+        "domainTermId": "norn.erpnext.journal.entry",
+        "label": "total_debit (journal.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.journal.entry.total.debit",
+        "termKind": "property"
+      },
+      {
+        "definition": "The total_credit field of journal.entry.",
+        "domainTermId": "norn.erpnext.journal.entry",
+        "label": "total_credit (journal.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.journal.entry.total.credit",
+        "termKind": "property"
+      },
+      {
+        "definition": "The customer_group field of customer.",
+        "domainTermId": "norn.erpnext.customer",
+        "label": "customer_group (customer)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.customer.customer.group",
+        "termKind": "property"
+      },
+      {
+        "definition": "The customer_type field of customer.",
+        "domainTermId": "norn.erpnext.customer",
+        "label": "customer_type (customer)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.customer.customer.type",
+        "termKind": "property"
+      },
+      {
+        "definition": "The supplier_group field of supplier.",
+        "domainTermId": "norn.erpnext.supplier",
+        "label": "supplier_group (supplier)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.supplier.supplier.group",
+        "termKind": "property"
+      },
+      {
+        "definition": "The stock_uom field of item.",
+        "domainTermId": "norn.erpnext.item",
+        "label": "stock_uom (item)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.item.stock.uom",
+        "termKind": "property"
+      },
+      {
+        "definition": "The valuation_method field of item.",
+        "domainTermId": "norn.erpnext.item",
+        "label": "valuation_method (item)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.item.valuation.method",
+        "termKind": "property"
+      },
+      {
+        "definition": "The has_variants field of item.",
+        "domainTermId": "norn.erpnext.item",
+        "label": "has_variants (item)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.item.has.variants",
+        "termKind": "property"
+      },
+      {
+        "definition": "The purpose field of stock.entry.",
+        "domainTermId": "norn.erpnext.stock.entry",
+        "label": "purpose (stock.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.stock.entry.purpose",
+        "termKind": "property"
+      },
+      {
+        "definition": "The customer field of sales.order.",
+        "domainTermId": "norn.erpnext.sales.order",
+        "label": "customer (sales.order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.order.customer",
+        "termKind": "property"
+      },
+      {
+        "definition": "The grand_total field of sales.order.",
+        "domainTermId": "norn.erpnext.sales.order",
+        "label": "grand_total (sales.order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.order.grand.total",
+        "termKind": "property"
+      },
+      {
+        "definition": "The status field of sales.order.",
+        "domainTermId": "norn.erpnext.sales.order",
+        "label": "status (sales.order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.order.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "The per_delivered field of sales.order.",
+        "domainTermId": "norn.erpnext.sales.order",
+        "label": "per_delivered (sales.order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.order.per.delivered",
+        "termKind": "property"
+      },
+      {
+        "definition": "The per_billed field of sales.order.",
+        "domainTermId": "norn.erpnext.sales.order",
+        "label": "per_billed (sales.order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.order.per.billed",
+        "termKind": "property"
+      },
+      {
+        "definition": "The customer field of delivery.note.",
+        "domainTermId": "norn.erpnext.delivery.note",
+        "label": "customer (delivery.note)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.delivery.note.customer",
+        "termKind": "property"
+      },
+      {
+        "definition": "The is_return field of delivery.note.",
+        "domainTermId": "norn.erpnext.delivery.note",
+        "label": "is_return (delivery.note)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.delivery.note.is.return",
+        "termKind": "property"
+      },
+      {
+        "definition": "Submitting posts the invoice's ledger entries and locks it.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "Submit Sales Invoice",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Cancelling a submitted invoice posts reversing ledger entries; the document stays.",
+        "domainTermId": "norn.erpnext.sales.invoice",
+        "label": "Cancel Sales Invoice",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.sales.invoice.cancel",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submitting posts the payment's ledger entries and allocations.",
+        "domainTermId": "norn.erpnext.payment.entry",
+        "label": "Submit Payment Entry",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Cancelling posts reversing entries and releases the allocations.",
+        "domainTermId": "norn.erpnext.payment.entry",
+        "label": "Cancel Payment Entry",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.payment.entry.cancel",
+        "termKind": "action"
+      },
+      {
+        "definition": "The posting date is inside a closed Accounting Period.",
+        "label": "Accounting period closed",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.guard.accounting.period.closed",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "A journal entry's total debit differs from its total credit.",
+        "label": "Journal unbalanced",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.guard.journal.unbalanced",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "The customer is disabled.",
+        "label": "Customer disabled",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.guard.customer.disabled",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "The supplier is on hold for invoices or payments.",
+        "label": "Supplier on hold",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.erpnext.guard.supplier.on.hold",
+        "termKind": "predicate"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/erpnext/artifacts/norn.ontology-pack.erpnext.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
