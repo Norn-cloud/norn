@@ -464,6 +464,51 @@ def central_obligation_closure_canaries() -> None:
     )
 
 
+def core_physics_closure_canaries() -> None:
+    """Deleting a norn.core law everywhere it is referenced must still be rejected."""
+    registry_path = ROOT / "verification/core-physics-v1/obligations.json"
+    removed = "INV-CORE-COMMITMENT-COMPLETION"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["obligations"] = [item for item in registry["obligations"] if item["id"] != removed]
+    coverage = json.loads(COVERAGE.read_text(encoding="utf-8"))
+    for subsystem in coverage["subsystems"]:
+        if subsystem["id"] == "core-physics":
+            subsystem["obligations"].remove(removed)
+            subsystem["obligationClaims"] = [
+                claim for claim in subsystem["obligationClaims"] if claim["id"] != removed
+            ]
+    with tempfile.TemporaryDirectory() as directory:
+        candidate_registry = Path(directory) / "obligations.json"
+        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
+        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        message = expect_coverage_validator_rejection(
+            "coordinated core-physics law deletion",
+            coverage_path=candidate_coverage,
+            core_physics_obligations_path=candidate_registry,
+        )
+    if "norn.core law closure" not in message:
+        raise AssertionError(f"core-physics law deletion was rejected for the wrong reason: {message}")
+
+    # Demoting a law below P0 must not let its coverage claim disappear.
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    for item in registry["obligations"]:
+        if item["id"] == removed:
+            item["priority"] = "P1"
+    with tempfile.TemporaryDirectory() as directory:
+        candidate_registry = Path(directory) / "obligations.json"
+        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
+        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        message = expect_coverage_validator_rejection(
+            "core-physics law demotion and coverage removal",
+            coverage_path=candidate_coverage,
+            core_physics_obligations_path=candidate_registry,
+        )
+    if "core-physics coverage must claim exactly" not in message:
+        raise AssertionError(f"core-physics law demotion was rejected for the wrong reason: {message}")
+
+
 def workflow_verdict_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
     verdict = next(step["run"] for step in workflow["jobs"]["full"]["steps"] if "run" in step)
@@ -1226,6 +1271,7 @@ def main() -> int:
         raise SystemExit("usage: negative_canaries.py")
     manifest_canaries()
     central_obligation_closure_canaries()
+    core_physics_closure_canaries()
     workflow_canaries()
     quint_apalache_retry_canaries()
     ontology_quint_semantic_mutation_canaries()
