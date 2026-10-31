@@ -11,7 +11,7 @@ use norn_metrics::temporal::{TemporalError, TemporalPlan, TemporalRow, TemporalV
 fn admits_only_point_in_time_rows_and_chronological_holdouts() {
     let root = PathBuf::from(
         std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR")
-            .expect("generate typed fixtures with scripts/ci/core.sh before testing"),
+            .expect("prepare fixtures as documented in crates/norn-metrics/README.md, or run scripts/ci/core.sh test"),
     );
     let bytes =
         std::fs::read(root.join("metric-demand.json")).expect("generated synthetic fixture");
