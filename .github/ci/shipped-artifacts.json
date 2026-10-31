@@ -104,7 +104,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "23ea5520d2d19f069426233a142849a8b5101fe767abf87b0e6ee60d1a9b96e1",
+      "sha256": "36b1cc6d47fe338d38941a85ad643349e1a229acc13e794b7a61ab05240d3326",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -122,7 +122,7 @@
     },
     {
       "path": ".github/workflows/cla.yml",
-      "sha256": "56b5ac0c3e661074ae8c83743ddb9f48906cf917254723f25156f4276dc6e550",
+      "sha256": "40857fe32012e40154df20675a14c3a5a5c2237326b6f073f0fdda744ecb90bf",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -6318,7 +6318,7 @@
     },
     {
       "path": "crates/norn-expr/src/env.rs",
-      "sha256": "3c4fd5e3c7e033d47e411e53b47e4be5e85120d85692f0d84c8e8eded72b7c40",
+      "sha256": "cfad8e461894327f66e6d37bd3e4de89be134d3486218d69b17b64f3eba0229f",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18529,7 +18529,7 @@
     },
     {
       "path": "scripts/ci/core.sh",
-      "sha256": "b70f91fea9dc41f2ee038a89e6a4ac709a5e165add3b856f12b68a16d629cbff",
+      "sha256": "d99ec6a9ab33ac5fa20dfc95ef7422f8a1116810584590c6ee782d5b173fdc81",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
