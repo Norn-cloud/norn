@@ -516,6 +516,10 @@
         {
           "subsystem": "cala-boundary",
           "layer": "runtime"
+        },
+        {
+          "subsystem": "core-physics",
+          "layer": "runtime"
         }
       ],
       "resultArtifacts": [],
@@ -792,6 +796,53 @@
       "id": "core-value-ledger-lean",
       "profile": "fast",
       "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "core-quantity-commitment-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/core-physics-v1/models/core-quantity-commitment.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "core-quantity-commitment-quint",
+      "profile": "fast",
+      "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/core-quantity-commitment-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "core-quantity-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean",
       "evidenceKind": "command",
       "role": "claim-evidence",
       "classifications": [

@@ -18781,7 +18781,7 @@
     },
     {
       "path": "scripts/verify-promoted-subsystems.sh",
-      "sha256": "b8a30bc72b892e1bf756c6477e435fd433a4d1eaec8895e2f6dedb41bdbf24f6",
+      "sha256": "eecec764e2d89a41ca6d92f2b51189f672725fd9ea373be6c1426f4df14a0c58",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29916,6 +29916,24 @@
       "connector": null
     },
     {
+      "path": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+      "sha256": "8e3c8ab95c2079ce80d22215adedd4db8930fc6e1f2f3b453d82d6ac05f28e55",
+      "origin": "authored",
+      "category": "generic-proof",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "verification/core-physics-v1/models/core-value-ledger.qnt",
       "sha256": "da155028d082250285c23325e1a0a07820689a09781e61b06940948b65361871",
       "origin": "authored",
@@ -29935,9 +29953,27 @@
     },
     {
       "path": "verification/core-physics-v1/obligations.json",
-      "sha256": "411d309d0ea84a4336ea0e634e0c0ab2c88f77de9191dd5f39779c9427d1365b",
+      "sha256": "285a0be2696c7e2e4a3b13ed6d64a236a5c4bcfce2ae5ae19aafdb8b776a08aa",
       "origin": "authored",
       "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "verification/core-physics-v1/proofs/CoreQuantity.lean",
+      "sha256": "49ac491febb6631839fc5d5f8e3afb2754ee1bcba0710438eac5e3afc4f08d12",
+      "origin": "authored",
+      "category": "generic-proof",
       "license": "Apache-2.0",
       "sources": [],
       "analyzed_sources": [],
@@ -29971,7 +30007,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "346cba26913b5f30df0370a8bb3ee28affad75e054bdc6043a969a66fd4a7382",
+      "sha256": "139413f0850aac06cea69ff5dbddfc32090ba0dbecc8d6ed6774de4f6c6db7eb",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30007,7 +30043,7 @@
     },
     {
       "path": "verification/coverage-v1/promoted-gates.json",
-      "sha256": "a51e767784059887fea4e1d978eac8396d58fc7c598293c431d9841bd90f630a",
+      "sha256": "2253da6863fb69836002aa0f98da8e5d93a99bf859496f4a1e1dab5f16c8c4bd",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30061,7 +30097,7 @@
     },
     {
       "path": "verification/coverage-v1/validate.py",
-      "sha256": "7e8b18ba34412d5887dcf9cae157b9b57b32e21926524c0b417e258b299ed3f7",
+      "sha256": "65045d1e48f5c481a5149544f946e24846ccc278d953aae37278f1c6514bdbd1",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
