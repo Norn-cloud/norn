@@ -28,17 +28,38 @@ pub struct PointStamp<T> {
 
 impl<T: Timestamp> PartialEq<[T]> for PointStamp<T> {
     fn eq(&self, other: &[T]) -> bool {
-        self.vector.iter()
-            .zip(other.iter().chain(std::iter::repeat(&T::minimum())))
-            .all(|(t1, t2)| t1.eq(t2))
+        let minimum = T::minimum();
+        (0..self.vector.len().max(other.len())).all(|i| {
+            self.vector.get(i).unwrap_or(&minimum) == other.get(i).unwrap_or(&minimum)
+        })
     }
 }
 
 impl<T: Timestamp> PartialEq<PointStamp<T>> for [T] {
     fn eq(&self, other: &PointStamp<T>) -> bool {
-        self.iter()
-            .zip(other.vector.iter().chain(std::iter::repeat(&T::minimum())))
-            .all(|(t1, t2)| t1.eq(t2))
+        other == self
+    }
+}
+
+#[cfg(test)]
+mod equality_tests {
+    use super::PointStamp;
+
+    #[test]
+    fn cross_slice_equality_checks_both_lengths_and_ignores_only_minimum_padding() {
+        for (coordinates, slice, equal) in [
+            (vec![], vec![], true),
+            (vec![], vec![0, 0], true),
+            (vec![], vec![0, 1], false),
+            (vec![1], vec![], false),
+            (vec![1], vec![1, 0], true),
+            (vec![1], vec![1, 2], false),
+            (vec![1, 2], vec![1], false),
+        ] {
+            let stamp = PointStamp::<u64>::new(coordinates.into());
+            assert_eq!(stamp == slice[..], equal);
+            assert_eq!(slice[..] == stamp, equal);
+        }
     }
 }
 
