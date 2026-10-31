@@ -1,0 +1,478 @@
+{
+  "obligations": [
+    "INV-AUTH-ATOMIC-COMMIT",
+    "INV-AUTH-STALE-REJECT",
+    "INV-AUTH-IDEMPOTENT-RESULT",
+    "INV-AUTH-CLOSED-CUSTOM-EFFECT",
+    "INV-AUTH-HARD-INVARIANT-OWNERSHIP",
+    "INV-AUTH-DOMAIN-ADMISSION-PREDICATE"
+  ],
+  "obligationClaims": [
+    {
+      "id": "INV-AUTH-ATOMIC-COMMIT",
+      "runtime": "missing",
+      "model": "bounded_model_checked",
+      "proof": "partial",
+      "residual": "Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in #2764 (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, #2583), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted.",
+      "evidence": {
+        "runtime": [],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+            "command": "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+            "selectors": [
+              "invariant:atomicCommit"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+            "selectors": [
+              "theorem:accepted_commit_keeps_effect_event_atomic"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-AUTH-STALE-REJECT",
+      "runtime": "missing",
+      "model": "bounded_model_checked",
+      "proof": "reference_proved",
+      "residual": "The retained InMemory store exercises a general owner-version compare-and-swap envelope, stale-writer rejection, no-partial-effect behavior, and stable replay receipts. The canonical Turso adapter's persistence-failure rollback and reopen tests were removed in #2764 (not currently covered). Legacy callers still use the unversioned compatibility method, Postgres parity and a transport TransitionEnvelope remain open, and the Verus reference has no extracted correspondence proof. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "evidence": {
+        "runtime": [],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+            "command": "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+            "selectors": [
+              "invariant:noOpPreservesCanonical"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+            "selectors": [
+              "theorem:stale_commit_rejects"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-AUTH-IDEMPOTENT-RESULT",
+      "runtime": "missing",
+      "model": "bounded_model_checked",
+      "proof": "reference_proved",
+      "residual": "Lean proves exact replay is state-preserving, conflicting replay rejects, and a stored receipt blocks a second abstract commit. Retained InMemory receipts bind both the semantic input hash and a canonical authority-effect digest; request-local correlation IDs are normalized out while deterministic action/ledger IDs make lost-reply reconstruction stable. Turso-persisted receipt and reopen evidence was removed in #2764 (not currently covered). The correspondence is not machine-proved, pre-v3 receipts fail closed on replay, and legacy unversioned callers remain. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "evidence": {
+        "runtime": [],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+            "command": "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+            "selectors": [
+              "invariant:idempotentAtMostOnce"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+            "selectors": [
+              "theorem:exact_replay_is_state_preserving",
+              "theorem:conflicting_input_replay_rejects",
+              "theorem:conflicting_effect_replay_rejects"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-AUTH-CLOSED-CUSTOM-EFFECT",
+      "runtime": "missing",
+      "model": "bounded_model_checked",
+      "proof": "partial",
+      "residual": "The retained IR validator admits a closed upsert_input_object declaration and rejects unknown payload/schema fields, open object schemas, and contradictory idempotent/ledgered declarations. Quint and Lean check independent bounded/reference semantics for exact active-definition pins, schema/ontology guards, one effect/event, stale/no-op behavior, and stable replay. No HTTP executor or custom ActionIR runtime is retained. Relation effects, deletes, field templates, arithmetic, domain-specific invariant programs, task-result coupling, extraction/refinement, and arbitrary custom ActionIR remain open.",
+      "evidence": {
+        "runtime": [],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/models/closed-action-effect.qnt",
+            "command": "quint verify verification/stripmine-2026-08-22/models/closed-action-effect.qnt --backend apalache --invariants typeOk oneClosedEffectPerCommit acceptedBoundExactDefinitions acceptedPassedClosedChecks noOpPreservesAuthority --max-steps 8",
+            "selectors": [
+              "invariant:oneClosedEffectPerCommit",
+              "invariant:acceptedBoundExactDefinitions",
+              "invariant:acceptedPassedClosedChecks"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+            "selectors": [
+              "theorem:accepted_execution_has_one_derived_effect",
+              "theorem:derived_effect_cannot_change_declared_pins"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-AUTH-HARD-INVARIANT-OWNERSHIP",
+      "runtime": "missing",
+      "model": "bounded_model_checked",
+      "proof": "partial",
+      "residual": "Rust rejects open or unsupported EntityIR mutationAuthority descriptors and noncanonical semantic objectKind identities containing whitespace, control characters, or wildcards. Both the versioned ActionIR path and the legacy generic store path reject domain-owned objects before publication. Every legacy mutation is checked against the scoped Active semantic owner before fresh publication or idempotent-result return, including unpinned, unresolved-pinned, and resolved Draft, Proposed, or historical aliases; a resolved pin must additionally match its exact declared objectKind and admit the generic source. The legacy runtime independently revalidates canonical object-kind syntax. Governed catalog transition checks prevent owner/objectKind changes, duplicate semantic owners, or untyped retirement, and the typed authority/source mapping is exhaustively tested across all 36 current pairs. Quint checks generic/domain separation and Lean proves independent reference semantics, but descriptor parsing, active-artifact lookup, whole-store write-path completeness, storage atomicity, and domain-internal invariants are not implementation-proved. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "evidence": {
+        "runtime": [],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
+            "command": "quint verify verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt --backend apalache --invariants typeOk genericNeverCommitsDomainOwned domainNeverCommitsGenericOwned domainCommitMatchesExactOwner rejectionIsNoOp --max-steps 8",
+            "selectors": [
+              "invariant:genericNeverCommitsDomainOwned",
+              "invariant:domainCommitMatchesExactOwner"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+            "selectors": [
+              "theorem:generic_action_cannot_mutate_domain_owned_state",
+              "theorem:accepted_domain_commit_has_exact_owner"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-AUTH-DOMAIN-ADMISSION-PREDICATE",
+      "runtime": "missing",
+      "model": "bounded_model_checked",
+      "proof": "missing",
+      "residual": "Two pinned extraction lanes start from the exact production norn_ir::entity_mutation_authority_admits symbol: hax emits F* and Aeneas/Charon emits Lean, and both prove the complete representation-free Boolean truth table used by EntityMutationAuthority::admits. The Aeneas theorem reports no axioms and the gate checks four negative canaries, but the translator/compiler/prover toolchains remain trusted. This claim excludes descriptor parsing, enum-to-Boolean mapping, active-artifact lookup, call-site completeness, persistence, and every domain engine's internal invariants. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "evidence": {
+        "runtime": [],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
+            "command": "quint verify verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt --backend apalache --invariants typeOk genericNeverCommitsDomainOwned domainNeverCommitsGenericOwned domainCommitMatchesExactOwner rejectionIsNoOp --max-steps 8",
+            "selectors": [
+              "invariant:genericNeverCommitsDomainOwned",
+              "invariant:domainNeverCommitsGenericOwned",
+              "invariant:domainCommitMatchesExactOwner"
+            ]
+          }
+        ],
+        "proof": []
+      }
+    }
+  ],
+  "runtime": {
+    "status": "missing",
+    "artifacts": [],
+    "commands": [],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "model": {
+    "status": "bounded_model_checked",
+    "bound": "Apalache depth 8 over one consistency owner, one transition identity, two payloads, one versioned capability policy, active Action/Entity pins in versions 1..3, Boolean closed input/output/ontology checks, and the six finite generic/domain owner/source tags",
+    "artifacts": [
+      "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+      "verification/stripmine-2026-08-22/models/closed-action-effect.qnt",
+      "verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt"
+    ],
+    "resultArtifacts": [
+      "target/verification-results/authority-commit-quint.json",
+      "target/verification-results/closed-action-effect-quint.json",
+      "target/verification-results/domain-engine-boundary-quint.json"
+    ],
+    "commands": [
+      "quint typecheck verification/stripmine-2026-08-22/models/authority-commit.qnt",
+      "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+      "quint typecheck verification/stripmine-2026-08-22/models/closed-action-effect.qnt",
+      "quint verify verification/stripmine-2026-08-22/models/closed-action-effect.qnt --backend apalache --invariants typeOk oneClosedEffectPerCommit acceptedBoundExactDefinitions acceptedPassedClosedChecks noOpPreservesAuthority --max-steps 8",
+      "quint typecheck verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
+      "quint verify verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt --backend apalache --invariants typeOk genericNeverCommitsDomainOwned domainNeverCommitsGenericOwned domainCommitMatchesExactOwner rejectionIsNoOp --max-steps 8"
+    ],
+    "generatedArtifacts": []
+  },
+  "proof": {
+    "status": "partial",
+    "artifacts": [
+      "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+      "verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+      "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean"
+    ],
+    "commands": [
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "limitations": [
+    "A general expected-owner-version compare-and-swap path exists in the retained in-memory store, but legacy unversioned callers remain and no transport TransitionEnvelope routes custom state effects through it.",
+    "The authority model is bounded to one owner and transition identity, abstracts persistence as one atomic assignment, and omits crashes, replication, multi-owner coordination, and liveness.",
+    "The closed-action model bounds artifact versions to 1..3 and validation outcomes to Boolean predicates; it does not model arbitrary JSON schema or ontology semantics.",
+    "The Verus function is not linked to the retained store implementation by extraction or a proved refinement.",
+    "The closed custom ActionIR subset currently contains only upsert_input_object; it is evidence for the authority pattern, not a general verified action language.",
+    "Only the final representation-free hard-invariant ownership Boolean predicate has extracted production correspondence. Descriptor parsing, enum mapping, artifact activation/lookup, store-path completeness, and atomic persistence remain outside that proof.",
+    "No normalized durable production profile is retained in this workspace."
+  ],
+  "sourceFiles": [
+    "Cargo.toml",
+    "crates/norn-api/Cargo.toml",
+    "crates/norn-api/src/contracts.rs",
+    "crates/norn-api/src/lib.rs",
+    "crates/norn-api/src/openapi.rs",
+    "crates/norn-canonical/Cargo.toml",
+    "crates/norn-canonical/src/lib.rs",
+    "crates/norn-canonical/src/number.rs",
+    "crates/norn-cell/Cargo.toml",
+    "crates/norn-cell/src/codec.rs",
+    "crates/norn-cell/src/engine.rs",
+    "crates/norn-cell/src/error.rs",
+    "crates/norn-cell/src/export.rs",
+    "crates/norn-cell/src/export_journal.rs",
+    "crates/norn-cell/src/history.rs",
+    "crates/norn-cell/src/host.rs",
+    "crates/norn-cell/src/lib.rs",
+    "crates/norn-cell/src/migration.rs",
+    "crates/norn-cell/src/model.rs",
+    "crates/norn-cell/src/payload_storage.rs",
+    "crates/norn-cell/src/reactive.rs",
+    "crates/norn-cell/src/reactive_read.rs",
+    "crates/norn-cell/src/read.rs",
+    "crates/norn-cell/src/restore.rs",
+    "crates/norn-cell/src/store.rs",
+    "crates/norn-cell/src/system.rs",
+    "crates/norn-cell/src/write.rs",
+    "crates/norn-checker-wasm/Cargo.toml",
+    "crates/norn-checker/Cargo.toml",
+    "crates/norn-cli/Cargo.toml",
+    "crates/norn-cli/src/main.rs",
+    "crates/norn-graph/Cargo.toml",
+    "crates/norn-graph/src/algorithms.rs",
+    "crates/norn-graph/src/graph.rs",
+    "crates/norn-graph/src/lib.rs",
+    "crates/norn-ir/Cargo.toml",
+    "crates/norn-ir/src/access.rs",
+    "crates/norn-ir/src/action.rs",
+    "crates/norn-ir/src/business_pack.rs",
+    "crates/norn-ir/src/connector.rs",
+    "crates/norn-ir/src/customization.rs",
+    "crates/norn-ir/src/data_quality.rs",
+    "crates/norn-ir/src/decision_output.rs",
+    "crates/norn-ir/src/deontic.rs",
+    "crates/norn-ir/src/entitlement.rs",
+    "crates/norn-ir/src/entity.rs",
+    "crates/norn-ir/src/entity_v2.rs",
+    "crates/norn-ir/src/entity_v2/extension.rs",
+    "crates/norn-ir/src/entity_v2/interface.rs",
+    "crates/norn-ir/src/entity_v2/invariant.rs",
+    "crates/norn-ir/src/entity_v2/lifecycle.rs",
+    "crates/norn-ir/src/entity_v2/link.rs",
+    "crates/norn-ir/src/entity_v2/naming_series.rs",
+    "crates/norn-ir/src/entity_v2/object.rs",
+    "crates/norn-ir/src/entity_v2/property.rs",
+    "crates/norn-ir/src/entity_v2/status.rs",
+    "crates/norn-ir/src/fact_change.rs",
+    "crates/norn-ir/src/flow_source_map.rs",
+    "crates/norn-ir/src/function.rs",
+    "crates/norn-ir/src/identifier_limits.rs",
+    "crates/norn-ir/src/jdm.rs",
+    "crates/norn-ir/src/layout.rs",
+    "crates/norn-ir/src/lib.rs",
+    "crates/norn-ir/src/limit_profile.rs",
+    "crates/norn-ir/src/lineage.rs",
+    "crates/norn-ir/src/marking.rs",
+    "crates/norn-ir/src/members.rs",
+    "crates/norn-ir/src/metric.rs",
+    "crates/norn-ir/src/osi.rs",
+    "crates/norn-ir/src/provenance.rs",
+    "crates/norn-ir/src/rule.rs",
+    "crates/norn-ir/src/runtime.rs",
+    "crates/norn-ir/src/sealing.rs",
+    "crates/norn-ir/src/setting.rs",
+    "crates/norn-ir/src/source_schema.rs",
+    "crates/norn-ir/src/technical_view.rs",
+    "crates/norn-ir/src/theorem_input.rs",
+    "crates/norn-ir/src/verification.rs",
+    "crates/norn-ir/src/view.rs",
+    "crates/norn-ir/src/widget.rs",
+    "crates/norn-ir/src/widget_ux.rs",
+    "crates/norn-kernel/Cargo.toml",
+    "crates/norn-kernel/src/action.rs",
+    "crates/norn-kernel/src/action_commit.rs",
+    "crates/norn-kernel/src/cell_host.rs",
+    "crates/norn-kernel/src/commit_check.rs",
+    "crates/norn-kernel/src/decider.rs",
+    "crates/norn-kernel/src/decision_commit.rs",
+    "crates/norn-kernel/src/effect.rs",
+    "crates/norn-kernel/src/envelope.rs",
+    "crates/norn-kernel/src/limits.rs",
+    "crates/norn-kernel/src/naming_series.rs",
+    "crates/norn-kernel/src/observations.rs",
+    "crates/norn-kernel/src/refusal.rs",
+    "crates/norn-kernel/src/result_reconciliation.rs",
+    "crates/norn-kernel/src/snapshot_observe.rs",
+    "crates/norn-kernel/src/version_check.rs",
+    "crates/norn-skeleton-guard/Cargo.toml",
+    "crates/norn-testkit/Cargo.toml",
+    "fixtures/connectors/frappe.connector.json",
+    "fixtures/connectors/google-directory.connector.json",
+    "fixtures/dev/catalog-sync/definitions/shopify_demo.connector.json",
+    "fixtures/invalid/blank-namespace.entity.json",
+    "fixtures/invalid/effectful-ts-boundary.customization.json",
+    "fixtures/invalid/incremental-maintenance.derived.json",
+    "fixtures/invalid/null-member.entity-v2.json",
+    "fixtures/invalid/retired-kind.process.json",
+    "fixtures/invalid/two-definitions.entity-v2.json",
+    "fixtures/invalid/unknown-kind.json",
+    "fixtures/invalid/unknown-resource.connector.json",
+    "fixtures/invalid/unsafe-action-binding.widget.json",
+    "fixtures/invalid/unsupported-ir-version.entity.json",
+    "fixtures/invalid/v1-member-in-v2.entity.json",
+    "fixtures/invalid/v2-form.relation.json",
+    "fixtures/invalid/wasm-boundary.customization.json",
+    "fixtures/ir/artifact-set/action-invalid-write-mode.action.json",
+    "fixtures/ir/commerce-sales-order-submit-invoice.action.json",
+    "fixtures/ir/entity-v2/artifact-set/acme-sku.extension.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/commerce-purchase-order.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/commerce-sales-order.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/invalid/conflicting-inverse.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/invalid/unknown-link-target.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/invalid/unknown-supertype.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json",
+    "fixtures/ir/retail-core.business_pack.json",
+    "fixtures/ir/retail-inventory.connector.json",
+    "fixtures/ir/retail-low-stock.derived.json",
+    "fixtures/ir/retail-procurement.policy.json",
+    "fixtures/ir/retail-purchase-request.entity.json",
+    "fixtures/ir/retail-reorder-routing.rule.json",
+    "fixtures/ir/retail-reorder-threshold.setting.json",
+    "fixtures/ir/retail-reorder.action.json",
+    "fixtures/ir/retail-replenishment.widget.json",
+    "fixtures/ir/retail-sku-reorder-point.customization.json",
+    "fixtures/ir/retail-sku-supplier.relation.json",
+    "fixtures/ir/retail-sku-v2.entity.json",
+    "fixtures/ir/retail-sku.entity.json",
+    "fixtures/ir/ux-orders-customer.widget.json",
+    "fixtures/law-ir/laws.source.ts",
+    "packages/norn-sdk/src/generated/norn-api.ts",
+    "packages/norn-sdk/src/index.ts",
+    "tools/norn-ts/corpus/accept/aliased-imports.ts",
+    "tools/norn-ts/corpus/accept/data-and-results.ts",
+    "tools/norn-ts/corpus/accept/reexported-effect.ts",
+    "tools/norn-ts/corpus/accept/scoped-law.ts",
+    "tools/norn-ts/corpus/accept/sequential-all-flatmap.ts",
+    "tools/norn-ts/corpus/accept/sequential-perform.ts",
+    "tools/norn-ts/corpus/reject/ambient-date-random.ts",
+    "tools/norn-ts/corpus/reject/arbitrary-predicate.ts",
+    "tools/norn-ts/corpus/reject/bare-return.ts",
+    "tools/norn-ts/corpus/reject/concurrent-all.ts",
+    "tools/norn-ts/corpus/reject/definition-as-data.ts",
+    "tools/norn-ts/corpus/reject/effect-as-value.ts",
+    "tools/norn-ts/corpus/reject/effect-in-data.ts",
+    "tools/norn-ts/corpus/reject/effect-run-promise.ts",
+    "tools/norn-ts/corpus/reject/fork-race.ts",
+    "tools/norn-ts/corpus/reject/function-valued-flatmap.ts",
+    "tools/norn-ts/corpus/reject/generator-escape.ts",
+    "tools/norn-ts/corpus/reject/helper-call.ts",
+    "tools/norn-ts/corpus/reject/hostile-reexport.ts",
+    "tools/norn-ts/corpus/reject/import-allowlist.ts",
+    "tools/norn-ts/corpus/reject/imported-ambient.ts",
+    "tools/norn-ts/corpus/reject/layer-context.ts",
+    "tools/norn-ts/corpus/reject/map-block-undefined.ts",
+    "tools/norn-ts/corpus/reject/mutable-capture.ts",
+    "tools/norn-ts/corpus/reject/non-finite-negative.ts",
+    "tools/norn-ts/corpus/reject/non-literal-arguments.ts",
+    "tools/norn-ts/corpus/reject/object-equality-arithmetic.ts",
+    "tools/norn-ts/corpus/reject/proxy-truthiness.ts",
+    "tools/norn-ts/corpus/reject/ref-queue.ts",
+    "tools/norn-ts/corpus/reject/resource-finalizer.ts",
+    "tools/norn-ts/corpus/reject/shadowed-effect.ts",
+    "tools/norn-ts/corpus/reject/switch-fallthrough.ts",
+    "tools/norn-ts/corpus/reject/sync-promise-await.ts",
+    "tools/norn-ts/corpus/reject/template-interpolation.ts",
+    "tools/norn-ts/corpus/reject/throw.ts",
+    "tools/norn-ts/corpus/reject/try-catch-around-yield.ts",
+    "tools/norn-ts/corpus/reject/unbounded-schedule.ts",
+    "tools/norn-ts/corpus/reject/while-loop.ts",
+    "tools/norn-ts/corpus/reject/wrapped-effect-in-data.ts",
+    "tools/norn-ts/corpus/support/ambient-const.ts",
+    "tools/norn-ts/corpus/support/billing.ts",
+    "tools/norn-ts/corpus/support/declared-only.d.ts",
+    "tools/norn-ts/corpus/support/definitions.ts",
+    "tools/norn-ts/corpus/support/hostile-effect.ts",
+    "tools/norn-ts/corpus/support/reexport-effect.ts",
+    "tools/norn-ts/fixtures/definitions/access-principal-attribute.source.ts",
+    "tools/norn-ts/fixtures/definitions/action-preconditions.source.ts",
+    "tools/norn-ts/fixtures/definitions/acyclic.source.ts",
+    "tools/norn-ts/fixtures/definitions/connector.source.ts",
+    "tools/norn-ts/fixtures/definitions/create-linked.source.ts",
+    "tools/norn-ts/fixtures/definitions/crm.source.ts",
+    "tools/norn-ts/fixtures/definitions/interface-inheritance.source.ts",
+    "tools/norn-ts/fixtures/definitions/interface-invariant.source.ts",
+    "tools/norn-ts/fixtures/definitions/invalid/connector-aliased-secret.ts",
+    "tools/norn-ts/fixtures/definitions/invalid/connector-secret.ts",
+    "tools/norn-ts/fixtures/definitions/invalid/connector-write.ts",
+    "tools/norn-ts/fixtures/definitions/invalid/implements-type.ts",
+    "tools/norn-ts/fixtures/definitions/invalid/invariant-classification.ts",
+    "tools/norn-ts/fixtures/definitions/invalid/privacy-aliased-field.ts",
+    "tools/norn-ts/fixtures/definitions/invalid/proto-condition.ts",
+    "tools/norn-ts/fixtures/definitions/privacy.source.ts",
+    "tools/norn-ts/fixtures/definitions/temporal-enum.source.ts",
+    "tools/norn-ts/fixtures/flows/invalid/duplicate-step.builder.ts",
+    "tools/norn-ts/fixtures/flows/invalid/no-result.builder.ts",
+    "tools/norn-ts/fixtures/flows/invalid/over-bound-retry.builder.ts",
+    "tools/norn-ts/fixtures/flows/invalid/reused-step-object.builder.ts",
+    "tools/norn-ts/fixtures/flows/invalid/unbounded-retry.builder.ts",
+    "tools/norn-ts/fixtures/flows/invalid/undeclared-read.builder.ts",
+    "tools/norn-ts/fixtures/flows/invalid/undeclared-tag.builder.ts",
+    "tools/norn-ts/fixtures/flows/invalid/wrong-input.builder.ts",
+    "tools/norn-ts/fixtures/flows/retry-timer.builder.ts",
+    "tools/norn-ts/fixtures/flows/retry-timer.source.ts",
+    "tools/norn-ts/fixtures/flows/route.builder.ts",
+    "tools/norn-ts/fixtures/flows/route.source.ts",
+    "tools/norn-ts/fixtures/flows/sequence.builder.ts",
+    "tools/norn-ts/fixtures/flows/sequence.source.ts",
+    "tools/norn-ts/fixtures/flows/support/billing.builder.ts",
+    "tools/norn-ts/fixtures/flows/support/billing.source.ts",
+    "tools/norn-ts/fixtures/flows/terminal-fact.builder.ts",
+    "tools/norn-ts/fixtures/flows/terminal-fact.source.ts",
+    "tools/norn-ts/fixtures/flows/typed-failure.builder.ts",
+    "tools/norn-ts/fixtures/flows/typed-failure.source.ts",
+    "tools/norn-ts/fixtures/packs/billing/retry-timer.ts",
+    "tools/norn-ts/fixtures/packs/billing/sequence.ts",
+    "tools/norn-ts/fixtures/vertical/invalid/arbitrary-callback.ts",
+    "tools/norn-ts/fixtures/vertical/invalid/proxy-truthiness.ts",
+    "tools/norn-ts/fixtures/vertical/route-message.builder.ts",
+    "tools/norn-ts/fixtures/vertical/route-message.source.ts",
+    "tools/norn-ts/fixtures/vertical/support/classifier.builder.ts",
+    "tools/norn-ts/fixtures/vertical/support/classifier.source.ts",
+    "tools/norn-ts/package.json",
+    "tools/norn-ts/profile/norn-authoring.d.ts",
+    "verification/kernel-l1/Audit.lean",
+    "verification/kernel-l1/Reference.lean",
+    "verification/kernel-l1/VersionProof.lean",
+    "verification/kernel-l1/version_kani.rs",
+    "verification/kernel-l1/version_verus.rs"
+  ]
+}

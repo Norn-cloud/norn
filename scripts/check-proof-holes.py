@@ -9,9 +9,10 @@ import re
 import sys
 from pathlib import Path
 
+import coverage_manifest
+
 
 ROOT = Path(__file__).resolve().parents[1]
-COVERAGE = ROOT / "verification/coverage-v1/coverage.json"
 ASSUMPTIONS = ROOT / "verification/coverage-v1/trusted-assumptions.json"
 LEAN_ROOT = ROOT / "verification"
 FSTAR_ROOT = ROOT / "verification/stripmine-2026-08-22/proofs/fstar"
@@ -224,7 +225,7 @@ def main() -> int:
     parser.add_argument("--fstar-generated", action="append", default=[], type=Path)
     args = parser.parse_args()
     run_lexer_canaries()
-    coverage = json.loads(COVERAGE.read_text(encoding="utf-8"))
+    coverage = coverage_manifest.load()
     assumptions = json.loads(ASSUMPTIONS.read_text(encoding="utf-8"))
     if assumptions.get("schemaVersion") != "norn.verification.trusted-assumptions.v1":
         fail("trusted-assumptions.json has the wrong schemaVersion")

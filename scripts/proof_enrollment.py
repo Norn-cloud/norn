@@ -13,6 +13,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import coverage_manifest
+
 ROOT = Path(__file__).resolve().parents[1]
 EXECUTABLE_SUFFIXES = {
     ".rs", ".ts", ".tsx", ".js", ".jsx", ".cjs", ".mjs", ".py", ".pyw",
@@ -148,7 +150,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT, help="candidate checked only as data by this validator")
     root = parser.parse_args().root.resolve()
-    coverage = json.loads((root / "verification/coverage-v1/coverage.json").read_text())
+    coverage = coverage_manifest.load(root / "verification/coverage-v1/manifest")
     gates = json.loads((root / "verification/coverage-v1/promoted-gates.json").read_text())
     present = validate(root, coverage, gates)
     print(f"exact source enrollment: {len(discover_sources(root))} files, {len(coverage['subsystems'])} subsystems; held domains present: {sorted(present)}")

@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import coverage_manifest
 from verification_attestation import (
     canonical_command,
     collect_git_identity,
@@ -23,7 +24,7 @@ from verification_attestation import (
 
 ROOT = Path(__file__).resolve().parents[1]
 IGNORED_EVIDENCE_DIRS = {".git", ".turbo", "__pycache__", "node_modules", "target"}
-CANONICAL_COVERAGE = ROOT / "verification/coverage-v1/coverage.json"
+CANONICAL_COVERAGE = coverage_manifest.COVERAGE
 CANONICAL_GATE_MANIFEST = (
     ROOT / "verification/coverage-v1/promoted-gates.json"
 )
@@ -271,7 +272,7 @@ def main() -> int:
         )
     reject_ambient_input_overrides()
     run("python3", relative(CANONICAL_COVERAGE_VALIDATOR))
-    coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+    coverage = coverage_manifest.load(coverage_path)
     gates = parse_passed(passed_path)
     gate_manifest_path = ROOT / coverage["promotedGateManifest"]
     if gate_manifest_path.resolve() != CANONICAL_GATE_MANIFEST.resolve():
@@ -380,7 +381,7 @@ def main() -> int:
         "statusDefinitions": coverage["statusDefinitions"],
         "coverageManifest": {
             "path": relative(coverage_path),
-            "sha256": sha256(coverage_path),
+            "sha256": coverage_manifest.digest(coverage_path),
         },
         "gateManifest": {
             "path": relative(gate_manifest_path),
