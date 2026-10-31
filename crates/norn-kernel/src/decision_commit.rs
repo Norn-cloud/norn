@@ -419,7 +419,6 @@ impl<'a> TypeCatalog<'a> {
         Ok(declared || temporal)
     }
 
-    /// Whether the type or any ancestor is append-only.
     pub(crate) fn immutable(&self, object_type: &ObjectTypeName) -> bool {
         self.ancestry(object_type)
             .iter()
