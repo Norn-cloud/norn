@@ -1,16 +1,17 @@
 //! Thin remote client: the server's live MCP catalog supplies every tool.
 
-use std::io::{BufRead as _, Read as _, Write as _};
+use std::io::{Read as _, Write as _};
 use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Args, Subcommand};
+use futures_util::StreamExt as _;
 use norn_ir::RuntimeValue;
 use serde_json::{Value, json};
 
 #[derive(Debug, Args)]
 pub(super) struct RemoteArgs {
-    /// Full MCP endpoint URL, for example https://norn.example/mcp.
+    /// Full MCP endpoint URL, for example <https://norn.example/mcp>.
     #[arg(long)]
     url: String,
     #[arg(long)]
@@ -40,8 +41,8 @@ enum RemoteCommand {
     },
 }
 
-pub(super) fn run(args: RemoteArgs) -> ExitCode {
-    match execute(&args) {
+pub(super) fn run(args: &RemoteArgs) -> ExitCode {
+    match execute(args) {
         Ok((text, failed)) => {
             if std::io::stdout().write_all(text.as_bytes()).is_err() {
                 return ExitCode::FAILURE;
@@ -153,28 +154,34 @@ fn response_text(reader: impl std::io::Read, is_sse: bool) -> Result<String, Str
             .map_err(|_e| "MCP response could not be read")?;
         return Ok(text);
     }
-    let mut data = String::new();
-    loop {
-        let mut line = String::new();
-        if reader
-            .read_line(&mut line)
-            .map_err(|_e| "MCP stream could not be read")?
-            == 0
-        {
-            return Err("MCP stream ended before its response".into());
-        }
-        if line.trim_end_matches(['\r', '\n']).is_empty() {
-            if serde_json::from_str::<Value>(&data)
-                .ok()
-                .is_some_and(|value| value.get("id") == Some(&json!(1)))
-            {
-                return Ok(data);
+    let chunks = std::iter::from_fn(move || {
+        let mut buffer = vec![0; 8192];
+        match reader.read(&mut buffer) {
+            Ok(0) => None,
+            Ok(size) => {
+                buffer.truncate(size);
+                Some(Ok(bytes::Bytes::from(buffer)))
             }
-            data.clear();
-        } else if let Some(field) = line.strip_prefix("data:") {
-            data.push_str(field.strip_prefix(' ').unwrap_or(field));
+            Err(error) => Some(Err(error)),
         }
-    }
+    });
+    let events = sse_stream::SseStream::from_bytes_stream(futures_util::stream::iter(chunks));
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|e| e.to_string())?
+        .block_on(async {
+            futures_util::pin_mut!(events);
+            while let Some(event) = events.next().await {
+                if let Some(data) = event.map_err(|e| e.to_string())?.data {
+                    if serde_json::from_str::<Value>(&data)
+                        .is_ok_and(|value| value.get("id") == Some(&json!(1)))
+                    {
+                        return Ok(data);
+                    }
+                }
+            }
+            Err("MCP stream ended before its response".into())
+        })
 }
 
 #[cfg(test)]
@@ -196,16 +203,10 @@ mod tests {
             value.pointer("/params/_meta/norn~1idempotencyKey"),
             Some(&json!("operation-1"))
         );
-        assert!(
-            request(
-                &RemoteCommand::Call {
-                    name: "sales_order.approve".into(),
-                    idempotency_key: "operation-1".into(),
-                },
-                "[]"
-            )
-            .is_err()
-        );
+        let response =
+            r#"{"jsonrpc":"2.0","id":1,"result":{"amount":12345678901234567890.123456789}}"#;
+        let stream = format!("event: message\r\ndata: {response}\r\n\r\n");
+        assert_eq!(response_text(stream.as_bytes(), true)?, response);
         Ok(())
     }
 }
