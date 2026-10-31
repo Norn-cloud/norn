@@ -1374,6 +1374,27 @@
         "seal gate"
       ],
       "status": "specified"
+    },
+    {
+      "id": "INV-WELLDB-ORACLE-PARITY",
+      "domain": "welldb",
+      "priority": "P1",
+      "kind": "safety",
+      "statement": "Within each declared supported profile, incremental view results agree with the canonical batch oracle at the same epoch and frontier.",
+      "owner": "welldb",
+      "assumptions": [
+        "The host supplies authorized, complete ordered deltas.",
+        "Simulation and test bounds are stated by each executable test."
+      ],
+      "sources": [],
+      "checkers": [],
+      "counterexamples": [
+        "A retained incremental result differs from the batch oracle after a delta or epoch change."
+      ],
+      "implementation_bindings": [
+        "WellDB incremental and oracle adapters"
+      ],
+      "status": "planned"
     }
   ]
 }

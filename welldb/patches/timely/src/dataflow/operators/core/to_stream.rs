@@ -1,0 +1,98 @@
+//! Conversion to the `Stream` type from iterators.
+
+use crate::container::{CapacityContainerBuilder, SizableContainer, PushInto};
+use crate::progress::Timestamp;
+use crate::{Container, ContainerBuilder};
+use crate::dataflow::operators::generic::operator::source;
+use crate::dataflow::{Stream, Scope};
+
+/// Converts to a timely [Stream], using a container builder.
+pub trait ToStreamBuilder {
+    /// The item type produced by this iterator-like source.
+    type Item;
+
+    /// Converts to a timely [Stream], using the supplied container builder type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use timely::dataflow::operators::core::{ToStreamBuilder, Capture};
+    /// use timely::dataflow::operators::core::capture::Extract;
+    /// use timely::container::CapacityContainerBuilder;
+    ///
+    /// let (data1, data2) = timely::example(|scope| {
+    ///     let data1 = (0..3).to_stream_with_builder::<_, CapacityContainerBuilder<_>>(scope)
+    ///         .container::<Vec<_>>()
+    ///         .capture();
+    ///     let data2 = vec![0,1,2].to_stream_with_builder::<_, CapacityContainerBuilder<_>>(scope)
+    ///         .container::<Vec<_>>()
+    ///         .capture();
+    ///     (data1, data2)
+    /// });
+    ///
+    /// assert_eq!(data1.extract(), data2.extract());
+    /// ```
+    fn to_stream_with_builder<'scope, T: Timestamp, CB: ContainerBuilder>(self, scope: Scope<'scope, T>) -> Stream<'scope, T, CB::Container>
+    where
+        CB: PushInto<Self::Item>;
+}
+
+impl<I: IntoIterator+'static> ToStreamBuilder for I {
+    type Item = I::Item;
+
+    fn to_stream_with_builder<'scope, T: Timestamp, CB: ContainerBuilder>(self, scope: Scope<'scope, T>) -> Stream<'scope, T, CB::Container>
+    where
+        CB: PushInto<I::Item>
+    {
+        source::<_, CB, _, _>(scope, "ToStreamBuilder", |capability, info| {
+
+            // Acquire an activator, so that the operator can rescheduled itself.
+            let activator = scope.activator_for(info.address);
+
+            let mut iterator = self.into_iter().fuse();
+            let mut capability = Some(capability);
+
+            move |output| {
+
+                if let Some(element) = iterator.next() {
+                    let mut session = output.session_with_builder(capability.as_ref().unwrap());
+                    session.give(element);
+                    let n = 256 * crate::container::buffer::default_capacity::<I::Item>();
+                    session.give_iterator(iterator.by_ref().take(n - 1));
+                    activator.activate();
+                }
+                else {
+                    capability = None;
+                }
+            }
+        })
+    }
+}
+
+/// Converts to a timely [Stream]. Equivalent to [`ToStreamBuilder`] but
+/// uses a [`CapacityContainerBuilder`].
+pub trait ToStream<C> {
+    /// Converts to a timely [Stream].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use timely::dataflow::operators::core::{ToStream, Capture};
+    /// use timely::dataflow::operators::core::capture::Extract;
+    ///
+    /// let (data1, data2) = timely::example(|scope| {
+    ///     let data1 = (0..3).to_stream(scope).container::<Vec<_>>().capture();
+    ///     let data2 = vec![0,1,2].to_stream(scope).container::<Vec<_>>().capture();
+    ///     (data1, data2)
+    /// });
+    ///
+    /// assert_eq!(data1.extract(), data2.extract());
+    /// ```
+    fn to_stream<'scope, T: Timestamp>(self, scope: Scope<'scope, T>) -> Stream<'scope, T, C>;
+}
+
+impl<C: Container + SizableContainer, I: IntoIterator+'static> ToStream<C> for I where C: PushInto<I::Item> {
+    fn to_stream<'scope, T: Timestamp>(self, scope: Scope<'scope, T>) -> Stream<'scope, T, C> {
+        ToStreamBuilder::to_stream_with_builder::<_, CapacityContainerBuilder<C>>(self, scope)
+    }
+}

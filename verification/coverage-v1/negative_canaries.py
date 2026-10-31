@@ -49,6 +49,7 @@ import quint_apalache  # noqa: E402  (shared Quint/Apalache execution policy)
 
 CANONICAL_CENTRAL_OBLIGATION_IDS = frozenset(
     {
+        "INV-WELLDB-ORACLE-PARITY",
         "INV-AUTH-ATOMIC-COMMIT",
         "INV-AUTH-STALE-REJECT",
         "INV-AUTH-IDEMPOTENT-RESULT",
