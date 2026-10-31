@@ -49,21 +49,25 @@ impl std::fmt::Display for CatalogError {
 
 impl std::error::Error for CatalogError {}
 
-/// Project the catalog of `set`: its candidates and the installed base
-/// artifacts they reference. See the module docs.
+/// Project the catalog of `set`: its candidates and every installed `base`
+/// artifact they reach through references (envelope dependencies, pack
+/// members, and action effect pins), transitively. See the module docs.
 ///
 /// # Errors
 ///
 /// [`CatalogError::Hash`] if an artifact's semantic hash cannot be computed.
-pub fn project(set: &ResolvedArtifactSet<'_>) -> Result<DefinitionCatalog, CatalogError> {
+pub fn project(
+    set: &ResolvedArtifactSet<'_>,
+    base: &[ArtifactEnvelope],
+) -> Result<DefinitionCatalog, CatalogError> {
     let all: Vec<(&ArtifactEnvelope, bool)> = set
         .artifacts
         .iter()
         .map(|artifact| (*artifact, true))
         .chain(
-            set.base_dependencies
-                .iter()
-                .map(|artifact| (*artifact, false)),
+            base_closure(set, base)
+                .into_iter()
+                .map(|artifact| (artifact, false)),
         )
         .collect();
     let mut rows = Rows::default();
@@ -87,7 +91,7 @@ pub fn project(set: &ResolvedArtifactSet<'_>) -> Result<DefinitionCatalog, Catal
         match &artifact.payload {
             ArtifactPayload::Action(_) => rows.action(artifact, &types),
             ArtifactPayload::Mapping(_) => rows.mapping(artifact, &types),
-            ArtifactPayload::Law(_) => rows.law(artifact),
+            ArtifactPayload::Law(_) => rows.law(artifact, &types, &envelopes),
             // Entities were projected above; decide graphs below. The other
             // kinds declare no catalog member yet.
             ArtifactPayload::Entity(_)
@@ -109,6 +113,102 @@ pub fn project(set: &ResolvedArtifactSet<'_>) -> Result<DefinitionCatalog, Catal
         }
     }
     Ok(rows.finish())
+}
+
+/// The exact `(artifactId, version)` references of `artifact`: resolved
+/// envelope dependencies, composition pack members, and its action effect's
+/// pinned entity.
+fn references(artifact: &ArtifactEnvelope) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = artifact
+        .dependencies
+        .iter()
+        .filter_map(|dependency| {
+            Some((dependency.artifact_id.clone(), dependency.version.clone()?))
+        })
+        .collect();
+    match &artifact.payload {
+        ArtifactPayload::BusinessPack(_) => {
+            if let Ok(BusinessPackRoot::Composition(pack)) =
+                serde_json::from_value(payload_json(artifact))
+            {
+                out.extend(
+                    pack.artifacts
+                        .iter()
+                        .map(|member| (member.artifact_id.clone(), member.version.clone())),
+                );
+            }
+        }
+        ArtifactPayload::Action(_) => {
+            if let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact))
+                && let Some(program) = &action.effect_program
+            {
+                let target = program.target();
+                out.push((
+                    target.entity_artifact_id.to_owned(),
+                    target.entity_artifact_version.to_owned(),
+                ));
+            }
+        }
+        ArtifactPayload::Entity(_)
+        | ArtifactPayload::Relation(_)
+        | ArtifactPayload::Rule(_)
+        | ArtifactPayload::Connector(_)
+        | ArtifactPayload::Widget(_)
+        | ArtifactPayload::Customization(_)
+        | ArtifactPayload::Setting(_)
+        | ArtifactPayload::Policy(_)
+        | ArtifactPayload::Derived(_)
+        | ArtifactPayload::SourceSchema(_)
+        | ArtifactPayload::Mapping(_)
+        | ArtifactPayload::Law(_) => {}
+    }
+    out
+}
+
+/// The base artifacts the candidates reach, transitively, starting from
+/// the ones they reference directly.
+fn base_closure<'a>(
+    set: &ResolvedArtifactSet<'a>,
+    base: &'a [ArtifactEnvelope],
+) -> Vec<&'a ArtifactEnvelope> {
+    let candidates: BTreeSet<(&str, &str)> = set
+        .artifacts
+        .iter()
+        .map(|artifact| (artifact.artifact_id.as_str(), artifact.version.as_str()))
+        .collect();
+    let mut included: Vec<&'a ArtifactEnvelope> = Vec::new();
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut frontier: Vec<&'a ArtifactEnvelope> = set
+        .artifacts
+        .iter()
+        .chain(&set.base_dependencies)
+        .copied()
+        .collect();
+    while let Some(artifact) = frontier.pop() {
+        let mut next = references(artifact);
+        if !candidates.contains(&(artifact.artifact_id.as_str(), artifact.version.as_str())) {
+            next.push((artifact.artifact_id.clone(), artifact.version.clone()));
+        }
+        for (id, version) in next {
+            if candidates.contains(&(id.as_str(), version.as_str()))
+                || seen.contains(&(id.clone(), version.clone()))
+            {
+                continue;
+            }
+            if let Some(found) = base
+                .iter()
+                .find(|other| other.artifact_id == id && other.version == version)
+            {
+                seen.insert((id, version));
+                included.push(found);
+                frontier.push(found);
+            }
+        }
+    }
+    included.sort_by(|left, right| {
+        (&left.artifact_id, &left.version).cmp(&(&right.artifact_id, &right.version))
+    });
+    included
 }
 
 #[derive(Default)]
@@ -576,8 +676,28 @@ impl Rows {
         }
     }
 
-    fn law(&mut self, artifact: &ArtifactEnvelope) {
+    /// A law whose subject or binding the set does not define has no row:
+    /// the law check (`law.model.unknown_binding`) already refuses it.
+    fn law(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        types: &BTreeMap<String, ArtifactKey>,
+        all: &[&ArtifactEnvelope],
+    ) {
         let Ok(law) = serde_json::from_value::<LawIR>(payload_json(artifact)) else {
+            return;
+        };
+        let type_of = |name: &str| {
+            types.get(name).map(|owner| {
+                member_of(
+                    owner,
+                    Member::Type {
+                        type_name: name.to_owned(),
+                    },
+                )
+            })
+        };
+        let Some(subject) = type_of(&law.subject) else {
             return;
         };
         let binds = match law.response {
@@ -586,23 +706,45 @@ impl Rows {
                 object_type,
                 property,
                 transition_id,
-            } => Some(LawBinding::Transition {
-                type_name: object_type,
-                lifecycle: property,
-                transition: transition_id,
-            }),
+            } => {
+                let Some(owner) = types.get(&object_type) else {
+                    return;
+                };
+                Some(LawBinding::Transition {
+                    target: member_of(
+                        owner,
+                        Member::Transition {
+                            type_name: object_type,
+                            lifecycle: property,
+                            transition: transition_id,
+                        },
+                    ),
+                })
+            }
             LawResponse::Invariant {
                 object_type,
                 invariant_id,
-            } => Some(LawBinding::Invariant {
-                type_name: object_type,
-                invariant: invariant_id,
-            }),
-            LawResponse::Action { artifact_id } => Some(LawBinding::Action { artifact_id }),
+            } => {
+                let Some(owner) = type_of(&object_type) else {
+                    return;
+                };
+                Some(LawBinding::Invariant {
+                    owner,
+                    invariant: invariant_id,
+                })
+            }
+            LawResponse::Action { artifact_id } => {
+                let Some(action) = all.iter().find(|other| other.artifact_id == artifact_id) else {
+                    return;
+                };
+                Some(LawBinding::Action {
+                    target: at(action, Member::Artifact {}),
+                })
+            }
         };
         self.laws.insert(LawRow {
             at: at(artifact, Member::Law { law: law.id }),
-            subject: law.subject,
+            subject,
             binds,
         });
     }

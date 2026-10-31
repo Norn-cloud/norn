@@ -28,7 +28,8 @@
 //! - **DependsOn**: resolved envelope dependencies and pack membership;
 //! - **Mapping**: what each object map of a `mapping` artifact observes into
 //!   which target member (observed, never authored);
-//! - **Law**: each law's subject and response binding.
+//! - **Law**: each law's subject and response binding, pinned like every
+//!   other reference.
 //!
 //! Rows are sorted and unique, so two projections of the same set are equal
 //! and serialize to the same bytes.
@@ -303,15 +304,16 @@ pub struct MappingRow {
     pub rule: MapRule,
 }
 
-/// **Law**: one law and the definition its response binds.
+/// **Law**: one law, its subject, and the definition its response binds,
+/// each pinned to the artifact that declares it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LawRow {
     pub at: MemberRef,
     /// The subject object type.
-    pub subject: String,
-    /// The bound transition, invariant owner, or action; absent for a
-    /// predicate response.
+    pub subject: MemberRef,
+    /// The bound transition, invariant, or action; absent for a predicate
+    /// response.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binds: Option<LawBinding>,
 }
@@ -325,19 +327,13 @@ pub struct LawRow {
     deny_unknown_fields
 )]
 pub enum LawBinding {
-    /// A lifecycle transition of a type.
-    Transition {
-        type_name: String,
-        lifecycle: String,
-        transition: String,
-    },
-    /// An invariant of a type.
-    Invariant {
-        type_name: String,
-        invariant: String,
-    },
+    /// A lifecycle transition (a transition row).
+    Transition { target: MemberRef },
+    /// An invariant of the type `owner` (a type row) declares; invariants
+    /// have no rows of their own.
+    Invariant { owner: MemberRef, invariant: String },
     /// An action artifact.
-    Action { artifact_id: String },
+    Action { target: MemberRef },
 }
 
 /// The catalog: every relation over one admitted artifact set. See the
