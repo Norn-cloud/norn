@@ -7,6 +7,7 @@ export const SalesOrder = Norn.type({
   name: "alpha.SalesOrder", title: "Alpha sales order", version: "0.1.0",
   extends: "commerce.SalesOrder",
   properties: Schema.Struct({
+    id: Schema.String,
     status: Schema.Literals(["draft", "submitted", "approved", "cancelled"]),
     invoice_count: Schema.Int,
     invoiced_total: Norn.decimal(2),
