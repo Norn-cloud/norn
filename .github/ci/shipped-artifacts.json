@@ -29944,7 +29944,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "42162c0c3cb3df3ac85412b4fffc23015ca1e37f6bc74b2e3355180aced1fc73",
+      "sha256": "43c4d5bfa4ae19520436dc1300210f09c1d4ee5bc8095637b20a8f345487ac5a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32617,6 +32617,114 @@
     {
       "path": "verification/stripmine-2026-08-22/sources.json",
       "sha256": "c3d661f7048807cd7d6d0cec3196ed87839160ff1daf1ba0ecae6587c466d3bc",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/Cargo.lock",
+      "sha256": "493845871deac25628abc997f40c25bda66a47ba0d2ce0128b0a752cf1c5b11f",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/Cargo.toml",
+      "sha256": "7f134c198447cbc678699d777747c3fee9fcbb0a983894ba7dab0fac369b98ab",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/Cargo.toml",
+      "sha256": "cc442007edac71580578454f84b4802867b2d4263786ec327fbf42f893b6f9d6",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/src/arithmetic.rs",
+      "sha256": "b6ecb149cb0769f0fe2e0f158c0dd7df583c30cfd171cb429a5169d9188f8864",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/src/lib.rs",
+      "sha256": "df253352799278d3810eb2c5604d1522ba6f4fd37170e254311b7885184ce5cf",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/tests/arithmetic.rs",
+      "sha256": "8545f154bf2a48f26af6b371a5eaf92cf12c15493ac470a1373987a91daec162",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

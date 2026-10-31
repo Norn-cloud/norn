@@ -118,4 +118,3 @@ impl Ord for Decimal {
         }
     }
 }
-
