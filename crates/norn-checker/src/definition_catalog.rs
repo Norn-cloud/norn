@@ -38,6 +38,7 @@ use norn_ir::{
 
 use crate::action_set::{Admission, AdmittedType};
 use crate::entity_artifacts::{Decoded, decode_v2};
+use crate::entity_lowering::{EntityForm, entity_object_type};
 use crate::lifecycle_writes::{FactSchema, fact_decisions};
 use crate::receipt::{ArtifactRef, ReceiptError};
 
@@ -211,7 +212,17 @@ fn lifecycle_states(property: &Property, lifecycles: &[Lifecycle]) -> Option<Lif
 
 impl Rows {
     fn entity(&mut self, artifact: &ArtifactEnvelope) {
-        let Decoded::Root(root) = decode_v2(artifact) else {
+        let decoded = decode_v2(artifact);
+        // An `EntityIR` v1 type is projected through the checker's own
+        // lowering, the view admission uses for it.
+        if let (Decoded::NotV2, ArtifactPayload::Entity(payload)) = (&decoded, &artifact.payload)
+            && let Ok(Some(object)) = entity_object_type(payload)
+            && object.form == EntityForm::V1
+        {
+            self.object_type(artifact, &object.root.object_type);
+            return;
+        }
+        let Decoded::Root(root) = decoded else {
             return;
         };
         match *root {
