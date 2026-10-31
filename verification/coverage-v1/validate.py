@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import shlex
@@ -422,6 +423,23 @@ echo "$plan"''',
         "test": "bash scripts/ci/core.sh test ${{ matrix.shard }}",
         "phase": "bash scripts/ci/core.sh ${{ matrix.phase }}",
     }
+    checkout = {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "with": {"persist-credentials": False, "fetch-depth": 0}}
+    setup = [
+        {"uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+         "with": {"toolchain": "1.98.0", "components": "rustfmt, clippy", "targets": "wasm32-unknown-unknown"}},
+        {"uses": "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "with": {"bun-version": "1.3.14"}},
+        {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",
+         "with": {"version": "v0.19.0"}},
+        {"uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
+         "with": {"cache-targets": False, "shared-key": "cargo-registry",
+                  "save-if": "${{ github.ref == 'refs/heads/main' }}"}},
+        {"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+         "with": {"path": "~/.bun/install/cache",
+                  "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}"}},
+    ]
+    nextest = {"uses": "taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32",
+               "with": {"tool": "nextest@0.9.150"}}
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
     for name, command in required_runs.items():
         job = jobs.get(name, {})
@@ -433,6 +451,13 @@ echo "$plan"''',
         require(job.get("env", {}) == job_env[name],
                 f"{name}: environment must bind the gate plan")
         job_steps = job.get("steps", [])
+        preparation = [checkout] + ([] if name == "plan" else copy.deepcopy(setup))
+        if name in {"test", "phase"}:
+            preparation.append(nextest)
+        if name == "phase":
+            preparation[4]["with"]["shared-key"] = "cargo-${{ (matrix.phase == 'guards' || matrix.phase == 'integration') && matrix.phase || 'registry' }}"
+        require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
+                f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
         require(len(checkouts) == 1 and "if" not in checkouts[0]
                 and not checkouts[0].get("continue-on-error")

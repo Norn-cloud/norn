@@ -504,6 +504,12 @@ def workflow_context_canaries(source: str) -> None:
             raise AssertionError(f"workflow context mutation passed: {label}")
 
         for name in ("core", "plan", "test", "phase"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["steps"].insert(-1, {
+                "uses": "actions/github-script@" + "a" * 40,
+                "with": {"script": "core.exportVariable('NORN_CI_PACKAGES', 'norn-canonical')"},
+            })
+            rejected(f"{name} additional pinned preparation action", document)
             for key, value in (("ref", "main"), ("repository", "other/repository"),
                                ("path", "other-checkout"), ("persist-credentials", True),
                                ("persist-credentials", 0), ("fetch-depth", False)):
@@ -514,6 +520,9 @@ def workflow_context_canaries(source: str) -> None:
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
                 rejected(f"{name} step environment {key}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["steps"][2]["with"]["bun-version"] = "latest"
+        rejected("altered preparation action inputs", document)
         for location in ("workflow", "job", "step"):
             document = copy.deepcopy(workflow)
             target = (document if location == "workflow" else document["jobs"]["full"]
