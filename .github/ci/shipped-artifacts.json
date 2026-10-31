@@ -32652,7 +32652,7 @@
     },
     {
       "path": "welldb/Cargo.toml",
-      "sha256": "7f134c198447cbc678699d777747c3fee9fcbb0a983894ba7dab0fac369b98ab",
+      "sha256": "5180b21aee9dbb0a73a539172c6860a01afe612b3a739c9b9896281302507b34",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
