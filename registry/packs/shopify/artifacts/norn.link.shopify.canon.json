@@ -24,13 +24,13 @@
         ]
       },
       {
-        "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.order.claim",
+        "confidenceBasisPoints": 6500,
+        "correspondenceId": "corr.order.receivable",
         "evidenceRefs": [
           "source.shopify-admin"
         ],
-        "fromTermId": "norn.shopify.order",
-        "justification": "Shopify has no invoice: totalOutstanding makes the same order carry the receivable.",
+        "fromTermId": "norn.shopify.order.receivable",
+        "justification": "The receivable view is the claim the order gives rise to; the order itself stays a commitment (lead ruling 2026-10-31, Ruling case on #74).",
         "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
@@ -39,18 +39,18 @@
         ]
       },
       {
-        "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.order.line.item",
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.order.gives.rise.to",
         "evidenceRefs": [
           "source.shopify-admin"
         ],
-        "fromTermId": "norn.shopify.order.line.item",
-        "justification": "Order lines are what the buyer is charged for.",
+        "fromTermId": "norn.shopify.order.gives.rise.to",
+        "justification": "Links each order to the receivable view it gives rise to.",
         "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
-          "norn.finance.invoice.line"
+          "norn.core.commitment.gives.rise.to"
         ]
       },
       {
@@ -136,7 +136,7 @@
         ],
         "fromTermId": "norn.shopify.order.customer",
         "justification": "The ordering customer.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -151,7 +151,7 @@
         ],
         "fromTermId": "norn.shopify.order.total.price",
         "justification": "The order total.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -160,13 +160,13 @@
       },
       {
         "confidenceBasisPoints": 6500,
-        "correspondenceId": "corr.order.total.outstanding",
+        "correspondenceId": "corr.order.receivable.total.outstanding",
         "evidenceRefs": [
           "source.shopify-admin"
         ],
-        "fromTermId": "norn.shopify.order.total.outstanding",
-        "justification": "The amount still owed; a claim property on the order.",
-        "relation": "equivalent",
+        "fromTermId": "norn.shopify.order.receivable.total.outstanding",
+        "justification": "The amount still owed on the receivable.",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -175,13 +175,13 @@
       },
       {
         "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.order.subtotal.price",
+        "correspondenceId": "corr.order.receivable.subtotal.price",
         "evidenceRefs": [
           "source.shopify-admin"
         ],
-        "fromTermId": "norn.shopify.order.subtotal.price",
+        "fromTermId": "norn.shopify.order.receivable.subtotal.price",
         "justification": "Total before taxes, after discounts.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -190,13 +190,13 @@
       },
       {
         "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.order.total.tax",
+        "correspondenceId": "corr.order.receivable.total.tax",
         "evidenceRefs": [
           "source.shopify-admin"
         ],
-        "fromTermId": "norn.shopify.order.total.tax",
+        "fromTermId": "norn.shopify.order.receivable.total.tax",
         "justification": "Total tax.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -205,107 +205,17 @@
       },
       {
         "confidenceBasisPoints": 7000,
-        "correspondenceId": "corr.order.currency.code",
+        "correspondenceId": "corr.order.receivable.currency.code",
         "evidenceRefs": [
           "source.shopify-admin"
         ],
-        "fromTermId": "norn.shopify.order.currency.code",
+        "fromTermId": "norn.shopify.order.receivable.currency.code",
         "justification": "The shop currency of the amounts.",
-        "relation": "equivalent",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.finance.invoice.currency"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 5500,
-        "correspondenceId": "corr.order.display.financial.status",
-        "evidenceRefs": [
-          "source.shopify-admin"
-        ],
-        "fromTermId": "norn.shopify.order.display.financial.status",
-        "justification": "Paid, partly paid or pending follow from the outstanding amount.",
-        "relation": "derived",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.finance.invoice.amount.outstanding"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.order.display.fulfillment.status",
-        "evidenceRefs": [
-          "source.shopify-admin"
-        ],
-        "fromTermId": "norn.shopify.order.display.fulfillment.status",
-        "justification": "Derived from how much has shipped.",
-        "relation": "derived",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.commerce.order.state"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 7000,
-        "correspondenceId": "corr.order.line.item.variant",
-        "evidenceRefs": [
-          "source.shopify-admin"
-        ],
-        "fromTermId": "norn.shopify.order.line.item.variant",
-        "justification": "The purchased variant.",
-        "relation": "equivalent",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.finance.invoice.line.resource"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 7500,
-        "correspondenceId": "corr.order.line.item.quantity",
-        "evidenceRefs": [
-          "source.shopify-admin"
-        ],
-        "fromTermId": "norn.shopify.order.line.item.quantity",
-        "justification": "Purchased quantity.",
-        "relation": "equivalent",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.finance.invoice.line.quantity"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 6500,
-        "correspondenceId": "corr.order.line.item.original.total",
-        "evidenceRefs": [
-          "source.shopify-admin"
-        ],
-        "fromTermId": "norn.shopify.order.line.item.original.total",
-        "justification": "Line total before discounts.",
-        "relation": "equivalent",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.finance.invoice.line.amount"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.order.mark.as.paid",
-        "evidenceRefs": [
-          "source.shopify-admin"
-        ],
-        "fromTermId": "norn.shopify.order.mark.as.paid",
-        "justification": "Marking as paid records a payment received elsewhere.",
         "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
-          "norn.finance.payment.post"
+          "norn.finance.invoice.currency"
         ]
       }
     ],
@@ -317,6 +227,41 @@
     "packKind": "link",
     "packVersion": "0.1",
     "residuals": [
+      {
+        "note": "Authorised, voided, expired and refunded states come from gateway events the canon has no hold or refund term for; outstanding amount alone does not produce them.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.order.receivable.display.financial.status"
+      },
+      {
+        "note": "On-hold, scheduled and in-progress states come from fulfilment workflow the canon order state does not model.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.order.display.fulfillment.status"
+      },
+      {
+        "note": "A line of a commitment; the canon has no commitment line, and Shopify has no invoice line.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.order.line.item"
+      },
+      {
+        "note": "Follows the order-line gap.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.order.line.item.variant"
+      },
+      {
+        "note": "Follows the order-line gap.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.order.line.item.quantity"
+      },
+      {
+        "note": "The total before discounts; also follows the order-line gap.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.order.line.item.original.total"
+      },
+      {
+        "note": "Marking as paid records that money arrived elsewhere; it does not post a payment to an immutable ledger.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.order.mark.as.paid"
+      },
       {
         "note": "The canon order has no placement time.",
         "reason": "canon_gap",

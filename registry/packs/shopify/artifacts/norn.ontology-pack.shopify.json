@@ -25,6 +25,20 @@
       {
         "confidenceBasisPoints": 9000,
         "evidenceRefs": [
+          "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Order"
+        ],
+        "externalIri": "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Order",
+        "justification": "The term names this Admin API object of the pinned version.",
+        "mappingId": "map.norn.shopify.order.receivable",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.shopify-admin",
+        "termId": "norn.shopify.order.receivable"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
           "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/LineItem"
         ],
         "externalIri": "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/LineItem",
@@ -148,6 +162,19 @@
             "valueType": "string"
           }
         ],
+        "shapeId": "shape.norn.shopify.order.receivable",
+        "termId": "norn.shopify.order.receivable"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
         "shapeId": "shape.norn.shopify.order.line.item",
         "termId": "norn.shopify.order.line.item"
       },
@@ -248,11 +275,19 @@
     ],
     "terms": [
       {
-        "definition": "Shopify's record of a customer's purchase, carrying both what was ordered and what is still owed.",
+        "definition": "Shopify's record of a customer's purchase: what was ordered.",
         "label": "Order",
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.shopify.order",
+        "termKind": "class"
+      },
+      {
+        "definition": "The receivable a Shopify order gives rise to: what the buyer still owes. Shopify stores it on the order; Norn models it as its own view (lead ruling 2026-10-31).",
+        "label": "Order (receivable view)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.receivable",
         "termKind": "class"
       },
       {
@@ -330,30 +365,30 @@
         "termKind": "property"
       },
       {
-        "definition": "The currencyCode field of order.",
-        "domainTermId": "norn.shopify.order",
-        "label": "currencyCode (order)",
+        "definition": "The currencyCode field of order.receivable.",
+        "domainTermId": "norn.shopify.order.receivable",
+        "label": "currencyCode (order.receivable)",
         "semanticAuthority": "semantic_only",
         "status": "active",
-        "termId": "norn.shopify.order.currency.code",
+        "termId": "norn.shopify.order.receivable.currency.code",
         "termKind": "property"
       },
       {
-        "definition": "The subtotalPriceSet field of order.",
-        "domainTermId": "norn.shopify.order",
-        "label": "subtotalPriceSet (order)",
+        "definition": "The subtotalPriceSet field of order.receivable.",
+        "domainTermId": "norn.shopify.order.receivable",
+        "label": "subtotalPriceSet (order.receivable)",
         "semanticAuthority": "semantic_only",
         "status": "active",
-        "termId": "norn.shopify.order.subtotal.price",
+        "termId": "norn.shopify.order.receivable.subtotal.price",
         "termKind": "property"
       },
       {
-        "definition": "The totalTaxSet field of order.",
-        "domainTermId": "norn.shopify.order",
-        "label": "totalTaxSet (order)",
+        "definition": "The totalTaxSet field of order.receivable.",
+        "domainTermId": "norn.shopify.order.receivable",
+        "label": "totalTaxSet (order.receivable)",
         "semanticAuthority": "semantic_only",
         "status": "active",
-        "termId": "norn.shopify.order.total.tax",
+        "termId": "norn.shopify.order.receivable.total.tax",
         "termKind": "property"
       },
       {
@@ -366,21 +401,30 @@
         "termKind": "property"
       },
       {
-        "definition": "The totalOutstandingSet field of order.",
-        "domainTermId": "norn.shopify.order",
-        "label": "totalOutstandingSet (order)",
+        "definition": "The totalOutstandingSet field of order.receivable.",
+        "domainTermId": "norn.shopify.order.receivable",
+        "label": "totalOutstandingSet (order.receivable)",
         "semanticAuthority": "semantic_only",
         "status": "active",
-        "termId": "norn.shopify.order.total.outstanding",
+        "termId": "norn.shopify.order.receivable.total.outstanding",
         "termKind": "property"
       },
       {
-        "definition": "The displayFinancialStatus field of order.",
-        "domainTermId": "norn.shopify.order",
-        "label": "displayFinancialStatus (order)",
+        "definition": "The displayFinancialStatus field of order.receivable.",
+        "domainTermId": "norn.shopify.order.receivable",
+        "label": "displayFinancialStatus (order.receivable)",
         "semanticAuthority": "semantic_only",
         "status": "active",
-        "termId": "norn.shopify.order.display.financial.status",
+        "termId": "norn.shopify.order.receivable.display.financial.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "The receivable view field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "receivable view (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.gives.rise.to",
         "termKind": "property"
       },
       {

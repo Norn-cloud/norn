@@ -18457,7 +18457,7 @@
     },
     {
       "path": "registry/packs/PROJECTION.md",
-      "sha256": "aa28a0ab7ba3492e51da4be90e093aa82b6f73423d5e4478354fdd38d3ae005a",
+      "sha256": "1cfab96d8c8ec934a85355ed7d1e0c58e7662f73709d2ca56918df0e7b337da5",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -18595,7 +18595,7 @@
     },
     {
       "path": "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
-      "sha256": "dfa17c83f78a68d1f85bd5957c48808e166d5c251fbadc1151bd512631525d0b",
+      "sha256": "def156608994094022730047ade4e98d0038a5d6ea32eb757828553a473008f2",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -18616,7 +18616,7 @@
     },
     {
       "path": "registry/packs/shopify/artifacts/norn.ontology-pack.shopify.json",
-      "sha256": "c5e4ef7ac1a4385f1773d25e1b0a760c9dad730b2156c3204218712bbdf83bed",
+      "sha256": "0ae463eb1b7a02194c8dd0bd26ab02dd6b90eaa79e67a6cff5caf2c1f1cbd62a",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
