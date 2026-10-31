@@ -154,3 +154,21 @@ fn each_table_binds_the_artifact_version_digest_and_stable_node() {
     assert_ne!(updated.tables[0].artifact.version, prior.version);
     assert_ne!(updated.tables[0].artifact.sha256, prior.sha256);
 }
+
+#[test]
+fn executable_unicode_spelling_has_a_distinct_protected_identity() {
+    let report = |literal: &str| {
+        let mut rule = table_rule();
+        rule["payload"]["graph"]["nodes"][1]["content"]["inputs"][0]
+            .as_object_mut().expect("input").remove("field");
+        rule["payload"]["graph"]["nodes"][1]["content"]["rules"][0]["condition"] =
+            json!(format!("len('{literal}') == 2"));
+        let checked = check(&[rule]);
+        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+        checked.analysis.expect("analysis").tables.remove(0)
+    };
+    let composed = report("é");
+    let decomposed = report("e\u{301}");
+    assert_eq!(composed.artifact, decomposed.artifact);
+    assert_ne!(composed.artifact_exact_digest, decomposed.artifact_exact_digest);
+}

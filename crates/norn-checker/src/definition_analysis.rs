@@ -25,6 +25,8 @@ pub enum Unknown {
 pub struct TableReport {
     /// Exact artifact id, version and Norn1 content digest.
     pub artifact: ArtifactRef,
+    /// Exact typed-envelope commitment; preserves executable Unicode spelling.
+    pub artifact_exact_digest: String,
     /// Stable table node identity inside that artifact.
     pub node_id: String,
     /// Exhaustive finite result, or an explicit reason for no conclusion.
@@ -79,6 +81,8 @@ fn analyze_tables(
         predecessors.entry(&edge.target_id).or_default().push(edge);
     }
     let identity = ArtifactRef::of(artifact).map_err(|_error| Unknown::ArtifactIdentity)?;
+    let exact = crate::obligations::exact_artifact_digest(artifact)
+        .map_err(|_error| Unknown::ArtifactIdentity)?;
     for node in &graph.nodes {
         let JdmNode::DecisionTableNode { id, content, .. } = node else {
             continue;
@@ -119,11 +123,13 @@ fn analyze_tables(
                 .len()
                 .saturating_add(identity.version.len())
                 .saturating_add(identity.sha256.len())
+                .saturating_add(exact.len())
                 .saturating_add(id.len())
                 .saturating_add(table_bytes(&evidence)),
         )?;
         reports.push(TableReport {
             artifact: identity.clone(),
+            artifact_exact_digest: exact.clone(),
             node_id: id.clone(),
             result: evidence,
         });
