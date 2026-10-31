@@ -196,22 +196,54 @@ fn cursor_refuses_a_backdated_lookup_even_when_the_snapshot_hash_is_unchanged() 
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
     let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
-    let first = store.commit(&batch(vec![put("proof.Item", "item", "one")])).expect("first").receipt().body.commit_seq;
-    store.commit(&batch(vec![put("proof.Item", "item", "two")])).expect("later version");
+    let first = store
+        .commit(&batch(vec![put("proof.Item", "item", "one")]))
+        .expect("first")
+        .receipt()
+        .body
+        .commit_seq;
+    store
+        .commit(&batch(vec![put("proof.Item", "item", "two")]))
+        .expect("later version");
     let connection = rusqlite::Connection::open(path).expect("corruption fixture");
     let changed = connection.execute(
         "UPDATE \"_norn_fact_values\" SET \"commit_seq\" = ?1 WHERE \"world\" = ?2 AND \"root_type\" = 'proof.Item' AND \"id\" = 'item' AND \"version\" = 2",
         rusqlite::params![i64::try_from(first).expect("cursor"), MAIN_WORLD],
     ).expect("backdate lookup only");
     assert_eq!(changed, 1);
-    let intact = store.read().object_at_version(MAIN_WORLD, "proof.Item", "item", 2).expect("snapshot proof remains valid").expect("live version");
+    let intact = store
+        .read()
+        .object_at_version(MAIN_WORLD, "proof.Item", "item", 2)
+        .expect("snapshot proof remains valid")
+        .expect("live version");
     assert_eq!(intact.values["value"], Value::from("two"));
     let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
     let mut budget = DecodeBudget::new(&limits);
-    assert!(matches!(store.read().object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", first, &mut budget), Err(CellError::HistoricalValueUnproven(_))));
+    assert!(matches!(
+        store.read().object_at_commit_with_budget(
+            MAIN_WORLD,
+            "proof.Item",
+            "item",
+            first,
+            &mut budget
+        ),
+        Err(CellError::HistoricalValueUnproven(_))
+    ));
     let mut exhausted = limits;
     exhausted.max_candidate_bytes_per_commit = 0;
-    assert!(matches!(store.read().object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", first, &mut DecodeBudget::new(&exhausted)).expect("budget checked before decoding"), BudgetedRead::Exhausted));
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(
+                MAIN_WORLD,
+                "proof.Item",
+                "item",
+                first,
+                &mut DecodeBudget::new(&exhausted)
+            )
+            .expect("budget checked before decoding"),
+        BudgetedRead::Exhausted
+    ));
 }
 
 #[test]
