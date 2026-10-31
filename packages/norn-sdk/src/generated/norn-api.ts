@@ -234,6 +234,8 @@ export interface components {
             format: components["schemas"]["NornCheckReceiptFormat"];
             /** @description Identifier admission profile applied to the set. */
             identifierProfile: string;
+            /** @description Origins of laws inherited from installed versioned composition packs. */
+            lawEnrollment?: components["schemas"]["NornLawEnrollment"][] | null;
             limitProfile: components["schemas"]["NornIrLimitProfileRef"];
             typeEnv?: components["schemas"]["NornExprTypeEnvRef"];
         };
@@ -281,7 +283,7 @@ export interface components {
          * @description Receipt format for a newly issued checker receipt.
          * @enum {string}
          */
-        NornCheckReceiptFormat: "norn-checker/receipt@2" | "norn-checker/receipt@3";
+        NornCheckReceiptFormat: "norn-checker/receipt@2" | "norn-checker/receipt@3" | "norn-checker/receipt@4";
         /** @description One finding in the checker's stable diagnostics document. */
         NornCheckerDiagnostic: {
             /** @description The artifact that owns this finding, when known. */
@@ -341,6 +343,19 @@ export interface components {
             id: string;
             sha256: string;
             version: number;
+        };
+        /** @description Exact origin of a law inherited from an installed composition pack. */
+        NornInheritedLawOrigin: {
+            /** @description Norn1 semantic artifact digest. */
+            artifact_digest: string;
+            /** @description Artifact envelope identity. */
+            artifact_id: string;
+            /** @description Stable law member identity. */
+            law_id: string;
+            /** @description Pack identity. */
+            pack_id: string;
+            /** @description Pack version. */
+            pack_version: string;
         };
         /**
          * @description One typed conjunct of [`AccessRule::all_of`]. Externally tagged and closed:
@@ -5640,6 +5655,11 @@ export interface components {
          *     `norn-checker`.
          */
         NornIrZenExpression: string;
+        /** @description One receipt-bound inherited law; this conveys provenance, not proof status. */
+        NornLawEnrollment: {
+            /** @description Pack, artifact digest and stable law member identity. */
+            inherited_from: components["schemas"]["NornInheritedLawOrigin"];
+        };
     };
     responses: never;
     parameters: never;

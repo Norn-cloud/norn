@@ -638,7 +638,10 @@ pub fn verify_admission_receipt(
     })
 }
 
-fn verify_law_enrollment(parsed: &StoredReceipt, base: &[ArtifactEnvelope]) -> Result<(), ReceiptError> {
+fn verify_law_enrollment(
+    parsed: &StoredReceipt,
+    base: &[ArtifactEnvelope],
+) -> Result<(), ReceiptError> {
     if parsed.format == LAW_ENROLLMENT_RECEIPT_FORMAT {
         let expected: Vec<_> = crate::law_enrollment::inherited_laws(base)?
             .iter()

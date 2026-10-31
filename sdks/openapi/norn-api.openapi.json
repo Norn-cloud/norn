@@ -562,6 +562,16 @@
             "type": "string",
             "description": "Identifier admission profile applied to the set."
           },
+          "lawEnrollment": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/NornLawEnrollment"
+            },
+            "description": "Origins of laws inherited from installed versioned composition packs."
+          },
           "limitProfile": {
             "$ref": "#/components/schemas/NornIrLimitProfileRef"
           },
@@ -672,7 +682,8 @@
         "description": "Receipt format for a newly issued checker receipt.",
         "enum": [
           "norn-checker/receipt@2",
-          "norn-checker/receipt@3"
+          "norn-checker/receipt@3",
+          "norn-checker/receipt@4"
         ]
       },
       "NornCheckerDiagnostic": {
@@ -856,6 +867,39 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornInheritedLawOrigin": {
+        "type": "object",
+        "description": "Exact origin of a law inherited from an installed composition pack.",
+        "required": [
+          "pack_id",
+          "pack_version",
+          "artifact_id",
+          "artifact_digest",
+          "law_id"
+        ],
+        "properties": {
+          "artifact_digest": {
+            "type": "string",
+            "description": "Norn1 semantic artifact digest."
+          },
+          "artifact_id": {
+            "type": "string",
+            "description": "Artifact envelope identity."
+          },
+          "law_id": {
+            "type": "string",
+            "description": "Stable law member identity."
+          },
+          "pack_id": {
+            "type": "string",
+            "description": "Pack identity."
+          },
+          "pack_version": {
+            "type": "string",
+            "description": "Pack version."
+          }
+        }
       },
       "NornIrAccessCondition": {
         "oneOf": [
@@ -14574,6 +14618,19 @@
       "NornIrZenExpression": {
         "type": "string",
         "description": "Source text of one ZEN Expression (the IR's single expression language,\nruling 2026-09-25 §3): a decision-table cell, switch condition, expression\nassignment, or action precondition.\n\nStored verbatim; parsing and type checking belong to `norn-expr` and\n`norn-checker`."
+      },
+      "NornLawEnrollment": {
+        "type": "object",
+        "description": "One receipt-bound inherited law; this conveys provenance, not proof status.",
+        "required": [
+          "inherited_from"
+        ],
+        "properties": {
+          "inherited_from": {
+            "$ref": "#/components/schemas/NornInheritedLawOrigin",
+            "description": "Pack, artifact digest and stable law member identity."
+          }
+        }
       }
     }
   }
