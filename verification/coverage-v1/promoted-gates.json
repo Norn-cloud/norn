@@ -941,36 +941,6 @@
       "generatedArtifacts": []
     },
     {
-      "id": "verification-executed-test-selectors",
-      "profile": "full",
-      "command": "python3 scripts/validate-executed-test-selectors.py",
-      "evidenceKind": "command",
-      "role": "evidence-integrity",
-      "classifications": [
-        {
-          "subsystem": "verification-integrity",
-          "layer": "runtime"
-        }
-      ],
-      "resultArtifacts": [],
-      "generatedArtifacts": []
-    },
-    {
-      "id": "verification-executed-test-selectors-fast",
-      "profile": "fast",
-      "command": "python3 scripts/validate-executed-test-selectors.py --profile fast",
-      "evidenceKind": "command",
-      "role": "evidence-integrity",
-      "classifications": [
-        {
-          "subsystem": "verification-integrity",
-          "layer": "runtime"
-        }
-      ],
-      "resultArtifacts": [],
-      "generatedArtifacts": []
-    },
-    {
       "id": "verification-proof-hole-audit-fast",
       "profile": "fast",
       "command": "python3 scripts/check-proof-holes.py",
@@ -1134,6 +1104,36 @@
         {
           "subsystem": "transition-authority",
           "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "verification-executed-test-selectors",
+      "profile": "full",
+      "command": "python3 scripts/validate-executed-test-selectors.py",
+      "evidenceKind": "command",
+      "role": "evidence-integrity",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "verification-executed-test-selectors-fast",
+      "profile": "fast",
+      "command": "python3 scripts/validate-executed-test-selectors.py --profile fast",
+      "evidenceKind": "command",
+      "role": "evidence-integrity",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
         }
       ],
       "resultArtifacts": [],

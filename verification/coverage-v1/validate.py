@@ -1086,6 +1086,10 @@ def validate(
         f"runner={runner_profiles}, manifest={manifest_profiles}",
     )
 
+    require(
+        runner_registrations == [(gate["profile"], gate["id"]) for gate in gates],
+        "promoted gate order must match the runner registrations",
+    )
     validate_selector_gate_order(runner_registrations, gates)
 
     validate_timeout_budgets(gates, formal_path=formal_workflow_path)

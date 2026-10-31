@@ -141,6 +141,9 @@ def expect_coverage_rejection(label: str, mutate: Callable[[dict[str, Any]], Non
 
 def manifest_canaries() -> None:
     subprocess.run(["python3", str(VALIDATOR)], cwd=ROOT, check=True)
+    expect_manifest_rejection(
+        "promoted gate execution order drift", lambda value: value["gates"].reverse()
+    )
 
     with tempfile.TemporaryDirectory() as directory:
         environment = os.environ.copy()
