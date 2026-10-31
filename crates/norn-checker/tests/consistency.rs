@@ -396,3 +396,91 @@ fn a_later_refusal_keeps_earlier_contradictions() {
     let findings = check_non_vacuity(&theory, budget);
     assert_eq!(codes_of(&findings), [codes::VACUOUS, codes::CHASE_REFUSED]);
 }
+
+/// Sol R1 S1: `e1` is redundant, but the chase without it enumerates
+/// `e2`'s matches far past a small budget.
+fn redundant_equation() -> Theory {
+    theory(vec![
+        tgd(
+            "t",
+            &[atom("A", &[var("x")])],
+            &[
+                atom("R", &[var("y1")]),
+                atom("R", &[var("y2")]),
+                atom("R", &[var("y3")]),
+            ],
+        ),
+        egd("e1", &[atom("R", &[var("x")])], var("x"), konst("a")),
+        egd(
+            "e2",
+            &[
+                atom("R", &[var("u")]),
+                atom("R", &[var("v")]),
+                atom("R", &[var("w")]),
+                atom("R", &[var("p")]),
+                atom("R", &[var("q")]),
+            ],
+            konst("a"),
+            konst("b"),
+        ),
+    ])
+}
+
+#[test]
+fn minimisation_never_claims_minimality_on_a_refused_subset() {
+    let facts = [fact("A", &["seed"])];
+    let small = ChaseBudget {
+        max_steps: 100,
+        ..ChaseBudget::default()
+    };
+    assert!(matches!(
+        chase(&redundant_equation(), &facts, small),
+        Err(ChaseError::BudgetExceeded {
+            resource: "steps",
+            ..
+        })
+    ));
+    let ChaseOutcome::Conflict(conflict) =
+        chase(&redundant_equation(), &facts, ChaseBudget::default()).unwrap()
+    else {
+        panic!("expected a conflict");
+    };
+    assert_eq!(conflict.rules, ["t", "e2"]);
+}
+
+#[test]
+fn the_null_budget_counts_created_nulls_not_labels() {
+    // Sol R1 S2: a high input label must not exhaust the null budget.
+    let theory = theory(vec![tgd(
+        "a_has_b",
+        &[atom("A", &[var("x")])],
+        &[atom("B", &[var("x"), var("y")])],
+    )]);
+    let seeded = Fact {
+        relation: "A".to_owned(),
+        values: vec![Value::Null(4096)],
+    };
+    assert!(matches!(
+        chase(&theory, &[seeded], ChaseBudget::default()),
+        Ok(ChaseOutcome::Model(_))
+    ));
+    let one = ChaseBudget {
+        max_nulls: 1,
+        ..ChaseBudget::default()
+    };
+    assert!(matches!(
+        non_vacuity_witness(&invoice_mapping(), "Line", one),
+        Ok(ChaseOutcome::Model(_))
+    ));
+    let none = ChaseBudget {
+        max_nulls: 0,
+        ..ChaseBudget::default()
+    };
+    assert!(matches!(
+        non_vacuity_witness(&invoice_mapping(), "Line", none),
+        Err(ChaseError::BudgetExceeded {
+            resource: "nulls",
+            ..
+        })
+    ));
+}
