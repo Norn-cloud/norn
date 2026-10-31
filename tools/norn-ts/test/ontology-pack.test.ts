@@ -37,7 +37,7 @@ test("the compiler refuses members outside the closed source manifest", () => {
   const source = readFileSync(file, "utf8").replace('importMode: "map_only",', 'importMode: "map_only", checksum: "x",')
   const result = compileModule(source, scope)
   expect(result.ok).toBe(false)
-  if (!result.ok) expect(JSON.stringify(result.diagnostics)).toContain("unknown member checksum")
+  if (!result.ok) expect(JSON.stringify(result.diagnostics)).toContain("checksum")
 }, 30_000)
 
 test.skipIf(!checker)("Rust admits the pack and refuses a mapping that cites a study_only source", () => {

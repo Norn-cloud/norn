@@ -23599,7 +23599,7 @@
     },
     {
       "path": "tools/norn-ts/test/ontology-pack.test.ts",
-      "sha256": "071fdafe38a135488684f64080d51aec1476683c0c0ef9eb36fa2683024bffb9",
+      "sha256": "b01a10cd30aa2618308a8d34502d4e0657be09298da1b9f6ef683d1366297803",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
