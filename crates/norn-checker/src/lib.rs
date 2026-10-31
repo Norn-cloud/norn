@@ -80,6 +80,7 @@ pub mod metric_interchange;
 pub mod posting;
 pub mod table_analysis;
 pub use metric::check_metrics_and_questions;
+pub mod law_enrollment;
 pub mod naming_series;
 pub mod object_types;
 pub mod obligations;
