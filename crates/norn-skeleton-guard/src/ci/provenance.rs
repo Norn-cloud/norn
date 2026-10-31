@@ -13,8 +13,6 @@
 //! parent paths, hashed rights evidence and shipped notices. Sources use literal
 //! MANIFEST `id` or standards-lock `sourceId`; they bind revision and evidence
 //! path/hash, with no vendor-name aliases. Unknown fields and enum values fail.
-//! Until the #121 migration lands, the version-1 `shipped-artifacts.json`
-//! (records with a `path` field) is read instead; never both.
 //! The control directory is the sole exception to the self-hash problem; every
 //! file in it must be the manifest or a record.
 //!
@@ -46,23 +44,11 @@ pub const MANIFEST: &str = ".github/ci/provenance/manifest.json";
 /// Prefix of each per-file record, `RECORDS` + path + `.json`.
 pub const RECORDS: &str = ".github/ci/provenance/artifacts/";
 
-/// Transitional (#121): the single version-1 manifest, read only until the
-/// per-file migration lands. A tree with both layouts is refused.
-pub const LEGACY_MANIFEST: &str = ".github/ci/shipped-artifacts.json";
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     version: u32,
     software_sources: Vec<SoftwareSource>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyManifest {
-    version: u32,
-    software_sources: Vec<SoftwareSource>,
-    artifacts: Vec<Artifact>,
 }
 
 /// Artifact-specific software provenance; never an override of acquisition
@@ -145,8 +131,8 @@ struct SupportedVersions {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Artifact {
-    /// Derived from the record file path; only version-1 records carry it.
-    #[serde(default)]
+    /// Derived from the record file path; never a claim inside the record.
+    #[serde(skip)]
     path: String,
     sha256: String,
     origin: Origin,
@@ -909,9 +895,6 @@ fn load_records(root: &Path, paths: &[String], report: &mut Report) -> Vec<Artif
         match bytes(root, path)
             .and_then(|b| serde_json::from_slice::<Artifact>(&b).map_err(|e| e.to_string()))
         {
-            Ok(a) if !a.path.is_empty() => {
-                report.reject(path, "malformed provenance record: path is the file name");
-            }
             Ok(mut a) => {
                 target.clone_into(&mut a.path);
                 artifacts.push(a);
@@ -922,30 +905,6 @@ fn load_records(root: &Path, paths: &[String], report: &mut Report) -> Vec<Artif
     artifacts
 }
 
-fn load_legacy(
-    root: &Path,
-    report: &mut Report,
-) -> Result<(Vec<SoftwareSource>, Vec<Artifact>), String> {
-    let manifest: LegacyManifest = bytes(root, LEGACY_MANIFEST)
-        .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
-        .map_err(|e| format!("{LEGACY_MANIFEST}: {e}"))?;
-    if manifest.version != 1 {
-        return Err(format!("{LEGACY_MANIFEST}: unknown provenance version"));
-    }
-    let mut seen = BTreeSet::new();
-    let mut artifacts = Vec::new();
-    for a in manifest.artifacts {
-        if a.path.is_empty() {
-            return Err(format!("{LEGACY_MANIFEST}: record without path"));
-        }
-        if !seen.insert(a.path.clone()) {
-            report.reject(&a.path, "ambiguous duplicate artifact record");
-        }
-        artifacts.push(a);
-    }
-    Ok((manifest.software_sources, artifacts))
-}
-
 fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
     let mut report = Report {
         checked_paths: paths.len(),
@@ -953,32 +912,19 @@ fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
     };
     let hashes = inspect_bytes(root, paths, &mut report);
     let mut sources = inspect_sources(root, paths, base, &mut report);
-    let legacy = paths.iter().any(|p| p == LEGACY_MANIFEST);
-    if legacy && paths.iter().any(|p| p.starts_with(CONTROL)) {
-        report
-            .policy_errors
-            .push(format!("both {LEGACY_MANIFEST} and {CONTROL} present"));
-        return report;
-    }
-    let loaded = if legacy {
-        load_legacy(root, &mut report)
-    } else {
-        bytes(root, MANIFEST)
-            .and_then(|b| serde_json::from_slice::<Manifest>(&b).map_err(|e| e.to_string()))
-            .and_then(|m| match m.version {
-                2 => Ok(m.software_sources),
-                _ => Err("unknown provenance version".to_owned()),
-            })
-            .map_err(|e| format!("{MANIFEST}: {e}"))
-            .map(|software| (software, load_records(root, paths, &mut report)))
-    };
-    let (software_sources, artifacts) = match loaded {
-        Ok(loaded) => loaded,
+    let software_sources = match bytes(root, MANIFEST)
+        .and_then(|b| serde_json::from_slice::<Manifest>(&b).map_err(|e| e.to_string()))
+        .and_then(|m| match m.version {
+            2 => Ok(m.software_sources),
+            _ => Err("unknown provenance version".to_owned()),
+        }) {
+        Ok(software) => software,
         Err(e) => {
-            report.policy_errors.push(e);
+            report.policy_errors.push(format!("{MANIFEST}: {e}"));
             return report;
         }
     };
+    let artifacts = load_records(root, paths, &mut report);
     for s in software_sources {
         if !s.id.starts_with("software.") || s.revision.is_empty() || s.license != "MIT" {
             report
@@ -1004,7 +950,7 @@ fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
     }
     let mut records = BTreeMap::new();
     for a in &artifacts {
-        if a.path.starts_with(CONTROL) || a.path == LEGACY_MANIFEST || !safe_path(&a.path) {
+        if a.path.starts_with(CONTROL) || !safe_path(&a.path) {
             report.reject(&a.path, "control file/self hash or non-exact artifact path");
         }
         records.insert(a.path.clone(), a);
@@ -1031,10 +977,7 @@ fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
             }
         }
     }
-    for path in paths
-        .iter()
-        .filter(|p| !p.starts_with(CONTROL) && p.as_str() != LEGACY_MANIFEST)
-    {
+    for path in paths.iter().filter(|p| !p.starts_with(CONTROL)) {
         if !records.contains_key(path) {
             report.reject(path, "missing shipped-artifact admission record");
         }
