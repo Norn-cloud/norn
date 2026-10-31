@@ -10,7 +10,8 @@ export interface Installation {
   plan: "additive" | "breaking";
 }
 export interface Definitions {
-  compileDefinition(source: string): Promise<Json>;
+  /** Path to the authored TypeScript definition file. */
+  compileDefinition(sourcePath: string): Promise<Json>;
   installDefinition(tenant: Tenant, compiledDefinition: Json): Promise<Installation>;
   /** Run the real lifecycle/refinement checker; failure rejects the promise. */
   checkDefinition(compiledDefinition: Json): Promise<void>;
