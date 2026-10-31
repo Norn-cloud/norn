@@ -1,7 +1,11 @@
 {
   "schemaVersion": "norn.verification.coverage.v1",
   "promotedGateManifest": "verification/coverage-v1/promoted-gates.json",
-  "leanCompositeGates": {},
+  "leanCompositeGates": {
+    "verification/kernel-l1/Reference.lean": "scripts/verify-kernel-l1-lean.sh",
+    "verification/kernel-l1/Audit.lean": "scripts/verify-kernel-l1-lean.sh",
+    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh"
+  },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [
     "missing",
@@ -75,7 +79,7 @@
           "runtime": "missing",
           "model": "bounded_model_checked",
           "proof": "partial",
-          "residual": "Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in #2764 (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, #2583), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted.",
+          "residual": "Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in #2764 (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, #2583), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted. The L1 reference checks single-object atomic updates, and its extracted successor theorem covers only the version increment/overflow fragment; no whole-transition correspondence is claimed.",
           "evidence": {
             "runtime": [],
             "model": [
@@ -93,6 +97,20 @@
                 "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
                 "selectors": [
                   "theorem:accepted_commit_keeps_effect_event_atomic"
+                ]
+              },
+              {
+                "artifact": "verification/kernel-l1/Reference.lean",
+                "command": "scripts/verify-kernel-l1-lean.sh",
+                "selectors": [
+                  "theorem:fresh_atomic"
+                ]
+              },
+              {
+                "artifact": "verification/kernel-l1/VersionProof.lean",
+                "command": "scripts/verify-kernel-l1-aeneas.sh",
+                "selectors": [
+                  "theorem:version_correspondence"
                 ]
               }
             ]
@@ -275,12 +293,17 @@
         "artifacts": [
           "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
           "verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
-          "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean"
+          "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+          "verification/kernel-l1/Reference.lean",
+          "verification/kernel-l1/Audit.lean",
+          "verification/kernel-l1/VersionProof.lean"
         ],
         "commands": [
           "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
           "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
-          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean"
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+          "scripts/verify-kernel-l1-lean.sh",
+          "scripts/verify-kernel-l1-aeneas.sh"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": []
@@ -292,7 +315,8 @@
         "The Verus function is not linked to the retained store implementation by extraction or a proved refinement.",
         "The closed custom ActionIR subset currently contains only upsert_input_object; it is evidence for the authority pattern, not a general verified action language.",
         "Only the final representation-free hard-invariant ownership Boolean predicate has extracted production correspondence. Descriptor parsing, enum mapping, artifact activation/lookup, store-path completeness, and atomic persistence remain outside that proof.",
-        "No normalized durable production profile is retained in this workspace."
+        "No normalized durable production profile is retained in this workspace.",
+        "Kernel L1 adds a single-object mathematical reference and a checked-successor correspondence fragment only. VersionProof does not prove stale-CAS admission, durable persistence, or whole-kernel refinement; no evidence status is promoted by its enrollment."
       ],
       "sourceFiles": [
         "Cargo.toml",
@@ -1517,6 +1541,8 @@
       "sourceFiles": [
         "crates/norn-checker/src/consistency.rs",
         "crates/norn-checker/src/consistency/chase.rs",
+        "crates/norn-checker/src/consistency/divergence.rs",
+        "crates/norn-checker/src/consistency/exchange.rs",
         "crates/norn-checker/src/consistency/theory.rs",
         "crates/norn-checker/src/lint/mapping.rs",
         "crates/norn-checker/src/mapping.rs",
@@ -1529,7 +1555,10 @@
         "crates/norn-checker/src/ontology/link.rs",
         "crates/norn-checker/src/ontology/link_registry.rs",
         "crates/norn-checker/tests/consistency.rs",
+        "crates/norn-checker/tests/consistency_divergence.rs",
+        "crates/norn-checker/tests/consistency_exchange.rs",
         "crates/norn-checker/tests/ontology_link.rs",
+        "crates/norn-checker/tests/registry_packs.rs",
         "crates/norn-ir/src/mapping.rs",
         "crates/norn-ir/src/mapping_evidence.rs",
         "fixtures/ir/metrics/customers-by-region-week.question.json",
@@ -1537,12 +1566,29 @@
         "fixtures/ir/synthetic-contact.source_schema.json",
         "fixtures/ir/synthetic-rows.mapping.json",
         "fixtures/projections/sqlite/entity-v2-object-types.sql",
+        "registry/packs/canon/artifacts/norn.ontology-pack.canon.json",
+        "registry/packs/canon/canon.pack.ts",
+        "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
+        "registry/packs/erpnext/artifacts/norn.ontology-pack.erpnext.json",
+        "registry/packs/erpnext/erpnext.link.ts",
+        "registry/packs/erpnext/erpnext.pack.ts",
+        "registry/packs/odoo/artifacts/norn.link.odoo.canon.json",
+        "registry/packs/odoo/artifacts/norn.ontology-pack.odoo.json",
+        "registry/packs/odoo/odoo.link.ts",
+        "registry/packs/odoo/odoo.pack.ts",
+        "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
+        "registry/packs/shopify/artifacts/norn.ontology-pack.shopify.json",
+        "registry/packs/shopify/shopify.link.ts",
+        "registry/packs/shopify/shopify.pack.ts",
         "scripts/check-ontology-semantics.sh",
         "tools/norn-ts/corpus/accept/ontology-type.ts",
         "tools/norn-ts/fixtures/definitions/ontology-pack.source.ts",
         "tools/norn-ts/src/builder/mapping.ts",
         "tools/norn-ts/src/builder/ontology-pack.ts",
+        "tools/norn-ts/src/builder/pack-link.ts",
         "tools/norn-ts/test/ontology-pack.test.ts",
+        "tools/norn-ts/test/pack-link.test.ts",
+        "tools/norn-ts/test/registry-packs.test.ts",
         "verification/ontology-v1/OntologyMappingProvenance.lean",
         "verification/ontology-v1/models/ontology-mapping-provenance.qnt",
         "verification/ontology-v1/models/ontology-relation-authority.qnt",
@@ -2286,6 +2332,7 @@
         "scripts/verify-kernel-l1-version-body.py",
         "scripts/verify-promoted-subsystems.sh",
         "scripts/write-verification-result.py",
+        "tools/norn-ts/fixtures/translation-validation/markings.source.ts",
         "tools/norn-ts/src/builder/access.ts",
         "tools/norn-ts/src/builder/action.ts",
         "tools/norn-ts/src/builder/budget.ts",
@@ -2319,6 +2366,7 @@
         "tools/norn-ts/src/plan.ts",
         "tools/norn-ts/src/printer.ts",
         "tools/norn-ts/src/profile.ts",
+        "tools/norn-ts/src/translation-validation.ts",
         "tools/norn-ts/test/authoring-sdk.test.ts",
         "tools/norn-ts/test/checker.ts",
         "tools/norn-ts/test/compiler.test.ts",
@@ -2333,6 +2381,7 @@
         "tools/norn-ts/test/profile-corpus.test.ts",
         "tools/norn-ts/test/schema-lowering.test.ts",
         "tools/norn-ts/test/temporal-enum.test.ts",
+        "tools/norn-ts/test/translation-validation.test.ts",
         "tools/norn-ts/test/vertical-fixture.test.ts",
         "vendor/zen/core/engine/tests/decision.rs",
         "vendor/zen/core/engine/tests/engine.rs",
@@ -2545,6 +2594,215 @@
         "verification/kernel-v2/models/commit-admission.qnt",
         "verification/kernel-v2/models/projection-trust.qnt",
         "verification/kernel-v2/validate.py"
+      ]
+    },
+    {
+      "id": "core-physics",
+      "obligations": [
+        "INV-CORE-VALUE-CONSERVATION",
+        "INV-CORE-POSTED-IMMUTABLE",
+        "INV-CORE-LINKED-REVERSAL",
+        "INV-CORE-QUANTITY-CONSERVATION",
+        "INV-CORE-ESCROW-NON-NEGATIVE",
+        "INV-CORE-COMMITMENT-COMPLETION"
+      ],
+      "obligationClaims": [
+        {
+          "id": "INV-CORE-VALUE-CONSERVATION",
+          "runtime": "tested",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
+          "residual": "The kernel commit check refuses a posting group that does not net to zero in each unit, for every type that declares an accounting leg (tested; the cited tests use one balance layer, so cross-layer cancellation is enforced by the check but not separately tested). The Lean reference proves the admission check exact and the law inherited by every workflow of post and reverse steps; it is not a refinement proof of the Rust check, i128 arithmetic or storage.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-kernel/tests/accounting_commit.rs",
+                "command": "cargo test --locked -p norn-kernel --test accounting_commit",
+                "selectors": [
+                  "test:balanced_exact_posting_group_commits_including_inherited_marker",
+                  "test:unbalanced_group_refusal_has_no_fact_ledger_or_outbox_effects",
+                  "test:multiple_currencies_balance_independently_and_cannot_cancel_across_units"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+                "selectors": [
+                  "invariant:allPostedBalanced"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+                "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+                "selectors": [
+                  "theorem:checkBalanced_iff",
+                  "theorem:balanced_append",
+                  "theorem:run_balanced",
+                  "theorem:run_trial_zero",
+                  "theorem:unbalanced_post_refused"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-CORE-POSTED-IMMUTABLE",
+          "runtime": "tested",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
+          "residual": "The kernel refuses updates and deletes of committed accounting legs, including through an unmarked ancestor type (tested). The reference model has no edit or delete operation; the theorems show every admitted step only prepends. Types without an accounting-leg declaration are not covered.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-kernel/tests/accounting_commit.rs",
+                "command": "cargo test --locked -p norn-kernel --test accounting_commit",
+                "selectors": [
+                  "test:committed_leg_records_are_create_only_and_cannot_be_deleted",
+                  "test:deleting_a_posted_leg_through_its_unmarked_ancestor_is_refused_atomically",
+                  "test:updating_a_posted_leg_through_its_unmarked_ancestor_is_refused_atomically"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+                "selectors": [
+                  "invariant:postedImmutable"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+                "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+                "selectors": [
+                  "theorem:step_append_only",
+                  "theorem:run_append_only"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-CORE-LINKED-REVERSAL",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
+          "residual": "The public kernel has no linked journal reversal yet; quantity-ledger reversals are covered by INV-QL-APPEND-REVERSAL. The model and reference proof cover the pack law only.",
+          "evidence": {
+            "runtime": [],
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+                "selectors": [
+                  "invariant:reversalLinkedExact",
+                  "invariant:reversedAtMostOnce"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+                "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+                "selectors": [
+                  "theorem:reverse_is_linked_exact",
+                  "theorem:reversal_nets_account",
+                  "theorem:reversal_nets_unit",
+                  "theorem:run_reversed_at_most_once"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "INV-CORE-QUANTITY-CONSERVATION",
+          "runtime": "missing",
+          "model": "missing",
+          "proof": "missing",
+          "evidence": {
+            "runtime": [],
+            "model": [],
+            "proof": []
+          },
+          "residual": "Specified only; the kernel quantity ledger enforces partition conservation (INV-QL-CONSERVATION). Core-pack model and proof are pending."
+        },
+        {
+          "id": "INV-CORE-ESCROW-NON-NEGATIVE",
+          "runtime": "missing",
+          "model": "missing",
+          "proof": "missing",
+          "evidence": {
+            "runtime": [],
+            "model": [],
+            "proof": []
+          },
+          "residual": "Specified only; the kernel quantity ledger refuses spending held or absent quantity. Core-pack model and proof are pending."
+        },
+        {
+          "id": "INV-CORE-COMMITMENT-COMPLETION",
+          "runtime": "missing",
+          "model": "missing",
+          "proof": "missing",
+          "evidence": {
+            "runtime": [],
+            "model": [],
+            "proof": []
+          },
+          "residual": "Specified only; no runtime enforcement, model or proof yet."
+        }
+      ],
+      "runtime": {
+        "status": "partial",
+        "artifacts": [
+          "crates/norn-kernel/tests/accounting_commit.rs"
+        ],
+        "commands": [
+          "cargo test --locked -p norn-kernel --test accounting_commit"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "partial",
+        "bound": "Apalache depth 4 over four journal slots of two legs, accounts 0..3, two units and amounts -2..2, with post, reverse and refused amend or delete steps",
+        "artifacts": [
+          "verification/core-physics-v1/models/core-value-ledger.qnt"
+        ],
+        "commands": [
+          "quint typecheck verification/core-physics-v1/models/core-value-ledger.qnt",
+          "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": [
+          "target/verification-results/core-value-ledger-quint.json"
+        ]
+      },
+      "proof": {
+        "status": "partial",
+        "scope": "reference",
+        "artifacts": [
+          "verification/core-physics-v1/proofs/CoreValueLedger.lean"
+        ],
+        "commands": [
+          "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel.",
+        "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops.",
+        "Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack."
+      ],
+      "sourceFiles": [
+        "verification/core-physics-v1/models/core-value-ledger.qnt",
+        "verification/core-physics-v1/proofs/CoreValueLedger.lean"
       ]
     }
   ]
