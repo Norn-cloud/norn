@@ -83,7 +83,8 @@ class ReviewRegressions(unittest.TestCase):
     def test_type_only_declarations_do_not_claim_runtime_use(self):
         for source in ['import type { State } from "xstate";', 'export type { Effect } from "effect";', 'import { type State } from "xstate";']:
             self.assertEqual(analyze({'x.ts': source.encode()})['recognized'], [])
-        self.assertEqual(analyze({'x.ts': b'export { Effect } from "effect";'})['recognized'][0]['framework'], 'effect')
+        for source in [b'export { Effect } from "effect";', b'import Effect, {type X} from "effect";']:
+            self.assertEqual(analyze({'x.ts': source})['recognized'][0]['framework'], 'effect')
 
     def test_nested_import_does_not_change_outer_decorator(self):
         source = b'from odoo import api\ndef unrelated():\n from other import api\n@api.depends("x")\ndef check(): pass\n'

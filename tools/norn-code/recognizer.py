@@ -91,7 +91,9 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                         emit('odoo', 'config:odoo_manifest', .9, level='declared')
                 def bound_names(nodes):
                     names = set()
-                    for item in nodes:
+                    pending = list(nodes)
+                    while pending:
+                        item = pending.pop()
                         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                             names.add(item.name)
                         elif isinstance(item, ast.Import):
@@ -101,7 +103,7 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                         else:
                             if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store):
                                 names.add(item.id)
-                            names.update(bound_names(ast.iter_child_nodes(item)))
+                            pending.extend(ast.iter_child_nodes(item))
                     return names
                 def decorators(statements, inherited):
                     aliases = dict(inherited)
@@ -148,7 +150,9 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                         package = string(node.child_by_field_name('source'))
                         type_only = any(child.type == 'type' for child in node.children)
                         specifiers = [child for child in walk(node) if child.type in {'import_specifier', 'export_specifier'}]
-                        only_type_specifiers = bool(specifiers) and all(any(c.type == 'type' for c in child.children) for child in specifiers)
+                        clause = next((c for c in node.named_children if c.type == 'import_clause'), None)
+                        default_or_namespace = clause is not None and any(c.type in {'identifier', 'namespace_import'} for c in clause.named_children)
+                        only_type_specifiers = not default_or_namespace and bool(specifiers) and all(any(c.type == 'type' for c in child.children) for child in specifiers)
                         if package and not type_only and not only_type_specifiers:
                             emit(package, 'import:' + package, .95, node.start_point.row + 1)
                     elif node.type == 'call_expression':
@@ -158,7 +162,7 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                             package = string(args.named_children[0])
                             if package:
                                 emit(package, 'import:' + package, .9, node.start_point.row + 1)
-        except (ValueError, SyntaxError, TypeError, AttributeError, IndexError) as error:
+        except (ValueError, SyntaxError, TypeError, AttributeError, IndexError, RecursionError) as error:
             unknown.append({'reason': 'unreadable_syntax', 'evidence': asdict(evidence(path, data, revision)), 'detail': type(error).__name__})
     matched_paths = {m.evidence.file for m in matches}
     diagnosed_paths = {u['evidence']['file'] for u in unknown}
