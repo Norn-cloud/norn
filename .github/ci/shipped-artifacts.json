@@ -6871,8 +6871,44 @@
       "connector": null
     },
     {
+      "path": "crates/norn-host/src/analysis_jobs.rs",
+      "sha256": "cbf4ce202881ce56176a2e70c428fab7dbcfab69361a79e1b78434a7bcc0c5d1",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-host/src/analysis_native.rs",
+      "sha256": "8ff461c7cc5a545e2ccaff5af860ff197bf54f48f39c7f34f5e295125ea95482",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "crates/norn-host/src/lib.rs",
-      "sha256": "3546d81445de95a472f6121dc2eb3025724e65f9cfb91b140aa7637c8f1b2772",
+      "sha256": "e88d856fd48de4a531f394696fa253dbd68bd82eebbfd60a0ccf299f02650455",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -6909,6 +6945,24 @@
     {
       "path": "crates/norn-host/src/scope.rs",
       "sha256": "f32149f2dfd47a89a8f25c39c2dab5181515b43ff0967c83c6347d8f390f5c70",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-host/tests/analysis_declaration.rs",
+      "sha256": "f577c8a48c62bc514d99ef57f9384c1112624ec02cbe6b17c657eed921ecd45f",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30187,7 +30241,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "a13c3178e0a2d741e863921170dd12e12ad00d7773e06d635d9aad4af04bf856",
+      "sha256": "f8ecee390faf3b3897a46d9efb75bbcb6c0d9f406c16668cd22aa48d624dec94",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
