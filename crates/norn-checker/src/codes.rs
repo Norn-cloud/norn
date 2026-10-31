@@ -1890,11 +1890,6 @@ pub static REGISTRY: &[CodeEntry] = &[
         "naming series is invalid: {detail}",
     ),
     entry(
-        "object_type.validation.protected_owned_row_field",
-        Tier::T3,
-        "kernel-owned row metadata cannot be protected: {detail}",
-    ),
-    entry(
         "object_type.validation.invalid_owned_collection",
         Tier::T3,
         "owned collection {collection} is invalid: {reason}",
@@ -1978,6 +1973,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "object_type.validation.override_widens_nullability",
         Tier::T3,
         "property {property} is nullable, but the property {owner} declares is not; an override may only narrow",
+    ),
+    entry(
+        "object_type.validation.protected_owned_row_field",
+        Tier::T3,
+        "kernel-owned row metadata cannot be protected: {detail}",
     ),
     entry(
         "object_type.validation.redundant_key",
