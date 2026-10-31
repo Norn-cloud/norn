@@ -572,13 +572,19 @@ impl Rows {
 
     /// `type_name`, then its supertypes, nearest first. A cycle (refused by
     /// the entity check) ends after at most one pass over the types.
-    fn lineage(&self, type_name: &str) -> Vec<String> {
+    fn lineage(&self, type_name: &str, owner: Option<&ArtifactKey>) -> Vec<String> {
         let mut out = vec![type_name.to_owned()];
         while out.len() <= self.types.len() {
             let current = Member::Type {
                 type_name: out.last().cloned().unwrap_or_default(),
             };
-            let bound = self.bound.get(&*out.last().cloned().unwrap_or_default());
+            // The type itself is the version the reference pins; each
+            // supertype, the artifact its name is bound to.
+            let bound = if out.len() == 1 {
+                owner.or_else(|| self.bound.get(type_name))
+            } else {
+                self.bound.get(&*out.last().cloned().unwrap_or_default())
+            };
             let Some(parent) = self
                 .types
                 .iter()
@@ -629,7 +635,7 @@ impl Rows {
                     || !declares_type(at)
             })
         };
-        self.lineage(type_name)
+        self.lineage(type_name, owner)
             .into_iter()
             .enumerate()
             .find_map(|(step, name)| {

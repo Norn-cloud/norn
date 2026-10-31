@@ -733,3 +733,22 @@ fn a_supertype_name_binds_the_first_installed_artifact_like_the_entity_model() {
     assert!(catalog.artifact("shop.Request.entity", "1.0.0").is_none());
     assert_eq!(catalog.writes[0].target.version, "2.0.0");
 }
+
+#[test]
+fn the_lineage_of_a_pinned_type_starts_at_the_pinned_version() {
+    // Two installed versions of the subtype, the newer first in base order;
+    // the action pins the older one, whose supertype declares the transition.
+    let [parent, child] = request_types();
+    let mut newer_child = serde_json::to_value(&child).expect("envelope encodes");
+    newer_child["version"] = json!("2.0.0");
+    let action = approve_action(
+        "shop.approve.action",
+        "shop.RushRequest",
+        "shop.RushRequest.entity",
+        "1.0.0",
+    );
+    let catalog = catalog(&[action], &[envelope(newer_child), child, parent]);
+    assert_eq!(catalog.writes.len(), 1);
+    assert_eq!(catalog.writes[0].target.artifact_id, "shop.Request.entity");
+    assert!(catalog.contains(&catalog.writes[0].target));
+}
