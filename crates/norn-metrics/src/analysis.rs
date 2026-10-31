@@ -261,7 +261,7 @@ fn fit(pairs: &[(f64, f64)], alpha: f64) -> Result<OlsReport, AnalysisError> {
         .iter()
         .map(|p| {
             let fitted = mean_y + slope * ((p.0 - origin_x) - centered_x);
-            (fitted, p.1 - fitted)
+            (fitted, ((p.1 - origin_y) - centered_y) - slope * ((p.0 - origin_x) - centered_x))
         })
         .collect();
     let sse = residuals.iter().map(|p| p.1.powi(2)).sum::<f64>();
