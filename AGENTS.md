@@ -65,6 +65,15 @@ the trusted policy lane checks pull requests against the base branch's rules.
 Symlinks, customer data, credentials, vendor schemas and copied GPL-family code
 are refused.
 
+## Verification coverage
+
+Coverage lives in `verification/coverage-v1/manifest/`: `index.json` holds the
+status vocabulary and evidence roots, and `subsystems/<id>.json` holds one
+subsystem's obligations, claims and `sourceFiles`. The id is the file name, so
+it is not a field. A new executable source joins exactly one subsystem's
+`sourceFiles`; edit only that subsystem's file and its provenance record.
+`scripts/coverage_manifest.py` is the only reader and writer.
+
 ## Changes and merging
 
 - **Small PRs.** One reviewable unit per PR, about 400 changed lines of

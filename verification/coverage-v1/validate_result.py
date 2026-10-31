@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = Path(__file__).with_name("result.schema.json")
 IGNORED_EVIDENCE_DIRS = {".git", ".turbo", "__pycache__", "node_modules", "target"}
 sys.path.insert(0, str(ROOT / "scripts"))
+import coverage_manifest  # noqa: E402
 from verification_attestation import (  # noqa: E402
     canonical_command,
     collect_git_identity,
@@ -179,12 +180,12 @@ def main() -> int:
     jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker()).validate(result)
 
     coverage = result["coverageManifest"]
-    if coverage["path"] != "verification/coverage-v1/coverage.json":
+    if coverage["path"] != "verification/coverage-v1/manifest":
         fail("result does not name the canonical coverage manifest")
     coverage_path = ROOT / coverage["path"]
-    if not coverage_path.is_file() or sha256(coverage_path) != coverage["sha256"]:
+    if not coverage_path.is_dir() or coverage_manifest.digest(coverage_path) != coverage["sha256"]:
         fail("coverage manifest digest does not match the current workspace")
-    coverage_document = json.loads(coverage_path.read_text(encoding="utf-8"))
+    coverage_document = coverage_manifest.load(coverage_path)
     run("python3", "verification/coverage-v1/validate.py")
     gate_manifest_record = result["gateManifest"]
     require_safe_repo_path(gate_manifest_record["path"], label="gate manifest path")

@@ -1,0 +1,166 @@
+{
+  "obligations": [
+    "KERNEL-V2-COMMIT",
+    "KERNEL-V2-QUANTITY",
+    "KERNEL-V2-PROJECTION"
+  ],
+  "obligationClaims": [
+    {
+      "id": "KERNEL-V2-COMMIT",
+      "runtime": "tested",
+      "model": "partial",
+      "proof": "deferred",
+      "residual": "Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-testkit/tests/kernel_quint.rs",
+            "command": "cargo test --locked -p norn-testkit --test kernel_quint",
+            "selectors": [
+              "test:commit_admission_quint_traces",
+              "test:commit_admission_trace_mutants_fail"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "verification/kernel-v2/models/commit-admission.qnt",
+            "command": "quint verify verification/kernel-v2/models/commit-admission.qnt --backend apalache --invariants invariant --max-steps 8",
+            "selectors": [
+              "invariant:invariant"
+            ]
+          }
+        ],
+        "proof": []
+      }
+    },
+    {
+      "id": "KERNEL-V2-QUANTITY",
+      "runtime": "tested",
+      "model": "partial",
+      "proof": "deferred",
+      "residual": "Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-testkit/tests/kernel_quint.rs",
+            "command": "cargo test --locked -p norn-testkit --test kernel_quint",
+            "selectors": [
+              "test:quantity_v2_quint_traces",
+              "test:quantity_closed_slice_refusal_matches_pure_kernel"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "verification/kernel-v2/models/quantity-ledger.qnt",
+            "command": "quint test verification/kernel-v2/models/quantity-ledger.qnt --backend rust --match conservation.*Test --max-samples 1 --seed 1",
+            "selectors": [
+              "invariant:invariant"
+            ]
+          }
+        ],
+        "proof": []
+      }
+    },
+    {
+      "id": "KERNEL-V2-PROJECTION",
+      "runtime": "tested",
+      "model": "partial",
+      "proof": "deferred",
+      "residual": "Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-testkit/tests/kernel_quint.rs",
+            "command": "cargo test --locked -p norn-testkit --test kernel_quint",
+            "selectors": [
+              "test:projection_trust_quint_traces"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "verification/kernel-v2/models/projection-trust.qnt",
+            "command": "quint verify verification/kernel-v2/models/projection-trust.qnt --backend apalache --invariants invariant --max-steps 8",
+            "selectors": [
+              "invariant:invariant"
+            ]
+          }
+        ],
+        "proof": []
+      }
+    }
+  ],
+  "runtime": {
+    "status": "tested",
+    "artifacts": [
+      "crates/norn-testkit/tests/kernel_quint.rs"
+    ],
+    "commands": [
+      "cargo test --locked -p norn-testkit --test kernel_quint"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "model": {
+    "status": "partial",
+    "bound": "Admission/projection full nondeterministic models: BMC depth8. Quantity: exact enumeration of four 4-step resolution paths and both 15-step expiry paths, original submit/full invariant, 46 semantic transitions and 52 init/prefix checks. No quantity Apalache BMC verdict; general step remains sampled.",
+    "artifacts": [
+      "verification/kernel-v2/models/commit-admission.qnt",
+      "verification/kernel-v2/models/quantity-ledger.qnt",
+      "verification/kernel-v2/models/projection-trust.qnt"
+    ],
+    "commands": [
+      "quint typecheck verification/kernel-v2/models/commit-admission.qnt",
+      "quint verify verification/kernel-v2/models/commit-admission.qnt --backend apalache --invariants invariant --max-steps 8",
+      "quint typecheck verification/kernel-v2/models/quantity-ledger.qnt",
+      "quint test verification/kernel-v2/models/quantity-ledger.qnt --backend rust --match conservation.*Test --max-samples 1 --seed 1",
+      "quint typecheck verification/kernel-v2/models/projection-trust.qnt",
+      "quint verify verification/kernel-v2/models/projection-trust.qnt --backend apalache --invariants invariant --max-steps 8"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": [
+      "target/verification-results/kernel-v2-commit-admission.json",
+      "target/verification-results/kernel-v2-projection-trust.json"
+    ]
+  },
+  "proof": {
+    "status": "deferred",
+    "artifacts": [],
+    "commands": [],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "limitations": [
+    "Finite models and sampled traces are not unbounded Rust refinement.",
+    "No OS/fs durability, host scheduler fairness, external delivery, authorization noninterference, or i128 overflow theorem.",
+    "Quantity reservation vectors have three legs in one unit/layer partition; multi-partition vectors, reversal, account-limit admission, and growing-net-hold remainders are outside this bounded model. Existing quantity v2 regressions cover additional cases.",
+    "Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled."
+  ],
+  "sourceFiles": [
+    "crates/norn-cli/src/eval.rs",
+    "crates/norn-kernel/src/lib.rs",
+    "crates/norn-projections/Cargo.toml",
+    "crates/norn-projections/src/cedar.rs",
+    "crates/norn-projections/src/interop.rs",
+    "crates/norn-projections/src/lib.rs",
+    "crates/norn-projections/src/lifecycle.rs",
+    "crates/norn-projections/src/lineage.rs",
+    "crates/norn-projections/src/mcp.rs",
+    "crates/norn-projections/src/sqlite_ddl.rs",
+    "crates/norn-testkit/src/cell_host.rs",
+    "crates/norn-testkit/src/compose.rs",
+    "crates/norn-testkit/src/coverage.rs",
+    "crates/norn-testkit/src/laws.rs",
+    "crates/norn-testkit/src/lib.rs",
+    "crates/norn-testkit/src/machine.rs",
+    "crates/norn-testkit/src/model.rs",
+    "crates/norn-testkit/src/runner.rs",
+    "crates/norn-testkit/src/strategy.rs",
+    "verification/kernel-v2/generate.py",
+    "verification/kernel-v2/models/commit-admission.qnt",
+    "verification/kernel-v2/models/projection-trust.qnt",
+    "verification/kernel-v2/validate.py"
+  ]
+}

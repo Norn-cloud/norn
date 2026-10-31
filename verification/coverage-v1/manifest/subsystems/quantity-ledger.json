@@ -1,0 +1,403 @@
+{
+  "obligations": [
+    "INV-QL-CONSERVATION",
+    "INV-QL-UNIT-DIMENSION",
+    "INV-QL-EXACT-ARITHMETIC",
+    "INV-QL-PENDING-RESOLUTION",
+    "INV-QL-BATCH-ATOMIC",
+    "INV-QL-APPEND-REVERSAL",
+    "INV-QL-REFERENCE-BALANCE-ALGEBRA"
+  ],
+  "obligationClaims": [
+    {
+      "id": "INV-QL-CONSERVATION",
+      "runtime": "tested",
+      "model": "partial",
+      "proof": "partial",
+      "residual": "The Rust checker targets the full admitted linear-template contract, but the Quint model constructs one balanced debit/credit pair and the Lean/Kani artifacts prove narrower independent algebraic references; no theorem covers every admitted template valuation or production correspondence.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+            "selectors": [
+              "test:generated_balanced_packs_match_independent_oracle",
+              "test:coefficient_constant_unit_and_layer_mutations_fail_closed"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+            "command": "quint verify verification/stripmine-2026-08-22/models/quantity-authority.qnt --backend apalache --invariants typeOk perUnitLayerConserved atomicAuthorityRecords phaseMatchesCommitCount reversalRestoresBalances noOpPreservesAuthority --max-steps 8",
+            "selectors": [
+              "invariant:perUnitLayerConserved"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+            "selectors": [
+              "theorem:balanced_pair",
+              "theorem:balanced_append"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-QL-UNIT-DIMENSION",
+      "runtime": "tested",
+      "model": "bounded_model_checked",
+      "proof": "reference_proved",
+      "residual": "Whole checker-admitted packs pin exact ontology, unit/dimension terms and precision in immutable Define receipts on the normalized cell path. Legacy authority/profile state was removed in quantity v2. Formal artifacts remain references; #3303 must establish v2 refinement.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-checker/tests/quantity_ledger.rs",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+            "selectors": [
+              "test:account_registry_binds_every_leg_to_an_allowed_unit",
+              "test:ontology_artifact_and_unit_dimension_bindings_fail_closed",
+              "test:different_dimensions_cannot_balance_or_substitute_after_sealing"
+            ]
+          },
+          {
+            "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+            "selectors": [
+              "test:ontology_dimension_substitution_never_preserves_pack_or_certificate_identity"
+            ]
+          },
+          {
+            "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+            "selectors": [
+              "test:boundary_hashes_are_versioned_golden_vectors",
+              "test:recomputing_a_tampered_certificate_hash_does_not_forge_checker_agreement"
+            ]
+          },
+          {
+            "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+            "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+            "selectors": [
+              "test:pack_identity_corruption_cannot_reinterpret_existing_quantities"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
+            "command": "quint verify verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt --backend apalache --invariants typeOk certificateRemainsPinned acceptedPostingHasExactBinding differentDimensionCannotSubstitute differentDimensionsCannotBalance --max-steps 8",
+            "selectors": [
+              "invariant:certificateRemainsPinned",
+              "invariant:acceptedPostingHasExactBinding",
+              "invariant:differentDimensionCannotSubstitute",
+              "invariant:differentDimensionsCannotBalance"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+            "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+            "selectors": [
+              "harness:partitions_by_unit_and_layer",
+              "harness:equal_values_in_different_units_are_not_balanced"
+            ]
+          },
+          {
+            "artifact": "verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+            "command": "lean -DwarningAsError=true verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+            "selectors": [
+              "theorem:different_dimensions_cannot_balance",
+              "theorem:different_units_cannot_balance_without_explicit_identity",
+              "theorem:admitted_substitution_is_exact",
+              "theorem:changing_dimension_rejects_substitution"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-QL-EXACT-ARITHMETIC",
+      "runtime": "tested",
+      "model": "missing",
+      "proof": "partial",
+      "residual": "The production checker and differential/property cases exercise exact checked i128 arithmetic, while Kani proves only one fixed intermediate-overflow vector and a bounded pair domain; no proof covers every admitted bound or production evaluator path.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+            "selectors": [
+              "test:balanced_symbolic_expression_with_unsafe_bounds_is_rejected_by_both_checkers",
+              "test:cross_leg_prefix_overflow_is_rejected_by_production_and_independent_oracle"
+            ]
+          }
+        ],
+        "model": [],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+            "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+            "selectors": [
+              "harness:overflow_is_rejected_not_wrapped",
+              "harness:rejects_intermediate_overflow"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-QL-PENDING-RESOLUTION",
+      "runtime": "tested",
+      "model": "bounded_model_checked",
+      "proof": "reference_proved",
+      "residual": "Quantity v2 admits any conserving signed subset and funds the remaining vector under explicit policies. Runtime timer expiry and cell clock use the shared commit path. The full-only reference models are not refinement evidence for partial resolution, balance CAS or host scheduling (#3303).",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+            "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+            "selectors": [
+              "test:conserving_partial_post_and_void_preserve_identity_deadline_and_retry",
+              "test:partial_resolution_interleaved_lots_conserve_independent_scalar_fold",
+              "test:lazy_deadline_refuses_post_and_scheduled_expiry_consumes_timer_atomically"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+            "command": "quint verify verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt --backend apalache --invariants typeOk conserved recordsAligned terminalResolvedOnce noTerminalReservation pendingHasOneCreate noOpPreservesAuthority --max-steps 8",
+            "selectors": [
+              "invariant:terminalResolvedOnce",
+              "invariant:noTerminalReservation",
+              "invariant:pendingHasOneCreate"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+            "selectors": [
+              "theorem:every_resolution_releases_the_full_reservation",
+              "theorem:a_terminal_result_rejects_every_second_resolution",
+              "theorem:expiry_before_due_is_rejected"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-QL-BATCH-ATOMIC",
+      "runtime": "missing",
+      "model": "bounded_model_checked",
+      "proof": "reference_proved",
+      "residual": "The unused engine multi-posting batch protocol was deleted by owner direction in quantity v2. Current multi-leg templates and ordinary effects are atomic in one cell transaction, but do not implement that protocol's ordered child transaction identities. Legacy Quint/Lean batch models remain reference mathematics; no current batch runtime claim or v2 refinement is credited.",
+      "evidence": {
+        "runtime": [],
+        "model": [
+          {
+            "artifact": "verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+            "command": "quint verify verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt --backend apalache --invariants typeOk sequentialVersions batchAllOrNone stableReceipt --max-steps 8",
+            "selectors": [
+              "invariant:sequentialVersions",
+              "invariant:batchAllOrNone",
+              "invariant:stableReceipt"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+            "command": "lean -DwarningAsError=true verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+            "selectors": [
+              "theorem:accepted_posting_applies_deltas_and_conserves",
+              "theorem:rejected_batch_is_noop",
+              "theorem:accepted_batch_matches_sequential_execution",
+              "theorem:accepted_batch_conserves_total",
+              "theorem:accepted_batch_advances_exactly"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-QL-APPEND-REVERSAL",
+      "runtime": "tested",
+      "model": "bounded_model_checked",
+      "proof": "partial",
+      "residual": "The normalized cell path appends linked exact negations, checks immutable reversal evidence and reconstructs projections at open. Formal quantity authority models remain reference mathematics; no Rust/SQL refinement proof is claimed (#3303).",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+            "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+            "selectors": [
+              "test:linked_reversal_is_append_only_and_cannot_repeat_or_reverse_a_reversal",
+              "test:reversal_projection_damage_refuses_reopen_replay_and_second_reversal",
+              "test:reversal_refuses_a_balanced_but_corrupted_original_vector"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+            "command": "quint verify verification/stripmine-2026-08-22/models/quantity-authority.qnt --backend apalache --invariants typeOk perUnitLayerConserved atomicAuthorityRecords phaseMatchesCommitCount reversalRestoresBalances noOpPreservesAuthority --max-steps 8",
+            "selectors": [
+              "invariant:reversalRestoresBalances"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
+            "selectors": [
+              "theorem:exact_reversal_restores_prior_balances",
+              "theorem:admitted_i128_amount_has_representable_negation"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-QL-REFERENCE-BALANCE-ALGEBRA",
+      "runtime": "missing",
+      "model": "missing",
+      "proof": "reference_proved",
+      "residual": "The theorem is intentionally limited to mathematical integer-list semantics; it does not claim keyed unit/layer semantics, checked i128 arithmetic, persistence, or production Rust correspondence.",
+      "evidence": {
+        "runtime": [],
+        "model": [],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+            "selectors": [
+              "theorem:balanced_pair",
+              "theorem:net_reverse",
+              "theorem:balanced_reverse",
+              "theorem:balanced_append"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "runtime": {
+    "status": "partial",
+    "artifacts": [
+      "crates/norn-checker/src/quantity_ledger.rs",
+      "crates/norn-checker/src/quantity_ledger/boundary.rs",
+      "crates/norn-checker/tests/quantity_ledger.rs",
+      "crates/norn-checker/tests/quantity_ledger_properties.rs",
+      "crates/norn-checker/tests/quantity_ledger_expression.rs",
+      "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+      "crates/norn-cell/src/quantity.rs",
+      "verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+      "verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
+      "crates/norn-cell/tests/quantity_reservations.rs",
+      "crates/norn-kernel/src/quantity.rs",
+      "crates/norn-kernel/tests/accounting_commit.rs",
+      "crates/norn-checker/src/posting.rs",
+      "crates/norn-ir/src/posting.rs"
+    ],
+    "commands": [
+      "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+      "cargo test --locked -p norn-kernel --test accounting_commit",
+      "cargo test --locked -p norn-cell --test quantity_reservations"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "model": {
+    "status": "partial",
+    "bound": "Apalache depth 8 over quantity lifecycle amounts 1..3, one authority posting/reversal with identities and amounts 1..3, abstract atomic batches of one through three postings, and exact/substituted bindings over two units and two dimensions",
+    "artifacts": [
+      "verification/stripmine-2026-08-22/models/quantity-ledger.qnt",
+      "verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+      "verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+      "verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+      "verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt"
+    ],
+    "resultArtifacts": [
+      "target/verification-results/quantity-authority-quint.json",
+      "target/verification-results/quantity-batch-atomicity-quint.json",
+      "target/verification-results/quantity-ledger-quint.json",
+      "target/verification-results/quantity-reservation-authority-quint.json",
+      "target/verification-results/quantity-unit-dimension-quint.json"
+    ],
+    "commands": [
+      "quint typecheck verification/stripmine-2026-08-22/models/quantity-ledger.qnt",
+      "quint verify verification/stripmine-2026-08-22/models/quantity-ledger.qnt --backend apalache --invariants typeOk conserved terminalResolvedOnce noTerminalReservation --max-steps 8",
+      "quint typecheck verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+      "quint verify verification/stripmine-2026-08-22/models/quantity-authority.qnt --backend apalache --invariants typeOk perUnitLayerConserved atomicAuthorityRecords phaseMatchesCommitCount reversalRestoresBalances noOpPreservesAuthority --max-steps 8",
+      "quint typecheck verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+      "quint verify verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt --backend apalache --invariants typeOk conserved recordsAligned terminalResolvedOnce noTerminalReservation pendingHasOneCreate noOpPreservesAuthority --max-steps 8",
+      "quint typecheck verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+      "quint verify verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt --backend apalache --invariants typeOk sequentialVersions batchAllOrNone stableReceipt --max-steps 8",
+      "quint typecheck verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
+      "quint verify verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt --backend apalache --invariants typeOk certificateRemainsPinned acceptedPostingHasExactBinding differentDimensionCannotSubstitute differentDimensionsCannotBalance --max-steps 8"
+    ],
+    "generatedArtifacts": []
+  },
+  "proof": {
+    "status": "partial",
+    "scope": "reference",
+    "artifacts": [
+      "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+      "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
+      "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+      "verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+      "verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+      "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs"
+    ],
+    "commands": [
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+      "lean -DwarningAsError=true verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+      "lean -DwarningAsError=true verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+      "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "limitations": [
+    "The retained pure checker and in-memory quantity authority are executable, including a deliberately full-resolution-only pending reservation slice and an ordered same-owner batch of at most 64 postings, but governed pack activation, partial pending resolution, automatic deadline enforcement, inventory capacity, account graphs, normalized tables, and a same-transaction CALA/general-action bridge are not production-bound.",
+    "Lean and Kani currently prove independent reference functions, not production Rust correspondence; the quantity-unit/dimension lane also assumes ontology-artifact authenticity and SHA-256 collision resistance.",
+    "The Quint lifecycle model omits storage, owner versions, idempotency maps, account floors, and partial-post policy; the separate authority model adds bounded owner/retry/record-count behavior but still abstracts storage as atomic assignments and treats authorization of the seal as a Boolean."
+  ],
+  "sourceFiles": [
+    "crates/norn-cell/src/quantity/replay.rs",
+    "crates/norn-checker/src/posting.rs",
+    "crates/norn-checker/src/quantity_ledger.rs",
+    "crates/norn-checker/src/quantity_ledger/boundary.rs",
+    "crates/norn-checker/src/quantity_ledger/expression.rs",
+    "crates/norn-graph/src/quantity.rs",
+    "crates/norn-ir/src/posting.rs",
+    "crates/norn-ir/src/quantity_ledger.rs",
+    "crates/norn-ir/src/quantity_ledger/boundary.rs",
+    "crates/norn-ir/src/quantity_ledger/cell.rs",
+    "crates/norn-ir/src/quantity_ledger/expression.rs",
+    "crates/norn-kernel/src/action_quantity.rs",
+    "crates/norn-kernel/src/quantity.rs",
+    "crates/norn-kernel/tests/accounting_commit.rs",
+    "verification/kernel-v2/models/quantity-ledger.qnt",
+    "verification/ontology/packs/quantity-units-v0/pack.json",
+    "verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+    "verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+    "verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
+    "verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+    "verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+    "verification/stripmine-2026-08-22/models/quantity-ledger.qnt",
+    "verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+    "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs"
+  ]
+}

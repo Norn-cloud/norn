@@ -21,8 +21,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from verification_attestation import selector_is_declared  # noqa: E402
 from proof_enrollment import validate as validate_enrollment  # noqa: E402
+import coverage_manifest  # noqa: E402
 
-COVERAGE = ROOT / "verification/coverage-v1/coverage.json"
 CENTRAL_OBLIGATIONS = (
     ROOT / "verification/stripmine-2026-08-22/obligations.json"
 )
@@ -694,7 +694,7 @@ def validate_claim_evidence_shape(
 
 def validate(
     *,
-    coverage_path: Path = COVERAGE,
+    coverage_path: Path = coverage_manifest.COVERAGE,
     gate_manifest_source: Path | None = None,
     central_obligations_path: Path = CENTRAL_OBLIGATIONS,
     formal_workflow_path: Path = FORMAL_WORKFLOW,
@@ -706,7 +706,10 @@ def validate(
     from silently selecting a different security registry or claim manifest.
     """
 
-    coverage = load(coverage_path)
+    try:
+        coverage = coverage_manifest.load(coverage_path)
+    except coverage_manifest.InvalidCoverageLayout as error:
+        raise InvalidCoverage(f"coverage manifest: {error}") from error
     require(coverage.get("schemaVersion") == "norn.verification.coverage.v1", "wrong schemaVersion")
     gate_manifest_path = coverage.get("promotedGateManifest")
     require(

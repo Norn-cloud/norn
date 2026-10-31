@@ -1,0 +1,162 @@
+{
+  "obligations": [
+    "INV-AUTH-CAPABILITY-NOW",
+    "INV-AUTH-SCOPE-CLOSED"
+  ],
+  "obligationClaims": [
+    {
+      "id": "INV-AUTH-CAPABILITY-NOW",
+      "runtime": "missing",
+      "model": "bounded_model_checked",
+      "proof": "partial",
+      "residual": "The retained production-bound InMemory ActionIR method loads the exact current verified ActionIR artifact, persisted policy, grant, resource, authorization epoch, replacement receipt, and monotonic trusted logical-time watermark inside one candidate-state commit, runs the deterministic checker, and atomically publishes the action effect plus authorization-bound receipt. Exact replay is mutation-inert but rechecks current artifact/authority and retry time before result disclosure; fresh-commit and post-commit exact-retry revocation races both deny with no duplicate business effect or prior-result disclosure. Tests also cover valid exact and lost-reply replay, revocation/expiry, stale or substituted bindings, owner CAS, and artifact/provenance/receipt tampering. The authenticated HTTP ActionIR route (server-side expectations and trusted logical time) and the Turso injected-persistence-failure and reopen tests were removed in #2764 (not currently covered); trusted logical time is supplied by the test caller. Other mutation families still use narrower authorization boundaries; governed network provisioning, strong-receipt projection in aggregate evidence, effect-program-to-proposed-effect correspondence, and Rust-to-Lean/Quint refinement are not claimed. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "evidence": {
+        "runtime": [],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt",
+            "command": "quint verify verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt --backend apalache --invariants typeOk atMostOnce acceptedOnlyWithExactBindings acceptedOnlyWithFreshVersions acceptedOnlyWithinValidityWindow rejectionPreservesCommitAuthority --max-steps 8",
+            "selectors": [
+              "invariant:acceptedOnlyWithFreshVersions",
+              "invariant:acceptedOnlyWithinValidityWindow"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+            "selectors": [
+              "theorem:allow_uses_current_policy_and_authorization_epoch",
+              "theorem:revoked_grant_denies"
+            ]
+          },
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/AuthorizationAuthorityCommit.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationAuthorityCommit.lean",
+            "selectors": [
+              "theorem:accepted_fresh_commit_uses_current_authority",
+              "theorem:replay_or_collision_is_inert",
+              "theorem:successful_fresh_commit_is_atomic"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-AUTH-SCOPE-CLOSED",
+      "runtime": "missing",
+      "model": "bounded_model_checked",
+      "proof": "partial",
+      "residual": "The retained authorization checker and engine store require explicit scope and reject missing, wildcard, or cross-organization bindings. Optional dimensions, including agent session, require exact presence or absence; blank/wildcard values are rejected. ScopeKey constructors and retained store boundaries revalidate components, and authorization evidence binds exact actor kind. No HTTP, UPE mutation, or legacy fixture/migration path is retained. Lean proves compact exact option semantics and Quint exhausts None/Some(A)/Some(B) combinations for five optional dimensions. The Aeneas lane starts at the concrete interned Rust grant-vector decision and proves its traversal, exact tuple comparisons, and capability membership. Its generated vector loops use `partial_fixpoint`, so the theorem dependency closure is restricted to Lean core `propext`, `Classical.choice`, and `Quot.sound`, never `sorryAx` or a custom axiom. It does not prove String-to-u64 interning, deserialization/validation, commit-evidence construction, or every call-site route. The broad production obligation still needs a whole-store scoped-key audit, authentication/provisioning proof, a general storage-key injectivity proof, read-path lifecycle enforcement, and full implementation correspondence. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "evidence": {
+        "runtime": [],
+        "model": [
+          {
+            "artifact": "verification/authz-v1/models/authorization-scope-exactness.qnt",
+            "command": "quint verify verification/authz-v1/models/authorization-scope-exactness.qnt --backend apalache --invariants typeOk allowIffExact omittedGrantTenantRejectsPresentRequest omittedGrantSessionRejectsPresentRequest --max-steps 4",
+            "selectors": [
+              "invariant:allowIffExact",
+              "invariant:omittedGrantTenantRejectsPresentRequest",
+              "invariant:omittedGrantSessionRejectsPresentRequest"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+            "selectors": [
+              "theorem:allow_is_scope_closed",
+              "theorem:allow_binds_identity"
+            ]
+          },
+          {
+            "artifact": "verification/authz-v1/AuthorizationScopeExactness.lean",
+            "command": "lean -DwarningAsError=true verification/authz-v1/AuthorizationScopeExactness.lean",
+            "selectors": [
+              "theorem:omitted_tenant_is_not_wildcard",
+              "theorem:omitted_workspace_is_not_wildcard",
+              "theorem:omitted_environment_is_not_wildcard",
+              "theorem:omitted_business_unit_is_not_wildcard",
+              "theorem:omitted_agent_session_is_not_wildcard",
+              "theorem:exact_scope_allow_implies_every_dimension_equal"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "runtime": {
+    "status": "missing",
+    "artifacts": [],
+    "commands": [],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "model": {
+    "status": "bounded_model_checked",
+    "bound": "Apalache depth 8 over the general one-principal capability/owner transition model plus a dedicated commit-authorization model with Boolean exact-binding groups, policy/resource versions 1..4, authorization epochs 1..4, logical time 1..4, revocation/policy/resource changes, optional expiry, and at most one logical commit; plus exhaustive per-step None/Some(A)/Some(B) combinations for tenant, workspace, environment, business unit, and agent session to depth 4",
+    "artifacts": [
+      "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+      "verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt",
+      "verification/authz-v1/models/authorization-scope-exactness.qnt"
+    ],
+    "resultArtifacts": [
+      "target/verification-results/authority-commit-quint.json",
+      "target/verification-results/authorization-commit-boundary-quint.json",
+      "target/verification-results/authorization-scope-exactness-quint.json"
+    ],
+    "commands": [
+      "quint typecheck verification/stripmine-2026-08-22/models/authority-commit.qnt",
+      "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+      "quint typecheck verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt",
+      "quint verify verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt --backend apalache --invariants typeOk atMostOnce acceptedOnlyWithExactBindings acceptedOnlyWithFreshVersions acceptedOnlyWithinValidityWindow rejectionPreservesCommitAuthority --max-steps 8",
+      "quint typecheck verification/authz-v1/models/authorization-scope-exactness.qnt",
+      "quint verify verification/authz-v1/models/authorization-scope-exactness.qnt --backend apalache --invariants typeOk allowIffExact omittedGrantTenantRejectsPresentRequest omittedGrantSessionRejectsPresentRequest --max-steps 4"
+    ],
+    "generatedArtifacts": []
+  },
+  "proof": {
+    "status": "partial",
+    "scope": "mixed concrete extracted decision and independent references",
+    "artifacts": [
+      "verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+      "verification/stripmine-2026-08-22/proofs/lean/AuthorizationAuthorityCommit.lean",
+      "verification/authz-v1/AuthorizationScopeExactness.lean"
+    ],
+    "commands": [
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean",
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationAuthorityCommit.lean",
+      "lean -DwarningAsError=true verification/authz-v1/AuthorizationScopeExactness.lean"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "limitations": [
+    "The retained in-memory store method couples the exact current verified ActionIR artifact, persisted policy/grant/resource/epoch/replacement receipt/time watermark, deterministic authorization, owner CAS, business effects, and an authorization-bound receipt in one candidate commit. No HTTP route or durable database adapter is retained. INV-AUTH-CAPABILITY-NOW remains partial because other authoritative mutation families, network authority provisioning, and strong-receipt evidence projection remain outside this slice; the kernel also does not derive the proposed effect from the artifact's optional closed effect program.",
+    "INV-AUTH-SCOPE-CLOSED remains partial until every authoritative store trait, primary/unique identity, and lookup path passes a scoped-key audit; the public ScopeKey/scope registry alias checks and cell tenant-binding regression are only closed slices.",
+    "The bounded models cover capability freshness, abstract exact-binding groups, and the concrete five optional scope/session dimensions over a three-value option encoding, but not grant hierarchy, policy language, identity authentication, storage snapshots, or production evaluator correspondence.",
+    "Except for the concrete interned decision graph extracted by the Aeneas lane, the Lean authorization theorems are independent reference semantics over compact exact identity/scope/operation/policy/resource/version/epoch/time, atomic publication values, and exact optional dimensions\u2014not an end-to-end Rust implementation proof, identity/evaluator proof, storage-key injectivity proof, or whole-store scope audit.",
+    "Cedar's formal reference semantics are source evidence. No runtime differential-refinement harness is retained, and no checked correspondence theorem relates the Rust authorization implementation to the references."
+  ],
+  "sourceFiles": [
+    "crates/norn-authz/Cargo.toml",
+    "crates/norn-authz/src/admit.rs",
+    "crates/norn-authz/src/base.rs",
+    "crates/norn-authz/src/diag.rs",
+    "crates/norn-authz/src/entitlement.rs",
+    "crates/norn-authz/src/grants.rs",
+    "crates/norn-authz/src/lib.rs",
+    "crates/norn-authz/src/lower.rs",
+    "crates/norn-authz/src/pdp.rs",
+    "crates/norn-authz/src/projected_tests.rs",
+    "crates/norn-authz/src/request.rs",
+    "crates/norn-authz/src/tests.rs",
+    "crates/norn-authz/tests/goldens/order_access.cedar",
+    "crates/norn-kernel/src/authz.rs",
+    "crates/norn-kernel/src/authz_action.rs",
+    "verification/authz-v1/AuthorizationScopeExactness.lean",
+    "verification/authz-v1/models/authorization-scope-exactness.qnt"
+  ]
+}

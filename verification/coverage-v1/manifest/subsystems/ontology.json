@@ -1,0 +1,248 @@
+{
+  "obligations": [
+    "INV-ONT-MAPPING-PROVENANCE",
+    "INV-ONT-OPEN-CLOSED-SEPARATION",
+    "INV-ONT-RELATION-AUTHORITY"
+  ],
+  "obligationClaims": [
+    {
+      "id": "INV-ONT-MAPPING-PROVENANCE",
+      "runtime": "tested",
+      "model": "bounded_model_checked",
+      "proof": "reference_proved",
+      "residual": "The closed Rust validator requires immutable source resolution, evidence, integer confidence in 0..10000, non-empty reviewer identity, a shared UTC review timestamp subset, and at most one direct supersession edge to an active same-term/same-pinned-source mapping; adversarial tests cover missing/range/time/unresolved/self/cross-identity/chained cases and valid direct replacement. Quint checks the two-record direct-replacement protocol and Lean proves the compact closed predicate's confidence, review, identity-preservation, direct-terminal, and exactly-one-active consequences. Reviewer strings are not authenticated principals, confidence/evidence truth is not machine-established, timestamp parsing and arbitrary graphs are outside the formal abstractions, and no correspondence proof exists.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-checker/tests/ontology_pack.rs",
+            "command": "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+            "selectors": [
+              "test:ontology_mapping_requires_reviewed_confidence_provenance",
+              "test:ontology_mapping_allows_one_direct_same_term_same_source_replacement",
+              "test:ontology_mapping_supersession_rejects_invalid_graph_edges"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+            "command": "quint verify verification/ontology-v1/models/ontology-mapping-provenance.qnt --backend apalache --invariants typeOk replacementIsDirect replacementPreservesIdentity replacementHasReviewedBoundedProvenance exactlyOneActivePerIdentity rejectedAttemptIsNoOp --max-steps 8",
+            "selectors": [
+              "invariant:replacementIsDirect",
+              "invariant:replacementPreservesIdentity",
+              "invariant:replacementHasReviewedBoundedProvenance",
+              "invariant:exactlyOneActivePerIdentity",
+              "invariant:rejectedAttemptIsNoOp"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/ontology-v1/OntologyMappingProvenance.lean",
+            "command": "lean -DwarningAsError=true verification/ontology-v1/OntologyMappingProvenance.lean",
+            "selectors": [
+              "theorem:accepted_provenance_bounds_confidence",
+              "theorem:accepted_provenance_requires_review",
+              "theorem:direct_replacement_is_not_self",
+              "theorem:direct_replacement_preserves_term",
+              "theorem:direct_replacement_preserves_source",
+              "theorem:direct_replacement_is_terminal",
+              "theorem:direct_replacement_leaves_exactly_one_active"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-ONT-OPEN-CLOSED-SEPARATION",
+      "runtime": "partial",
+      "model": "partial",
+      "proof": "partial",
+      "residual": "The closed Rust EntityIR validator and the production commit checker reject every unknown payload/schema keyword; the admitted field language is type/required plus exact finite string enums. The finite reasoner/SHACL corpus is checked, and versioned authoritative object/relation commits require exact Active ontology artifacts and revalidate that same bounded field language before publishing effects. Lean proves the declared evidence-type separation, but no implementation correspondence or end-to-end inferred-triple negative test exists; no general OWL soundness/completeness theorem is claimed.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-checker/tests/ontology_pack.rs",
+            "command": "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+            "selectors": [
+              "test:closed_instance_checker_accepts_valid_values_and_rejects_unknown_fields",
+              "test:owl_and_shacl_files_are_projection_only_contracts"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "verification/ontology/scripts/validate_semantics.py",
+            "command": "scripts/check-ontology-semantics.sh",
+            "selectors": [
+              "checker:check_owl_membership",
+              "checker:check_shacl"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+            "selectors": [
+              "theorem:semantic_evidence_never_authorizes",
+              "theorem:authority_requires_current_scoped_capability"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INV-ONT-RELATION-AUTHORITY",
+      "runtime": "missing",
+      "model": "bounded_model_checked",
+      "proof": "partial",
+      "residual": "The canonical versioned authority path has retained InMemory tests for exact Relation artifact identity, exact active Relation/Entity pins, endpoint object kinds, existing and same-commit cardinality conflicts, superseded versions, atomic rejection, and immutable-id payload updates; its Turso/reopen variants were removed in #2764 (not currently covered). Quint checks a two-relation abstraction across all four declared cardinalities, exact accepted-version binding, exact endpoint-kind admission, and rejected no-ops; Lean proves compact pairwise reference lemmas. Neither artifact is Rust refinement evidence, a future parallel writer topology must add relation-kind/index-level serialization, and the legacy unversioned migration path remains non-authoritative until disabled. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "evidence": {
+        "runtime": [],
+        "model": [
+          {
+            "artifact": "verification/ontology-v1/models/ontology-relation-authority.qnt",
+            "command": "quint verify verification/ontology-v1/models/ontology-relation-authority.qnt --backend apalache --invariants typeOk acceptedVersionWasExact acceptedEndpointsHadExactKinds cardinalityPreserved rejectedAttemptIsNoOp --max-steps 8",
+            "selectors": [
+              "invariant:acceptedVersionWasExact",
+              "invariant:acceptedEndpointsHadExactKinds",
+              "invariant:cardinalityPreserved",
+              "invariant:rejectedAttemptIsNoOp"
+            ]
+          }
+        ],
+        "proof": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+            "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+            "selectors": [
+              "theorem:superseded_artifact_version_rejects",
+              "theorem:relation_kind_alias_rejects",
+              "theorem:one_to_many_duplicate_target_conflicts",
+              "theorem:same_immutable_relation_identity_is_not_counted_twice"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "runtime": {
+    "status": "partial",
+    "artifacts": [
+      "crates/norn-checker/src/ontology.rs",
+      "crates/norn-checker/tests/ontology_pack.rs",
+      "crates/norn-checker/tests/ontology_registry.rs",
+      "crates/norn-checker/tests/quantity_unit_ontology_pack.rs",
+      "verification/ontology/packs/company-commerce-v0/pack.json",
+      "verification/ontology/packs/quantity-units-v0/pack.json",
+      "verification/ontology/fixtures/registry-conformance-v0.json"
+    ],
+    "commands": [
+      "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+      "cargo test --locked -p norn-ir -p norn-checker entity_"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "model": {
+    "status": "partial",
+    "bound": "two reviewed v0 packs, 19 reviewed external mappings, 20 terms, five OWL-RL membership cases, four SHACL instance decisions, a depth-eight two-record reviewed mapping-replacement protocol, and a depth-eight two-relation/four-cardinality authority protocol",
+    "artifacts": [
+      "verification/ontology/registry-v0.json",
+      "verification/ontology/scripts/validate.py",
+      "verification/ontology/scripts/validate_semantics.py",
+      "verification/ontology/tools/requirements.lock",
+      "scripts/check-ontology-semantics.sh",
+      "verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+      "verification/ontology-v1/models/ontology-relation-authority.qnt"
+    ],
+    "commands": [
+      "python3 verification/ontology/scripts/validate.py",
+      "scripts/check-ontology-semantics.sh",
+      "quint typecheck verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+      "quint verify verification/ontology-v1/models/ontology-mapping-provenance.qnt --backend apalache --invariants typeOk replacementIsDirect replacementPreservesIdentity replacementHasReviewedBoundedProvenance exactlyOneActivePerIdentity rejectedAttemptIsNoOp --max-steps 8",
+      "quint typecheck verification/ontology-v1/models/ontology-relation-authority.qnt",
+      "quint verify verification/ontology-v1/models/ontology-relation-authority.qnt --backend apalache --invariants typeOk acceptedVersionWasExact acceptedEndpointsHadExactKinds cardinalityPreserved rejectedAttemptIsNoOp --max-steps 8"
+    ],
+    "resultArtifacts": [
+      "target/verification-results/ontology-mapping-provenance-quint.json",
+      "target/verification-results/ontology-relation-authority-quint.json"
+    ],
+    "generatedArtifacts": []
+  },
+  "proof": {
+    "status": "partial",
+    "scope": "reference",
+    "artifacts": [
+      "verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+      "verification/ontology-v1/OntologyMappingProvenance.lean"
+    ],
+    "commands": [
+      "lean -DwarningAsError=true verification/ontology-v1/OntologyMappingProvenance.lean",
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "limitations": [
+    "The external semantic lane covers the finite reviewed v0 fixture only; it is not a universal OWL/SHACL equivalence result.",
+    "Mapping confidence/reviewer/direct-supersession structure is runtime tested in Rust, statically reproduced over the 19 checked-in mappings, and represented by compact Lean/Quint reference semantics. Reviewer identity is not authenticated, confidence/evidence truth is not machine-established, timestamp parsing and arbitrary graphs are outside those abstractions, and no implementation correspondence proof covers mapping provenance.",
+    "An inferred-ontology-to-transition negative integration test remains open; the authoritative field validator is intentionally limited to type/required plus exact finite string enums, and direct RelationIR does not yet implement association-object/through semantics.",
+    "The Lean file proves declared compact reference semantics for evidence separation and RelationIR binding/cardinality only; no correspondence, OWL soundness, or completeness theorem connects it to the Rust implementation or general OWL semantics.",
+    "The current single authority-file writer serializes cardinality candidate-set checks; a future per-owner parallel topology must introduce an equivalent relation-kind/index consistency owner.",
+    "Legacy unversioned relation mutation is retained for migration and pre-reset tests, checks only immutable identity plus endpoint existence, is not credited as authoritative RelationIR enforcement, and must be migrated or disabled before public production."
+  ],
+  "sourceFiles": [
+    "crates/norn-checker/src/consistency.rs",
+    "crates/norn-checker/src/consistency/chase.rs",
+    "crates/norn-checker/src/consistency/theory.rs",
+    "crates/norn-checker/src/lint/mapping.rs",
+    "crates/norn-checker/src/mapping.rs",
+    "crates/norn-checker/src/mapping/compile.rs",
+    "crates/norn-checker/src/mapping/evidence.rs",
+    "crates/norn-checker/src/mapping/set.rs",
+    "crates/norn-checker/src/mapping/snapshot_lint.rs",
+    "crates/norn-checker/src/mapping/vendor.rs",
+    "crates/norn-checker/src/ontology.rs",
+    "crates/norn-checker/src/ontology/link.rs",
+    "crates/norn-checker/src/ontology/link_registry.rs",
+    "crates/norn-checker/tests/consistency.rs",
+    "crates/norn-checker/tests/ontology_link.rs",
+    "crates/norn-checker/tests/registry_packs.rs",
+    "crates/norn-ir/src/mapping.rs",
+    "crates/norn-ir/src/mapping_evidence.rs",
+    "fixtures/ir/metrics/customers-by-region-week.question.json",
+    "fixtures/ir/metrics/sales-by-store-day.question.json",
+    "fixtures/ir/synthetic-contact.source_schema.json",
+    "fixtures/ir/synthetic-rows.mapping.json",
+    "fixtures/projections/sqlite/entity-v2-object-types.sql",
+    "registry/packs/canon/artifacts/norn.ontology-pack.canon.json",
+    "registry/packs/canon/canon.pack.ts",
+    "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
+    "registry/packs/erpnext/artifacts/norn.ontology-pack.erpnext.json",
+    "registry/packs/erpnext/erpnext.link.ts",
+    "registry/packs/erpnext/erpnext.pack.ts",
+    "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
+    "registry/packs/shopify/artifacts/norn.ontology-pack.shopify.json",
+    "registry/packs/shopify/shopify.link.ts",
+    "registry/packs/shopify/shopify.pack.ts",
+    "scripts/check-ontology-semantics.sh",
+    "tools/norn-ts/corpus/accept/ontology-type.ts",
+    "tools/norn-ts/fixtures/definitions/ontology-pack.source.ts",
+    "tools/norn-ts/src/builder/mapping.ts",
+    "tools/norn-ts/src/builder/ontology-pack.ts",
+    "tools/norn-ts/src/builder/pack-link.ts",
+    "tools/norn-ts/test/ontology-pack.test.ts",
+    "tools/norn-ts/test/pack-link.test.ts",
+    "tools/norn-ts/test/registry-packs.test.ts",
+    "verification/ontology-v1/OntologyMappingProvenance.lean",
+    "verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+    "verification/ontology-v1/models/ontology-relation-authority.qnt",
+    "verification/ontology/packs/company-commerce-v0/pack.json",
+    "verification/ontology/scripts/build_company_commerce_pack.py",
+    "verification/ontology/scripts/semantic_check.py",
+    "verification/ontology/scripts/validate.py",
+    "verification/ontology/scripts/validate_semantics.py"
+  ]
+}

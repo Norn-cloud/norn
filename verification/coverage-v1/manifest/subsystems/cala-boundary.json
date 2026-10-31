@@ -1,0 +1,117 @@
+{
+  "obligations": [
+    "INV-QL-CERTIFICATE-POSTING-BINDING",
+    "INV-QL-AUTHORITY-BRIDGE-ATOMIC"
+  ],
+  "obligationClaims": [
+    {
+      "id": "INV-QL-CERTIFICATE-POSTING-BINDING",
+      "runtime": "tested",
+      "model": "executable_reference",
+      "proof": "missing",
+      "residual": "The checker retains exact certificate/evaluation binding. Quantity v2 compiles the immutable admitted pack and evaluates original parameters inside the cell transaction; no caller-provided leg vector or naked certificate can supply posting authority. Formal references are not v2 refinement proofs.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+            "selectors": [
+              "test:posting_commitment_binds_runtime_evaluation_and_deterministic_outbox_identity",
+              "test:stale_pack_or_checker_reference_fails_before_runtime_posting"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+            "selectors": [
+              "test:posting_commitment_binds_runtime_evaluation_and_deterministic_outbox_identity"
+            ]
+          }
+        ],
+        "proof": []
+      }
+    },
+    {
+      "id": "INV-QL-AUTHORITY-BRIDGE-ATOMIC",
+      "runtime": "partial",
+      "model": "exhaustive_bounded",
+      "proof": "missing",
+      "residual": "The pure reopen-observation checker exhausts the admitted partial-record state space, with bounded/reference formal evidence. The Norn-owned snapshot port's failure/lost-reply/reopen tests were removed in #2764 (not currently covered) together with the Turso adapter. No persisted CALA posting transaction or normalized same-transaction CALA bridge exists.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+            "selectors": [
+              "test:authority_observation_accepts_only_all_absent_or_complete_matching_state"
+            ]
+          },
+          {
+            "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+            "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+            "selectors": [
+              "test:quantity_and_ordinary_commit_succeed_and_retry_as_one_receipt",
+              "test:crash_before_commit_rolls_back_and_lost_reply_replays_once",
+              "test:reopen_restore_replay_preserve_heads_holds_history_and_receipts"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+            "selectors": [
+              "test:authority_observation_accepts_only_all_absent_or_complete_matching_state"
+            ]
+          }
+        ],
+        "proof": []
+      }
+    }
+  ],
+  "runtime": {
+    "status": "partial",
+    "artifacts": [
+      "crates/norn-checker/src/quantity_ledger/boundary.rs",
+      "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+      "crates/norn-cell/tests/quantity_reservations.rs",
+      "crates/norn-cell/src/quantity.rs",
+      "crates/norn-kernel/src/quantity.rs"
+    ],
+    "commands": [
+      "cargo test --locked -p norn-cell --test quantity_reservations",
+      "cargo test --locked -p norn-checker --test quantity_ledger_boundary"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "model": {
+    "status": "partial",
+    "bound": "all 2,046 nonempty partial-presence combinations in the admitted reopen record set",
+    "artifacts": [
+      "crates/norn-checker/tests/quantity_ledger_boundary.rs"
+    ],
+    "commands": [
+      "cargo test --locked -p norn-checker --test quantity_ledger_boundary"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "proof": {
+    "status": "missing",
+    "artifacts": [],
+    "commands": [],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "limitations": [
+    "CALA core posting and balance maintenance do not yet run in the same Turso authority transaction.",
+    "Only the partial authority-record presence space is exhaustively enumerated; certificate and commitment identity checks are executable examples and golden vectors, not exhaustive input-space exploration.",
+    "Crash injection, reply-after-commit recovery, and production storage correspondence remain open."
+  ],
+  "sourceFiles": [
+    "crates/norn-cell/src/quantity.rs"
+  ]
+}
