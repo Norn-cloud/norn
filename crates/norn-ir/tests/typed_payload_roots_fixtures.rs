@@ -86,8 +86,8 @@ fn fixtures() -> Vec<Fixture> {
             )
             .into(),
             kind: ArtifactKind::BusinessPack,
-            canonical_hash: "460641c3831e399285d19ba24118df6f90ffed033ae23e77f21caef9addc00b3",
-            raw_sha256: "b08f4ba750442377644d92de294b8a18fafe495191833dee4fdb5aecf27d990c",
+            canonical_hash: "ac62a2d1cd4e3eea1e3f1132d91be9cc587aa714510c2558f2a4ff8929ded202",
+            raw_sha256: "c98dc82f0972fd422410580b3506f47485d007c2d40263b8aff829dd003589ca",
         },
         Fixture {
             name: "verification/ontology/packs/quantity-units-v0/pack.json",
