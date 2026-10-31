@@ -25,6 +25,14 @@ CENTRAL_OBLIGATIONS = (
     ROOT / "verification/stripmine-2026-08-22/obligations.json"
 )
 CORE_PHYSICS_OBLIGATIONS = ROOT / "verification/core-physics-v1/obligations.json"
+REQUIRED_CORE_PHYSICS_OBLIGATION_IDS = frozenset([
+    "INV-CORE-COMMITMENT-COMPLETION",
+    "INV-CORE-ESCROW-NON-NEGATIVE",
+    "INV-CORE-LINKED-REVERSAL",
+    "INV-CORE-POSTED-IMMUTABLE",
+    "INV-CORE-QUANTITY-CONSERVATION",
+    "INV-CORE-VALUE-CONSERVATION",
+])
 KERNEL_OBLIGATIONS = ROOT / "verification/archive/kernel-v1/obligations.json"
 KERNEL_OBLIGATIONS_SCHEMA = (
     ROOT / "verification/archive/kernel-v1/schemas/obligations.schema.json"
@@ -571,6 +579,7 @@ def validate(
     coverage_path: Path = COVERAGE,
     gate_manifest_source: Path | None = None,
     central_obligations_path: Path = CENTRAL_OBLIGATIONS,
+    core_physics_obligations_path: Path = CORE_PHYSICS_OBLIGATIONS,
     formal_workflow_path: Path = FORMAL_WORKFLOW,
 ) -> int:
     """Validate canonical inputs, with explicit paths only for in-process canaries.
@@ -645,11 +654,19 @@ def validate(
         f"unexpected={sorted(central_ids - REQUIRED_CENTRAL_OBLIGATION_IDS)}",
     )
     phase1_registry = load(ROOT / "verification/kernel-v2/manifest.json")
-    core_physics_registry = load(CORE_PHYSICS_OBLIGATIONS)
+    core_physics_registry = load(core_physics_obligations_path)
+    core_physics_ids = obligation_ids(core_physics_registry)
+    require(
+        len(core_physics_registry.get("obligations", [])) == len(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)
+        and core_physics_ids == REQUIRED_CORE_PHYSICS_OBLIGATION_IDS,
+        "core-physics obligation registry must contain exactly the norn.core law closure; "
+        f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_ids)}, "
+        f"unexpected={sorted(core_physics_ids - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
+    )
     known_obligations = (
         central_ids
         | obligation_ids(phase1_registry)
-        | obligation_ids(core_physics_registry)
+        | core_physics_ids
     )
     p0_obligations = (
         p0_obligation_ids(central_registry)
