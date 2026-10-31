@@ -514,3 +514,39 @@ fn installed_dependencies_of_installed_artifacts_are_projected() {
     assert!(catalog.contains(&catalog.writes[0].target));
     assert_eq!(catalog.writes[0].target, invoice_transition());
 }
+
+#[test]
+fn a_law_on_an_inherited_transition_binds_the_declaring_supertype() {
+    let parent = entity(
+        "shop.Request.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.Request",
+            "properties": [{ "id": "status", "type": { "kind": "enum",
+                "values": [{ "value": "open" }, { "value": "approved" }] }, "default": "open" }],
+            "lifecycles": [{ "property": "status", "initial": ["open"], "terminal": ["approved"],
+                "transitions": [{ "id": "approve", "from": ["open"], "to": "approved" }] }]
+        }}),
+    );
+    let child = entity(
+        "shop.RushRequest.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.RushRequest", "extends": "shop.Request", "properties": []
+        }}),
+    );
+    let Value::Array(laws) = read_json("fixtures/law-ir/laws.json") else {
+        panic!("laws.json is a list");
+    };
+    let mut law = laws[0].clone();
+    law["dependencies"] = json!([]);
+    law["payload"]["subject"] = json!("shop.RushRequest");
+    law["payload"]["response"] = json!({
+        "kind": "transition", "objectType": "shop.RushRequest",
+        "property": "status", "transitionId": "approve"
+    });
+    let catalog = catalog(&[parent, child, envelope(law)], &[]);
+    let Some(LawBinding::Transition { target }) = &catalog.laws[0].binds else {
+        panic!("the law binds a transition");
+    };
+    assert_eq!(target.artifact_id, "shop.Request.entity");
+    assert!(catalog.contains(target));
+}

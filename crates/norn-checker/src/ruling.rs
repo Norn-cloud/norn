@@ -12,7 +12,7 @@ use norn_ir::definition_catalog::{Member, MemberRef};
 use norn_ir::ruling::{
     ClaimIr, ClaimStatement, Evidence, EvidenceSource, RevisitTrigger, RulingIr, RulingOutcome,
 };
-use norn_ir::{ArtifactEnvelope, ArtifactPayload};
+use norn_ir::{ArtifactEnvelope, ArtifactPayload, ScopeRef};
 
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
@@ -92,6 +92,20 @@ fn is_date(text: &str) -> bool {
         && (1..=31).contains(&number(8..10))
 }
 
+/// Whether no object can be in both scopes: some dimension is set on both
+/// to different values.
+pub(crate) fn disjoint(left: &ScopeRef, right: &ScopeRef) -> bool {
+    [
+        (&left.org_id, &right.org_id),
+        (&left.tenant_id, &right.tenant_id),
+        (&left.workspace_id, &right.workspace_id),
+        (&left.environment_id, &right.environment_id),
+        (&left.business_unit_id, &right.business_unit_id),
+    ]
+    .into_iter()
+    .any(|(left, right)| matches!((left, right), (Some(left), Some(right)) if left != right))
+}
+
 fn is_sha256(text: &str) -> bool {
     text.len() == 64
         && text
@@ -126,25 +140,28 @@ impl Findings<'_> {
 
     fn evidence(&mut self, pointer: &str, evidence: &[Evidence]) {
         for (index, item) in evidence.iter().enumerate() {
-            let at = format!("{pointer}/{index}/source");
-            let pinned = match &item.source {
-                EvidenceSource::Artifact {
-                    artifact_id,
-                    version,
-                    sha256,
-                } => !blank(artifact_id) && !blank(version) && is_sha256(sha256),
-                EvidenceSource::Upstream {
-                    system,
-                    release,
-                    locator,
-                } => !blank(system) && !blank(release) && !blank(locator),
-            };
-            if !pinned {
-                self.push(
-                    &at,
-                    "evidence is pinned: an artifact by id, version and lower-case SHA-256, or an upstream file by system, release and locator",
-                );
-            }
+            self.source(&format!("{pointer}/{index}/source"), &item.source);
+        }
+    }
+
+    fn source(&mut self, at: &str, source: &EvidenceSource) {
+        let pinned = match source {
+            EvidenceSource::Artifact {
+                artifact_id,
+                version,
+                sha256,
+            } => !blank(artifact_id) && !blank(version) && is_sha256(sha256),
+            EvidenceSource::Upstream {
+                system,
+                release,
+                locator,
+            } => !blank(system) && !blank(release) && !blank(locator),
+        };
+        if !pinned {
+            self.push(
+                at,
+                "evidence is pinned: an artifact by id, version and lower-case SHA-256, or an upstream file by system, release and locator",
+            );
         }
     }
 
@@ -273,22 +290,36 @@ impl Findings<'_> {
                     );
                 }
                 for (index, case) in cases.iter().enumerate() {
+                    let overlaps = cases
+                        .get(..index)
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|earlier| !disjoint(&earlier.scope, &case.scope));
+                    if overlaps {
+                        self.push(
+                            &format!("{pointer}/cases/{index}/scope"),
+                            "the cases of a scoped outcome have disjoint scopes",
+                        );
+                    }
                     named.push((
                         format!("{pointer}/cases/{index}/definition"),
                         &case.definition,
                     ));
                 }
             }
-            RulingOutcome::Defer { revisit } => {
-                if let RevisitTrigger::Date { on } = revisit
-                    && !is_date(on)
-                {
-                    self.push(
-                        &format!("{pointer}/revisit/on"),
-                        "a revisit date is YYYY-MM-DD",
-                    );
+            RulingOutcome::Defer { revisit } => match revisit {
+                RevisitTrigger::Date { on } => {
+                    if !is_date(on) {
+                        self.push(
+                            &format!("{pointer}/revisit/on"),
+                            "a revisit date is YYYY-MM-DD",
+                        );
+                    }
                 }
-            }
+                RevisitTrigger::Evidence { source } => {
+                    self.source(&format!("{pointer}/revisit/source"), source);
+                }
+            },
             RulingOutcome::Reject {} => {}
         }
         for (at, member) in named {
