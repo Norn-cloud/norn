@@ -564,9 +564,16 @@ impl Rows {
             })
             .collect();
         // The rows a parent mutation creates, changes, and deletes are
-        // objects of its owned collections' child types.
+        // objects of its owned collections' child types, declared on the
+        // type or inherited from a supertype.
         if via == WriteVia::MutateRows {
-            for child in self.children.get(target.object_kind).into_iter().flatten() {
+            let children: BTreeSet<&String> = self
+                .lineage(target.object_kind, Some(&pinned))
+                .iter()
+                .filter_map(|name| self.children.get(name))
+                .flatten()
+                .collect();
+            for child in children {
                 if let Some(owner) = types.get(child) {
                     writes.push(member_of(
                         owner,

@@ -755,3 +755,65 @@ fn the_lineage_of_a_pinned_type_starts_at_the_pinned_version() {
     assert_eq!(catalog.writes[0].target.artifact_id, "shop.Request.entity");
     assert!(catalog.contains(&catalog.writes[0].target));
 }
+
+#[test]
+fn a_subtype_row_mutation_writes_its_inherited_child_types() {
+    let parent = entity(
+        "shop.Order.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.Order",
+            "properties": [{ "id": "id", "type": { "kind": "text" } }],
+            "links": [{ "id": "lines", "target": "shop.OrderLine",
+                "cardinality": { "to": "many", "from": "one" } }],
+            "ownedCollections": [{ "id": "lines", "childType": "shop.OrderLine",
+                "rowIdProperty": "row_id", "orderingKey": "idx",
+                "cascadeOnParentDelete": true, "maxRows": 20 }]
+        }}),
+    );
+    let rush = entity(
+        "shop.RushOrder.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.RushOrder", "extends": "shop.Order", "properties": []
+        }}),
+    );
+    let child = entity(
+        "shop.OrderLine.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.OrderLine",
+            "properties": [
+                { "id": "row_id", "type": { "kind": "text" } },
+                { "id": "idx", "type": { "kind": "integer" } }
+            ]
+        }}),
+    );
+    let action = envelope(json!({
+        "irVersion": "0.1", "artifactId": "shop.edit_rush.action", "kind": "action",
+        "namespace": "shop", "name": "edit", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "actionId": "shop.edit_rush", "scopeRequired": [], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object" },
+            "outputSchema": { "type": "object" },
+            "effectProgram": {
+                "kind": "mutate_parent_with_rows", "objectIdField": "id",
+                "objectKind": "shop.RushOrder", "entityArtifactId": "shop.RushOrder.entity",
+                "entityArtifactVersion": "1.0.0", "parentValuesField": "values",
+                "rowOpsField": "rows", "parentVersionField": "version",
+                "collections": [{ "id": "lines" }]
+            }
+        }
+    }));
+    let catalog = catalog(&[parent, rush, child, action], &[]);
+    let targets: Vec<String> = catalog
+        .writes
+        .iter()
+        .map(|row| format!("{} {}", row.target.artifact_id, row.target.member.id()))
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            "shop.OrderLine.entity type:shop.OrderLine",
+            "shop.RushOrder.entity type:shop.RushOrder"
+        ]
+    );
+}
