@@ -3027,7 +3027,7 @@
     },
     {
       "path": "crates/norn-checker/src/ontology/link_registry.rs",
-      "sha256": "a5339b5f7fcfc76a1c05554ca0290209496726ad5acdd9a90f37755b87ca43a5",
+      "sha256": "5531d246ceaa2a97823a66970ba78a3ccd18fa26468486c4b422b63df6bdfafc",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

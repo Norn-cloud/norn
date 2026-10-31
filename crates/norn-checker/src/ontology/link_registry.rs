@@ -207,7 +207,7 @@ fn validate_link(
             .and_then(as_array)
             .unwrap_or_default()
             .iter()
-            .filter_map(|t| t.as_str().map(str::to_owned))
+            .filter_map(|t| t.as_string().map(str::to_owned))
             .collect();
         for (target_index, target) in targets.iter().enumerate() {
             let target_path = format!("{path}.toTermIds[{target_index}]");
@@ -246,7 +246,8 @@ fn validate_link(
             .get("evidenceRefs")
             .and_then(as_array)
             .unwrap_or_default();
-        for (evidence_index, reference) in evidence.iter().filter_map(|r| r.as_str()).enumerate() {
+        for (evidence_index, reference) in evidence.iter().filter_map(|r| r.as_string()).enumerate()
+        {
             if !reference.starts_with("source.") {
                 continue;
             }
