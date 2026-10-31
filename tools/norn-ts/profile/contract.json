@@ -16,6 +16,8 @@
     "`@norn/authoring#Norn.access`",
     "`@norn/authoring#Norn.decision`",
     "`@norn/authoring#Norn.sourceSchema`",
+    "`@norn/authoring#Norn.ontologyPack`",
+    "`@norn/authoring#Norn.packLink`",
     "`@norn/authoring#Norn.markings`",
     "`@norn/authoring#Norn.connector`",
     "`@norn/authoring#Norn.mapping`",

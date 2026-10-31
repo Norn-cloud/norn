@@ -3048,7 +3048,7 @@ fn validate_business_pack_payload(
         require_literal_field(
             payload,
             "packKind",
-            &["composition", "ontology"],
+            &["composition", "ontology", "link"],
             "payload.packKind",
             diagnostics,
             artifact_id,
@@ -3073,6 +3073,7 @@ fn validate_business_pack_payload(
         Some("ontology") => {
             ontology::validate_ontology_pack_payload(value, diagnostics, artifact_id);
         }
+        Some("link") => ontology::validate_link_payload(value, diagnostics, artifact_id),
         _ => {}
     }
 }

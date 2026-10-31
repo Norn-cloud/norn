@@ -1,0 +1,20 @@
+{
+  "sha256": "da208f161601d97cd141081f71abcfc8f25bba204cf42ae61e87e44a6604a4df",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-checker/tests/table_analysis.rs",
+    "crates/norn-checker/src/table_analysis.rs"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

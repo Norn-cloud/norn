@@ -168,6 +168,15 @@ declare module "@norn/authoring" {
       readonly properties: S
     }
 
+    /** A link every implementing type must declare, at most this wide (EntityIR `InterfaceLink`). */
+    interface InterfaceLinkSpec {
+      readonly id: string
+      readonly description?: string
+      /** The widest target: an object type or an interface, by reference or qualified name. */
+      readonly target: TypeDefinition<unknown> | InterfaceDefinition<unknown> | string
+      readonly cardinality: { readonly to: "one" | "many"; readonly from: "one" | "many"; readonly required?: boolean }
+    }
+
     interface InterfaceInvariantMeta {
       /** Invariants over the required interface members, read through `self`. */
       readonly invariants?: ReadonlyArray<InvariantSpec>
@@ -213,7 +222,7 @@ declare module "@norn/authoring" {
       S extends Schema.Top,
       const P extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
     >(
-      meta: InterfaceMeta<S> & InterfaceInvariantMeta & { readonly extends?: P },
+      meta: InterfaceMeta<S> & InterfaceInvariantMeta & { readonly extends?: P; readonly links?: ReadonlyArray<InterfaceLinkSpec> },
     ): InterfaceDefinition<EffectiveProperties<undefined, P, S["Type"]>>
 
     /** Opaque action definition; the syntax compiler lowers the call. */
@@ -461,6 +470,70 @@ declare module "@norn/authoring" {
       }>
     }
     function sourceSchema(meta: SourceSchemaSpec): { readonly _tag: "NornSourceSchema" }
+
+    /** One source-manifest entry (norn#56): pinned release, licence, redistribution, import mode, importer and checksums. */
+    interface OntologySourceSpec {
+      readonly sourceId: string
+      readonly releaseId: string
+      readonly releasedAt: string
+      readonly retrievedAt: string
+      readonly canonicalUrl: string
+      readonly license: string
+      readonly redistribution: "reference_only" | "vendored"
+      readonly importMode: "import" | "map_only" | "study_only"
+      readonly importer?: { readonly name: string; readonly version: string }
+      readonly files?: ReadonlyArray<{ readonly path: string; readonly sha256: string }>
+    }
+    /** A closed-world, semantic-only ontology pack; lowers to a `business_pack` artifact with `packKind: "ontology"`. */
+    interface OntologyPackSpec {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      readonly sources: ReadonlyArray<OntologySourceSpec>
+      readonly terms: ReadonlyArray<{
+        readonly termId: string; readonly label: string; readonly definition: string
+        readonly termKind: "class" | "property" | "value_object" | "concept_scheme_root" | "action" | "predicate"
+        readonly status: "active" | "deprecated" | "superseded"; readonly semanticAuthority: "semantic_only"
+        readonly parentTermId?: string; readonly supersededBy?: string
+        /** The class a property or action belongs to. */
+        readonly domainTermId?: string
+      }>
+      readonly mappings: ReadonlyArray<{
+        readonly mappingId: string; readonly termId: string; readonly sourceId: string; readonly externalIri: string
+        readonly relation: "exact_match" | "close_match" | "broad_match" | "narrow_match" | "related_match"
+        readonly justification: string; readonly evidenceRefs: ReadonlyArray<string>; readonly confidenceBasisPoints: number
+        readonly reviewedBy: string; readonly reviewedAt: string
+        readonly supersededByMappingId?: string; readonly ratifiedBy?: string; readonly ratifiedAt?: string
+      }>
+      readonly shapes: ReadonlyArray<{
+        readonly shapeId: string; readonly termId: string; readonly closed: true
+        readonly fields: ReadonlyArray<{
+          readonly fieldId: string
+          readonly valueType: "string" | "boolean" | "integer" | "decimal" | "date_time" | "iri" | "term_ref" | "external_identifier" | "category_ref"
+          readonly targetTermId?: string; readonly minCount: number; readonly maxCount: number
+        }>
+      }>
+    }
+    function ontologyPack(meta: OntologyPackSpec): { readonly _tag: "NornOntologyPack" }
+
+    /** Checked correspondences from one ontology pack's terms into another's; lowers to a `business_pack` with `packKind: "link"`. */
+    interface PackLinkSpec {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      readonly fromPack: { readonly packId: string; readonly version: string }
+      readonly toPack: { readonly packId: string; readonly version: string }
+      readonly correspondences: ReadonlyArray<{
+        readonly correspondenceId: string; readonly fromTermId: string
+        readonly relation: "equivalent" | "subsumed_by" | "subsumes" | "derived"
+        readonly toTermIds: ReadonlyArray<string>; readonly justification: string
+        readonly evidenceRefs: ReadonlyArray<string>; readonly confidenceBasisPoints: number
+        readonly reviewedBy: string; readonly reviewedAt: string
+        readonly transformRef?: string; readonly rulingRef?: string
+      }>
+      readonly residuals?: ReadonlyArray<{ readonly termId: string; readonly reason: "system_specific" | "canon_gap" | "non_conforming"; readonly note: string }>
+    }
+    function packLink(meta: PackLinkSpec): { readonly _tag: "NornPackLink" }
 
     /** Opaque mapping definition; the syntax compiler lowers the call. */
     interface MappingDefinition {

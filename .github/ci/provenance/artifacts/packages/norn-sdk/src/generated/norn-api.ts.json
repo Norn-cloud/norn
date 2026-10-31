@@ -1,0 +1,30 @@
+{
+  "sha256": "55ef520bca5304a7eb229aa17ece584d8750b0a1d59ae28c5ef16824a7810a95",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "packages/norn-sdk/bun.lock",
+    "packages/norn-sdk/package.json",
+    "sdks/openapi/norn-api.openapi.json"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    },
+    {
+      "path": "sdks/README.md",
+      "sha256": "6a973de4fc9b33c653cf7f29982bc803a6fd041d803acd3e0e730b66800881c2"
+    }
+  ],
+  "notices": [
+    {
+      "path": "sdks/README.md",
+      "sha256": "6a973de4fc9b33c653cf7f29982bc803a6fd041d803acd3e0e730b66800881c2"
+    }
+  ],
+  "connector": null
+}
