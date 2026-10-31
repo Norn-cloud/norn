@@ -2419,7 +2419,10 @@ fn apply_change<X>(
                 .is_some_and(|property| property.protected)
         };
         let forbidden = match change {
-            FactChange::Create { values, .. } => values.keys().any(|property| protected(property)),
+            FactChange::Create { values, .. } => {
+                origin != AdmissionOrigin::OwnedRows
+                    && values.keys().any(|property| protected(property.as_str()))
+            }
             FactChange::Set { property, .. } => protected(property.as_str()),
             FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
             FactChange::Delete { .. } => false,
