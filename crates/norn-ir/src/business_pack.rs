@@ -455,14 +455,6 @@ pub struct OntologyLinkRoot {
     /// Source terms with no correspondence, and why.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub residuals: Vec<LinkResidual>,
-    /// Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.
-    #[serde(
-        default,
-        deserialize_with = "present_non_null",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(with = "JsonObject")]
-    pub extensions: Option<JsonObject>,
 }
 
 /// One linked pack, pinned by its artifact id and exact artifact version.
