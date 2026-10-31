@@ -60,7 +60,8 @@
     "scripts/proof_enrollment.py",
     "scripts/test_proof_enrollment.py",
     ".github/workflows/ci-policy.yml",
-    "scripts/ci/core.sh"
+    "scripts/ci/core.sh",
+    "crates/norn-cell-wasm"
   ],
   "subsystems": [
     {
@@ -2453,6 +2454,13 @@
                   "test:commit_admission_quint_traces",
                   "test:commit_admission_trace_mutants_fail"
                 ]
+              },
+              {
+                "artifact": "crates/norn-cell-wasm/tests/abi.rs",
+                "command": "cargo test --locked -p norn-cell-wasm",
+                "selectors": [
+                  "test:payload_numbers_cross_the_abi_as_exact_bytes"
+                ]
               }
             ],
             "model": [
@@ -2528,10 +2536,13 @@
       "runtime": {
         "status": "tested",
         "artifacts": [
-          "crates/norn-testkit/tests/kernel_quint.rs"
+          "crates/norn-testkit/tests/kernel_quint.rs",
+          "crates/norn-cell-wasm/tests/abi.rs",
+          "crates/norn-cell-wasm/tests/law_traces.rs"
         ],
         "commands": [
-          "cargo test --locked -p norn-testkit --test kernel_quint"
+          "cargo test --locked -p norn-testkit --test kernel_quint",
+          "cargo test --locked -p norn-cell-wasm"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": []
@@ -2569,7 +2580,8 @@
         "Finite models and sampled traces are not unbounded Rust refinement.",
         "No OS/fs durability, host scheduler fairness, external delivery, authorization noninterference, or i128 overflow theorem.",
         "Quantity reservation vectors have three legs in one unit/layer partition; multi-partition vectors, reversal, account-limit admission, and growing-net-hold remainders are outside this bounded model. Existing quantity v2 regressions cover additional cases.",
-        "Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled."
+        "Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
+        "Native regression tests and sampled traces do not prove implementation correspondence or host durability."
       ],
       "sourceFiles": [
         "crates/norn-cli/src/eval.rs",
@@ -2594,7 +2606,13 @@
         "verification/kernel-v2/generate.py",
         "verification/kernel-v2/models/commit-admission.qnt",
         "verification/kernel-v2/models/projection-trust.qnt",
-        "verification/kernel-v2/validate.py"
+        "verification/kernel-v2/validate.py",
+        "crates/norn-cell-wasm/Cargo.toml",
+        "crates/norn-cell-wasm/src/lib.rs",
+        "crates/norn-cell-wasm/src/wasm.rs",
+        "crates/norn-cell-wasm/tests/abi.rs",
+        "crates/norn-cell-wasm/tests/law_traces.rs",
+        "crates/norn-cell-wasm/scripts/build-pkg.sh"
       ]
     },
     {
