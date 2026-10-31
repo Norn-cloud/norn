@@ -6314,7 +6314,8 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             Schema::String(None) => Type::text(),
             Schema::String(Some(values)) => Type::enumeration(values.iter().cloned()),
             Schema::Integer => Type::Integer,
-            Schema::Number | Schema::Decimal(_) => Type::Number,
+            Schema::Number => Type::Number,
+            Schema::Decimal(_) => Type::text(),
             Schema::Boolean => Type::Bool,
             Schema::Null | Schema::Json => Type::Json,
             Schema::Nullable(inner) => self.schema_type(inner, records).optional(),
@@ -7033,10 +7034,19 @@ fn inferred_matches_schema(
         (InferredType::Enum(values), Schema::String(Some(allowed))) => Err(format!(
             "{path} produces string values {values:?} outside ActionIR values {allowed:?}"
         )),
-        (
-            InferredType::String | InferredType::Const(_) | InferredType::Enum(_),
-            Schema::Decimal(_),
-        ) => Ok(()),
+        (InferredType::String, Schema::Decimal(_)) => Ok(()),
+        (InferredType::Const(text), decimal @ Schema::Decimal(_)) => decimal
+            .decode_action_input(norn_ir::RuntimeValue::String(text.clone()), path)
+            .map(|_value| ())
+            .map_err(|error| error.reason),
+        (InferredType::Enum(values), decimal @ Schema::Decimal(_)) => {
+            for text in values {
+                decimal
+                    .decode_action_input(norn_ir::RuntimeValue::String(text.clone()), path)
+                    .map_err(|error| error.reason)?;
+            }
+            Ok(())
+        }
         (InferredType::Null, Schema::Null)
         | (
             InferredType::String
@@ -7452,5 +7462,6 @@ mod decimal_wire_tests {
         assert!(accepts(InferredType::String).is_ok());
         assert!(accepts(InferredType::Const("125.50".to_owned())).is_ok());
         assert!(accepts(InferredType::Number).is_err());
+        assert!(accepts(InferredType::Const("1.001".to_owned())).is_err());
     }
 }
