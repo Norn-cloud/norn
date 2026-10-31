@@ -495,6 +495,22 @@ def workflow_canaries() -> None:
             expect_coverage_validator_rejection("disabled shard step: " + option,
                                                formal_workflow_path=candidate)
 
+    shell_mutations = (
+        source.replace("      - run: " + command,
+                       "      - shell: /usr/bin/true {0}\n        run: " + command, 1),
+        source.replace("  test:\n", "  test:\n    defaults:\n      run:\n        shell: /usr/bin/true {0}\n", 1),
+        source.replace("jobs:\n", "defaults:\n  run:\n    shell: /usr/bin/true {0}\njobs:\n", 1),
+        source.replace("      - env:\n          RESULTS:",
+                       "      - shell: /usr/bin/true {0}\n        env:\n          RESULTS:", 1),
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+        for index, mutation in enumerate(shell_mutations):
+            if mutation == source:
+                raise AssertionError("shell override mutation target drifted")
+            candidate.write_text(mutation, encoding="utf-8")
+            expect_coverage_validator_rejection(f"shell override {index}", formal_workflow_path=candidate)
+
 
 def counterexampled(run: quint_apalache.QuintRun) -> bool:
     """A mutation canary passes only on a real counterexample for the final attempt.

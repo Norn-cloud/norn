@@ -68,6 +68,7 @@ run_phase() {
   if [[ $1 != cheap && $1 != test-shards && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
     cheap)
+      use_jsonschema
       cargo metadata --locked --format-version 1 > /dev/null
       cargo fmt --all -- --check
       (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck)
