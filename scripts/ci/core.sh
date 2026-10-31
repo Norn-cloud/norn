@@ -219,7 +219,7 @@ case "${1:-all}" in
     for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test || $phase == formal ]] || others+=("$phase"); done
     case "${2:-}" in
       '') [[ $# -le 1 ]] || run_phase usage; changed='' ;;
-      --affected) [[ $# -eq 3 && $3 =~ ^[0-9a-f]{40}$ ]] || run_phase usage; changed=$(git diff --name-only "$3" HEAD --) || exit 2 ;;
+      --affected) [[ $# -eq 3 && $3 =~ ^[0-9a-f]{40}$ ]] || run_phase usage; changed=$(git diff --name-only --no-renames "$3" HEAD --) || exit 2 ;;
       *) run_phase usage ;;
     esac
     NORN_CI_CHANGED=$changed python3 - "${2:-full}" "$(list_shards | tr '\n' ' ')" "${others[*]}" "$rest_shards" <<'PY'
