@@ -473,7 +473,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "computed", "lifecycles", "markings", "propertyMarkings"])
+    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "computed", "protected", "immutable", "lifecycles", "markings", "propertyMarkings"])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()
@@ -484,6 +484,12 @@ class DefinitionCompiler {
         defaults.set(key, this.defaultValue(value))
       }
     }
+    const protectedNode = members.get("protected")
+    const protectedProperties = new Set(protectedNode ? this.strings(protectedNode) : [])
+    for (const key of protectedProperties) {
+      if (!projected.some((property) => property.id === key)) throw new CompileError("NORN-FLOW-LITERAL", `protection for undeclared property ${key}`, protectedNode!)
+    }
+    const immutableNode = members.get("immutable")
     const computed = new Map<string, string>()
     const computedNode = members.get("computed")
     if (computedNode) for (const [key, value] of this.closedRecord(computedNode, projected.map((p) => p.id), [])) {
@@ -496,6 +502,7 @@ class DefinitionCompiler {
     const lifecyclesNode = members.get("lifecycles")
     return E.objectType({
       ...rest,
+      ...(immutableNode ? { immutable: this.boolean(immutableNode) } : {}),
       ...(extendsNode ? { extends: this.typeName(extendsNode, OBJECT_TYPES) } : {}),
       properties: projected.map((p) => {
         const value = defaults.get(p.id)
@@ -506,6 +513,7 @@ class DefinitionCompiler {
           ...(p.projection.nullable ? { nullable: true } : {}),
           ...(value === undefined ? {} : { default: value }),
           ...(computed.has(p.id) ? { computed: computed.get(p.id)! } : {}),
+          ...(protectedProperties.has(p.id) ? { protected: true } : {}),
           at: this.at(p.node),
         }
       }),

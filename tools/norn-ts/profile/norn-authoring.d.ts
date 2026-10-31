@@ -202,6 +202,10 @@ declare module "@norn/authoring" {
       /** The one supertype, declared locally or named from the installed registry. */
       readonly extends?: E
       readonly implements?: I
+      /** Append-only records; the kernel enforces this after creation. */
+      readonly immutable?: boolean
+      /** Stored properties maintained by declared rules, never action inputs. */
+      readonly protected?: ReadonlyArray<keyof S["Type"] & string>
       readonly links?: ReadonlyArray<LinkSpec>
       readonly identity?: ReadonlyArray<KeySpec<EffectiveProperties<E, I, S["Type"]>>>
       /** Literal defaults; numbers are exact decimal literals. */
