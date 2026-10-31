@@ -503,6 +503,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "core-physics-inheritance-runtime",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-kernel --test core_physics_inheritance",
+      "evidenceKind": "rust-tests",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "quantity-authority-runtime-unit",
       "profile": "full",
       "command": "cargo test --locked -p norn-cell --test quantity_reservations",

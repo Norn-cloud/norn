@@ -11960,6 +11960,24 @@
       "connector": null
     },
     {
+      "path": "crates/norn-kernel/tests/core_physics_inheritance.rs",
+      "sha256": "afc4f3617c769d71364f24207f8a33406a83cd2172c19ad8b400682e68607b01",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "crates/norn-kernel/tests/decider.rs",
       "sha256": "c22ac6fa4c06629c890b54a63ba492b19bd0df752b14313cad5a66793aafb8be",
       "origin": "authored",
@@ -18781,7 +18799,7 @@
     },
     {
       "path": "scripts/verify-promoted-subsystems.sh",
-      "sha256": "eecec764e2d89a41ca6d92f2b51189f672725fd9ea373be6c1426f4df14a0c58",
+      "sha256": "cf9c9d300ff9f78a6e6ad7cbf621803c9282c9960764314e481047f9c1309ffd",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29916,6 +29934,24 @@
       "connector": null
     },
     {
+      "path": "verification/core-physics-v1/inheritance.md",
+      "sha256": "a645bb172fa2fd6c35f6f99d46cee62026dea429c00bc5ec9439f4f057190f98",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
       "sha256": "8e3c8ab95c2079ce80d22215adedd4db8930fc6e1f2f3b453d82d6ac05f28e55",
       "origin": "authored",
@@ -30007,7 +30043,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "e9a453c5fa04696be34073e6c483ea45e5a9e7d1cc07808066594ed0a9049114",
+      "sha256": "f4287a47c531a251169354fafd041ca18ee709b83d17b104ce7d72edc88a1667",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30043,7 +30079,7 @@
     },
     {
       "path": "verification/coverage-v1/promoted-gates.json",
-      "sha256": "2253da6863fb69836002aa0f98da8e5d93a99bf859496f4a1e1dab5f16c8c4bd",
+      "sha256": "d128f553b253fb9809d1df77f229f863dbbc52892f5386da333f5c3f9e756f52",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

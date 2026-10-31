@@ -2551,6 +2551,13 @@
                   "test:unbalanced_group_refusal_has_no_fact_ledger_or_outbox_effects",
                   "test:multiple_currencies_balance_independently_and_cannot_cancel_across_units"
                 ]
+              },
+              {
+                "artifact": "crates/norn-kernel/tests/core_physics_inheritance.rs",
+                "command": "cargo test --locked -p norn-kernel --test core_physics_inheritance",
+                "selectors": [
+                  "test:every_generated_workflow_of_primitive_steps_inherits_conservation_and_immutability"
+                ]
               }
             ],
             "model": [
@@ -2592,6 +2599,13 @@
                   "test:committed_leg_records_are_create_only_and_cannot_be_deleted",
                   "test:deleting_a_posted_leg_through_its_unmarked_ancestor_is_refused_atomically",
                   "test:updating_a_posted_leg_through_its_unmarked_ancestor_is_refused_atomically"
+                ]
+              },
+              {
+                "artifact": "crates/norn-kernel/tests/core_physics_inheritance.rs",
+                "command": "cargo test --locked -p norn-kernel --test core_physics_inheritance",
+                "selectors": [
+                  "test:every_generated_workflow_of_primitive_steps_inherits_conservation_and_immutability"
                 ]
               }
             ],
@@ -2771,11 +2785,13 @@
         "status": "partial",
         "artifacts": [
           "crates/norn-kernel/tests/accounting_commit.rs",
-          "crates/norn-cell/tests/quantity_reservations.rs"
+          "crates/norn-cell/tests/quantity_reservations.rs",
+          "crates/norn-kernel/tests/core_physics_inheritance.rs"
         ],
         "commands": [
           "cargo test --locked -p norn-kernel --test accounting_commit",
-          "cargo test --locked -p norn-cell --test quantity_reservations"
+          "cargo test --locked -p norn-cell --test quantity_reservations",
+          "cargo test --locked -p norn-kernel --test core_physics_inheritance"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": []
@@ -2823,7 +2839,8 @@
         "verification/core-physics-v1/models/core-value-ledger.qnt",
         "verification/core-physics-v1/proofs/CoreValueLedger.lean",
         "verification/core-physics-v1/models/core-quantity-commitment.qnt",
-        "verification/core-physics-v1/proofs/CoreQuantity.lean"
+        "verification/core-physics-v1/proofs/CoreQuantity.lean",
+        "crates/norn-kernel/tests/core_physics_inheritance.rs"
       ]
     }
   ]
