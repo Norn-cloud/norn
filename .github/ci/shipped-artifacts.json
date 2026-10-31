@@ -12266,6 +12266,24 @@
       "connector": null
     },
     {
+      "path": "crates/norn-metrics/src/analysis.rs",
+      "sha256": "be81d1ac634d21220bd8df927b006d38407b58144a485c1c2702b3ae5a032a7b",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "crates/norn-metrics/src/lib.rs",
       "sha256": "3e14abddb72ac7134981a706399795af300928fb1ce462a29829182719a0697c",
       "origin": "authored",
