@@ -398,7 +398,7 @@ impl ObjectText {
             .map(|(name, value)| {
                 RuntimeValue::from_json_text(value.get())
                     .map(|value| (name.clone(), value))
-                    .map_err(|_| AbiError::UnrepresentableProperty { property: name })
+                    .map_err(|_error| AbiError::UnrepresentableProperty { property: name })
             })
             .collect()
     }
