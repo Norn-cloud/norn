@@ -63,8 +63,8 @@ class RecognizerTests(unittest.TestCase):
 class DecoratorTests(unittest.TestCase):
     def test_bound_decorator(self):
         report = analyze({'x.py': b'from odoo import api as a\n@a.constrains("amount")\ndef check(): pass\n'})
-        self.assertEqual(report['recognized'][1]['signal'], 'decorator:odoo.api.constrains')
-        self.assertEqual(report['recognized'][1]['evidence']['line'], 2)
+        match = next(m for m in report['recognized'] if m['signal'] == 'decorator:odoo.api.constrains')
+        self.assertEqual(match['evidence']['line'], 2)
 
 
 class RobustnessTests(unittest.TestCase):

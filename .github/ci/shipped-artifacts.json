@@ -19000,7 +19000,7 @@
     },
     {
       "path": "tools/norn-code/tests/test_recognizer.py",
-      "sha256": "4d2dba95b621554a448f80133a25e22e24c28febd280dd0fd6c4b3fe26cb67cc",
+      "sha256": "19a7856e12fcdb8f5b22c82ca76223c0ed2a7e910b7b0959c1d54647df49b445",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
