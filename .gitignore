@@ -140,3 +140,5 @@ legacy/docs/platform-docs-archive-2026-06-01/local-ignored/
 # Python interpreter output
 __pycache__/
 *.py[cod]
+# Provenance records mirror tracked paths, ignored names included.
+!/.github/ci/provenance/**

@@ -6,7 +6,7 @@
     reason = "synthetic policy fixtures"
 )]
 
-use norn_skeleton_guard::ci::provenance::{self, CONTROL, LEGACY_MANIFEST, MANIFEST, RECORDS};
+use norn_skeleton_guard::ci::provenance::{self, CONTROL, MANIFEST, RECORDS};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
@@ -150,37 +150,6 @@ fn unknown_ambiguous_and_cyclic_ancestry_fails_closed() {
     f.derived("a", "b", "generated");
     f.derived("b", "a", "generated");
     f.rejects("cyclic ancestry");
-}
-
-/// #121 transition: the version-1 manifest still reads, alone.
-#[test]
-fn legacy_manifest_reads_until_migrated_but_never_beside_records() {
-    let mut f = Fixture::new();
-    f.add("crates/a/src/lib.rs", b"// a", "code");
-    let legacy = |f: &Fixture| {
-        f.write(
-            LEGACY_MANIFEST,
-            &serde_json::to_vec(
-                &json!({"version":1,"software_sources":f.software,"artifacts":f.records}),
-            )
-            .unwrap(),
-        );
-    };
-    f.save();
-    legacy(&f);
-    let r = provenance::check_distribution(f.root());
-    assert!(
-        r.errors().iter().any(|e| e.contains("both")),
-        "{:?}",
-        r.errors()
-    );
-    fs::remove_dir_all(f.root().join(CONTROL)).unwrap();
-    let r = provenance::check_distribution(f.root());
-    assert!(r.errors().is_empty(), "{:?}", r.errors());
-    f.records.push(f.records[1].clone());
-    legacy(&f);
-    let r = provenance::check_distribution(f.root());
-    assert!(r.errors().iter().any(|e| e.contains("duplicate artifact")));
 }
 
 /// #121: each refusal the single manifest gave survives per-file records.

@@ -213,7 +213,7 @@ case "${1:-all}" in
   # queue. Only the non-heavy tests of the packages a change can reach (by
   # workspace reverse dependencies, dev-dependencies included; every package
   # when a change is outside the workspace crates, other than Markdown outside
-  # crates and the provenance manifest), with the skeleton guard always, and
+  # crates and provenance records), with the skeleton guard always, and
   # no other phase.
   plan)
     others=()
@@ -257,8 +257,8 @@ for path in changed:
     owner = max((m for m in names if path.startswith(m + "/")), key=len, default=None)
     if owner:
         touched.add(names[owner])
-    # The provenance manifest changes with every file; core checks it.
-    elif path != ".github/ci/shipped-artifacts.json" and not (
+    # Provenance records change with every file; core checks them.
+    elif not path.startswith(".github/ci/provenance/") and not (
             path.endswith(".md") and (path.startswith("docs/") or "/" not in path)):
         outside.append(path)
 reached, stack = set(touched) | {"norn-skeleton-guard"}, list(touched)
