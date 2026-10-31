@@ -3189,7 +3189,7 @@
     },
     {
       "path": "crates/norn-checker/src/ruling.rs",
-      "sha256": "80076a67cd4a9a69a0dad997a94c443cad8baae33f8091e791d08c881eacf22e",
+      "sha256": "fe86a3b54ca96cea14f2cc485b02e44aef4421ca4d2fbffc3a9d2b0bcc0c56c2",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -4212,7 +4212,7 @@
     },
     {
       "path": "crates/norn-checker/tests/ruling_local.rs",
-      "sha256": "ad9fb5a4732841ece055d37f744c4835cd7910918150afc4d213b3ab4c7b8fe7",
+      "sha256": "a5c9136e2e27916fdcfb29b142031d44f611e062d2ee85ff02db56ce6b0e08d5",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

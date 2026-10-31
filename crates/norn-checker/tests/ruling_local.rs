@@ -227,3 +227,27 @@ fn a_ruling_is_dated_decided_and_never_its_own_successor() {
         refused(INVALID_RULING, "/payload/alternatives/0/outcome")
     );
 }
+
+#[test]
+fn scoped_cases_are_disjoint_and_revisit_evidence_is_pinned() {
+    let mut overlapping = ruling();
+    overlapping["payload"]["outcome"] = json!({ "kind": "scoped", "cases": [
+        { "scope": { "tenantId": "a" }, "definition": total("0.1.0") },
+        { "scope": { "tenantId": "a" }, "definition": total("0.1.0") }
+    ]});
+    assert_eq!(
+        findings(&overlapping),
+        refused(INVALID_RULING, "/payload/outcome/cases/1/scope")
+    );
+    let mut disjoint = overlapping.clone();
+    disjoint["payload"]["outcome"]["cases"][1]["scope"] = json!({ "tenantId": "b" });
+    assert_eq!(findings(&disjoint), []);
+
+    let mut deferred = ruling();
+    deferred["payload"]["outcome"] = json!({ "kind": "defer", "revisit": { "kind": "evidence",
+        "source": { "kind": "artifact", "artifactId": "", "version": "", "sha256": "bad" } } });
+    assert_eq!(
+        findings(&deferred),
+        refused(INVALID_RULING, "/payload/outcome/revisit/source")
+    );
+}
