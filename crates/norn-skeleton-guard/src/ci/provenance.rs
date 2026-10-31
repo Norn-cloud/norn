@@ -4,13 +4,17 @@
 //! admissible ancestry. Acquisition evidence is factual, not a redistribution
 //! grant. Analysis references do not imply derivation; extraction databases do.
 //!
-//! Contract: `.github/ci/shipped-artifacts.json` version 1 has `artifacts` and
-//! `software_sources` arrays. Artifact identities are exact file paths (never
-//! globs), with lowercase SHA256, origin/category, SPDX rights, source bindings,
+//! Contract: version 2 control data lives under `.github/ci/provenance/`.
+//! `manifest.json` holds the version and `software_sources`; each shipped file
+//! `<path>` has exactly one record, `artifacts/<path>.json`, so changes to
+//! different files never touch the same record. The identity is the exact
+//! record file path (never a glob or a field), with lowercase SHA256,
+//! origin/category, SPDX rights, source bindings,
 //! parent paths, hashed rights evidence and shipped notices. Sources use literal
 //! MANIFEST `id` or standards-lock `sourceId`; they bind revision and evidence
 //! path/hash, with no vendor-name aliases. Unknown fields and enum values fail.
-//! The manifest is control data, the sole exception to the self-hash problem.
+//! The control directory is the sole exception to the self-hash problem; every
+//! file in it must be the manifest or a record.
 //!
 //! A query/law/verdict uses `analyzed_sources` for pinned subjects of analysis;
 //! copied or extracted content uses `sources`/`parents`. Independently authored
@@ -32,16 +36,19 @@ use std::path::{Component, Path};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// The only control file exempt from its own content hash. Its entire typed
+/// The only directory exempt from its own content hash. Its entire typed
 /// content is validated, including all records; it cannot admit itself.
-pub const MANIFEST: &str = ".github/ci/shipped-artifacts.json";
+pub const CONTROL: &str = ".github/ci/provenance/";
+/// Version and software sources.
+pub const MANIFEST: &str = ".github/ci/provenance/manifest.json";
+/// Prefix of each per-file record, `RECORDS` + path + `.json`.
+pub const RECORDS: &str = ".github/ci/provenance/artifacts/";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     version: u32,
     software_sources: Vec<SoftwareSource>,
-    artifacts: Vec<Artifact>,
 }
 
 /// Artifact-specific software provenance; never an override of acquisition
@@ -124,6 +131,8 @@ struct SupportedVersions {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Artifact {
+    /// Derived from the record file path; never a claim inside the record.
+    #[serde(skip)]
     path: String,
     sha256: String,
     origin: Origin,
@@ -869,6 +878,33 @@ fn close_artifacts(records: &BTreeMap<String, &Artifact>, report: &mut Report) {
     }
 }
 
+/// One record per file under [`RECORDS`]; the filesystem makes each path
+/// unique. Any other control file, or an unreadable record, fails closed.
+fn load_records(root: &Path, paths: &[String], report: &mut Report) -> Vec<Artifact> {
+    let mut artifacts = Vec::new();
+    for path in paths.iter().filter(|p| p.starts_with(CONTROL)) {
+        let Some(target) = path
+            .strip_prefix(RECORDS)
+            .and_then(|p| p.strip_suffix(".json"))
+        else {
+            if path != MANIFEST {
+                report.reject(path, "unknown provenance control file");
+            }
+            continue;
+        };
+        match bytes(root, path)
+            .and_then(|b| serde_json::from_slice::<Artifact>(&b).map_err(|e| e.to_string()))
+        {
+            Ok(mut a) => {
+                target.clone_into(&mut a.path);
+                artifacts.push(a);
+            }
+            Err(e) => report.reject(path, format!("malformed provenance record: {e}")),
+        }
+    }
+    artifacts
+}
+
 fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
     let mut report = Report {
         checked_paths: paths.len(),
@@ -876,21 +912,20 @@ fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
     };
     let hashes = inspect_bytes(root, paths, &mut report);
     let mut sources = inspect_sources(root, paths, base, &mut report);
-    let manifest: Manifest = match bytes(root, MANIFEST)
-        .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
-    {
-        Ok(m) => m,
+    let software_sources = match bytes(root, MANIFEST)
+        .and_then(|b| serde_json::from_slice::<Manifest>(&b).map_err(|e| e.to_string()))
+        .and_then(|m| match m.version {
+            2 => Ok(m.software_sources),
+            _ => Err("unknown provenance version".to_owned()),
+        }) {
+        Ok(software) => software,
         Err(e) => {
             report.policy_errors.push(format!("{MANIFEST}: {e}"));
             return report;
         }
     };
-    if manifest.version != 1 {
-        report
-            .policy_errors
-            .push("unknown provenance version".to_owned());
-    }
-    for s in manifest.software_sources {
+    let artifacts = load_records(root, paths, &mut report);
+    for s in software_sources {
         if !s.id.starts_with("software.") || s.revision.is_empty() || s.license != "MIT" {
             report
                 .policy_errors
@@ -914,13 +949,11 @@ fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
         }
     }
     let mut records = BTreeMap::new();
-    for a in &manifest.artifacts {
-        if a.path == MANIFEST || !safe_path(&a.path) {
+    for a in &artifacts {
+        if a.path.starts_with(CONTROL) || !safe_path(&a.path) {
             report.reject(&a.path, "control file/self hash or non-exact artifact path");
         }
-        if records.insert(a.path.clone(), a).is_some() {
-            report.reject(&a.path, "ambiguous duplicate artifact record");
-        }
+        records.insert(a.path.clone(), a);
         for e in validate_record(a, &sources, &hashes) {
             report.reject(&a.path, e);
         }
@@ -944,7 +977,7 @@ fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
             }
         }
     }
-    for path in paths.iter().filter(|p| p.as_str() != MANIFEST) {
+    for path in paths.iter().filter(|p| !p.starts_with(CONTROL)) {
         if !records.contains_key(path) {
             report.reject(path, "missing shipped-artifact admission record");
         }
