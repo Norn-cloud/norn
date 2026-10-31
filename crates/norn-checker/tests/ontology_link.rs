@@ -161,6 +161,17 @@ fn correspondences_cite_the_source_manifest_with_bounded_confidence() {
 }
 
 #[test]
+fn residual_reasons_are_closed_and_include_non_conforming_behaviour() {
+    let mut candidate = link();
+    candidate["payload"]["residuals"][0]["reason"] = json!("non_conforming");
+    validate(candidate).expect("non-conforming source behaviour is a residual reason");
+
+    let mut candidate = link();
+    candidate["payload"]["residuals"][0]["reason"] = json!("ignored");
+    refuses(candidate, "payload.residuals[0].reason", "one of");
+}
+
+#[test]
 fn a_term_is_either_mapped_or_residual() {
     let mut candidate = link();
     candidate["payload"]["residuals"][0]["termId"] = json!("norn.shop.order");
