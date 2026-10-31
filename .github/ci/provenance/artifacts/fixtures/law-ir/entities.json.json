@@ -1,0 +1,19 @@
+{
+  "sha256": "be62a6f2b5a470a94342f9c58469b672b91a7c4e6738daff77e6eec0935a7ec4",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "fixtures/law-ir/laws.source.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
