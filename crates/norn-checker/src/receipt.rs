@@ -483,7 +483,9 @@ fn check_artifact_set_with_profile(
         diagnostics: DiagnosticsDigest::of(&diagnostics)?,
         admitted: !has_errors(&diagnostics),
         flow_source_map: flow_source_map.cloned(),
-        law_enrollment: if has_errors(&diagnostics) { Vec::new() } else {
+        law_enrollment: if has_errors(&diagnostics) {
+            Vec::new()
+        } else {
             crate::law_enrollment::inherited_laws(context.base)?
         },
     };
@@ -580,10 +582,15 @@ pub fn verify_admission_receipt(
     }
     if parsed.format == LAW_ENROLLMENT_RECEIPT_FORMAT {
         let expected: Vec<_> = crate::law_enrollment::inherited_laws(base)?
-            .iter().map(crate::law_enrollment::LawEnrollment::to_json_value).collect();
+            .iter()
+            .map(crate::law_enrollment::LawEnrollment::to_json_value)
+            .collect();
         if norn_canonical::canonical_json_of(&parsed.law_enrollment)?
-            != norn_canonical::canonical_json_of(&expected)? {
-            return Err(invalid_receipt("receipt law enrollment does not match the retained pack members"));
+            != norn_canonical::canonical_json_of(&expected)?
+        {
+            return Err(invalid_receipt(
+                "receipt law enrollment does not match the retained pack members",
+            ));
         }
     }
     if let Some(flow_source_map) = &parsed.flow_source_map {
@@ -765,7 +772,7 @@ pub fn recover_legacy_admission_receipt(
                 diagnostics: diagnostics_digest_for_version(findings, checker_version)?,
                 admitted: true,
                 flow_source_map: None,
-            law_enrollment: Vec::new(),
+                law_enrollment: Vec::new(),
             };
             let bytes = historical.legacy_canonical_json()?;
             let recovered = std::str::from_utf8(&bytes)
@@ -1110,15 +1117,20 @@ impl CheckReceipt {
                 reference(&env.id, env.version, &env.sha256),
             );
         }
-        if matches!(format, FLOW_SOURCE_MAP_RECEIPT_FORMAT | LAW_ENROLLMENT_RECEIPT_FORMAT)
-            && let Some(flow_source_map) = &self.flow_source_map
+        if matches!(
+            format,
+            FLOW_SOURCE_MAP_RECEIPT_FORMAT | LAW_ENROLLMENT_RECEIPT_FORMAT
+        ) && let Some(flow_source_map) = &self.flow_source_map
         {
             let bytes = norn_canonical::canonical_json_of(flow_source_map)?;
             members.insert("flowSourceMap".to_owned(), norn_canonical::parse(bytes)?);
         }
         if format == LAW_ENROLLMENT_RECEIPT_FORMAT {
-            let enrollment: Vec<_> = self.law_enrollment.iter()
-                .map(crate::law_enrollment::LawEnrollment::to_json_value).collect();
+            let enrollment: Vec<_> = self
+                .law_enrollment
+                .iter()
+                .map(crate::law_enrollment::LawEnrollment::to_json_value)
+                .collect();
             let bytes = norn_canonical::canonical_json_of(&enrollment)?;
             members.insert("lawEnrollment".to_owned(), norn_canonical::parse(bytes)?);
         }
@@ -1188,7 +1200,12 @@ fn parse_stored_receipt(value: &serde_json::Value) -> Result<StoredReceipt, Rece
             "diagnostics",
             "admitted",
         ],
-        &["typeEnv", "identifierProfile", "flowSourceMap", "lawEnrollment"],
+        &[
+            "typeEnv",
+            "identifierProfile",
+            "flowSourceMap",
+            "lawEnrollment",
+        ],
     )?;
     let format = required_string(object, "format", "receipt")?;
     let identifier_profile = object
@@ -1210,10 +1227,14 @@ fn parse_stored_receipt(value: &serde_json::Value) -> Result<StoredReceipt, Rece
         .transpose()?;
     let law_enrollment = object.get("lawEnrollment").cloned();
     if format == LAW_ENROLLMENT_RECEIPT_FORMAT {
-        if identifier_profile.is_none() || !law_enrollment.as_ref().is_some_and(|value| {
-            value.as_array().is_some_and(|entries| !entries.is_empty())
-        }) {
-            return Err(invalid_receipt("receipt@4 requires identifierProfile and nonempty lawEnrollment"));
+        if identifier_profile.is_none()
+            || !law_enrollment
+                .as_ref()
+                .is_some_and(|value| value.as_array().is_some_and(|entries| !entries.is_empty()))
+        {
+            return Err(invalid_receipt(
+                "receipt@4 requires identifierProfile and nonempty lawEnrollment",
+            ));
         }
     } else if law_enrollment.is_some() {
         return Err(invalid_receipt("lawEnrollment requires receipt@4"));

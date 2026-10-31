@@ -2487,7 +2487,7 @@
     },
     {
       "path": "crates/norn-checker/src/law_enrollment.rs",
-      "sha256": "0acd89cdcfeaa078d14d908996449bd7269ab45ba9ca698ca1cb0ef8a0c124a1",
+      "sha256": "4c5e4a38679b74c1e085a9912588be52a6702508b087ba4da966db0c036647c1",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -2523,7 +2523,7 @@
     },
     {
       "path": "crates/norn-checker/src/lib.rs",
-      "sha256": "a94919c8c16da242da87aed1c10977c1d139eeae1e23278999bfca7adb57fb75",
+      "sha256": "085c8031a3cf1c6e527560109f88a2c19d3be7cd4a26c51766f1aad5c2a4edbc",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3135,7 +3135,7 @@
     },
     {
       "path": "crates/norn-checker/src/receipt.rs",
-      "sha256": "74ceda0d336120f7587ce694914117d3ae71192d8f05bf99bf208f445f16acd3",
+      "sha256": "d5840f1f440c38e38b7fb2aec3a1893555073177514ad4a555ff8feb00d6bb5e",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3405,7 +3405,7 @@
     },
     {
       "path": "crates/norn-checker/tests/check_receipt.rs",
-      "sha256": "d0be302d21e04ad29a6ce4f7c74fb57a2b73cc8d6553ce869586f70f99df801d",
+      "sha256": "dc198851983c13c310e5d8a647e0447527757e6b71da2326cde60360ea6b7685",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

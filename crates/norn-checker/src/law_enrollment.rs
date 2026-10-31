@@ -46,39 +46,74 @@ impl LawEnrollment {
     #[must_use]
     pub fn description(&self) -> String {
         let origin = &self.inherited_from;
-        format!("inherited from law {} of pack {} version {}",
-                origin.law_id, origin.pack_id, origin.pack_version)
+        format!(
+            "inherited from law {} of pack {} version {}",
+            origin.law_id, origin.pack_id, origin.pack_version
+        )
     }
 }
 
-pub(crate) fn inherited_laws(base: &[ArtifactEnvelope]) -> Result<Vec<LawEnrollment>, ReceiptError> {
+pub(crate) fn inherited_laws(
+    base: &[ArtifactEnvelope],
+) -> Result<Vec<LawEnrollment>, ReceiptError> {
     let invalid = |detail: String| ReceiptError::InvalidStoredReceipt { detail };
-    if !base.iter().any(|artifact| artifact.kind() == ArtifactKind::BusinessPack) {
+    if !base
+        .iter()
+        .any(|artifact| artifact.kind() == ArtifactKind::BusinessPack)
+    {
         return Ok(Vec::new());
     }
     let mut laws = BTreeMap::new();
-    for law in base.iter().filter(|artifact| artifact.kind() == ArtifactKind::Law) {
-        let definition: LawIR = serde_json::from_value(law.payload.to_json_value())
+    for law in base
+        .iter()
+        .filter(|artifact| artifact.kind() == ArtifactKind::Law)
+    {
+        let definition: LawIR = serde_json::to_value(law.payload.to_json_value())
+            .and_then(serde_json::from_value)
             .map_err(|error| invalid(format!("invalid retained law: {error}")))?;
         let identity = (&law.artifact_id, &law.version);
-        if laws.insert(identity, (definition.id, ArtifactRef::of(law)?.sha256)).is_some() {
-            return Err(invalid(format!("retained law is ambiguous: {}", law.artifact_id)));
+        if laws
+            .insert(identity, (definition.id, ArtifactRef::of(law)?.sha256))
+            .is_some()
+        {
+            return Err(invalid(format!(
+                "retained law is ambiguous: {}",
+                law.artifact_id
+            )));
         }
     }
     let mut enrollment = Vec::new();
-    for artifact in base.iter().filter(|artifact| artifact.kind() == ArtifactKind::BusinessPack) {
-        let pack: BusinessPackRoot = serde_json::from_value(artifact.payload.to_json_value())
+    for artifact in base
+        .iter()
+        .filter(|artifact| artifact.kind() == ArtifactKind::BusinessPack)
+    {
+        let pack: BusinessPackRoot = serde_json::to_value(artifact.payload.to_json_value())
+            .and_then(serde_json::from_value)
             .map_err(|error| invalid(format!("invalid retained pack: {error}")))?;
-        let BusinessPackRoot::Composition(pack) = pack else { continue };
+        let BusinessPackRoot::Composition(pack) = pack else {
+            continue;
+        };
         for member in &pack.artifacts {
-            if member.kind != norn_ir::business_pack::PackArtifactKind::Law { continue; }
-            let (law_id, digest) = laws.get(&(&member.artifact_id, &member.version))
-                .ok_or_else(|| invalid(format!("retained pack law is unresolved: {}", member.artifact_id)))?;
-            enrollment.push(LawEnrollment { inherited_from: InheritedFrom {
-                pack_id: pack.pack_id.clone(), pack_version: pack.pack_version.clone(),
-                artifact_id: member.artifact_id.clone(), artifact_digest: digest.clone(),
-                law_id: law_id.clone(),
-            }});
+            if member.kind != norn_ir::business_pack::PackArtifactKind::Law {
+                continue;
+            }
+            let (law_id, digest) = laws
+                .get(&(&member.artifact_id, &member.version))
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "retained pack law is unresolved: {}",
+                        member.artifact_id
+                    ))
+                })?;
+            enrollment.push(LawEnrollment {
+                inherited_from: InheritedFrom {
+                    pack_id: pack.pack_id.clone(),
+                    pack_version: pack.pack_version.clone(),
+                    artifact_id: member.artifact_id.clone(),
+                    artifact_digest: digest.clone(),
+                    law_id: law_id.clone(),
+                },
+            });
         }
     }
     enrollment.sort();
