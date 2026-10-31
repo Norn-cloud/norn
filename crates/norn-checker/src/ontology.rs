@@ -609,7 +609,7 @@ fn validate_source_use(
                 diagnostics,
                 artifact_id,
                 PACK_CODE,
-            ) && !(name.contains('.') && valid_prefixed_id(&name, ""))
+            ) && !valid_dotted_name(&name)
             {
                 diagnostics.push(diagnostic(
                     PACK_CODE,
@@ -625,7 +625,7 @@ fn validate_source_use(
                 diagnostics,
                 artifact_id,
                 PACK_CODE,
-            ) && !valid_semantic_version(&version)
+            ) && !valid_semver(&version)
             {
                 diagnostics.push(diagnostic(
                     PACK_CODE,
@@ -669,6 +669,57 @@ fn validate_source_use(
             artifact_id,
         ));
     }
+}
+
+/// Two or more dot-separated components, each a lowercase identifier
+/// (`norn.importers.frappe`).
+fn valid_dotted_name(value: &str) -> bool {
+    let mut components = value.split('.');
+    let valid = |component: &str| {
+        component
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase())
+            && !component.ends_with('-')
+            && component.chars().all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+            })
+    };
+    components.clone().count() >= 2 && components.all(valid)
+}
+
+/// A strict SemVer 2.0.0 version: `MAJOR.MINOR.PATCH` without leading
+/// zeroes, with optional pre-release and build identifiers.
+fn valid_semver(value: &str) -> bool {
+    let (rest, build) = match value.split_once('+') {
+        Some((rest, build)) => (rest, Some(build)),
+        None => (value, None),
+    };
+    let (core, pre) = match rest.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (rest, None),
+    };
+    let numeric = |part: &str| {
+        !part.is_empty()
+            && part.chars().all(|character| character.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))
+    };
+    let identifier = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    };
+    let core_parts: Vec<&str> = core.split('.').collect();
+    core_parts.len() == 3
+        && core_parts.iter().all(|part| numeric(part))
+        && pre.is_none_or(|pre| {
+            pre.split('.').all(|part| {
+                identifier(part)
+                    && (!part.chars().all(|character| character.is_ascii_digit()) || numeric(part))
+            })
+        })
+        && build.is_none_or(|build| build.split('.').all(identifier))
 }
 
 /// Whether a source's bytes are fixed: a content hash as (or after `@` in)
@@ -754,14 +805,23 @@ fn validate_source_files(
             artifact_id,
             PACK_CODE,
         );
-        required_string(
+        if let Some(file_path) = required_string(
             file,
             "path",
             format!("{path}.path"),
             diagnostics,
             artifact_id,
             PACK_CODE,
-        );
+        ) && redistribution == Some("reference_only")
+            && !is_absolute_web_iri(&file_path)
+        {
+            diagnostics.push(diagnostic(
+                PACK_CODE,
+                "a reference_only source pins its bytes by absolute HTTPS URL",
+                format!("{path}.path"),
+                artifact_id,
+            ));
+        }
         if let Some(hash) = required_string(
             file,
             "sha256",

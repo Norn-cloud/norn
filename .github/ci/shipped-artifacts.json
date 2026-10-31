@@ -2991,7 +2991,7 @@
     },
     {
       "path": "crates/norn-checker/src/ontology.rs",
-      "sha256": "18fd686ba3a496d1d99a01366714c3d89abb1de21f77aca76110fdf4e0421f3c",
+      "sha256": "9fe408eadedccf0d98789d60f39adf3599aee24e8c6b4ebee8c1b3aff46a09cc",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3996,7 +3996,7 @@
     },
     {
       "path": "crates/norn-checker/tests/ontology_pack.rs",
-      "sha256": "b8e97ca6b294a8cc02789dea5733c26df09f1d9399b292f28aa35414f2d5de5f",
+      "sha256": "04b8575753779724d1051f2b578af2fe6134d8cc92f6d3b4ce55c97299a1bc22",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
