@@ -149,7 +149,7 @@ pub struct OntologyPackRoot {
     pub terms: Vec<OntologyTerm>,
     /// Non-empty; reviewed mappings from terms to external IRIs.
     pub mappings: Vec<OntologyMapping>,
-    /// Non-empty; one closed promotion shape per active term.
+    /// Non-empty; one closed promotion shape per active shaped term.
     pub shapes: Vec<OntologyShape>,
     /// Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.
     #[serde(
@@ -269,9 +269,21 @@ pub struct OntologyTerm {
     )]
     #[schemars(with = "String")]
     pub superseded_by: Option<String>,
+    /// The active class term a `property` or `action` term belongs to
+    /// (required on those, optional on `predicate`, absent on shaped kinds;
+    /// checker rule).
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub domain_term_id: Option<String>,
 }
 
-/// What an ontology term denotes.
+/// What an ontology term denotes. `class`, `value_object` and
+/// `concept_scheme_root` terms take one closed promotion shape; `property`,
+/// `action` and `predicate` terms are vocabulary handles and take none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OntologyTermKind {
@@ -279,6 +291,10 @@ pub enum OntologyTermKind {
     Property,
     ValueObject,
     ConceptSchemeRoot,
+    /// A business operation on its domain class (posting an invoice).
+    Action,
+    /// A condition over canon state, such as an admission refusal.
+    Predicate,
 }
 
 /// Lifecycle status of an ontology term.

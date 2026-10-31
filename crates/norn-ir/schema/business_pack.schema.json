@@ -213,7 +213,7 @@
           "$ref": "#/$defs/IrVersion01"
         },
         "shapes": {
-          "description": "Non-empty; one closed promotion shape per active term.",
+          "description": "Non-empty; one closed promotion shape per active shaped term.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/OntologyShape"
@@ -390,6 +390,10 @@
         "definition": {
           "type": "string"
         },
+        "domainTermId": {
+          "description": "The active class term a `property` or `action` term belongs to\n(required on those, optional on `predicate`, absent on shaped kinds;\nchecker rule).",
+          "type": "string"
+        },
         "label": {
           "type": "string"
         },
@@ -426,13 +430,27 @@
       ]
     },
     "OntologyTermKind": {
-      "description": "What an ontology term denotes.",
-      "type": "string",
-      "enum": [
-        "class",
-        "property",
-        "value_object",
-        "concept_scheme_root"
+      "description": "What an ontology term denotes. `class`, `value_object` and\n`concept_scheme_root` terms take one closed promotion shape; `property`,\n`action` and `predicate` terms are vocabulary handles and take none.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "class",
+            "property",
+            "value_object",
+            "concept_scheme_root"
+          ]
+        },
+        {
+          "description": "A business operation on its domain class (posting an invoice).",
+          "type": "string",
+          "const": "action"
+        },
+        {
+          "description": "A condition over canon state, such as an admission refusal.",
+          "type": "string",
+          "const": "predicate"
+        }
       ]
     },
     "OntologyTermStatus": {
