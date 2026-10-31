@@ -98,5 +98,16 @@ class ReviewRegressions(unittest.TestCase):
         self.assertEqual(by_path, {'hooks.py':3,'package.json':3,'pyproject.toml':4})
 
 
+class ClassScopeTests(unittest.TestCase):
+    def test_class_namespace_is_not_a_method_closure(self):
+        source = b'from odoo import api\nclass C:\n api = object()\n def method(self):\n  @api.depends("x")\n  def inner(): pass\n'
+        matches = analyze({'x.py':source})['recognized']
+        decorators = [m for m in matches if m['signal']=='decorator:odoo.api.depends']
+        self.assertEqual(len(decorators), 1)
+        self.assertEqual(decorators[0]['evidence']['line'], 5)
+        source = b'from odoo import api\nclass C:\n api = object()\n @api.depends("x")\n def method(self): pass\n'
+        self.assertFalse(any(m['signal'].startswith('decorator:') for m in analyze({'x.py':source})['recognized']))
+
+
 if __name__ == '__main__':
     unittest.main()
