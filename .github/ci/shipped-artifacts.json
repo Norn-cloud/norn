@@ -2,6 +2,33 @@
   "version": 1,
   "software_sources": [
     {
+      "id": "software.columnation",
+      "revision": "0e4fe371ac319826dc7a460c704fda54c52a471a",
+      "license": "MIT",
+      "evidence": {
+        "path": "welldb/patches/PATCHES.md",
+        "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+      }
+    },
+    {
+      "id": "software.differential-dataflow",
+      "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+      "license": "MIT",
+      "evidence": {
+        "path": "welldb/patches/PATCHES.md",
+        "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+      }
+    },
+    {
+      "id": "software.timely",
+      "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+      "license": "MIT",
+      "evidence": {
+        "path": "welldb/patches/PATCHES.md",
+        "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+      }
+    },
+    {
       "id": "software.zen",
       "revision": "44530255a36df637edc86f6d29495c342805e21b",
       "license": "MIT",
@@ -29917,7 +29944,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "733dff6ea6f2e98a8e3b8d914992924cd2c479eb6ca33d8e08365687e8075504",
+      "sha256": "42162c0c3cb3df3ac85412b4fffc23015ca1e37f6bc74b2e3355180aced1fc73",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29935,7 +29962,7 @@
     },
     {
       "path": "verification/coverage-v1/negative_canaries.py",
-      "sha256": "36cea4cec94682ff8206d78d4daf6f3af2829cf2c7b4ece1f177c13d36971678",
+      "sha256": "c6d4fd0125b972a69e70018b76309aefe17d7e5306aee32597d36290b3da13b1",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30007,7 +30034,7 @@
     },
     {
       "path": "verification/coverage-v1/validate.py",
-      "sha256": "63b7f23b31f4dc5b0e623266daf220fed56bede46619b49b905e3bc06f572bb8",
+      "sha256": "5dea783a27cf9294e6d492749006f951925f6ee9f538cce2d4c826fd5570ec53",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32229,7 +32256,7 @@
     },
     {
       "path": "verification/stripmine-2026-08-22/obligations.json",
-      "sha256": "e7b5898cc0cb6f646e2613fddb1c064038b6d86eadee2bcd7d5e04ed9d7b3dcd",
+      "sha256": "60c7a74b59b21ccef23f402f723468b55002aef782809054343c2cd558c1ee27",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32603,6 +32630,5460 @@
         }
       ],
       "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/PATCHES.md",
+      "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/columnation/Cargo.toml",
+      "sha256": "b0daedecfde86f6184ed214e914a8aba5b064996664b154b955156c2f2c1a47c",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.columnation",
+          "revision": "0e4fe371ac319826dc7a460c704fda54c52a471a",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/columnation/LICENSE",
+          "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/columnation/LICENSE",
+          "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/columnation/LICENSE",
+      "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.columnation",
+          "revision": "0e4fe371ac319826dc7a460c704fda54c52a471a",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/columnation/LICENSE",
+          "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/columnation/LICENSE",
+          "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/columnation/README.md",
+      "sha256": "e642b3341814050c85added17be8839ca73d9ef96c743a991fd88aa619403f97",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.columnation",
+          "revision": "0e4fe371ac319826dc7a460c704fda54c52a471a",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/columnation/LICENSE",
+          "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/columnation/LICENSE",
+          "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/columnation/src/lib.rs",
+      "sha256": "e6b7d73e42b38c9d8428a1f39bef6d67123bc3c3043426b2b31d2437b7373453",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.columnation",
+          "revision": "0e4fe371ac319826dc7a460c704fda54c52a471a",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/columnation/LICENSE",
+          "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/columnation/LICENSE",
+          "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/Cargo.toml",
+      "sha256": "2cd3265584b124e86118fb67a6190b002cdf185331ac85e136118f4276f10c2b",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/LICENSE",
+      "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/README.md",
+      "sha256": "da7d26e1028df4df0868c0fe0cd62634352f224bf3ae5b981bb4ca3af415dc6c",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/algorithms/graphs/bfs.rs",
+      "sha256": "cef7d2a8a9cc818b13cdd52b677a575217bfa28724f0caa22e124617ef7421d9",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/algorithms/graphs/bijkstra.rs",
+      "sha256": "51563d9a21cf6ff5c96c549e8ca656c6ea55254996ebef64795225639aef26c5",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/algorithms/graphs/mod.rs",
+      "sha256": "be64f9c7a0345d7d372139c24569c75c04b3daa67e2beb907254bb4b65db6363",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/algorithms/graphs/propagate.rs",
+      "sha256": "991a7645f843e449da5b37258fdb7e14c71e6d0bd5c13d051f1bd17cc2c082e8",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/algorithms/graphs/scc.rs",
+      "sha256": "2b53421cea50fc28ad3203414b05cafb6628f3eea630a7ce07dead2c5377cb1d",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/algorithms/graphs/sequential.rs",
+      "sha256": "d0bd0593a8925ee4e61a45a3e86d90ec0f701ad36a68a8a29f9f63f6520529f7",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/algorithms/identifiers.rs",
+      "sha256": "eb1a391df59d4ab3d6b565816b59af0122046bb4d9842438e59e67a494294c6a",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/algorithms/mod.rs",
+      "sha256": "848535e90b40386bb6a492fa7fdca4dbf9e52d5fc037eea14a5e741ac7f7cc37",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/algorithms/prefix_sum.rs",
+      "sha256": "64e6cb75a2bc26ac9c0bfd03d130804c627257b2cc9fad2cfd821367e079cce3",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/capture.rs",
+      "sha256": "52f1af2ab7aa3ba3ad27e967ef3023d428671eea57e0c46e483b2fa3961d257a",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/collection.rs",
+      "sha256": "2846e601f80a03ad98ac52fa6d8741fccba2eb74462becb8534ec04daef159b2",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/collection/builder.rs",
+      "sha256": "f207bc76ed7a1a1eaef7d4da1ae8cc8c3d5c78eb08ecc3cbd1f7ab7f637d74f2",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/collection/container.rs",
+      "sha256": "51ca4d3f571604da0850f3065e523e90ff24538ca46eaec30db2be2995d49e56",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/collection/exchange.rs",
+      "sha256": "da6ac83dc8c0e79c04b6ef862849c82841d5c862ddb96c4d85f6dc346bdb2aa8",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/collection/mod.rs",
+      "sha256": "449716918628665ba2e119ad1cce1e32de5e55143f40e19623642c4375c92eb7",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/collection/operators.rs",
+      "sha256": "49aae154147e6b709211ab4124473c54070244774db0277d6117582a58870c4c",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/layout.rs",
+      "sha256": "7e2a06d5140b81f261814ad658ce27e1405f4df583097a2718da1a62a6cbc410",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/mod.rs",
+      "sha256": "8a36399a9b68d654db12591d6fbc530ecaca39a073d37cb34d45f69e9c1c2402",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/trace/chunk.rs",
+      "sha256": "118e3296cc9effddcb81f95968119d3d007fc77ba2fb8aa3f3d0878e1b89023b",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/trace/chunker.rs",
+      "sha256": "36b536912ccd55f43f436d40e552a69d9dfcf6e51113057c45821e13dfa861db",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/trace/mod.rs",
+      "sha256": "cbcc508cab1f6a72c3fbb9330fcd17409b2049c3801bd56694006fd12cf4044d",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/trace/spill.rs",
+      "sha256": "a0497f46d12026aab98a0497a3d94ad715a74bdca1e1bc3ff14082d6b882f74f",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/trie_merger.rs",
+      "sha256": "8efec0f2869d8c0176a14ab964c3391fa315f19da4ecb9222f5474cf547de484",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/columnar/updates.rs",
+      "sha256": "7ddb140ab4b8f6a5fc2b44ca05c448b27af285eecb3012057a95308bce0808b2",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/consolidation.rs",
+      "sha256": "d3c018ab83a67db14fefdeb8625b992ba073bca06036a83062273146dde0c7ce",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/difference.rs",
+      "sha256": "690f47e13848fc5c658ad0d2095344a784c001022d3c518d5b2d9b94e5f4cb28",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/dynamic/mod.rs",
+      "sha256": "b062b6ab90278a56e8a55544db8786403f29ccf196d00dac2f0cd911366ffc0b",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/dynamic/pointstamp.rs",
+      "sha256": "9f5b7138a819141cc7e49de1945827c9334f66dcfedfbfd5215c76b0e4108ff6",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/hashable.rs",
+      "sha256": "d00c961d636b284aa859c7d26c5cd473141dbc6de7310b88fc7d22a505b1caf1",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/input.rs",
+      "sha256": "fe4c1e1eee0657c7122a5cf270be1fe739d2681f1b89a8c7192712177aeda28d",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/lattice.rs",
+      "sha256": "81e09099bd5de14d570634a223c4c5b8f4b48e479f0b443a1d0daae9abcabaab",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/lib.rs",
+      "sha256": "5a26410b51291e7a183583bb42c3766b931d439f4120b149728772171b230df9",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/logging.rs",
+      "sha256": "60525e51afb9297f7781ec4292415fd4a3065f5bac32392b28e2bb485c51c822",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/arrange/agent.rs",
+      "sha256": "ed89ebb566d70176fc47f7a9e50c5a1b4dc55498bd138d5c1e763479cb62425b",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/arrange/arrangement.rs",
+      "sha256": "50cdb1b77c0d8cc6a7d60a26761c0b0c74353edebca237f06473e25673c08b3b",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/arrange/mod.rs",
+      "sha256": "0c2bc5b4840ebc5ed993a689c00657ab6317a62c0ea956f8ec147275ff2a7226",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/arrange/upsert.rs",
+      "sha256": "577694d83d8ea3c3efc78f1eb3bad04a248eb158efe9dc24059f41f0f773ae87",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/arrange/writer.rs",
+      "sha256": "0b1adb926535835b59f26a76ec3abaebb58e53b4c3951dee9cfb33de990f9e21",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/common.rs",
+      "sha256": "66ed40e9a8c74c32422166bd9ad1d1d9526152b7605bed808d15eb45434ec38a",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/count.rs",
+      "sha256": "3c8d7c4416910d20c44bc4857a9836c5576b6d2d3c6e3d85b7c7d8ac054a315f",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/int_proxy/history.rs",
+      "sha256": "45b619ff157e6fc34817a5951897148e4887cf0a6583fa232d5ff6c82029ba24",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/int_proxy/join.rs",
+      "sha256": "cf64fdc20decbd8e20c667e64566f753ed11db752da3b8a5e1e812be4e647e97",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/int_proxy/mod.rs",
+      "sha256": "76dbccaec95f27ca1d2e93a1a386992fec19c80355f75dfc3c00dc6f36f5438a",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/int_proxy/reduce.rs",
+      "sha256": "76d83167cb8d3805bbb73255d730a313ea5a936da62a378c3a17960cc0e511d0",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/iterate.rs",
+      "sha256": "81f96ba881b3126a1abfa66bea0493714f9984b89a8fd5b2a5d816dfe6b9e2de",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/join.rs",
+      "sha256": "8c243a2ec238acc513bc6b705489d4fa9ddd9d649e29fbe380adf72c9878a557",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/mod.rs",
+      "sha256": "ba76eae23a9911b977b734e859156051806d1fe378d932820e0d773c282f1112",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/reduce.rs",
+      "sha256": "635e4a58c965e860154f1f550ecbe6d1c85cc953b7b91d7ff87b08f0a6b5aedf",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/operators/threshold.rs",
+      "sha256": "c716f761322d1162352c6e5f830caef394ddc7bd5b432616aaaa220954c22899",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/chunk/mod.rs",
+      "sha256": "cd4832338ec1b4352e1eacb0342f6bbccca65e5841c131c6a602055723a4e44a",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/chunk/vec.rs",
+      "sha256": "6c980c11632f77b92ca79802bb8e0aee3752d4cffda23261616de682b59648fb",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/cursor/cursor_list.rs",
+      "sha256": "fd02a7f808ec724943d0cb5a9eb2e13c9a09e1626351b7b0917e0deae951a3d4",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/cursor/mod.rs",
+      "sha256": "db636b7369e95d8c9471029a83fc424bea5f7d1cfd09155268d171d9bb6e2174",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/description.rs",
+      "sha256": "ea27f7e25eedec495be07d5b48f641f824cd9701d08ff4e7c3c3ec19a172b171",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/implementations/chunker.rs",
+      "sha256": "4b24feb5d6e5858137d6fcfaa4fad7945134abb88d96e813c245cf2b9db812a6",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/implementations/merge_batcher.rs",
+      "sha256": "c288d1f8d8b0209bbf8083683efdc97432553b4b1c50ed8ade7a7acd46074061",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/implementations/mod.rs",
+      "sha256": "26ce0bb7fb2f545ba8824c84ff3fcd10438bf5e7a44fbe8d55c6955d4046e2d8",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/implementations/ord_neu.rs",
+      "sha256": "55473875f5ab2958c0b0799ff2f72a93e1cde8f8c81e71469fb631528fb7faf2",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/implementations/spine_fueled.rs",
+      "sha256": "86dc1e000fac7ad27e5e540f87cbc0e55bbf87630adf2ccb29d9021bce303b77",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/mod.rs",
+      "sha256": "e8075801ab2d2c6b073b99a760d1b6337b45b1b760436392853c07c037357f1d",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/wrappers/enter.rs",
+      "sha256": "7e28ad3889afc6bd3befbad5f42873d78212dbf9bed297d283e2720f42b9abe2",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/wrappers/enter_at.rs",
+      "sha256": "5d9dc5504dbd999e1868fbda45afd8e3dd7dedf102c3a7b36878d73dd11432f7",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/wrappers/frontier.rs",
+      "sha256": "feaafb39e699c20f6688a42631be2713c9b95d2b397b4de7fb0dfdf818f672b1",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/src/trace/wrappers/mod.rs",
+      "sha256": "6e9aecf9b1565696a930f69fc3d9b7dc9107c35aff096b57e58c7c6906430d5d",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.differential-dataflow",
+          "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/differential-dataflow/LICENSE",
+          "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/Cargo.toml",
+      "sha256": "972be7a58d394ecb30a44454429b82c37bf768d4a0d161b6de03d0eb54c175c0",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/LICENSE",
+      "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/README.md",
+      "sha256": "51ed7cd8a2f523512374a178e2660329668d68124449106ed137684fb41bd514",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/channels/mod.rs",
+      "sha256": "63c0e876d68cb1826aa355e0d2b97dc869f9ce40dde5f490feda371faaf28dc8",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/channels/pact.rs",
+      "sha256": "f2561dac7f850ee00f8de4064713284a65bb8a448c097ecf1e564064aa23effe",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/channels/pullers/counter.rs",
+      "sha256": "be1aad0956748186d811c2267bfa332ed6e15ca8ee4423e41b0d17fe261c280e",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/channels/pullers/mod.rs",
+      "sha256": "92a3acfe10a0d99b21c451290b2880be25553a528afd398a686a98e787d000c2",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/channels/pushers/counter.rs",
+      "sha256": "befc4f78cb5793dac7ff484c75d4e6db04559b47cb1f032e13602457121304e1",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/channels/pushers/exchange.rs",
+      "sha256": "ad3d02ad29023cf97cccfa25bc3371d595ae7a47e8e279d7f3d4f366213453a4",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/channels/pushers/mod.rs",
+      "sha256": "74944c9b5b3663da52a09c21b7e6357f029379f58ea2815c2aa7682560d06d57",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/channels/pushers/progress.rs",
+      "sha256": "596729f3df2b8fa4b881fba4ce757efb0e561bb0fb9b194e9f51a25a6a05ecfa",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/channels/pushers/tee.rs",
+      "sha256": "9ed2a9becffcdbf48f516baa4de5c2d4409c2117aa5d594a0dc89e60d0cd4fac",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/mod.rs",
+      "sha256": "f94c1bd46d608d59a35d073fad97acfcb0a540fcd6501e9de2ebfe11b4336e79",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/capability.rs",
+      "sha256": "0be9c9e7aa8d4b55cd85f337117f0056a945e02dce82be302e65a14533d4b34f",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/capture/capture.rs",
+      "sha256": "0fd494ad9dfcd27da0ec21c7cd50d15f67ab9067c3ec6e8477c612d31866c137",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/capture/event.rs",
+      "sha256": "cb92240fc0af97b313d96bd1051ada752a1ff38b9b296d225f799a32c2e8ef65",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/capture/extract.rs",
+      "sha256": "f38ef6aa6a4f48509aa0f00317ea681dc83c348897805f6073203225c252af9f",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/capture/mod.rs",
+      "sha256": "adfa3f970467cc49dda3f1b35a278b801cecbc9a05de0163fecacc0d16852b9d",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/capture/replay.rs",
+      "sha256": "de2d1514715806e8f87bc7e4698a2e4e622c4022343541a00a8d8e18c90c04fd",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/concat.rs",
+      "sha256": "47979b8b45fc8a75fe1272918c6b62cbe807cee9f440468d1a298579142d80d9",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/enterleave.rs",
+      "sha256": "1353361292dceaaee27ad65e6043daeb9543d570c7ba33e5ba9aff94f1e209f6",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/exchange.rs",
+      "sha256": "00c48deb9ec5b57de00c75efc74cfe403989b67cdfcb55178c68973c81ff7824",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/feedback.rs",
+      "sha256": "1d9f418c959f9c033e620bb132295eca6e5c292d0147c8e5f5723b01b6a95194",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/filter.rs",
+      "sha256": "9ef4b48d4dac016475d41e2d0723bd5fe1f256f303737acebd7d5d0259cadff2",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/input.rs",
+      "sha256": "46e6c592183c4db4729bbda3524cff5ccd9e61a60a3d32c2f83a74e3db399f41",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/inspect.rs",
+      "sha256": "f1400af9feca8d470572b3a28d668bd7f9583a1770283c14392a9c27251d58ea",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/map.rs",
+      "sha256": "534ad95b87fcac07c5f46ba2c820feecb0aa7aa07dd997d46297b55171b6cd41",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/mod.rs",
+      "sha256": "fa24c9e0c6200b256a5e125f234eb06c84b6e51d5cb81a72ef3d979256d4ad81",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/ok_err.rs",
+      "sha256": "372dfe2762a090e6e1b310296928c1e0b70759d8bbfbd7325e004136d53dafca",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/partition.rs",
+      "sha256": "7d86416dfe0581fc5e246793d5e15549874788914486e233bca47e4905404c89",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/probe.rs",
+      "sha256": "5d3dd89961457de99ac4834012b000531803d72d20683b860dc07e439d192065",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/rc.rs",
+      "sha256": "974ebb66b6570fe73b5d70ee015aab67439fa396b8af4658df988313e7b32f34",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/reclock.rs",
+      "sha256": "03ee7b71d4e2770130e26fbfa1dc342bf05eab49ac03eacba63686c4c7752959",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/to_stream.rs",
+      "sha256": "6e28f9e6791f7cfcf86806edba3c944b8efc215545d642932eeb32759c7d71bf",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/core/unordered_input.rs",
+      "sha256": "ccf7aed96596295db82f17d38e11240e130c442d5714684e361830ab9243b7b9",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/generic/builder_raw.rs",
+      "sha256": "41e01b3959a3563cd7481ce72327d4087540fafdd280a40a388bea19a2cdb507",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/generic/builder_rc.rs",
+      "sha256": "3db8ac25d10391482ddb48dea762b7e3942771fec353d6acecf67b03b2fda6d3",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/generic/builder_ref.rs",
+      "sha256": "090483c5d0d75d6a3c5b8133b9f2b03e106c08a9afd1923b92c556f44316108b",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/generic/handles.rs",
+      "sha256": "c738faffae512b66898848e2965d9d44e4a8239c4e3df301e40e9754d3c01f91",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/generic/mod.rs",
+      "sha256": "6d7989c040d6b8be9bbf3880d528c0797b3b5ae0564586a6053c4a4f6aec9820",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/generic/notificator.rs",
+      "sha256": "5311e885c5611b831d39267eacbedd11acce9ef2e9d4cfac2eee7b42dc2f94fe",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/generic/operator.rs",
+      "sha256": "5e020fd1b9dd2a6385e641b5a3fec78c12134dc7042b28cf6fa6af4daa8aa546",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/generic/operator_info.rs",
+      "sha256": "15989ee9c0d4d9e707c2e0c4644381908313978afdced88ea28c746c7eda249f",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/mod.rs",
+      "sha256": "29dbcd44a99b25639013763b368a259609a400975328b98035661c7bd1074164",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/aggregation/aggregate.rs",
+      "sha256": "c46da70a8f34332391ef2322ac40bede8e4e695d062c0be2d73e5ac1d7f77e9e",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/aggregation/mod.rs",
+      "sha256": "e0f9a16d520433cafd2823f6efec48e0067565cdaf423389a82df2682c46f06c",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/aggregation/state_machine.rs",
+      "sha256": "57f4e7afa48f73f47b7245e70c243a5aa9f56545140ef7638228678feaedfd7c",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/branch.rs",
+      "sha256": "53f284c317b8d53bdc4d77fa7f92a8d4f85f451ce84de02d241fffe48cfcd40b",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/broadcast.rs",
+      "sha256": "a08fcc0929b62548d48ae9f401f974104b3aaf091b64a1a0d98f1bfc97e48f60",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/count.rs",
+      "sha256": "e9c4c71cb1ac45dc6c529b28337c64551f357880acf558ef3bba355061d90253",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/delay.rs",
+      "sha256": "831aefedec9505348662ecc370520aaeb3842899e855cc5d2ce1cbbd41fef114",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/filter.rs",
+      "sha256": "4e15f76bb02484eea4d1230abc2a8947fc4ca5df184cf95b8f7d97fd7719f743",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/flow_controlled.rs",
+      "sha256": "d5123941ae7d23b4ddf3f7891a8c5deb696b6a23e3b0b57746a1106516374f29",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/input.rs",
+      "sha256": "e4993d1fcb2ed385d7c30522b0095190fa44c7a3379340bdc6c6dca73d3d7163",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/map.rs",
+      "sha256": "f817703873aecb955c79b4c55b8d512601fca40af510cd7522cec59885860c96",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/mod.rs",
+      "sha256": "7b7878acae76110f4174e22354d75fdadd086ab7f8c49bf6864e8c4180d0cfd4",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/partition.rs",
+      "sha256": "11c799909d08914f128377641e79e1366a3e46200ed015412ae17b08c286c26e",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/result.rs",
+      "sha256": "58551731be160aaf4261bfc892efd164a70f463e46f9800be0dd23bb0f18e7c2",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/to_stream.rs",
+      "sha256": "10d4ff284ce9f7e8532148757159a900ac65e1cc10fdd8d6c4446b33cb0b2d34",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/operators/vec/unordered_input.rs",
+      "sha256": "2c9a0d200ca557ff0774e7cf8f8cbbd26323b7af9c10a27fae82787295a3fb49",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/scope.rs",
+      "sha256": "48b65c1a6ffe0eb7f231006a473f03ff1264e65266bbde6f1ea28b5deefd10aa",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/dataflow/stream.rs",
+      "sha256": "cf33092bc64bca1551686ec69862a14c458ab2a16ce948531e9918ef00c483d1",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/execute.rs",
+      "sha256": "c3352a4ed734c25326a6f0f5e6babb9221a94349c251eb1173583b505838d832",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/lib.rs",
+      "sha256": "f8018892934668fe9ea2828cd4e7add03be89e8a31aff2465ef5b193b426cd9b",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/logging.rs",
+      "sha256": "d07a31601c34289e14854d688a58bd8ad01f1c9c28b9c3bdc05f5c37d32fee8b",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/order.rs",
+      "sha256": "e89da348dceea842313a360d6d1dbe4333149ac6dfc8cb526422535fcc711cca",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/progress/broadcast.rs",
+      "sha256": "9cac714859a25af587b1580079132dd1e5126643eddc10f7850168f3d606f9cd",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/progress/change_batch.rs",
+      "sha256": "1095787f26fd575f3fb730120a546df459f3c7818f8ae3c6159f45b391893354",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/progress/frontier.rs",
+      "sha256": "c979e0bca9ece8494fa84952c60f453501ffcea43021e2df592bbe957b7994b2",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/progress/mod.rs",
+      "sha256": "6c97bd385f65df698791f3180a7a8b2480e336f2d0aec3c868127f87f0094d7b",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/progress/operate.rs",
+      "sha256": "581c51b22ef0d68b95be914875d57cfbb12b39db89f24507e95a355eb8d55bbc",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/progress/reachability.rs",
+      "sha256": "b0133fd00332123022e3fb5260b31a4dc9aa1421f48026a2410adeb9facde99e",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/progress/subgraph.rs",
+      "sha256": "05f6c67da5cb22b278e7ff0b7db0b1f5a96912ec7f6d8f4a7b4433d4babd1e5e",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/progress/timestamp.rs",
+      "sha256": "aac59945a189f865a7fc4d3032be50fb4e42054ebd686f64203ef360c6d8bb5c",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/scheduling/activate.rs",
+      "sha256": "64915a0d90c5980787cf01b5768cedaf5a5f971f6bd88ddcb1b363feba236bc5",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/scheduling/mod.rs",
+      "sha256": "be93b965bf7d4d3c762a591a6b4df86f1267211fb9091d4a71a7925bd952ed53",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/synchronization/barrier.rs",
+      "sha256": "e6bf2b96c0da3c63e63bd909601c12a31e6067d72fdb75b0497fc04c2c16f470",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/synchronization/mod.rs",
+      "sha256": "74e299b14a2401a8662dd0c5238e588119cab26e54a8ae04fb5f90bfc35f43e2",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/synchronization/sequence.rs",
+      "sha256": "34f601cb94bff6a9b24033a83c5518a4895d48747b0db3f01d449a4955462842",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "connector": null
+    },
+    {
+      "path": "welldb/patches/timely/src/worker.rs",
+      "sha256": "757ea1d027d3c7674388e90e4cb856920c44e6146dc8ffdd591a4ae595c7efc4",
+      "origin": "derived",
+      "category": "software",
+      "license": "MIT",
+      "sources": [
+        {
+          "id": "software.timely",
+          "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+          "evidence": {
+            "path": "welldb/patches/PATCHES.md",
+            "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+          }
+        }
+      ],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "welldb/patches/PATCHES.md",
+          "sha256": "a85a453931a7edc2653b71eeebeca62f6b2c7bc2cc854f8fb89b6627818db14c"
+        },
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
+      "notices": [
+        {
+          "path": "welldb/patches/timely/LICENSE",
+          "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+        }
+      ],
       "connector": null
     }
   ]
