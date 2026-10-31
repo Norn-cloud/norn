@@ -62,6 +62,13 @@ fn join(theories: &[&Theory], keep: impl Fn(&Dependency) -> bool) -> Theory {
 /// Schema compatibility: an error when no tuple of a source relation can be
 /// exchanged at all, and a warning, with a witness source instance, when the
 /// source and mapping permit data that breaks a target constraint.
+///
+/// Evidence level: each reported witness is verified, but the search for
+/// witnesses is bounded (one unfolding of each constraint body through the
+/// mapping heads, within `budget`) and can miss some. The absence of an
+/// `unpreserved_constraint` warning therefore means no witness was found
+/// within the bound; it is not a proof that the source preserves the
+/// constraint.
 #[must_use]
 pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) -> Vec<Diagnostic> {
     if let Err(error) = exchange.validate() {

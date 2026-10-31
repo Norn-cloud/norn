@@ -9,8 +9,10 @@
 //!   hold a tuple; otherwise the failing equation, a minimal rule set and the
 //!   frozen tuple that triggers them;
 //! - **schema compatibility** ([`check_schema_compatibility`]): every source
-//!   relation can be exchanged, and which target constraints the source does
-//!   not guarantee, each with a witness source instance;
+//!   relation can be exchanged, and target constraints the source does not
+//!   guarantee, each with a witness source instance. The search for those
+//!   witnesses is bounded and can miss some: no warning means no witness was
+//!   found within the bound, not that the constraint is preserved;
 //! - **instance validation** ([`check_instance`]): sample or real data
 //!   against both systems' constraints;
 //! - **mapping totality** ([`check_mapping_totality`]): source relations and
