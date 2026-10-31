@@ -85,14 +85,23 @@ fn retained_graphs_require_profile_validation_beyond_wire_decoding() {
         let mut rule = table_rule();
         rule["payload"]["graph"] = graph;
         let base = [serde_json::from_value(rule).expect("base rule")];
-        check_artifact_set_with_receipt(&[], &EntityArtifactSetContext {
-            registry: &BTreeSet::new(), base: &base, tenant: None,
-        }, &ResourceLimitProfile::norn_limits_v1()).expect("check base")
+        check_artifact_set_with_receipt(
+            &[],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None,
+            },
+            &ResourceLimitProfile::norn_limits_v1(),
+        )
+        .expect("check base")
     };
     for node in [
         None,
         Some(json!({"id":"table","name":"table","type":"functionNode","content":"inert source"})),
-        Some(json!({"id":"table","name":"table","type":"customNode","content":{"kind":"outside","config":{}}})),
+        Some(
+            json!({"id":"table","name":"table","type":"customNode","content":{"kind":"outside","config":{}}}),
+        ),
     ] {
         let graph = if let Some(node) = node {
             let mut graph = table_rule()["payload"]["graph"].clone();
@@ -105,9 +114,17 @@ fn retained_graphs_require_profile_validation_beyond_wire_decoding() {
         assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
         assert_eq!(checked.analysis, Err(Unknown::GraphInput));
     }
-    let valid = check_base(json!({"nodes":[{"id":"input","name":"input","type":"inputNode"},{"id":"output","name":"output","type":"outputNode"}],"edges":[{"id":"direct","sourceId":"input","targetId":"output"}]}));
+    let valid = check_base(
+        json!({"nodes":[{"id":"input","name":"input","type":"inputNode"},{"id":"output","name":"output","type":"outputNode"}],"edges":[{"id":"direct","sourceId":"input","targetId":"output"}]}),
+    );
     assert!(valid.receipt.admitted);
-    assert!(valid.analysis.expect("valid table-free graph").tables.is_empty());
+    assert!(
+        valid
+            .analysis
+            .expect("valid table-free graph")
+            .tables
+            .is_empty()
+    );
 }
 
 #[test]
@@ -271,17 +288,28 @@ fn retained_table_witnesses_are_bounded_across_the_admitted_set() {
         template["payload"]["inputSchema"]["properties"][field] =
             json!({"type":"string","enum":["x".repeat(70),"y".repeat(70)]});
         template["payload"]["inputSchema"]["required"]
-            .as_array_mut().expect("required").push(json!(field));
+            .as_array_mut()
+            .expect("required")
+            .push(json!(field));
     }
     let single = check(std::slice::from_ref(&template));
     assert!(single.receipt.admitted, "{:?}", single.diagnostics);
-    assert_eq!(single.analysis.expect("finite").tables[0].result.as_ref().expect("table").inputs_checked, 64);
-    let rules: Vec<_> = (0..26).map(|index| {
-        let mut rule = template.clone();
-        rule["artifactId"] = json!(format!("erpnext.budget{index}.rule"));
-        rule["payload"]["ruleId"] = json!(format!("erpnext.budget{index}"));
-        rule
-    }).collect();
+    assert_eq!(
+        single.analysis.expect("finite").tables[0]
+            .result
+            .as_ref()
+            .expect("table")
+            .inputs_checked,
+        64
+    );
+    let rules: Vec<_> = (0..26)
+        .map(|index| {
+            let mut rule = template.clone();
+            rule["artifactId"] = json!(format!("erpnext.budget{index}.rule"));
+            rule["payload"]["ruleId"] = json!(format!("erpnext.budget{index}"));
+            rule
+        })
+        .collect();
     let checked = check(&rules);
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     assert_eq!(checked.analysis, Err(Unknown::Limit));
