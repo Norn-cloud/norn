@@ -3112,7 +3112,7 @@ fn validate_composition_pack_payload(
                         format!("{path}.kind"),
                         artifact_id,
                     )),
-                    Some(kind) => {
+                    Some(JsonValue::String(kind)) => {
                         if let Err(error) = serde_json::to_value(kind)
                             .and_then(serde_json::from_value::<PackArtifactKind>)
                         {
@@ -3124,6 +3124,12 @@ fn validate_composition_pack_payload(
                             ));
                         }
                     }
+                    Some(_) => diagnostics.push(invalid_diagnostic(
+                        CODE,
+                        "kind must be a string",
+                        format!("{path}.kind"),
+                        artifact_id,
+                    )),
                 }
                 require_non_empty_field(
                     artifact_ref,
