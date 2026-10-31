@@ -485,9 +485,54 @@ def workflow_verdict_canaries(source: str) -> None:
             raise AssertionError(f"workflow verdict case {index} had unexpected status {result.returncode}")
 
 
+def workflow_context_canaries(source: str) -> None:
+    workflow = yaml.safe_load(source)
+    validator = load_module("norn_workflow_context_canary", VALIDATOR)
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+        candidate.write_text(yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8")
+        validator.validate(formal_workflow_path=candidate)
+
+        def rejected(label: str, document: dict[str, Any]) -> None:
+            candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            expect_coverage_validator_rejection(label, formal_workflow_path=candidate)
+
+        for name in ("core", "plan", "test", "phase"):
+            for key, value in (("ref", "main"), ("repository", "other/repository"), ("path", "other-checkout")):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["steps"][0]["with"][key] = value
+                rejected(f"{name} checkout {key}", document)
+            for key in ("BASH_ENV", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE"):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
+                rejected(f"{name} step environment {key}", document)
+        for location in ("workflow", "job", "step"):
+            document = copy.deepcopy(workflow)
+            target = (document if location == "workflow" else document["jobs"]["full"]
+                      if location == "job" else document["jobs"]["full"]["steps"][0])
+            target.setdefault("env", {})["BASH_ENV"] = "/tmp/early-success"
+            rejected(f"{location} inherited BASH_ENV", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["full"]["steps"].insert(0, {"run": "echo BASH_ENV=/tmp/early-success >> $GITHUB_ENV"})
+        rejected("verdict preparation can change the shell environment", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["steps"].insert(-1, {"run": "echo NORN_CI_PACKAGES=norn-canonical >> $GITHUB_ENV"})
+        rejected("test preparation can override plan inputs", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["core"]["steps"].append(document["jobs"]["core"]["steps"].pop(0))
+        rejected("candidate checkout after the gate", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["phase"]["env"]["NORN_CI_BASE"] = "HEAD"
+        rejected("unbound shrink-only baseline", document)
+        candidate.write_text(source.replace("      - run: bash scripts/ci/core.sh cheap",
+                                            "      - run: echo ignored\n        run: bash scripts/ci/core.sh cheap", 1), encoding="utf-8")
+        expect_coverage_validator_rejection("duplicate workflow run key", formal_workflow_path=candidate)
+
+
 def workflow_canaries() -> None:
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
     workflow_verdict_canaries(source)
+    workflow_context_canaries(source)
     mutations = [
         ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
         ("missing test shards", "run: bash scripts/ci/core.sh test ${{ matrix.shard }}", "run: echo skipped"),

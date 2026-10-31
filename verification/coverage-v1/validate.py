@@ -142,6 +142,13 @@ def require(condition: bool, message: str) -> None:
         raise InvalidCoverage(message)
 
 
+class WorkflowLoader(yaml.SafeLoader):
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
+        mapping = super().construct_mapping(node, deep=deep)
+        require(len(mapping) == len(node.value), "workflow mapping keys must be unique")
+        return mapping
+
+
 def obligation_ids(document: dict[str, Any]) -> set[str]:
     values: set[str] = set()
     for item in document.get("obligations", []):
@@ -389,13 +396,22 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         require(re.search(rf"^  {trigger}:", source, re.MULTILINE) is not None, f"missing required trigger {trigger}")
     # Bind commands to executable steps and the matrices that cover the plan;
     # comments, environment values and a cheap-only invocation earn no credit.
-    workflow = yaml.safe_load(source)
+    workflow = yaml.load(source, Loader=WorkflowLoader)
     jobs = workflow["jobs"]
+    controlled_env = {"BASH_ENV", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE"}
+    require(not controlled_env.intersection(workflow.get("env", {})),
+            "workflow environment must not override gate inputs")
+    plan_env = {
+        "test": {"NORN_CI_PACKAGES": "${{ fromJSON(needs.plan.outputs.plan).packages }}",
+                 "NORN_CI_REST_SHARDS": "${{ fromJSON(needs.plan.outputs.plan).rest_shards }}"},
+        "phase": {"NORN_CI_BASE": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}"},
+    }
 
     def has_execution_override(job: dict, step: dict) -> bool:
-        return any(key in step or key in job.get("defaults", {}).get("run", {})
-                   or key in workflow.get("defaults", {}).get("run", {})
-                   for key in ("shell", "working-directory"))
+        return bool(controlled_env.intersection(step.get("env", {}))) or any(
+            key in step or key in job.get("defaults", {}).get("run", {})
+            or key in workflow.get("defaults", {}).get("run", {})
+            for key in ("shell", "working-directory"))
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
         "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE"); else plan=$(bash scripts/ci/core.sh plan); fi
@@ -412,10 +428,22 @@ echo "$plan"''',
         require(job.get("if") == condition,
                 f"{name}: candidate gate condition changed")
         require(not job.get("continue-on-error"), f"{name}: gate must fail closed")
-        steps = [step for step in job.get("steps", []) if step.get("run", "").strip() == command]
+        require({key: value for key, value in job.get("env", {}).items() if key in controlled_env}
+                == plan_env.get(name, {}), f"{name}: environment must bind the gate plan")
+        job_steps = job.get("steps", [])
+        checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
+        require(len(checkouts) == 1 and "if" not in checkouts[0]
+                and not checkouts[0].get("continue-on-error")
+                and checkouts[0].get("with") == {"persist-credentials": False, "fetch-depth": 0},
+                f"{name}: checkout must bind the default candidate repository, ref and workspace")
+        require(len([step for step in job_steps if "run" in step]) == 1,
+                f"{name}: unexpected executable preparation step")
+        steps = [step for step in job_steps if step.get("run", "").strip() == command]
         require(len(steps) == 1 and "if" not in steps[0] and not steps[0].get("continue-on-error")
                 and not has_execution_override(job, steps[0]),
                 f"{name}: required gate command missing or conditional")
+        require(job_steps.index(checkouts[0]) < job_steps.index(steps[0]),
+                f"{name}: candidate checkout must precede the gate")
         if name == "plan":
             require(steps[0].get("id") == "plan" and job.get("outputs", {}).get("plan") == "${{ steps.plan.outputs.plan }}",
                     "plan: gate plan output must bind the producer step")
@@ -427,12 +455,10 @@ echo "$plan"''',
         require(job.get("needs") == "plan" and job.get("strategy", {}).get("matrix") == {
             axis: "${{ fromJSON(needs.plan.outputs.plan)." + axis + " }}"
         }, f"{name}: matrix must execute the complete gate plan")
-    for key, field in (("NORN_CI_PACKAGES", "packages"), ("NORN_CI_REST_SHARDS", "rest_shards")):
-        require(jobs["test"].get("env", {}).get(key) ==
-                "${{ fromJSON(needs.plan.outputs.plan)." + field + " }}",
-                f"test: {key} must bind the gate plan")
     full = jobs.get("full", {})
     require(full.get("needs") == ["core", "plan", "test", "phase"], "full: verdict must depend on every gate")
+    require(len(full.get("steps", [])) == 1 and not controlled_env.intersection(full.get("env", {})),
+            "full: verdict must be the only step and cannot inherit shell or gate-input overrides")
     require(" ".join(full.get("if", "").split()) == "always() && " + candidate_condition
             + " && !(cancelled() && github.event_name == 'pull_request')"
             and not full.get("continue-on-error"),
