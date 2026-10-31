@@ -42,3 +42,12 @@ for (const fixture of ["board-unknown-property", "board-unknown-group"]) test(`$
   expect(result.ok).toBe(false)
   if (!result.ok) expect(result.diagnostics.some((d) => d.code === "NORN-FLOW-TYPE")).toBe(true)
 })
+
+
+test("metrics and board groups resolve object and transitive interface properties", () => {
+  const result = compile("board-inherited.source.ts")
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.boards).toMatchObject([{ panels: [{ definition: { type_params: {
+    expr: "open", metric_aggregation_params: { agg_time_dimension: "due" },
+  } }, question: { groupBy: [{ path: { property: "customer" } }] } }] }])
+})

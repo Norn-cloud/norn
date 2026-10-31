@@ -397,11 +397,26 @@ class DefinitionCompiler {
     return SS.sourceSchema({ ...data as unknown as SS.SourceSchemaSpec, at: this.at(call) })
   }
 
-  /** The property ids a referenced object type declares. */
+  /** Effective property ids, including object and interface ancestry. */
   private propertyIds(input: ts.Expression): { readonly name: string; readonly properties: ReadonlySet<string> } {
-    const { call, members } = this.referenced(input, OBJECT_TYPES, "a Norn.type definition")
-    const properties = this.schemas.properties(this.schemas.read(this.member(members, "properties", call)))
-    return { name: this.string(this.member(members, "name", call)), properties: new Set(properties.map((p) => p.id)) }
+    const root = this.referenced(input, OBJECT_TYPES, "a Norn.type definition")
+    const pending = [root], seen = new Set<ts.CallExpression>(), properties = new Set<string>()
+    for (let next = pending.pop(); next; next = pending.pop()) {
+      const { call, members } = next
+      this.guard(call)
+      this.expansion.reserve(1)
+      if (seen.has(call)) continue
+      seen.add(call)
+      for (const p of this.schemas.properties(this.schemas.read(this.member(members, "properties", call)))) properties.add(p.id)
+      const parent = members.get("extends"), implemented = members.get("implements")
+      if (this.id(call) === INTERFACE) {
+        for (const ref of parent ? this.list(parent) : []) pending.push(this.referenced(ref, INTERFACES, "a Norn.interfaceType definition"))
+      } else {
+        if (parent) pending.push(this.referenced(parent, OBJECT_TYPES, "a Norn.type definition"))
+        for (const ref of implemented ? this.list(implemented) : []) pending.push(this.referenced(ref, INTERFACES, "a Norn.interfaceType definition"))
+      }
+    }
+    return { name: this.string(this.member(root.members, "name", root.call)), properties }
   }
 
   private property(input: ts.Expression, type: { readonly name: string; readonly properties: ReadonlySet<string> }): string {
