@@ -910,20 +910,6 @@ where
             call.action_version,
         )?,
     };
-    if let Some(program) = &action.effect_program {
-        let object_type = ObjectTypeName(program.target().object_kind.to_owned());
-        if let Some(effective) = catalog.effective_type(&object_type)
-            && let Some(field) = prepared_input.effective_input.keys().find(|field| {
-                effective
-                    .property(field)
-                    .is_some_and(norn_checker::EffectiveProperty::protected)
-            })
-        {
-            return Err(ActionRefusal::InvalidInput {
-                field: field.clone(),
-            });
-        }
-    }
     match action.effect_program.as_ref() {
         Some(ActionEffectProgram::FireTransition {
             object_id_field,

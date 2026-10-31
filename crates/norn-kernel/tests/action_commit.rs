@@ -4034,7 +4034,7 @@ fn protected_properties_refuse_action_input_and_accept_rule_output() {
     let action_call = call(&action, "PROTECTED", "protected-action");
     assert!(
         matches!(commit_action(&mut cell, &catalog, &action_call, &Allow),
-        Err(ActionRefusal::InvalidInput { field }) if field == "so_number")
+        Err(ActionRefusal::Decision(error)) if error.to_string().contains("protected"))
     );
     assert!(cell.ledger().is_empty());
     let key = FactKey::new(ORDER, "PROTECTED");
