@@ -619,7 +619,11 @@ fn split_coverage(candidate: &mut Fixture, subsystems: &[(&str, &[u8])]) {
         .records
         .retain(|record| record["path"] != monolith);
     fs::remove_file(candidate.root().join(monolith)).unwrap();
-    candidate.add("verification/coverage-v1/manifest/index.json", b"{}", "code");
+    candidate.add(
+        "verification/coverage-v1/manifest/index.json",
+        b"{}",
+        "code",
+    );
     for (id, body) in subsystems {
         candidate.add(
             &format!("verification/coverage-v1/manifest/subsystems/{id}.json"),
