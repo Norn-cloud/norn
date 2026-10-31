@@ -3048,7 +3048,7 @@ fn validate_business_pack_payload(
         require_literal_field(
             payload,
             "packKind",
-            &["composition", "ontology"],
+            &["composition", "ontology", "link"],
             "payload.packKind",
             diagnostics,
             artifact_id,
@@ -3073,6 +3073,7 @@ fn validate_business_pack_payload(
         Some("ontology") => {
             ontology::validate_ontology_pack_payload(value, diagnostics, artifact_id);
         }
+        Some("link") => ontology::validate_link_payload(value, diagnostics, artifact_id),
         _ => {}
     }
 }
@@ -3105,28 +3106,32 @@ fn validate_composition_pack_payload(
                     artifact_id,
                     CODE,
                 );
-                require_literal_field(
-                    artifact_ref,
-                    "kind",
-                    &[
-                        "entity",
-                        "relation",
-                        "action",
-                        "rule",
-                        "connector",
-                        "widget",
-                        "customization",
-                        "setting",
-                        "business_pack",
-                        "policy",
-                        "source_schema",
-                        "mapping",
-                    ],
-                    format!("{path}.kind"),
-                    diagnostics,
-                    artifact_id,
-                    CODE,
-                );
+                match artifact_ref.get("kind") {
+                    None => diagnostics.push(invalid_diagnostic(
+                        CODE,
+                        "kind is required",
+                        format!("{path}.kind"),
+                        artifact_id,
+                    )),
+                    Some(JsonValue::String(kind)) => {
+                        if let Err(error) = serde_json::to_value(kind)
+                            .and_then(serde_json::from_value::<PackArtifactKind>)
+                        {
+                            diagnostics.push(invalid_diagnostic(
+                                CODE,
+                                format!("{path}.kind {error}"),
+                                format!("{path}.kind"),
+                                artifact_id,
+                            ));
+                        }
+                    }
+                    Some(_) => diagnostics.push(invalid_diagnostic(
+                        CODE,
+                        "kind must be a string",
+                        format!("{path}.kind"),
+                        artifact_id,
+                    )),
+                }
                 require_non_empty_field(
                     artifact_ref,
                     "version",
