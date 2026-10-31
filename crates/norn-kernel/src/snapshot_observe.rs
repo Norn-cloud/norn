@@ -1248,7 +1248,7 @@ pub fn prepare_observed_snapshot(
             ));
         }
     }
-    let facts = property_changes(catalog, key, &original_for_changes, values);
+    let facts = property_changes(key, &original_for_changes, values);
     let ordinary = prepare_observed_properties::<Infallible>(catalog, slice, turn, &facts)
         .map_err(|error| ObservationRefusal::Properties(Box::new(error)))?;
     let mut current = effective_original.clone().unwrap_or_default();
@@ -1689,12 +1689,7 @@ fn tombstone_values(
     ]))
 }
 
-fn property_changes(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    original: &FactState,
-    values: &JsonObject,
-) -> Vec<FactChange> {
+fn property_changes(key: &FactKey, original: &FactState, values: &JsonObject) -> Vec<FactChange> {
     let Some(existing) = &original.values else {
         return vec![FactChange::Create {
             object_type: key.object_type.clone(),

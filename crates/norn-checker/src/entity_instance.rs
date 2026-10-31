@@ -362,6 +362,10 @@ pub enum InstanceError {
 }
 
 impl EffectiveProperty {
+    pub(crate) fn protect(&mut self) {
+        self.write_authority = WriteAuthority::RulesOnly;
+    }
+
     /// Whether only declared rule outputs may write this property.
     pub const fn protected(&self) -> bool {
         matches!(self.write_authority, WriteAuthority::RulesOnly)

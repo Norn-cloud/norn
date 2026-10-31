@@ -1238,8 +1238,8 @@ fn observations_cannot_reconcile_a_protected_lifecycle() {
     let mut cell = cell();
     for (id, amount, state, refused) in [
         ("initialize", 5, None, false),
-        ("refuse-change", 6, Some("submitted"), true),
         ("unchanged", 6, Some("draft"), false),
+        ("refuse-change", 7, Some("submitted"), true),
     ] {
         let delivery = next_delivery(&mut cell, id);
         let slice = load_slice(&cell, [key.clone()]).unwrap();
@@ -1269,9 +1269,6 @@ fn observations_cannot_reconcile_a_protected_lifecycle() {
             assert_eq!(cell.load(&key).unwrap(), before);
             assert_eq!(cell.ledger().len(), ledger_len);
             assert!(cell.observe().unwrap().is_some());
-            // Consume the refused delivery before injecting the next case.
-            cell.commit(norn_kernel::CellCommit::empty().consuming(delivery.consumed()))
-                .unwrap();
         } else {
             result.unwrap();
             assert_eq!(

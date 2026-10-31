@@ -508,10 +508,9 @@ impl<'a, 'r> Checker<'a, 'r> {
                     let mut property = crate::entity_instance::EffectiveProperty::from_resolved(
                         resolved, markings,
                     );
-                    property.protected |= lineage_defs
-                        .iter()
-                        .flat_map(|owner| &owner.properties)
-                        .any(|inherited| inherited.id == property.id && inherited.protected);
+                    if self.protected(&def.name, &property.id) {
+                        property.protect();
+                    }
                     if let Some(reads) = computed_reads.get(resolved.property.id.as_str()) {
                         property.computed_inputs = reads.fields.iter().cloned().collect();
                         property.computed_reads_all = reads.whole_root;
@@ -873,6 +872,14 @@ impl<'a> Checker<'a, '_> {
     }
 
     /// The registered supertypes of `name`, nearest first.
+    fn protected(&self, name: &ObjectTypeName, property: &PropertyId) -> bool {
+        std::iter::once(name)
+            .chain(self.ancestors(name))
+            .filter_map(|name| self.types.get(name))
+            .flat_map(|entry| &entry.def.properties)
+            .any(|candidate| candidate.id == *property && candidate.protected)
+    }
+
     fn ancestors(&self, name: &ObjectTypeName) -> Vec<&'a ObjectTypeName> {
         let mut ancestors = Vec::new();
         let mut current = self.parent(name);
@@ -1427,10 +1434,7 @@ impl<'a> Checker<'a, '_> {
                     );
                     kind && !property.nullable() && !property.property.is_read_only()
                 });
-                if child_table
-                    .get(property_id)
-                    .is_some_and(|property| property.property.protected)
-                {
+                if self.protected(&collection.child_type, property_id) {
                     self.out.push(error(
                         codes::PROTECTED_OWNED_ROW_FIELD,
                         format!("{member} is kernel-owned and may not be protected"),
