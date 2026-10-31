@@ -29944,7 +29944,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "43c4d5bfa4ae19520436dc1300210f09c1d4ee5bc8095637b20a8f345487ac5a",
+      "sha256": "526fde6ea12885959ed9ee5eb73eaa5fc538a0ecb851990f92f40847ec3d197d",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32634,7 +32634,7 @@
     },
     {
       "path": "welldb/Cargo.lock",
-      "sha256": "493845871deac25628abc997f40c25bda66a47ba0d2ce0128b0a752cf1c5b11f",
+      "sha256": "f73e218b2ed1f2e7a1607818b8144c3188bf1f370ee96be51ec3402541c451b8",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32670,25 +32670,7 @@
     },
     {
       "path": "welldb/crates/welldb-ivm/Cargo.toml",
-      "sha256": "cc442007edac71580578454f84b4802867b2d4263786ec327fbf42f893b6f9d6",
-      "origin": "authored",
-      "category": "code",
-      "license": "Apache-2.0",
-      "sources": [],
-      "analyzed_sources": [],
-      "parents": [],
-      "rights_evidence": [
-        {
-          "path": "NOTICE",
-          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
-        }
-      ],
-      "notices": [],
-      "connector": null
-    },
-    {
-      "path": "welldb/crates/welldb-ivm/src/arithmetic.rs",
-      "sha256": "b6ecb149cb0769f0fe2e0f158c0dd7df583c30cfd171cb429a5169d9188f8864",
+      "sha256": "21524feb8d95850d3d6eebcdbb509e7b145de65b16dd8a291607123f1246f3d0",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32706,7 +32688,7 @@
     },
     {
       "path": "welldb/crates/welldb-ivm/src/lib.rs",
-      "sha256": "df253352799278d3810eb2c5604d1522ba6f4fd37170e254311b7885184ce5cf",
+      "sha256": "683d0fc1df6963fd8f2f057b23bfafa7b82afca80262b53994e265b62bf9d0b8",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32723,8 +32705,8 @@
       "connector": null
     },
     {
-      "path": "welldb/crates/welldb-ivm/tests/arithmetic.rs",
-      "sha256": "8545f154bf2a48f26af6b371a5eaf92cf12c15493ac470a1373987a91daec162",
+      "path": "welldb/crates/welldb-ivm/tests/decimal.rs",
+      "sha256": "1f65f67f5d0634c79f34cdd0f6ef780fe6222235038a52e91998b5c76534a666",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
