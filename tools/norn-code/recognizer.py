@@ -68,12 +68,17 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                 manifest = json.loads(data)
                 for group in ('dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'):
                     for package in manifest.get(group, {}):
-                        emit(package, 'manifest:' + package, .98, level='declared')
+                        group_match = re.search(rb'"' + group.encode() + rb'"\s*:', data)
+                        key_match = re.search(rb'"' + re.escape(package.encode()) + rb'"\s*:', data[group_match.end():]) if group_match else None
+                        line = data[:group_match.end() + key_match.start()].count(b'\n') + 1 if key_match else 1
+                        emit(package, 'manifest:' + package, .98, line, level='declared')
             elif name == 'pyproject.toml':
                 manifest = tomllib.loads(data.decode())
                 for dep in manifest.get('project', {}).get('dependencies', []):
                     package = re.split(r'[\s\[<>=!~;]', dep)[0].lower().replace('_', '-')
-                    emit(package, 'manifest:' + package, .98, level='declared')
+                    offset = data.find(dep.encode(), data.find(b'[project]'))
+                    line = data[:offset].count(b'\n') + 1 if offset >= 0 else 1
+                    emit(package, 'manifest:' + package, .98, line, level='declared')
             elif name in ('shopify.app.toml', 'shopify.web.toml'):
                 tomllib.loads(data.decode())
                 # App config alone does not establish GraphQL client use.
@@ -84,32 +89,56 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                     manifest = ast.literal_eval(tree.body[0].value)
                     if isinstance(manifest, dict) and 'depends' in manifest:
                         emit('odoo', 'config:odoo_manifest', .9, level='declared')
-                aliases = {}
+                def bound_names(nodes):
+                    names = set()
+                    for item in nodes:
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                            names.add(item.name)
+                        elif isinstance(item, ast.Import):
+                            names.update(alias.asname or alias.name.split('.')[0] for alias in item.names)
+                        elif isinstance(item, ast.ImportFrom):
+                            names.update(alias.asname or alias.name for alias in item.names)
+                        else:
+                            if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store):
+                                names.add(item.id)
+                            names.update(bound_names(ast.iter_child_nodes(item)))
+                    return names
+                def decorators(statements, inherited):
+                    aliases = dict(inherited)
+                    for node in statements:
+                        if isinstance(node, ast.Import):
+                            for alias in node.names:
+                                aliases[alias.asname or alias.name.split('.')[0]] = alias.name if alias.asname else alias.name.split('.')[0]
+                        elif isinstance(node, ast.ImportFrom):
+                            for alias in node.names:
+                                aliases[alias.asname or alias.name] = (node.module + '.' + alias.name) if node.module and node.level == 0 else 'local'
+                        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                            for decorator in node.decorator_list:
+                                expr = decorator.func if isinstance(decorator, ast.Call) else decorator
+                                parts = ast.unparse(expr).split('.')
+                                qualified = '.'.join([aliases.get(parts[0], 'local'), *parts[1:]])
+                                if qualified in {'frappe.whitelist', 'odoo.api.constrains', 'odoo.api.depends', 'temporalio.workflow.defn', 'temporalio.activity.defn'}:
+                                    emit(qualified, 'decorator:' + qualified, .97, decorator.lineno)
+                            child = dict(aliases)
+                            if not isinstance(node, ast.ClassDef):
+                                child.update({key: 'local' for key in bound_names(node.body)})
+                                child.update({arg.arg: 'local' for arg in ast.walk(node.args) if isinstance(arg, ast.arg)})
+                            decorators(node.body, child)
+                            aliases[node.name] = 'local'
+                        else:
+                            # Conditional/reassigned bindings need semantic resolution.
+                            aliases.update({key: 'local' for key in bound_names([node])})
+                decorators(tree.body, {})
                 for node in ast.walk(tree):
-                    if isinstance(node, ast.Import):
-                        for alias in node.names:
-                            aliases[alias.asname or alias.name.split('.')[0]] = alias.name
-                    elif isinstance(node, ast.ImportFrom):
-                        for alias in node.names:
-                            aliases[alias.asname or alias.name] = (node.module + '.' + alias.name) if node.module and node.level == 0 else 'local'
-
-                for node in ast.walk(tree):
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                        for decorator in node.decorator_list:
-                            expr = decorator.func if isinstance(decorator, ast.Call) else decorator
-                            parts = ast.unparse(expr).split('.')
-                            qualified = '.'.join([aliases.get(parts[0], parts[0]), *parts[1:]])
-                            if qualified in {'frappe.whitelist', 'odoo.api.constrains', 'odoo.api.depends', 'temporalio.workflow.defn', 'temporalio.activity.defn'}:
-                                emit(qualified, 'decorator:' + qualified, .97, decorator.lineno)
                     if isinstance(node, ast.Import):
                         for alias in node.names:
                             emit(alias.name, 'import:' + alias.name, .95, node.lineno)
                     elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                         emit(node.module, 'import:' + node.module, .95, node.lineno)
                 if name == 'hooks.py':
-                    keys = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
-                    if keys & {'doc_events', 'scheduler_events', 'app_name'}:
-                        emit('frappe', 'config:hooks', .8, level='declared')
+                    settings = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.id in {'doc_events', 'scheduler_events', 'app_name'}]
+                    if settings:
+                        emit('frappe', 'config:hooks', .8, min(n.lineno for n in settings), level='declared')
             elif Path(path).suffix in {'.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'}:
                 tree = parse(data, path.endswith(('.tsx', '.jsx')))
                 if tree.has_error:
@@ -117,7 +146,10 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                 for node in walk(tree):
                     if node.type in {'import_statement', 'export_statement'}:
                         package = string(node.child_by_field_name('source'))
-                        if package:
+                        type_only = any(child.type == 'type' for child in node.children)
+                        specifiers = [child for child in walk(node) if child.type in {'import_specifier', 'export_specifier'}]
+                        only_type_specifiers = bool(specifiers) and all(any(c.type == 'type' for c in child.children) for child in specifiers)
+                        if package and not type_only and not only_type_specifiers:
                             emit(package, 'import:' + package, .95, node.start_point.row + 1)
                     elif node.type == 'call_expression':
                         fn = node.child_by_field_name('function')
