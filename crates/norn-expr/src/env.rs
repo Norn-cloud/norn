@@ -963,6 +963,20 @@ impl<'d, 'e> Derivation<'d, 'e> {
         }
     }
 
+    /// Each resolvable interface's lineage names, itself included.
+    fn interface_ancestry(&self) -> BTreeMap<&'d str, BTreeSet<&'d str>> {
+        self.interfaces
+            .iter()
+            .filter_map(|(name, interface)| {
+                interface_lineage(interface, |parent| {
+                    self.interfaces.get(parent.as_str()).copied()
+                })
+                .ok()
+                .map(|lineage| (*name, lineage.iter().map(|def| def.name.as_str()).collect()))
+            })
+            .collect()
+    }
+
     fn run(mut self) -> BTreeMap<String, RecordType> {
         let mut records = BTreeMap::new();
         for ext in self.defs.extensions {
@@ -1001,6 +1015,22 @@ impl<'d, 'e> Derivation<'d, 'e> {
             records.insert(name.to_owned(), record);
         }
 
+        // Computed once for the inverse-role holder search below, and only when
+        // some link has an inverse.
+        let ancestry = if declared_links
+            .iter()
+            .any(|declared| declared.link.inverse.is_some())
+        {
+            self.interface_ancestry()
+        } else {
+            BTreeMap::new()
+        };
+        let inherits = |interface: &str, target: &str| {
+            ancestry
+                .get(interface)
+                .is_some_and(|names| names.contains(target))
+        };
+
         // Inverse roles: on the target, every subtype of it, and (for an
         // interface target) every implementor and its subtypes.
         for declared in &declared_links {
@@ -1026,28 +1056,16 @@ impl<'d, 'e> Derivation<'d, 'e> {
                             || def
                                 .implements
                                 .iter()
-                                .filter_map(|name| self.interfaces.get(name.as_str()).copied())
-                                .any(|interface| {
-                                    interface_lineage(interface, |name| {
-                                        self.interfaces.get(name.as_str()).copied()
-                                    })
-                                    .is_ok_and(|lineage| {
-                                        lineage.iter().any(|parent| parent.name.as_str() == target)
-                                    })
-                                })
+                                .any(|interface| inherits(interface.as_str(), target))
                     });
                     (reaches && *name != target).then_some(*name)
                 }))
-                .chain(self.interfaces.iter().filter_map(|(name, interface)| {
-                    (*name != target
-                        && interface_lineage(interface, |parent| {
-                            self.interfaces.get(parent.as_str()).copied()
-                        })
-                        .is_ok_and(|lineage| {
-                            lineage.iter().any(|parent| parent.name.as_str() == target)
-                        }))
-                    .then_some(*name)
-                }))
+                .chain(
+                    self.interfaces
+                        .keys()
+                        .filter(|name| **name != target && inherits(name, target))
+                        .copied(),
+                )
                 .collect();
             for holder in holders {
                 if let Some(record) = records.get_mut(holder) {
