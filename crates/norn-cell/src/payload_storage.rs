@@ -564,7 +564,7 @@ mod tests {
             journal_bytes < 20_000,
             "journal must contain references: {journal_bytes}"
         );
-        let ddl = canonical_json(&store.read().model().schema().to_sql()).expect("ddl");
+        let ddl = canonical_json(store.read().model().ddl_sql()).expect("ddl");
         let ddl_count: i64 = store
             .conn
             .query_row(

@@ -221,7 +221,7 @@ pub(crate) fn record<E: SqlEngine>(
         )?,
         ddl_hash: model.ddl_hash().to_owned(),
         model_hash: model.model_hash().to_owned(),
-        ddl_sql: model.schema().to_sql(),
+        ddl_sql: model.ddl_sql().to_owned(),
         bindings,
         previous,
         batch: batch.clone(),

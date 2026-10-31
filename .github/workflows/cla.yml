@@ -7,7 +7,13 @@ on:
 permissions: {}
 jobs:
   cla:
-    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request != null
+    # Only a signature or `recheck` comment takes a runner; bot review comments
+    # on a pull request would otherwise each queue a run that does nothing.
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request != null &&
+      (github.event.comment.body == 'recheck' ||
+      github.event.comment.body == 'I have read the Norn CLA v1 and agree to its applicable individual and corporate terms.'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -17,7 +23,6 @@ jobs:
       statuses: write
     steps:
       - name: Record contributor agreement
-        if: github.event_name == 'pull_request_target' || github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the Norn CLA v1 and agree to its applicable individual and corporate terms.'
         uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
         env:
           GITHUB_TOKEN: ${{ github.token }}
