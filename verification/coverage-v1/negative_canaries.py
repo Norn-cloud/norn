@@ -7,6 +7,7 @@ import copy
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -140,6 +141,9 @@ def expect_coverage_rejection(label: str, mutate: Callable[[dict[str, Any]], Non
 
 def manifest_canaries() -> None:
     subprocess.run(["python3", str(VALIDATOR)], cwd=ROOT, check=True)
+    expect_manifest_rejection(
+        "promoted gate execution order drift", lambda value: value["gates"].reverse()
+    )
 
     with tempfile.TemporaryDirectory() as directory:
         environment = os.environ.copy()
@@ -929,6 +933,32 @@ def ontology_quint_semantic_mutation_canaries() -> None:
             )
 
 
+def selector_gate_order_canaries() -> None:
+    validator = load_module("norn_selector_order_canary", VALIDATOR)
+    gates = json.loads(GATES.read_text(encoding="utf-8"))["gates"]
+    registrations = re.findall(
+        r"^run_gate (fast|full) ([a-z0-9][a-z0-9-]*)\b",
+        validator.PROMOTED_RUNNER.read_text(encoding="utf-8"), re.MULTILINE,
+    )
+    validator.validate_selector_gate_order(registrations, gates)
+    for profile, gate_id in (
+        ("full", "verification-executed-test-selectors"),
+        ("fast", "verification-executed-test-selectors-fast"),
+    ):
+        producer = {"id": "selector-order-canary-producer", "profile": profile,
+                    "evidenceKind": "rust-tests"}
+        baseline = [(profile, producer["id"]), *registrations]
+        validator.validate_selector_gate_order(baseline, [*gates, producer])
+        candidate = [(profile, gate_id)] + [
+            item for item in baseline if item[1] != gate_id
+        ]
+        try:
+            validator.validate_selector_gate_order(candidate, [*gates, producer])
+        except validator.InvalidCoverage:
+            continue
+        raise AssertionError(f"{profile} selector check accepted before its producers")
+
+
 def gate_binding_canaries() -> None:
     writer = load_module("norn_write_verification_result_canary", WRITER)
     result_validator = load_module("norn_validate_result_canary", RESULT_VALIDATOR)
@@ -1245,6 +1275,7 @@ def main() -> int:
     workflow_canaries()
     quint_apalache_retry_canaries()
     ontology_quint_semantic_mutation_canaries()
+    selector_gate_order_canaries()
     gate_binding_canaries()
     proof_hole_canaries()
     selector_declaration_canaries()
