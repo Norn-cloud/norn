@@ -104,7 +104,7 @@
     },
     {
       "path": ".github/workflows/ci-policy.yml",
-      "sha256": "23ea5520d2d19f069426233a142849a8b5101fe767abf87b0e6ee60d1a9b96e1",
+      "sha256": "36b1cc6d47fe338d38941a85ad643349e1a229acc13e794b7a61ab05240d3326",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -122,7 +122,7 @@
     },
     {
       "path": ".github/workflows/cla.yml",
-      "sha256": "56b5ac0c3e661074ae8c83743ddb9f48906cf917254723f25156f4276dc6e550",
+      "sha256": "40857fe32012e40154df20675a14c3a5a5c2237326b6f073f0fdda744ecb90bf",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18529,7 +18529,7 @@
     },
     {
       "path": "scripts/ci/core.sh",
-      "sha256": "bf8f5b4384d82b717e3db916b3e14a9af4a0e5c2b2952f181354fb68332b6717",
+      "sha256": "fc835a0d319febfba811e7495bc53e6f9898f2f84afa8adcb1f3df3dbbfc0b3c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
