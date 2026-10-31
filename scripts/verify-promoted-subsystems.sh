@@ -600,6 +600,26 @@ run_gate fast quantity-unit-dimension-lean \
   command \
   lean -DwarningAsError=true \
     verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean
+run_gate fast core-value-ledger-quint-typecheck \
+  "quint typecheck verification/core-physics-v1/models/core-value-ledger.qnt" \
+  command \
+  quint typecheck \
+    verification/core-physics-v1/models/core-value-ledger.qnt
+run_gate fast core-value-ledger-quint \
+  "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4" \
+  command \
+  quint verify \
+    verification/core-physics-v1/models/core-value-ledger.qnt \
+    --backend apalache \
+    --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact \
+      reversedAtMostOnce \
+    --max-steps 4 \
+    --out "$result_root/core-value-ledger-quint.json"
+run_gate fast core-value-ledger-lean \
+  "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean" \
+  command \
+  lean -DwarningAsError=true \
+    verification/core-physics-v1/proofs/CoreValueLedger.lean
 run_gate full quantity-kani \
   "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs" \
   command \
@@ -662,12 +682,6 @@ run_gate fast ontology-authority-lean \
 run_gate full cala-boundary "cargo test --locked -p norn-checker --test quantity_ledger_boundary" rust-tests \
   cargo test --locked -p norn-checker --test quantity_ledger_boundary
 
-run_gate full verification-executed-test-selectors \
-  "python3 scripts/validate-executed-test-selectors.py" command \
-  python3 scripts/validate-executed-test-selectors.py
-run_gate fast verification-executed-test-selectors-fast \
-  "python3 scripts/validate-executed-test-selectors.py --profile fast" command \
-  python3 scripts/validate-executed-test-selectors.py --profile fast
 run_gate fast verification-proof-hole-audit-fast \
   "python3 scripts/check-proof-holes.py" command \
   python3 scripts/check-proof-holes.py
@@ -702,6 +716,22 @@ run_gate full kernel-v2-projection-trust \
 run_gate full kernel-v2-commit-conformance \
   "cargo test --locked -p norn-testkit --test kernel_quint" rust-tests \
   cargo test --locked -p norn-testkit --test kernel_quint
+
+
+run_gate full kernel-l1-reference \
+  "scripts/verify-kernel-l1-lean.sh" command \
+  scripts/verify-kernel-l1-lean.sh
+run_gate full kernel-l1-version-correspondence \
+  "scripts/verify-kernel-l1-aeneas.sh" command \
+  scripts/verify-kernel-l1-aeneas.sh
+
+# Validate observed selectors only after every producing gate has run.
+run_gate full verification-executed-test-selectors \
+  "python3 scripts/validate-executed-test-selectors.py" command \
+  python3 scripts/validate-executed-test-selectors.py
+run_gate fast verification-executed-test-selectors-fast \
+  "python3 scripts/validate-executed-test-selectors.py --profile fast" command \
+  python3 scripts/validate-executed-test-selectors.py --profile fast
 
 mapfile -t declared_quint_results < <(
   python3 - verification/coverage-v1/coverage.json <<'PY'
