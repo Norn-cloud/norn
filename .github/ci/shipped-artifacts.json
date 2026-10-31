@@ -18458,12 +18458,14 @@
     {
       "path": "registry/packs/canon/artifacts/norn.ontology-pack.canon.json",
       "sha256": "6c7ffa3979f942a7bdf46fbdd4c523c4baa3af7ccf5d4cf4d62dd787787a931d",
-      "origin": "authored",
-      "category": "code",
+      "origin": "derived",
+      "category": "generated",
       "license": "Apache-2.0",
       "sources": [],
       "analyzed_sources": [],
-      "parents": [],
+      "parents": [
+        "registry/packs/canon/canon.pack.ts"
+      ],
       "rights_evidence": [
         {
           "path": "NOTICE",
@@ -18494,12 +18496,15 @@
     {
       "path": "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
       "sha256": "d7219f3ebd582b0f27c2c7106507cdc2bbe963e5f37062e93566f492569811e9",
-      "origin": "authored",
-      "category": "code",
+      "origin": "derived",
+      "category": "generated",
       "license": "Apache-2.0",
       "sources": [],
       "analyzed_sources": [],
-      "parents": [],
+      "parents": [
+        "registry/packs/erpnext/erpnext.link.ts",
+        "registry/packs/erpnext/erpnext.pack.ts"
+      ],
       "rights_evidence": [
         {
           "path": "NOTICE",
@@ -18512,12 +18517,15 @@
     {
       "path": "registry/packs/erpnext/artifacts/norn.ontology-pack.erpnext.json",
       "sha256": "480960980ce37e636832e82f7804d75577077d188246e9ba6b827f63925715ca",
-      "origin": "authored",
-      "category": "code",
+      "origin": "derived",
+      "category": "generated",
       "license": "Apache-2.0",
       "sources": [],
       "analyzed_sources": [],
-      "parents": [],
+      "parents": [
+        "registry/packs/erpnext/erpnext.link.ts",
+        "registry/packs/erpnext/erpnext.pack.ts"
+      ],
       "rights_evidence": [
         {
           "path": "NOTICE",
