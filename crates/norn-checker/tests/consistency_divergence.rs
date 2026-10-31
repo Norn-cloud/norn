@@ -187,3 +187,32 @@ fn an_identical_fact_of_a_third_record_does_not_block_a_valid_pair() {
         )
     );
 }
+
+#[test]
+fn the_pair_does_not_depend_on_observation_order() {
+    // CodeRabbit on #108: two records share the fact `total(a, 1)`, but only
+    // one of them carries the email that links it to `c`.
+    let keys = [CanonKey {
+        type_name: "shop.Order".to_owned(),
+        key: "by_email".to_owned(),
+        properties: vec!["email".to_owned()],
+    }];
+    let without_email = observed("a", &[("total", "1")]);
+    let with_email = observed("a", &[("email", "\"e\""), ("total", "1")]);
+    let linked = observed("c", &[("email", "\"e\""), ("total", "2")]);
+    for (observations, expected) in [
+        (
+            [without_email.clone(), with_email.clone(), linked.clone()],
+            (1, 2),
+        ),
+        ([with_email, without_email, linked], (0, 2)),
+    ] {
+        let found = find_divergences(&observations, &keys, ChaseBudget::default()).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!((found[0].left.0, found[0].right.0), expected);
+        assert_eq!(
+            found[0].identity,
+            WitnessIdentity::SharedKey("shop.Order".to_owned(), "by_email".to_owned())
+        );
+    }
+}

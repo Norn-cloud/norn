@@ -114,34 +114,46 @@ pub fn find_divergences(
         // Kept aligned with `inputs`, so a dropped fact drops its owner.
         let mut owners = owner.clone();
         while let ChaseOutcome::Conflict(conflict) = chase(&theory, &inputs, budget)? {
-            let position = |fact: &Fact| inputs.iter().position(|input| input == fact);
-            let witness: Vec<usize> = conflict
+            let reported: Vec<&Fact> = conflict
                 .witness
                 .iter()
                 .filter(|fact| fact.relation == property)
-                .filter_map(position)
                 .collect();
-            let (&[left, right], Some(&left_owner), Some(&right_owner)) = (
-                witness.as_slice(),
-                witness.first().and_then(|i| owners.get(*i)),
-                witness.get(1).and_then(|i| owners.get(*i)),
-            ) else {
+            let &[first, second] = reported.as_slice() else {
                 return Err(unexplained(property));
             };
-            // Identity must rest on the two reported records alone: every
-            // witness fact must be one the pair itself holds (an identical
-            // fact of a third record does not count against it), so a chain
-            // through a third record has no pairwise witness.
-            let pair = [left_owner, right_owner];
-            let held = |fact: &Fact| {
+            // Identical facts can come from several records, so try every
+            // record holding each reported value. Identity must rest on the
+            // pair alone: every witness fact must be one the pair holds, so a
+            // chain through a third record has no pairwise witness.
+            let holders = |fact: &Fact| -> Vec<(usize, usize)> {
                 inputs
                     .iter()
                     .zip(&owners)
-                    .any(|(input, owner)| input == fact && pair.contains(owner))
+                    .enumerate()
+                    .filter(|(_, (input, _))| *input == fact)
+                    .map(|(index, (_, owner))| (index, *owner))
+                    .collect()
             };
-            if !conflict.witness.iter().all(held) {
+            let explains = |pair: [usize; 2]| {
+                conflict.witness.iter().all(|fact| {
+                    inputs
+                        .iter()
+                        .zip(&owners)
+                        .any(|(input, owner)| input == fact && pair.contains(owner))
+                })
+            };
+            let chosen = holders(first).into_iter().find_map(|(left, left_owner)| {
+                holders(second)
+                    .into_iter()
+                    .find_map(|(right, right_owner)| {
+                        (left_owner != right_owner && explains([left_owner, right_owner]))
+                            .then_some((left, left_owner, right, right_owner))
+                    })
+            });
+            let Some((left, left_owner, right, right_owner)) = chosen else {
                 return Err(unexplained(property));
-            }
+            };
             let (Some(left_fact), Some(right_fact)) = (inputs.get(left), inputs.get(right)) else {
                 return Err(unexplained(property));
             };
