@@ -825,7 +825,7 @@ fn a_decide_graph_writes_an_installed_type_it_names() {
 /// A case artifact entry: a fixture path, or a fixture with a top-level patch
 /// (the format `tests/artifact_set.rs` reads).
 fn case_artifact(entry: &Value) -> ArtifactEnvelope {
-    let (path, patch) = match entry {
+    let (fixture, overrides) = match entry {
         Value::String(path) => (path.as_str(), None),
         Value::Object(object) => (
             object["fixture"].as_str().expect("fixture path"),
@@ -835,8 +835,8 @@ fn case_artifact(entry: &Value) -> ArtifactEnvelope {
             panic!("unexpected case artifact {other}")
         }
     };
-    let mut value = read_json(&format!("fixtures/{path}"));
-    for (key, member) in patch.into_iter().flatten() {
+    let mut value = read_json(&format!("fixtures/{fixture}"));
+    for (key, member) in overrides.into_iter().flatten() {
         value[key] = member.clone();
     }
     envelope(value)

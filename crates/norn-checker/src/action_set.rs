@@ -1888,22 +1888,22 @@ impl<'a> Admission<'a> {
     }
 }
 
-impl<'a> AdmittedType<'_, 'a> {
+impl<'m, 'a> AdmittedType<'m, 'a> {
     /// The entity artifact that defines the type.
-    pub(crate) const fn artifact(&self) -> &'a ArtifactEnvelope {
+    pub(crate) const fn artifact(self) -> &'a ArtifactEnvelope {
         self.defined.artifact
     }
 
-    pub(crate) fn name(&self) -> &str {
+    pub(crate) fn name(self) -> &'m str {
         &self.defined.name
     }
 
-    fn effective(&self) -> Option<&EffectiveObjectType> {
+    fn effective(self) -> Option<&'m EffectiveObjectType> {
         self.defined.effective_object_type.as_ref()?.as_ref().ok()
     }
 
     /// The effective supertype names, nearest first.
-    pub(crate) fn supertypes(&self) -> Vec<&str> {
+    pub(crate) fn supertypes(self) -> Vec<&'m str> {
         self.effective()
             .map(|effective| {
                 effective
@@ -1918,7 +1918,7 @@ impl<'a> AdmittedType<'_, 'a> {
 
     /// The child type names of every effective owned collection, inherited
     /// ones included.
-    pub(crate) fn owned_child_types(&self) -> Vec<&str> {
+    pub(crate) fn owned_child_types(self) -> Vec<&'m str> {
         self.effective()
             .map(|effective| {
                 effective

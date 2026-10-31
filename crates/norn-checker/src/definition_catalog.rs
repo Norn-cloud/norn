@@ -387,7 +387,7 @@ impl Rows {
                 // A transition may be inherited: it binds the declaring row.
                 writes.extend(self.resolve(
                     &Member::Transition {
-                        type_name: pinned.name.clone(),
+                        type_name: pinned.name,
                         lifecycle: lifecycle.as_str().to_owned(),
                         transition: transition.as_str().to_owned(),
                     },
@@ -414,7 +414,11 @@ impl Rows {
                 WriteVia::MutateRows
             }
         };
-        for target in writes.into_iter().filter(|target| self.declares(target)) {
+        let declared: Vec<MemberRef> = writes
+            .into_iter()
+            .filter(|target| self.declares(target))
+            .collect();
+        for target in declared {
             self.writes.insert(WritesRow {
                 writer: at(artifact, Member::Artifact {}),
                 target,
