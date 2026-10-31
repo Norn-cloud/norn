@@ -21166,7 +21166,7 @@
     },
     {
       "path": "tools/norn-ts/fixtures/definitions/board-inherited.source.ts",
-      "sha256": "5c5c6f0b341757eca889ad807bff5ebddadfe54b0a474509daa7869fe5e973a0",
+      "sha256": "2ecc07a218b5e2b78028539c0ffef9325f5c645132a090d1e3a43d71c4140a8b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -23275,7 +23275,7 @@
     },
     {
       "path": "tools/norn-ts/src/compiler/definitions.ts",
-      "sha256": "3276fd6d68fc1c86a7aae5a047768437b2ab333953f20cd9f727fa053a42af36",
+      "sha256": "ed1f3e58894d298459a718774b343c9ddf6426edd27e2616767f548aff17341b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
