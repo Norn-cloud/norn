@@ -882,3 +882,36 @@ fn candidate_pack_laws_are_not_labeled_as_inherited() {
     assert_eq!(value["format"], RECEIPT_FORMAT);
     assert!(value.get("lawEnrollment").is_none());
 }
+
+#[test]
+fn unresolved_pack_members_preserve_admission_and_legacy_recovery() {
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let registry = BTreeSet::new();
+    let enrolled = check_with(&[], &inherited_pack_base(), &registry, None, &limits)
+        .receipt.law_enrollment;
+    for missing_version in [false, true] {
+        let mut base = inherited_pack_base();
+        let members = base.last_mut().expect("pack")["payload"]["artifacts"]
+            .as_array_mut().expect("members");
+        if missing_version {
+            for member in members { member["version"] = json!(999); }
+        } else {
+            members.push(json!({"artifactId":"missing.law", "version":1, "kind":"law"}));
+        }
+        let checked = check_with(&[], &base, &registry, None, &limits);
+        assert!(checked.receipt.admitted);
+        if !missing_version {
+            assert_eq!(checked.receipt.law_enrollment, enrolled);
+            continue;
+        }
+        assert!(checked.receipt.law_enrollment.is_empty());
+        let mut historical = checked.receipt;
+        historical.checker_version = "0.1.0".to_owned();
+        historical.expr_profile = "norn-zen/4".to_owned();
+        historical.diagnostics = empty_diagnostics_for("0.1.0");
+        let (body, digest) = as_legacy_receipt(&historical);
+        assert_eq!(recover_legacy_admission_receipt(
+            &digest, &[], &envelopes(&base), &limits
+        ).expect("unresolved pack must not interrupt historical templates"), body);
+    }
+}

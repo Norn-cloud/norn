@@ -97,14 +97,11 @@ pub(crate) fn inherited_laws(
             if member.kind != norn_ir::business_pack::PackArtifactKind::Law {
                 continue;
             }
-            let (law_id, digest) = laws
-                .get(&(&member.artifact_id, &member.version))
-                .ok_or_else(|| {
-                    invalid(format!(
-                        "retained pack law is unresolved: {}",
-                        member.artifact_id
-                    ))
-                })?;
+            let Some((law_id, digest)) = laws.get(&(&member.artifact_id, &member.version)) else {
+                // An unresolved reference supplies no retained law to enroll.
+                // It must not block an unrelated admission or imply an origin.
+                continue;
+            };
             enrollment.push(LawEnrollment {
                 inherited_from: InheritedFrom {
                     pack_id: pack.pack_id.clone(),

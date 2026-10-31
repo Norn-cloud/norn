@@ -2487,7 +2487,7 @@
     },
     {
       "path": "crates/norn-checker/src/law_enrollment.rs",
-      "sha256": "4c5e4a38679b74c1e085a9912588be52a6702508b087ba4da966db0c036647c1",
+      "sha256": "08e5175ceff265396c237ee965656ec136ee554446841766259025a746a59c0c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3405,7 +3405,7 @@
     },
     {
       "path": "crates/norn-checker/tests/check_receipt.rs",
-      "sha256": "64491a662df4fe431ed54a9aae3f7de10bf59cb8afe983604309c1e7586f2374",
+      "sha256": "a164068deafa32ff366ef01a810900d9558e60c8a1b8222a53538d170e5919af",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
