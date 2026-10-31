@@ -29944,7 +29944,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "02d435c90bee9d2e876262ff141c862685c9c3587dc6ad0464b8c23351762480",
+      "sha256": "09b40784c4280aa0644ed4119f9640ac74d7fa56bfacc3c3ebb81adf85dad2f9",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32706,7 +32706,25 @@
     },
     {
       "path": "welldb/crates/welldb-ivm/src/lib.rs",
-      "sha256": "eaeda53f5241e37a61d767ff949a92636991e79b40c4ae67242e1206d941be13",
+      "sha256": "2b654474ce0844babad79d0f918b4ed102e34a8dc85d9c83c8e9a1b7d6e7839d",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/src/plan.rs",
+      "sha256": "f88297b548d2aa51593cae81682eaf5a21bcc3a39018f754a338eb19f9cd5fa1",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32743,6 +32761,24 @@
     {
       "path": "welldb/crates/welldb-ivm/tests/decimal.rs",
       "sha256": "6a89866bcd7aff952bbbe5e0d19bb2e0c3e07cce16515b55f2af09054d04567b",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/tests/plan.rs",
+      "sha256": "a4919c7f052d2c6c24fad66f6e3f35d993fdec880d16717aefc515a1c9a8a96b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

@@ -77,4 +77,3 @@ impl Plan {
 fn text_field(field: &Field) -> bool {
     matches!(field.kind.base(), Property::Text | Property::Enum(_))
 }
-
