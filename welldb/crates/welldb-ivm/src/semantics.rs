@@ -1,4 +1,9 @@
-//! Exact Gregorian time parsing for the admitted metric window profile.
+//! Ordered row capture, exact scalar checks and canonical result finalization.
+use crate::{
+    Aggregate, Bucket, BucketAgg, CaptureKey, ClassId, ExactSum, JoinedTarget, Placement, Property, RecordView, RowRef, GroupKey, Lineage, Member, MetricError, MetricResult,
+    Plan, Value, VisibilityOutcome,
+};
+use std::collections::BTreeMap;
 /// Parse admitted UTC ISO tokens exactly, without the native i64 nanosecond limit.
 #[must_use]
 #[allow(
@@ -96,11 +101,7 @@ pub fn parse_time(text: &str) -> Option<i128> {
     Some(nanos)
 }
 
-use crate::{
-    Aggregate, Bucket, BucketAgg, CaptureKey, GroupKey, Lineage, Member, MetricError, MetricResult,
-    Plan, Value, VisibilityOutcome,
-};
-use std::collections::BTreeMap;
+
 
 /// Ordered row refusal, suitable for an incrementally maintained index.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,4 +194,176 @@ pub fn lineage(contributions: &[Contribution], group: &GroupKey) -> Lineage {
         .collect();
     members.sort_by(|a, b| a.key.cmp(&b.key));
     members
+}
+
+fn visible<R: RecordView>(row: RowRef<'_, R>, class: &ClassId) -> bool {
+    !row.tombstoned && row.record.visible(class)
+}
+fn refused<R>(
+    measure: RowRef<'_, R>,
+    phase: u8,
+    field: usize,
+    kind: MetricError,
+    row: Option<Vec<Value>>,
+) -> Captured {
+    Captured {
+        visibility: VisibilityOutcome::Visible,
+        contribution: None,
+        refusal: Some(RowRefusal {
+            key: CaptureKey {
+                phase,
+                measure: measure.key.clone(),
+                field,
+            },
+            kind,
+        }),
+        row,
+    }
+}
+/// Capture and validate one row, respecting ordered hidden-target/mask checks.
+/// Backends call this inside their own map/join; it has no storage or IO.
+#[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "canonical ordered capture/refusal phases stay auditable together"
+)]
+pub fn capture<R: RecordView>(
+    plan: &Plan,
+    class: &ClassId,
+    measure: RowRef<'_, R>,
+    target: JoinedTarget<'_, R>,
+) -> Captured {
+    let empty = |visibility| Captured {
+        visibility,
+        contribution: None,
+        refusal: None,
+        row: None,
+    };
+    if !visible(measure, class) {
+        return empty(VisibilityOutcome::HiddenMeasure);
+    }
+    let mut values = Vec::with_capacity(plan.fields.len());
+    for (i, field) in plan.fields.iter().enumerate() {
+        let owner = if field.placement == Placement::Measure {
+            measure
+        } else {
+            match target {
+                JoinedTarget::Row(row) => {
+                    if !visible(row, class) {
+                        return empty(VisibilityOutcome::HiddenTarget);
+                    }
+                    row
+                }
+                JoinedTarget::Missing | JoinedTarget::NotRequired => {
+                    return refused(measure, 0, i, MetricError::SnapshotLink, None);
+                }
+            }
+        };
+        if owner.record.masked(class, &field.property) {
+            return refused(measure, 0, i, MetricError::MarkingDenied, None);
+        }
+        values.push(
+            owner
+                .record
+                .value(&field.property)
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+    }
+    for (i, (field, value)) in plan.fields.iter().zip(&values).enumerate() {
+        if !valid(&field.kind, value) {
+            return refused(measure, 1, i, MetricError::InvalidField, Some(values));
+        }
+    }
+    if let Aggregate::Sum {
+        currency: Some((index, code)),
+        ..
+    } = &plan.aggregate
+        && values.get(*index) != Some(&Value::Text(code.clone()))
+    {
+        return refused(
+            measure,
+            1,
+            plan.fields.len(),
+            MetricError::MixedCurrency,
+            Some(values),
+        );
+    }
+    let mut result = Captured {
+        visibility: VisibilityOutcome::Visible,
+        contribution: None,
+        refusal: None,
+        row: Some(values.clone()),
+    };
+    let time = values.get(plan.time).and_then(value_time);
+    if time.is_none_or(|t| t < plan.window.0 || t >= plan.window.1) {
+        return result;
+    }
+    if plan
+        .filters
+        .iter()
+        .any(|f| (values.get(f.field) == Some(&Value::Text(f.value.clone()))) != f.equal)
+    {
+        return result;
+    }
+    let sum = match &plan.aggregate {
+        Aggregate::Count => ExactSum::from_i128(1),
+        Aggregate::Sum { amount, scale, .. } => match values.get(*amount) {
+            Some(Value::Decimal(d)) => match ExactSum::scaled(*d, *scale) {
+                Ok(s) => s,
+                Err(e) => return refused(measure, 1, *amount, e, Some(values)),
+            },
+            Some(Value::Null | Value::Bool(_) | Value::Text(_)) | None => {
+                return refused(measure, 1, *amount, MetricError::InvalidField, Some(values));
+            }
+        },
+    };
+    let group = plan.group.and_then(|i| values.get(i)).and_then(|v| {
+        if let Value::Text(t) = v {
+            Some(t.clone())
+        } else {
+            None
+        }
+    });
+    result.contribution = Some(Contribution {
+        group,
+        aggregate: BucketAgg { sum, population: 1 },
+        member: Member {
+            key: measure.key.clone(),
+            seq: measure.record.seq(),
+            hash: measure.record.hash().to_owned(),
+        },
+    });
+    result
+}
+fn valid(kind: &Property, value: &Value) -> bool {
+    if let Property::Constrained { base, constraints } = kind {
+        return valid(base, value)
+            && constraints
+                .iter()
+                .all(|rules| crate::constraints::valid(base.base(), rules, value));
+    }
+    match (kind, value) {
+        (Property::Text, Value::Text(_)) => true,
+        (Property::Enum(allowed), Value::Text(v)) => allowed.contains(v),
+        (Property::Date, Value::Text(v)) => v.len() == 10 && parse_time(v).is_some(),
+        (Property::Timestamp, Value::Text(v)) => v.len() > 10 && parse_time(v).is_some(),
+        (Property::Decimal { scale }, Value::Decimal(d)) => d.scale() <= *scale,
+        (
+            Property::Constrained { .. }
+            | Property::Text
+            | Property::Enum(_)
+            | Property::Date
+            | Property::Timestamp
+            | Property::Decimal { .. },
+            Value::Null | Value::Bool(_) | Value::Decimal(_) | Value::Text(_),
+        ) => false,
+    }
+}
+fn value_time(value: &Value) -> Option<i128> {
+    if let Value::Text(v) = value {
+        parse_time(v)
+    } else {
+        None
+    }
 }

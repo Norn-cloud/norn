@@ -345,3 +345,6 @@ pub use source::SourceState;
 /// Pure metric evaluation semantics.
 pub mod semantics;
 pub use semantics::{Captured, Contribution, RefusalIndex, RowRefusal, finalize};
+
+mod constraints;
+pub use semantics::capture;
