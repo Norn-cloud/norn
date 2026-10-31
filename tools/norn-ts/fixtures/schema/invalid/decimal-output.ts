@@ -1,3 +1,4 @@
+// expect: NORN-FLOW-SCHEMA-PROJECTION
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 export const Invalid = Norn.action({
