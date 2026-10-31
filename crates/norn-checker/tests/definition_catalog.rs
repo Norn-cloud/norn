@@ -636,3 +636,80 @@ fn a_law_on_an_action_binds_its_pinned_version() {
     };
     assert_eq!(target.version, "0.2.0");
 }
+
+fn approve_action(id: &str, object_kind: &str, entity: &str, version: &str) -> ArtifactEnvelope {
+    envelope(json!({
+        "irVersion": "0.1", "artifactId": id, "kind": "action",
+        "namespace": "shop", "name": "approve", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "actionId": "shop.approve", "scopeRequired": [], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object" },
+            "outputSchema": { "type": "object" },
+            "effectProgram": {
+                "kind": "fire_transition", "objectIdField": "id",
+                "objectKind": object_kind, "entityArtifactId": entity,
+                "entityArtifactVersion": version, "lifecycle": "status", "transition": "approve"
+            }
+        }
+    }))
+}
+
+#[test]
+fn an_installed_supertype_reached_only_by_name_is_projected() {
+    // The candidate subtype names its installed supertype through `extends`
+    // and declares no envelope dependency on it.
+    let [parent, child] = request_types();
+    let action = approve_action(
+        "shop.approve.action",
+        "shop.RushRequest",
+        "shop.RushRequest.entity",
+        "1.0.0",
+    );
+    let catalog = catalog(&[child, action], &[parent]);
+    let parent = catalog
+        .artifact("shop.Request.entity", "1.0.0")
+        .expect("the installed supertype is pinned");
+    assert!(!parent.candidate);
+    assert_eq!(catalog.writes.len(), 1);
+    assert_eq!(catalog.writes[0].target.artifact_id, "shop.Request.entity");
+    assert!(catalog.contains(&catalog.writes[0].target));
+}
+
+#[test]
+fn a_transition_write_binds_the_version_its_action_pins() {
+    let [parent, _] = request_types();
+    let mut newer = serde_json::to_value(&parent).expect("envelope encodes");
+    newer["version"] = json!("2.0.0");
+    // Both versions are installed and reached; each action's write binds
+    // the version it pins.
+    let catalog = catalog(
+        &[
+            approve_action(
+                "shop.approve.v1.action",
+                "shop.Request",
+                "shop.Request.entity",
+                "1.0.0",
+            ),
+            approve_action(
+                "shop.approve.v2.action",
+                "shop.Request",
+                "shop.Request.entity",
+                "2.0.0",
+            ),
+        ],
+        &[envelope(newer), parent],
+    );
+    let writes: Vec<(&str, &str)> = catalog
+        .writes
+        .iter()
+        .map(|row| (row.writer.artifact_id.as_str(), row.target.version.as_str()))
+        .collect();
+    assert_eq!(
+        writes,
+        [
+            ("shop.approve.v1.action", "1.0.0"),
+            ("shop.approve.v2.action", "2.0.0")
+        ]
+    );
+}
