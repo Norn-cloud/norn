@@ -23,8 +23,9 @@ use norn_ir::definition_catalog::{
 };
 use norn_ir::mapping::MappingIr;
 use norn_ir::{
-    ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactPayload, BusinessPackRoot,
-    EntityRoot, FactChangeOp, LawIR, LawResponse, Lifecycle, ObjectTypeDef, Property, PropertyType,
+    ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactKind, ArtifactPayload,
+    BusinessPackRoot, EntityRoot, FactChangeOp, LawIR, LawResponse, Lifecycle, ObjectTypeDef,
+    Property, PropertyType,
 };
 
 use crate::artifact_set::ResolvedArtifactSet;
@@ -477,9 +478,17 @@ impl Rows {
             artifact_id: target.entity_artifact_id.to_owned(),
             version: target.entity_artifact_version.to_owned(),
         };
+        // A transition may be inherited: it binds the declaring row. Writes
+        // to members the catalog does not hold are not projected.
         let mut writes: Vec<MemberRef> = targets
             .into_iter()
-            .map(|member| member_of(&pinned, member))
+            .filter_map(|member| {
+                if matches!(member, Member::Transition { .. }) {
+                    self.resolve(&member)
+                } else {
+                    Some(member_of(&pinned, member)).filter(|target| self.declares(target))
+                }
+            })
             .collect();
         // The rows a parent mutation creates, changes, and deletes are
         // objects of its owned collections' child types.
@@ -504,31 +513,63 @@ impl Rows {
         }
     }
 
-    /// The row declaring a property or link of a type, in whichever artifact
-    /// declares it (the type's, or an extension's); otherwise `member` of
-    /// `owner`, which no row declares.
-    fn pin(&self, owner: &ArtifactKey, member: Member) -> MemberRef {
-        let declared = match &member {
-            Member::Property { .. } => self
-                .properties
+    /// `type_name`, then its supertypes, nearest first. A cycle (refused by
+    /// the entity check) ends after at most one pass over the types.
+    fn lineage(&self, type_name: &str) -> Vec<String> {
+        let mut out = vec![type_name.to_owned()];
+        while out.len() <= self.types.len() {
+            let current = Member::Type {
+                type_name: out.last().cloned().unwrap_or_default(),
+            };
+            let Some(parent) = self
+                .types
                 .iter()
-                .map(|row| &row.at)
-                .find(|at| at.member == member),
-            Member::Link { .. } => self
-                .links
-                .iter()
-                .map(|row| &row.at)
-                .find(|at| at.member == member),
-            Member::Artifact {}
-            | Member::Type { .. }
-            | Member::State { .. }
-            | Member::Transition { .. }
-            | Member::ObjectMap { .. }
-            | Member::Law { .. } => None,
+                .find(|row| row.at.member == current && row.kind == TypeKind::ObjectType)
+                .and_then(|row| row.extends.first())
+            else {
+                break;
+            };
+            out.push(parent.clone());
+        }
+        out
+    }
+
+    /// The row declaring a property, link, or transition of a type: on the
+    /// type or its nearest supertype that declares it, in whichever artifact
+    /// declares it (the type's or an extension's). `None` when no row does.
+    fn resolve(&self, member: &Member) -> Option<MemberRef> {
+        let (Member::Property { type_name, .. }
+        | Member::Link { type_name, .. }
+        | Member::Transition { type_name, .. }) = member
+        else {
+            return None;
         };
-        declared
-            .cloned()
-            .unwrap_or_else(|| member_of(owner, member))
+        self.lineage(type_name).into_iter().find_map(|owner| {
+            let wanted = with_type(member, owner);
+            let found = match &wanted {
+                Member::Property { .. } => self
+                    .properties
+                    .iter()
+                    .map(|row| &row.at)
+                    .find(|at| at.member == wanted),
+                Member::Link { .. } => self
+                    .links
+                    .iter()
+                    .map(|row| &row.at)
+                    .find(|at| at.member == wanted),
+                Member::Transition { .. } => self
+                    .transitions
+                    .iter()
+                    .map(|row| &row.at)
+                    .find(|at| at.member == wanted),
+                Member::Artifact {}
+                | Member::Type { .. }
+                | Member::State { .. }
+                | Member::ObjectMap { .. }
+                | Member::Law { .. } => None,
+            };
+            found.cloned()
+        })
     }
 
     /// Every write a decide graph's closed fact-change schema admits.
@@ -553,23 +594,21 @@ impl Rows {
             if ops.contains(&FactChangeOp::Transition) {
                 for lifecycle in values("lifecycle") {
                     for transition in values("transition") {
-                        candidates.push((
-                            target(Member::Transition {
-                                type_name: type_name.to_owned(),
-                                lifecycle: lifecycle.to_owned(),
-                                transition: transition.to_owned(),
-                            }),
-                            WriteVia::FactTransition,
-                        ));
+                        if let Some(declared) = self.resolve(&Member::Transition {
+                            type_name: type_name.to_owned(),
+                            lifecycle: lifecycle.to_owned(),
+                            transition: transition.to_owned(),
+                        }) {
+                            candidates.push((declared, WriteVia::FactTransition));
+                        }
                     }
                 }
             }
             if ops.contains(&FactChangeOp::Set) {
                 for property in values("property") {
-                    candidates.push((
-                        self.pin(owner, property_member(type_name, property)),
-                        WriteVia::FactSet,
-                    ));
+                    if let Some(declared) = self.resolve(&property_member(type_name, property)) {
+                        candidates.push((declared, WriteVia::FactSet));
+                    }
                 }
             }
             if ops.iter().any(|op| {
@@ -597,41 +636,6 @@ impl Rows {
                 }
             }
         }
-    }
-
-    /// The transition row declaring `transition` of `lifecycle` on
-    /// `type_name` or its nearest supertype that declares it.
-    fn declared_transition(
-        &self,
-        type_name: &str,
-        lifecycle: &str,
-        transition: &str,
-    ) -> Option<MemberRef> {
-        let mut current = type_name.to_owned();
-        // Each step moves to a supertype; a cycle (refused by the entity
-        // check) ends after at most one pass over the types.
-        for _ in 0..=self.types.len() {
-            let wanted = Member::Transition {
-                type_name: current.clone(),
-                lifecycle: lifecycle.to_owned(),
-                transition: transition.to_owned(),
-            };
-            if let Some(row) = self.transitions.iter().find(|row| row.at.member == wanted) {
-                return Some(row.at.clone());
-            }
-            let wanted_type = Member::Type {
-                type_name: current.clone(),
-            };
-            let parent = self
-                .types
-                .iter()
-                .find(|row| row.at.member == wanted_type && row.kind == TypeKind::ObjectType)?
-                .extends
-                .first()?
-                .clone();
-            current = parent;
-        }
-        None
     }
 
     /// Whether a type, property, link, or transition row declares `member`.
@@ -688,7 +692,7 @@ impl Rows {
                 ));
             }
             for gap in &map.gaps {
-                let member = if self.declares(&self.pin(owner, link(&gap.member))) {
+                let member = if self.resolve(&link(&gap.member)).is_some() {
                     link(&gap.member)
                 } else {
                     property_member(type_name, &gap.member)
@@ -696,6 +700,16 @@ impl Rows {
                 observed.push((member, MapRule::Gap { reason: gap.reason }));
             }
             for (member, rule) in observed {
+                // The object type row is the map's own target; members bind
+                // their declaring row, and an undeclared one has no row.
+                let target = if matches!(member, Member::Type { .. }) {
+                    Some(member_of(owner, member))
+                } else {
+                    self.resolve(&member)
+                };
+                let Some(target) = target else {
+                    continue;
+                };
                 self.mappings.insert(MappingRow {
                     map: at(
                         artifact,
@@ -704,7 +718,7 @@ impl Rows {
                         },
                     ),
                     dataset: map.source.dataset.clone(),
-                    target: self.pin(owner, member),
+                    target,
                     rule,
                 });
             }
@@ -744,9 +758,11 @@ impl Rows {
             } => {
                 // An inherited transition binds the row of the supertype
                 // that declares it.
-                let Some(target) =
-                    self.declared_transition(&object_type, &property, &transition_id)
-                else {
+                let Some(target) = self.resolve(&Member::Transition {
+                    type_name: object_type,
+                    lifecycle: property,
+                    transition: transition_id,
+                }) else {
                     return;
                 };
                 Some(LawBinding::Transition { target })
@@ -764,7 +780,22 @@ impl Rows {
                 })
             }
             LawResponse::Action { artifact_id } => {
-                let Some(action) = all.iter().find(|other| other.artifact_id == artifact_id) else {
+                // The exact version the law's required dependency pins.
+                let Some(action) = artifact
+                    .dependencies
+                    .iter()
+                    .filter(|dependency| {
+                        dependency.required
+                            && dependency.kind == ArtifactKind::Action
+                            && dependency.artifact_id == artifact_id
+                    })
+                    .find_map(|dependency| {
+                        let version = dependency.version.as_deref()?;
+                        all.iter().find(|other| {
+                            other.artifact_id == artifact_id && other.version == version
+                        })
+                    })
+                else {
                     return;
                 };
                 Some(LawBinding::Action {
@@ -792,6 +823,31 @@ impl Rows {
             mappings: self.mappings.into_iter().collect(),
             laws: self.laws.into_iter().collect(),
         }
+    }
+}
+
+/// `member` with its type replaced by `type_name`.
+fn with_type(member: &Member, type_name: String) -> Member {
+    match member.clone() {
+        Member::Property { property, .. } => Member::Property {
+            type_name,
+            property,
+        },
+        Member::Link { link, .. } => Member::Link { type_name, link },
+        Member::Transition {
+            lifecycle,
+            transition,
+            ..
+        } => Member::Transition {
+            type_name,
+            lifecycle,
+            transition,
+        },
+        other @ (Member::Artifact {}
+        | Member::Type { .. }
+        | Member::State { .. }
+        | Member::ObjectMap { .. }
+        | Member::Law { .. }) => other,
     }
 }
 

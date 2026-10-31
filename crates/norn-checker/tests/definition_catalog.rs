@@ -515,8 +515,7 @@ fn installed_dependencies_of_installed_artifacts_are_projected() {
     assert_eq!(catalog.writes[0].target, invoice_transition());
 }
 
-#[test]
-fn a_law_on_an_inherited_transition_binds_the_declaring_supertype() {
+fn request_types() -> [ArtifactEnvelope; 2] {
     let parent = entity(
         "shop.Request.entity",
         &json!({ "entityVersion": "2.0", "objectType": {
@@ -533,6 +532,12 @@ fn a_law_on_an_inherited_transition_binds_the_declaring_supertype() {
             "name": "shop.RushRequest", "extends": "shop.Request", "properties": []
         }}),
     );
+    [parent, child]
+}
+
+#[test]
+fn a_law_on_an_inherited_transition_binds_the_declaring_supertype() {
+    let [parent, child] = request_types();
     let Value::Array(laws) = read_json("fixtures/law-ir/laws.json") else {
         panic!("laws.json is a list");
     };
@@ -549,4 +554,85 @@ fn a_law_on_an_inherited_transition_binds_the_declaring_supertype() {
     };
     assert_eq!(target.artifact_id, "shop.Request.entity");
     assert!(catalog.contains(target));
+}
+
+fn request_member(member: Member) -> MemberRef {
+    MemberRef {
+        artifact_id: "shop.Request.entity".to_owned(),
+        version: "1.0.0".to_owned(),
+        member,
+    }
+}
+
+#[test]
+fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
+    let [parent, child] = request_types();
+    let action = envelope(json!({
+        "irVersion": "0.1", "artifactId": "shop.approve_rush.action", "kind": "action",
+        "namespace": "shop", "name": "approve", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "actionId": "shop.approve_rush", "scopeRequired": [], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object" },
+            "outputSchema": { "type": "object" },
+            "effectProgram": {
+                "kind": "fire_transition", "objectIdField": "id",
+                "objectKind": "shop.RushRequest", "entityArtifactId": "shop.RushRequest.entity",
+                "entityArtifactVersion": "1.0.0", "lifecycle": "status", "transition": "approve"
+            }
+        }
+    }));
+    let mapping = toy_mapping(&json!([{
+        "id": "rush", "source": { "dataset": "requests" },
+        "target": { "entity": "shop.RushRequest.entity", "interface": "shop.RushRequest.entity" },
+        "subject": "input.id", "sourceRecord": "input.id",
+        "lifecycles": [{ "property": "status", "state": "input.status" }],
+        "gaps": [{ "member": "nowhere", "reason": "deferred" }]
+    }]));
+    let catalog = catalog(&[parent, child, action, mapping], &[]);
+    assert_eq!(
+        catalog.writes[0].target,
+        request_member(Member::Transition {
+            type_name: "shop.Request".to_owned(),
+            lifecycle: "status".to_owned(),
+            transition: "approve".to_owned(),
+        })
+    );
+    let targets: Vec<&MemberRef> = catalog.mappings.iter().map(|row| &row.target).collect();
+    // The inherited lifecycle property binds the parent's row; the object
+    // row is the map's own type; an undeclared gap member has no row.
+    assert_eq!(targets.len(), 2);
+    assert!(targets.contains(&&request_member(Member::Property {
+        type_name: "shop.Request".to_owned(),
+        property: "status".to_owned(),
+    })));
+    assert!(targets.iter().all(|target| catalog.contains(target)));
+}
+
+#[test]
+fn a_law_on_an_action_binds_its_pinned_version() {
+    let action = |version: &str| {
+        let mut action = read_json("fixtures/ir/commerce-sales-order-submit-invoice.action.json");
+        action["version"] = json!(version);
+        envelope(action)
+    };
+    let Value::Array(laws) = read_json("fixtures/law-ir/laws.json") else {
+        panic!("laws.json is a list");
+    };
+    let mut law = laws[0].clone();
+    law["payload"]["subject"] = json!("commerce.SalesOrder");
+    law["payload"]["response"] =
+        json!({ "kind": "action", "artifactId": "commerce.sales_order.submit_invoice.action" });
+    law["dependencies"] = json!([{
+        "artifactId": "commerce.sales_order.submit_invoice.action", "kind": "action",
+        "version": "0.2.0", "required": true
+    }]);
+    let catalog = catalog(
+        &[sales_order(), envelope(law)],
+        &[action("0.1.0"), action("0.2.0")],
+    );
+    let Some(LawBinding::Action { target }) = &catalog.laws[0].binds else {
+        panic!("the law binds an action");
+    };
+    assert_eq!(target.version, "0.2.0");
 }
