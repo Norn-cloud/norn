@@ -18964,7 +18964,7 @@
     },
     {
       "path": "tools/norn-code/contracts.py",
-      "sha256": "63411cbfb571a08ec05fcb493af131701f4ce454360cfe6b5511e16cf0e621c1",
+      "sha256": "65f42522f6ad47d0800868ec65eea5b191dcc37b936052d307266981bf0be638",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -19072,7 +19072,7 @@
     },
     {
       "path": "tools/norn-code/tests/test_contracts.py",
-      "sha256": "93a0517d3fdaa41ae4ad6d8ed210c1108e086156df8bdad4532f3ca8c3cec2c9",
+      "sha256": "69898adf4c85f42e7c679442354904fd4b101ea2a8ac28f362ecbf71e81b10bd",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

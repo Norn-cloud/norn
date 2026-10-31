@@ -112,17 +112,20 @@ def project(report, mapping):
                     seen.add(target)
                     pending.append(target)
         refusals = [f for f in facts if f['handler'] in seen - {root} and f['relation'] == 'throws_if']
-        candidates, mapped = set(), 0
+        candidates, mapped = {}, 0
         for fact in refusals:
             predicate = mapping.get('guards', {}).get(fact.get('condition'))
             if predicate and fact.get('confidence') == 'resolved' and not fact.get('diagnostic'):
                 if predicate not in mapping['vocabulary']:
                     raise ValueError('guard candidate is outside supplied canon vocabulary')
-                candidates.add(predicate)
+                digest = fact.get('source', {}).get('sha256') or fact.get('source', {}).get('digest')
+                if digest and not re.fullmatch('[a-f0-9]{64}', digest):
+                    raise ValueError('invalid helper source digest')
+                candidates.setdefault(predicate, set()).update([digest] if digest else [])
                 mapped += 1
         # A static call edge establishes a candidate, not applicability on all
         # paths. Never lift a helper's refusal into the direct guard set.
-        contract['guard_candidates'] = [dict(predicate=p, evidence_level='analyzed', applicability='unknown') for p in sorted(candidates)]
+        contract['guard_candidates'] = [dict(predicate=p, evidence_level='analyzed', applicability='unknown', source_hashes=sorted(candidates[p])) for p in sorted(candidates)]
         contract['guard_candidate_coverage'] = dict(source_refusals=len(refusals), mapped=mapped, unknown=len(refusals) - mapped)
         contract['unknown'].append('helper_guard_applicability_not_established')
     result['validations'] = validators

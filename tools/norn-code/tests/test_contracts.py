@@ -114,7 +114,7 @@ class ContractTests(unittest.TestCase):
         validator = output['validations'][0]
         self.assertEqual(validator['subject'], 'norn.finance.payment')
         self.assertEqual(validator['guards'], ['norn.finance.guard.period.closed'])
-        self.assertEqual(validator['guard_candidates'], [{'predicate':'norn.finance.guard.allocation.exceeds.outstanding','evidence_level':'analyzed','applicability':'unknown'}])
+        self.assertEqual(validator['guard_candidates'], [{'predicate':'norn.finance.guard.allocation.exceeds.outstanding','evidence_level':'analyzed','applicability':'unknown','source_hashes':['b'*64]}])
         self.assertEqual(validator['guard_candidate_coverage'], {'source_refusals':2,'mapped':1,'unknown':1})
         self.assertNotIn('helper', json.dumps(validator['guard_candidates']))
         self.assertNotIn('synthetic_excess',json.dumps(validator))
