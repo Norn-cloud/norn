@@ -874,8 +874,19 @@ impl<'a> Checker<'a, '_> {
     fn protected(&self, name: &ObjectTypeName, property: &PropertyId) -> bool {
         std::iter::once(name)
             .chain(self.ancestors(name))
-            .filter_map(|name| self.types.get(name))
-            .flat_map(|entry| &entry.def.properties)
+            .flat_map(|name| {
+                self.types
+                    .get(name)
+                    .into_iter()
+                    .flat_map(|entry| &entry.def.properties)
+                    .chain(
+                        self.extensions
+                            .get(name)
+                            .into_iter()
+                            .flatten()
+                            .flat_map(|(_, _, extension)| &extension.properties),
+                    )
+            })
             .any(|candidate| candidate.id == *property && candidate.protected)
     }
 
