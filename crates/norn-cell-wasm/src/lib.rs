@@ -275,7 +275,11 @@ impl WireCommit {
 
     /// Admit declared fact and link fields through the native kernel checks.
     /// Undeclared payload fields, events and effects stay opaque.
-    fn admission(&self, catalog: &TypeCatalog<'_>, lookup: &ViewLookup) -> Result<CellCommit<(), (), ()>, AbiError> {
+    fn admission(
+        &self,
+        catalog: &TypeCatalog<'_>,
+        lookup: &ViewLookup,
+    ) -> Result<CellCommit<(), (), ()>, AbiError> {
         Ok(CellCommit {
             consumes: self.consumes.clone(),
             reads: self.reads.clone(),
@@ -289,7 +293,10 @@ impl WireCommit {
                         mutation: match &write.mutation {
                             WireMutation::Put { values } => {
                                 let declared = catalog
-                                    .effective_object_values(&write.key.object_type, &JsonObject::new())
+                                    .effective_object_values(
+                                        &write.key.object_type,
+                                        &JsonObject::new(),
+                                    )
                                     .map_err(invalid("model"))?;
                                 let values = values.project(&declared)?;
                                 FactMutation::Put { values }
@@ -312,14 +319,20 @@ impl WireCommit {
                             WireLinkMutation::Add { values } => {
                                 let model = CommitModel::new(catalog);
                                 let canonical = model.canonical(&link.key.source);
-                                let source = self.writes.iter()
+                                let source = self
+                                    .writes
+                                    .iter()
                                     .find(|write| model.canonical(&write.key) == canonical)
                                     .and_then(|write| match write.mutation {
                                         WireMutation::Put { .. } => Some(&write.key.object_type),
                                         WireMutation::Delete => None,
                                     })
-                                    .or_else(|| lookup.objects.get(&canonical)
-                                        .and_then(|object| object.concrete.as_ref()))
+                                    .or_else(|| {
+                                        lookup
+                                            .objects
+                                            .get(&canonical)
+                                            .and_then(|object| object.concrete.as_ref())
+                                    })
                                     .unwrap_or(&link.key.source.object_type);
                                 let declared = catalog
                                     .effective_link_values(
@@ -328,7 +341,9 @@ impl WireCommit {
                                         &JsonObject::new(),
                                     )
                                     .map_err(invalid("model"))?;
-                                LinkMutation::Add { values: values.project(&declared)? }
+                                LinkMutation::Add {
+                                    values: values.project(&declared)?,
+                                }
                             }
                             WireLinkMutation::Remove => LinkMutation::Remove,
                         },
@@ -396,7 +411,6 @@ impl ObjectText {
             })
             .collect()
     }
-
 }
 
 // ------------------------------------------------------------------ model
