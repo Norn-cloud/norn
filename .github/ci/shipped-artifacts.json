@@ -12267,7 +12267,7 @@
     },
     {
       "path": "crates/norn-metrics/src/analysis.rs",
-      "sha256": "abb44f45320015918fc623c0693a2d2480959fdfda93b6e5a8e25b5e18022eed",
+      "sha256": "a05915820014bf7b350e92ec64bf429b6daa4be0ec8dd8de1b803ce0a1e132bd",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12357,7 +12357,7 @@
     },
     {
       "path": "crates/norn-metrics/tests/ols.rs",
-      "sha256": "4fed542a6ad84f65898547f0d17ad6ce2f6dc04a6b6b29acadb2bbb95184a5f6",
+      "sha256": "43563a58e97136c31dedff4b8dcb52f74d631edaa5e55b1005911f1864dd5693",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

@@ -1,19 +1,49 @@
 //! Synthetic OLS reference with exact, orthogonal residuals.
-#![allow(clippy::expect_used, clippy::arithmetic_side_effects, reason = "independent numerical regression oracle")]
+#![allow(
+    clippy::expect_used,
+    clippy::arithmetic_side_effects,
+    reason = "independent numerical regression oracle"
+)]
 use norn_checker::EffectiveCatalog;
 use norn_ir::{ArtifactEnvelope, RuntimeValue};
-use norn_metrics::{analysis::ols, temporal::{TemporalPlan, TemporalRow, TemporalTable, TemporalValue}};
+use norn_metrics::{
+    analysis::ols,
+    temporal::{TemporalPlan, TemporalRow, TemporalTable, TemporalValue},
+};
 
 fn table(outcomes: &[i64], constant_predictor: bool) -> TemporalTable {
     let root = std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR").expect("prepare typed fixtures");
-    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_slice(&std::fs::read(std::path::Path::new(&root).join("metric-demand.json")).expect("fixture")).expect("artifacts");
+    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_slice(
+        &std::fs::read(std::path::Path::new(&root).join("metric-demand.json")).expect("fixture"),
+    )
+    .expect("artifacts");
     let catalog = EffectiveCatalog::from_artifacts(&artifacts);
-    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0).expect("plan");
-    let value = |n: i64, at| TemporalValue { value: RuntimeValue::from_json_text(n.to_string()).expect("number"), valid_at: at, recorded_at: at, source: format!("synthetic:{n}:{at}") };
-    let rows = outcomes.iter().copied().enumerate().map(|(i,y)| TemporalRow {
-        key: format!("row-{i}"), at: 100,
-        features: vec![value(if constant_predictor { 1 } else { i64::try_from(i).expect("bounded index") + 1 }, 100)], outcome: value(y, 200),
-    }).collect();
+    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0)
+        .expect("plan");
+    let value = |n: i64, at| TemporalValue {
+        value: RuntimeValue::from_json_text(n.to_string()).expect("number"),
+        valid_at: at,
+        recorded_at: at,
+        source: format!("synthetic:{n}:{at}"),
+    };
+    let rows = outcomes
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, y)| TemporalRow {
+            key: format!("row-{i}"),
+            at: 100,
+            features: vec![value(
+                if constant_predictor {
+                    1
+                } else {
+                    i64::try_from(i).expect("bounded index") + 1
+                },
+                100,
+            )],
+            outcome: value(y, 200),
+        })
+        .collect();
     plan.materialize(200, 1, rows).expect("table")
 }
 
@@ -29,18 +59,40 @@ fn regression_matches_fit_diagnostic_and_plot_oracles() {
     assert_eq!(report.plots.qq.len(), 6);
     assert_eq!(report.plots.cooks_distance.len(), 6);
     assert!(report.interval.0 < 2.0 && report.interval.1 > 2.0);
-    assert!(report.diagnostics.iter().any(|d| d.method == "sample_size_min_20" && !d.passed));
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.method == "sample_size_min_20" && !d.passed)
+    );
     let x = (35.0_f64 / 37.0).sqrt();
-    assert!((report.p_value - (1.0 - 1.5*x + 0.5*x.powi(3))).abs() < 1e-12);
-    let diagnostic = |name| report.diagnostics.iter().find(|d| d.method == name).expect("named diagnostic");
-    assert!((diagnostic("jarque_bera").statistic - 9.0/16.0).abs() < 1e-12);
-    assert!((diagnostic("jarque_bera").p_value.expect("tail") - (-9.0_f64/32.0).exp()).abs() < 1e-12);
+    assert!((report.p_value - (1.0 - 1.5 * x + 0.5 * x.powi(3))).abs() < 1e-12);
+    let diagnostic = |name| {
+        report
+            .diagnostics
+            .iter()
+            .find(|d| d.method == name)
+            .expect("named diagnostic")
+    };
+    assert!((diagnostic("jarque_bera").statistic - 9.0 / 16.0).abs() < 1e-12);
+    assert!(
+        (diagnostic("jarque_bera").p_value.expect("tail") - (-9.0_f64 / 32.0).exp()).abs() < 1e-12
+    );
     assert!(diagnostic("breusch_pagan_lm").statistic.abs() < 1e-12);
     assert!((diagnostic("durbin_watson_1_to_3_heuristic").statistic - 2.5).abs() < 1e-12);
-    assert!((report.plots.cooks_distance.first().expect("first") - 231.0/200.0).abs() < 1e-12);
+    assert!((report.plots.cooks_distance.first().expect("first") - 231.0 / 200.0).abs() < 1e-12);
     assert!((report.plots.qq.get(1).expect("quartile").0 + 0.674_489_750_196_081_7).abs() < 1e-12);
-    for (actual, expected) in report.plots.residuals.iter().zip([-1.0,1.0,0.0,0.0,1.0,-1.0]) { assert!((actual.1-expected).abs() < 1e-12); }
-    for alpha in [0.0, 1.0, f64::NAN] { assert!(ols(&admitted, alpha).is_err()); }
+    for (actual, expected) in report
+        .plots
+        .residuals
+        .iter()
+        .zip([-1.0, 1.0, 0.0, 0.0, 1.0, -1.0])
+    {
+        assert!((actual.1 - expected).abs() < 1e-12);
+    }
+    for alpha in [0.0, 1.0, f64::NAN] {
+        assert!(ols(&admitted, alpha).is_err());
+    }
     assert!(ols(&table(&[1, 2, 3, 4, 5, 6], true), 0.05).is_err());
     assert!(ols(&table(&[1, 2, 3, 4, 5, 6], false), 0.05).is_err());
 }
@@ -56,6 +108,15 @@ fn residuals_are_invariant_under_a_representable_large_outcome_translation() {
     assert!((baseline.slope - shifted.slope).abs() < 1e-12);
     assert!((baseline.slope_standard_error - shifted.slope_standard_error).abs() < 1e-12);
     assert!((baseline.p_value - shifted.p_value).abs() < 1e-12);
-    for (a,b) in baseline.plots.residuals.iter().zip(&shifted.plots.residuals) { assert!((a.1-b.1).abs() < 1e-12); }
-    for (a,b) in baseline.diagnostics.iter().zip(&shifted.diagnostics) { assert!((a.statistic-b.statistic).abs() < 1e-12); }
+    for (a, b) in baseline
+        .plots
+        .residuals
+        .iter()
+        .zip(&shifted.plots.residuals)
+    {
+        assert!((a.1 - b.1).abs() < 1e-12);
+    }
+    for (a, b) in baseline.diagnostics.iter().zip(&shifted.diagnostics) {
+        assert!((a.statistic - b.statistic).abs() < 1e-12);
+    }
 }
