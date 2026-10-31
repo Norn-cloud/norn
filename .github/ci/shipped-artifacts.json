@@ -22825,7 +22825,7 @@
     },
     {
       "path": "tools/norn-ts/profile/norn-authoring.d.ts",
-      "sha256": "5d599b9061206ae91d11f4851bc9f17e46a44dde1bced78342f1c28fe388dc97",
+      "sha256": "bae0b4f8dc48b588c6885f461ef63937d15203ae5294b51b401bd7b4d4d641f1",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -22969,7 +22969,7 @@
     },
     {
       "path": "tools/norn-ts/src/builder/entity.ts",
-      "sha256": "17a7f179d616d7b0af3fa76118fa24d00e2be2aa5a7f8355736b779e9d68eee8",
+      "sha256": "5843632ee94814d092136a76e8a104ab0eea21079d21f4ad8fc3f05acf7b3d10",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -23257,7 +23257,7 @@
     },
     {
       "path": "tools/norn-ts/src/compiler/definitions.ts",
-      "sha256": "3fe9f56a67dfa2ced4ec14922edeedf880468c75deefacf69574c6f4f58e1226",
+      "sha256": "3823e92f13de6834d6fcd724a857a175662daa68a46db05a2d730e74935acdce",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -23600,6 +23600,24 @@
     {
       "path": "tools/norn-ts/test/interface-inheritance.test.ts",
       "sha256": "35bdb64d59c68ea96838c034bdcc4cd4d8668a10dbeefa9808b5a44d11b54e86",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "tools/norn-ts/test/interface-links.test.ts",
+      "sha256": "bddff7258f4c919861b0b4c96589f21707e8b9a6a5976d312a334cf167667e47",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29989,7 +30007,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "a78540ce4649be9ba6f7028e9f2023987fad53d7a9b458159f0d2dd79c6a71d3",
+      "sha256": "3d9e237cfdcbb45b152881fd10622fd9d10633a7e367f4508e0d6e29aeefc5eb",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
