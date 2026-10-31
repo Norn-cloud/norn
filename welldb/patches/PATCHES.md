@@ -3,8 +3,8 @@
 Source: crates.io archives `timely 0.31.0`, `differential-dataflow 0.25.1`,
 `columnation 0.1.2`. MIT licences remain beside their sources. Only library
 sources, licences, README and normalized manifests are retained. Example, bench,
-test, development binary and dev-dependency manifest entries are omitted; no upstream algorithm is
-changed. Own backend code forbids unsafe; upstream dependency unsafe code is
+test, development binary and dev-dependency manifest entries are omitted.
+Own backend code forbids unsafe; upstream dependency unsafe code is
 unchanged.
 
 Investigation on 2026-10-28:
@@ -31,6 +31,12 @@ updates by comparing against the pinned crates.io archives and rerunning codec,
 conformance, wasm and performance gates. No advisory ignore is admitted. Vendored Timely's README doctest include is
 corrected to the retained crate-local README; trailing blank EOF lines are
 trimmed in five retained upstream files.
+
+Public-port qualification: cross-slice `PointStamp` equality now compares through
+the longer coordinate list, padding missing entries with the minimum in both
+directions. A regression covers trailing minimum and non-minimum coordinates.
+An upstream documentation reference to unshipped Lean proofs is removed; this
+port claims no formal qualification for the dependency or WellDB.
 
 ## Immutable archive provenance
 
