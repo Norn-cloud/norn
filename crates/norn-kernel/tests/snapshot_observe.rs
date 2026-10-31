@@ -1271,10 +1271,7 @@ fn observations_cannot_reconcile_a_protected_lifecycle() {
             assert!(cell.observe().unwrap().is_some());
         } else {
             result.unwrap();
-            assert_eq!(
-                cell.load(&key).unwrap().values.unwrap()["amount"],
-                json!(amount)
-            );
+            assert_eq!(state(&cell, &key, "amount"), JsonValue::from(amount));
         }
     }
 }

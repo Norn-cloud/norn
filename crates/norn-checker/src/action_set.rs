@@ -775,7 +775,7 @@ impl Defined<'_> {
                     .as_ref()
                     .and_then(|effective| effective.as_ref().ok())
                     .and_then(|effective| effective.property(property))
-                    .is_some_and(|property| property.protected())
+                    .is_some_and(crate::EffectiveProperty::protected)
             }) {
                 findings.push(finding(
                     codes::TARGET_NOT_WRITABLE,

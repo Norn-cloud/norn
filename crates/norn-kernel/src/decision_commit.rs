@@ -2416,7 +2416,7 @@ fn apply_change<X>(
             catalog
                 .effective_type(&key.object_type)
                 .and_then(|effective| effective.property(property))
-                .is_some_and(|property| property.protected())
+                .is_some_and(norn_checker::EffectiveProperty::protected)
         };
         let forbidden = match change {
             FactChange::Create { values, .. } => {

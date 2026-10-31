@@ -916,7 +916,7 @@ where
             && let Some(field) = prepared_input.effective_input.keys().find(|field| {
                 effective
                     .property(field)
-                    .is_some_and(|property| property.protected())
+                    .is_some_and(norn_checker::EffectiveProperty::protected)
             })
         {
             return Err(ActionRefusal::InvalidInput {

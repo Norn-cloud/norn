@@ -1236,7 +1236,7 @@ pub fn prepare_observed_snapshot(
         if catalog
             .effective_type(&key.object_type)
             .and_then(|effective| effective.property(snapshot.property.as_str()))
-            .is_some_and(|property| property.protected())
+            .is_some_and(norn_checker::EffectiveProperty::protected)
             && effective_original
                 .as_ref()
                 .and_then(|values| values.get(snapshot.property.as_str()))

@@ -367,6 +367,7 @@ impl EffectiveProperty {
     }
 
     /// Whether only declared rule outputs may write this property.
+    #[must_use]
     pub const fn protected(&self) -> bool {
         matches!(self.write_authority, WriteAuthority::RulesOnly)
     }
