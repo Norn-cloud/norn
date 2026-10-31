@@ -6999,7 +6999,7 @@
     },
     {
       "path": "crates/norn-ir/schema/artifact_envelope.schema.json",
-      "sha256": "214fc11191f6b02cd0eca349a010ec3774439c2bb8b351346e80d0cb815ee089",
+      "sha256": "1c491d4dffd4b7edd90605a2512e0291cffab35c8f68f77db509bd051ab08c0b",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -7072,7 +7072,7 @@
     },
     {
       "path": "crates/norn-ir/schema/business_pack.schema.json",
-      "sha256": "d27fa0dfe9b37c6a8cdd4d64f830dbaa0b8b9ec321a35ac7b2b1a856c7f012eb",
+      "sha256": "ad645a7ec2dd850f3bf3f0a56cb74cb24124ed17b500fd5ca25c86fd8e15f930",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -18192,7 +18192,7 @@
     },
     {
       "path": "packages/norn-sdk/src/generated/norn-api.ts",
-      "sha256": "b171f106380ef58aff165e5d898e4382d55905dcfe5abd5e024f58943a3f6093",
+      "sha256": "0aa5c593744b49a937516e9fd5225dba967f7d098da4d3cab2c68fbaaa8c18aa",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -18907,7 +18907,7 @@
     },
     {
       "path": "sdks/openapi/norn-api.openapi.json",
-      "sha256": "d3c30e4e0981850971f6aff9e9d943d0aad89603a500904898a8664ce7731462",
+      "sha256": "1bdcc0e5812bfc9ff52d95724a7e90c08180a5c71f1881c78980d233c8ab648b",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
