@@ -1014,3 +1014,26 @@ fn row_operation_items_must_admit_the_bounded_json_operation_profile() {
         }
     }
 }
+
+#[test]
+fn kernel_owned_row_fields_cannot_be_protected() {
+    for (index, member) in [(0, "rowIdProperty"), (1, "orderingKey")] {
+        for inherited in [false, true] {
+            let mut child = child_type("text", "integer");
+            child["properties"][index]["protected"] = json!(true);
+            let mut definitions = vec![parent_type(20, &json!({"to":"many","from":"one"})), child];
+            if inherited {
+                let mut base = definitions[1].clone();
+                base["name"] = json!(CHILD_BASE);
+                definitions[1]["extends"] = json!(CHILD_BASE);
+                definitions[1]["properties"][index]["protected"] = json!(false);
+                definitions.push(base);
+            }
+            assert_finding(
+                &model_findings(definitions),
+                object_codes::PROTECTED_OWNED_ROW_FIELD,
+                &format!("/objectTypes/0/ownedCollections/0/{member}"),
+            );
+        }
+    }
+}

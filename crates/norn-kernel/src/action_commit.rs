@@ -64,7 +64,7 @@ use crate::cell_host::{
 };
 use crate::decision_commit::{
     DecisionRefusal, DecisionTurn, FactEvent, FactSlice, TypeCatalog, expr_value,
-    fill_lifecycle_defaults, prepare_decision_with_limits, prepare_owned_rows, widen_effect,
+    fill_lifecycle_defaults, prepare_action_decision, prepare_owned_rows, widen_effect,
 };
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::{EnvelopeLimits, SliceMeter};
@@ -1692,6 +1692,7 @@ fn validate_stored_patch<X>(
             });
         };
         if declared.computed
+            || declared.protected()
             || type_series(catalog, object_type)
                 .is_some_and(|series| series.key_properties.contains(&declared.id))
         {
@@ -2134,7 +2135,7 @@ where
                             .properties
                             .iter()
                             .find(|candidate| candidate.id == *property)
-                            .is_none_or(|candidate| candidate.computed)
+                            .is_none_or(|candidate| candidate.computed || candidate.protected())
                 })
             })
         })
@@ -2455,7 +2456,10 @@ where
             })?;
             let lifecycle_properties = catalog.lifecycle_properties(&object_type);
             let touch = effective_type.properties.iter().find_map(|property| {
-                if property.computed || lifecycle_properties.contains(&property.id) {
+                if property.computed
+                    || property.protected()
+                    || lifecycle_properties.contains(&property.id)
+                {
                     None
                 } else {
                     current_values
@@ -3514,7 +3518,7 @@ where
         commands,
         timers: Vec::new(),
     };
-    let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
+    let mut prepared = prepare_action_decision(catalog, &slice, &call.turn, &output, limits)?;
     let mut created_links = Vec::new();
     for binding in &call.action.create_links {
         let target_id = effective_input
@@ -3973,7 +3977,8 @@ fn precondition_read_refusal<X>(
             .iter()
             .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
             .cloned(),
-        CommitError::OwnedRowsProtected { .. }
+        CommitError::ImmutableObject { .. }
+        | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::DuplicateLink { .. }
@@ -4005,7 +4010,8 @@ fn precondition_read_refusal<X>(
         | CommitError::UnsupportedLinkRead { source_key, link } => {
             Some((source_key.clone(), link.clone()))
         }
-        CommitError::OwnedRowsProtected { .. }
+        CommitError::ImmutableObject { .. }
+        | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::Conflict { .. }
@@ -4121,7 +4127,8 @@ where
             message,
             outcome,
         } => (key, owner, id, message, outcome),
-        error @ (CommitError::OwnedRowsProtected { .. }
+        error @ (CommitError::ImmutableObject { .. }
+        | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::Conflict { .. }
