@@ -897,10 +897,10 @@ fn unresolved_pack_members_preserve_admission_and_legacy_recovery() {
             .expect("members");
         if missing_version {
             for member in members {
-                member["version"] = json!(999);
+                member["version"] = json!("999.0.0");
             }
         } else {
-            members.push(json!({"artifactId":"missing.law", "version":1, "kind":"law"}));
+            members.push(json!({"artifactId":"missing.law", "version":"0.1.0", "kind":"law"}));
         }
         let checked = check_with(&[], &base, &registry, None, &limits);
         assert!(checked.receipt.admitted);
