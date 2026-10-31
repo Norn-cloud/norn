@@ -448,6 +448,7 @@ export class SchemaProjection {
       }
       case "value-type":
         if (temporalWire && (schema.type.kind === "timestamp" || schema.type.kind === "date")) return S.text()
+        if (schema.type.kind === "decimal" && !schema.type.unit && !schema.type.currencySource) return { type: "decimal", scale: schema.type.scale }
         throw projection(`Norn.${schema.type.kind === "ref" ? "ref" : schema.type.kind} projects to EntityIR properties only; closed schemas have no ${schema.type.kind} type yet`, schema.node)
     }
   }

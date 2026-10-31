@@ -44,6 +44,8 @@ pub enum Schema {
     Integer,
     /// An exact decimal number.
     Number,
+    /// Action-only exact decimal, supplied as text and decoded before execution.
+    Decimal(u32),
     /// A boolean.
     Boolean,
     /// The null value.
@@ -141,6 +143,7 @@ impl Schema {
             "object" => &["type", "properties", "required", "additionalProperties"],
             "array" => &["type", "items"],
             "string" => &["type", "enum"],
+            "decimal" if action_input => &["type", "scale"],
             _ => &["type"],
         };
         if let Some(unknown) = schema.keys().find(|key| !allowed.contains(&key.as_str())) {
@@ -167,6 +170,14 @@ impl Schema {
                 None => Ok(Self::String(None)),
                 Some(values) => Ok(Self::String(Some(parse_enum(values, path)?))),
             },
+            "decimal" if action_input => {
+                let scale = schema.get("scale").and_then(|value| match value {
+                    JsonValue::Number(scale) if scale.is_finite() && scale.fract() == 0.0 && (0.0..=28.0).contains(scale) => Some(*scale as u32),
+                    _ => None,
+                })
+                    .ok_or_else(|| Violation::new(path, "decimal scale must be an integer in 0..=28"))?;
+                Ok(Self::Decimal(scale))
+            }
             "integer" => Ok(Self::Integer),
             "number" => Ok(Self::Number),
             "boolean" => Ok(Self::Boolean),
@@ -265,6 +276,7 @@ impl Schema {
             | Self::String(_)
             | Self::Integer
             | Self::Number
+            | Self::Decimal(_)
             | Self::Boolean
             | Self::Null
             | Self::Json
@@ -281,10 +293,48 @@ impl Schema {
             | Self::String(_)
             | Self::Integer
             | Self::Number
+            | Self::Decimal(_)
             | Self::Boolean
             | Self::Null
             | Self::Json
             | Self::Nullable(_) => None,
+        }
+    }
+
+    /// Decode action wire decimals without a floating-point intermediate.
+    /// Other fields retain their values; the closed schema checks them afterward.
+    ///
+    /// # Errors
+    /// Refuses non-string decimals, invalid literals and excess scale.
+    pub fn decode_action_input(
+        &self,
+        value: norn_ir::RuntimeValue,
+        path: &str,
+    ) -> Result<norn_ir::RuntimeValue, Violation> {
+        use norn_ir::{Decimal, RuntimeValue};
+        match (self, value) {
+            (Self::Decimal(scale), RuntimeValue::String(text)) => {
+                let decimal = Decimal::parse(&text)
+                    .map_err(|_| Violation::new(path, "invalid decimal text"))?;
+                if decimal.scale() > *scale {
+                    return Err(Violation::new(path, "decimal exceeds declared scale"));
+                }
+                Ok(RuntimeValue::Number(decimal))
+            }
+            (Self::Decimal(_), _) => Err(Violation::new(path, "decimal input requires a JSON string")),
+            (Self::Object { properties, .. }, RuntimeValue::Object(members)) => {
+                members.into_iter().map(|(name, value)| {
+                    let value = match properties.get(&name) {
+                        Some(schema) => schema.decode_action_input(value, &format!("{path}.{name}"))?,
+                        None => value,
+                    };
+                    Ok((name, value))
+                }).collect::<Result<_, _>>().map(RuntimeValue::Object)
+            }
+            (Self::Array(items), RuntimeValue::Array(values)) => values.into_iter()
+                .enumerate().map(|(index, value)| items.decode_action_input(value, &format!("{path}[{index}]")))
+                .collect::<Result<_, _>>().map(RuntimeValue::Array),
+            (_, value) => Ok(value),
         }
     }
 
@@ -326,6 +376,7 @@ impl Schema {
             | (Self::Boolean, Value::Bool(_))
             | (Self::Null | Self::Nullable(_), Value::Null)
             | (Self::Json, _) => Ok(()),
+            (Self::Decimal(scale), Value::Number(number)) if norn_ir::Decimal::parse(number.as_str()).is_ok_and(|decimal| decimal.scale() <= *scale) => Ok(()),
             (Self::Nullable(inner), actual) => inner.check(actual, path),
             (Self::String(Some(allowed)), Value::String(text)) => {
                 if allowed.contains(text) {
@@ -353,6 +404,7 @@ impl Schema {
             Self::String(_) => "a string",
             Self::Integer => "an integer",
             Self::Number => "a number",
+            Self::Decimal(_) => "an exact decimal",
             Self::Boolean => "a boolean",
             Self::Null => "null",
             Self::Json => "a JSON value",

@@ -11,11 +11,17 @@
  */
 import type { Json } from "../canonical.ts"
 
-export type ValueSchema = StringSchema | ScalarSchema | ArraySchema | ObjectSchema | NullableSchema
+export type ValueSchema = StringSchema | DecimalSchema | ScalarSchema | ArraySchema | ObjectSchema | NullableSchema
 
 export interface StringSchema {
   readonly type: "string"
   readonly enum?: ReadonlyArray<string>
+}
+
+/** Exact decimal text on ActionIR wire, decoded by the kernel. */
+export interface DecimalSchema {
+  readonly type: "decimal"
+  readonly scale: number
 }
 
 export interface ScalarSchema {

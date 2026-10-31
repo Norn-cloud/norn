@@ -4488,15 +4488,23 @@ fn prepare_action_input_inner<'a, X>(
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
+    let schema = norn_expr::schema::Schema::parse_action(
+        &norn_ir::JsonValue::Object(action.input_schema.clone()), "$input",
+    ).map_err(|violation| ActionRefusal::InvalidInput { field: violation.path })?;
+    let normalized = schema.decode_action_input(RuntimeValue::Object(raw_input.clone()), "$input")
+        .map_err(|violation| ActionRefusal::InvalidInput { field: violation.path })?;
+    let RuntimeValue::Object(normalized) = normalized else {
+        return Err(ActionRefusal::InvalidInput { field: "$input".to_owned() });
+    };
     let profile = ResourceLimitProfile::norn_limits_v1();
     if !has_action_preparation_features(action) {
-        validate_action_input(action, raw_input)?;
+        validate_action_input(action, &normalized)?;
         return Ok(ActionInputPreparation {
             action,
             raw_input,
             action_artifact_id,
             action_version,
-            effective_input: raw_input.clone(),
+            effective_input: normalized.clone(),
             derived_values: Vec::new(),
             remaining_fuel: profile.turn.fuel_units,
             receipt_evidence_bytes: 0,
@@ -4515,7 +4523,7 @@ fn prepare_action_input_inner<'a, X>(
             max_bytes: max_receipt_bytes,
         });
     }
-    let mut effective_input = raw_input.clone();
+    let mut effective_input = normalized;
     for derivation in &action.derive {
         if derivation.input_required && !raw_input.contains_key(&derivation.field) {
             return Err(ActionRefusal::InvalidInput {
