@@ -1,5 +1,5 @@
 //! Projection of the definition catalog ([`norn_ir::definition_catalog`],
-//! norn#62) from a resolved artifact set.
+//! norn#62) from an admitted artifact set.
 //!
 //! [`project`] reads the typed roots the checker already decodes (`EntityIR`
 //! v2, `ActionIR`, decide graphs' fact-change schemas, `MappingIR`, `LawIR`,
@@ -9,12 +9,20 @@
 //! admits ([`crate::check_artifact_set`] with no error findings); rules over
 //! the catalog are checker code, never pack data.
 //!
+//! Which definition a write, mapping target or law binds is never derived
+//! here: it is the checker's own admission binding
+//! ([`crate::action_set::Admission`], the model the action and
+//! lifecycle-write checks resolve with). An action binds the definition its
+//! effect pins, a name (a decide graph's `objectType`, a supertype, an
+//! owned-collection child type, a law subject) binds what admission binds
+//! it to, and inherited members and owned collections are the effective
+//! ones. The catalog projects every candidate and every installed artifact.
+//!
 //! What is not projected yet, so rules over the catalog cannot rely on it:
-//! inherited members (a row belongs to the artifact that declares it), the
-//! states of a lifecycle whose property the declaring type inherits, and
-//! rule writes other than decide-graph fact changes.
+//! the states of a lifecycle whose property the declaring type inherits,
+//! and rule writes other than decide-graph fact changes.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use norn_ir::definition_catalog::{
     ArtifactKey, CatalogArtifact, CatalogFormat, DefinitionCatalog, DependencyVia, DependsOnRow,
@@ -25,10 +33,10 @@ use norn_ir::mapping::MappingIr;
 use norn_ir::{
     ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactKind, ArtifactPayload,
     BusinessPackRoot, EntityRoot, FactChangeOp, LawIR, LawResponse, Lifecycle, ObjectTypeDef,
-    Property, PropertyType,
+    Property, PropertyType, PropertyTypeName,
 };
 
-use crate::artifact_set::ResolvedArtifactSet;
+use crate::action_set::{Admission, AdmittedType};
 use crate::entity_artifacts::{Decoded, decode_v2};
 use crate::lifecycle_writes::{FactSchema, fact_decisions};
 use crate::receipt::{ArtifactRef, ReceiptError};
@@ -50,31 +58,25 @@ impl std::fmt::Display for CatalogError {
 
 impl std::error::Error for CatalogError {}
 
-/// Project the catalog of `set`: its candidates and every installed `base`
-/// artifact they reach through references (envelope dependencies, pack
-/// members, and action effect pins), transitively. See the module docs.
+/// Project the catalog of the candidate `artifacts` and the installed
+/// `base` they are checked against (with the `registry` value types the
+/// entity model resolves). See the module docs.
 ///
 /// # Errors
 ///
 /// [`CatalogError::Hash`] if an artifact's semantic hash cannot be computed.
 pub fn project(
-    set: &ResolvedArtifactSet<'_>,
+    artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
+    registry: &BTreeSet<PropertyTypeName>,
 ) -> Result<DefinitionCatalog, CatalogError> {
-    let all: Vec<(&ArtifactEnvelope, bool)> = set
-        .artifacts
+    let all: Vec<(&ArtifactEnvelope, bool)> = artifacts
         .iter()
-        .map(|artifact| (*artifact, true))
-        .chain(
-            base_closure(set, base)
-                .into_iter()
-                .map(|artifact| (artifact, false)),
-        )
+        .map(|artifact| (artifact, true))
+        .chain(base.iter().map(|artifact| (artifact, false)))
         .collect();
-    let mut rows = Rows {
-        bindings: Bindings::of(set, base),
-        ..Rows::default()
-    };
+    let admission = Admission::new(artifacts, base, registry);
+    let mut rows = Rows::default();
     for (artifact, candidate) in &all {
         let reference = ArtifactRef::of(artifact).map_err(CatalogError::Hash)?;
         rows.artifacts.insert(CatalogArtifact {
@@ -92,9 +94,9 @@ pub fn project(
     for artifact in &envelopes {
         rows.depends_on(artifact, &envelopes);
         match &artifact.payload {
-            ArtifactPayload::Action(_) => rows.action(artifact),
-            ArtifactPayload::Mapping(_) => rows.mapping(artifact),
-            ArtifactPayload::Law(_) => rows.law(artifact, &envelopes),
+            ArtifactPayload::Action(_) => rows.action(artifact, &admission),
+            ArtifactPayload::Mapping(_) => rows.mapping(artifact, &admission),
+            ArtifactPayload::Law(_) => rows.law(artifact, &envelopes, &admission),
             // Entities were projected above; decide graphs below. The other
             // kinds declare no catalog member yet.
             ArtifactPayload::Entity(_)
@@ -112,125 +114,14 @@ pub fn project(
     }
     for (artifact, output) in fact_decisions(envelopes.iter().copied()) {
         if let Some(schema) = FactSchema::of(&output) {
-            rows.fact_writes(artifact, &schema);
+            rows.fact_writes(artifact, &schema, &admission);
         }
     }
     Ok(rows.finish())
 }
 
-/// The exact `(artifactId, version)` references of `artifact`: resolved
-/// envelope dependencies, composition pack members, and its action effect's
-/// pinned entity.
-fn references(artifact: &ArtifactEnvelope) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = artifact
-        .dependencies
-        .iter()
-        .filter_map(|dependency| {
-            Some((dependency.artifact_id.clone(), dependency.version.clone()?))
-        })
-        .collect();
-    match &artifact.payload {
-        ArtifactPayload::BusinessPack(_) => {
-            if let Ok(BusinessPackRoot::Composition(pack)) =
-                serde_json::from_value(payload_json(artifact))
-            {
-                out.extend(
-                    pack.artifacts
-                        .iter()
-                        .map(|member| (member.artifact_id.clone(), member.version.clone())),
-                );
-            }
-        }
-        ArtifactPayload::Action(_) => {
-            if let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact))
-                && let Some(program) = &action.effect_program
-            {
-                let target = program.target();
-                out.push((
-                    target.entity_artifact_id.to_owned(),
-                    target.entity_artifact_version.to_owned(),
-                ));
-            }
-        }
-        ArtifactPayload::Entity(_)
-        | ArtifactPayload::Relation(_)
-        | ArtifactPayload::Rule(_)
-        | ArtifactPayload::Connector(_)
-        | ArtifactPayload::Widget(_)
-        | ArtifactPayload::Customization(_)
-        | ArtifactPayload::Setting(_)
-        | ArtifactPayload::Policy(_)
-        | ArtifactPayload::Derived(_)
-        | ArtifactPayload::SourceSchema(_)
-        | ArtifactPayload::Mapping(_)
-        | ArtifactPayload::Law(_) => {}
-    }
-    out
-}
-
-/// The type an entity artifact declares (an object type or interface), and
-/// the type names it refers to: supertypes, interfaces, an extension's
-/// target.
-fn type_names(artifact: &ArtifactEnvelope) -> (Option<String>, Vec<String>) {
-    let Decoded::Root(root) = decode_v2(artifact) else {
-        return (None, Vec::new());
-    };
-    match *root {
-        EntityRoot::V2(root) => {
-            let def = root.object_type;
-            let mut refs: Vec<String> = def.extends.iter().map(|n| n.as_str().to_owned()).collect();
-            refs.extend(def.implements.iter().map(|n| n.as_str().to_owned()));
-            refs.extend(
-                def.owned_collections
-                    .iter()
-                    .map(|collection| collection.child_type.as_str().to_owned()),
-            );
-            (Some(def.name.as_str().to_owned()), refs)
-        }
-        EntityRoot::V2Interface(root) => (
-            Some(root.interface.name.as_str().to_owned()),
-            root.interface
-                .extends
-                .iter()
-                .map(|n| n.as_str().to_owned())
-                .collect(),
-        ),
-        EntityRoot::V2Extension(root) => (
-            None,
-            vec![root.object_type_extension.target.as_str().to_owned()],
-        ),
-        EntityRoot::V2PropertyTypes(_) | EntityRoot::V2Markings(_) | EntityRoot::V1(_) => {
-            (None, Vec::new())
-        }
-    }
-}
-
-/// Type name → the one artifact the name binds to, as the entity model binds
-/// it: a candidate's own declaration, else the first installed artifact (in
-/// base order) that declares it. It is the only name-keyed structure, and it
-/// yields an artifact to pin, never per-type data.
-#[derive(Default)]
-struct Bindings(BTreeMap<String, ArtifactKey>);
-
-impl Bindings {
-    fn of(set: &ResolvedArtifactSet<'_>, base: &[ArtifactEnvelope]) -> Self {
-        let mut bound = BTreeMap::new();
-        for artifact in set.artifacts.iter().copied().chain(base) {
-            if let Some(name) = type_names(artifact).0 {
-                bound.entry(name).or_insert_with(|| key(artifact));
-            }
-        }
-        Self(bound)
-    }
-
-    /// The artifact `name` binds to.
-    fn artifact(&self, name: &str) -> Option<&ArtifactKey> {
-        self.0.get(name)
-    }
-}
-
-/// One type as one exact artifact declares it. Every per-type lookup takes
-/// this key; a name reaches it only through [`Rows::pin`].
+/// One type as one exact artifact declares it: the key every per-type
+/// lookup takes. It is only ever built from an admitted definition.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PinnedType {
     artifact: ArtifactKey,
@@ -238,11 +129,23 @@ struct PinnedType {
 }
 
 impl PinnedType {
-    fn of(artifact: &ArtifactEnvelope, name: &str) -> Self {
+    fn of(admitted: AdmittedType<'_, '_>) -> Self {
         Self {
-            artifact: key(artifact),
-            name: name.to_owned(),
+            artifact: key(admitted.artifact()),
+            name: admitted.name().to_owned(),
         }
+    }
+
+    /// `admitted`, then each supertype admission binds, nearest first.
+    fn lineage(admitted: AdmittedType<'_, '_>, admission: &Admission<'_>) -> Vec<Self> {
+        std::iter::once(Self::of(admitted))
+            .chain(
+                admitted
+                    .supertypes()
+                    .into_iter()
+                    .filter_map(|name| admission.named(name).map(Self::of)),
+            )
+            .collect()
     }
 
     /// `member` of the declaring artifact.
@@ -258,72 +161,6 @@ impl PinnedType {
     }
 }
 
-/// What lookups need of one projected type.
-struct TypeInfo {
-    kind: TypeKind,
-    /// An object type's supertype name.
-    extends: Option<String>,
-    /// The child type names of its own owned collections.
-    children: Vec<String>,
-}
-
-/// The base artifacts the candidates reach, transitively, starting from
-/// the ones they reference directly.
-fn base_closure<'a>(
-    set: &ResolvedArtifactSet<'a>,
-    base: &'a [ArtifactEnvelope],
-) -> Vec<&'a ArtifactEnvelope> {
-    let candidates: BTreeSet<(&str, &str)> = set
-        .artifacts
-        .iter()
-        .map(|artifact| (artifact.artifact_id.as_str(), artifact.version.as_str()))
-        .collect();
-    let mut included: Vec<&'a ArtifactEnvelope> = Vec::new();
-    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
-    let mut frontier: Vec<&'a ArtifactEnvelope> = set
-        .artifacts
-        .iter()
-        .chain(&set.base_dependencies)
-        .copied()
-        .collect();
-    // A subtype, implementor, or extension reaches the types it names even
-    // without an envelope dependency on them: the one artifact each name is
-    // bound to.
-    let bindings = Bindings::of(set, base);
-    while let Some(artifact) = frontier.pop() {
-        let mut next = references(artifact);
-        for name in type_names(artifact).1 {
-            next.extend(
-                bindings
-                    .artifact(&name)
-                    .map(|key| (key.artifact_id.clone(), key.version.clone())),
-            );
-        }
-        if !candidates.contains(&(artifact.artifact_id.as_str(), artifact.version.as_str())) {
-            next.push((artifact.artifact_id.clone(), artifact.version.clone()));
-        }
-        for (id, version) in next {
-            if candidates.contains(&(id.as_str(), version.as_str()))
-                || seen.contains(&(id.clone(), version.clone()))
-            {
-                continue;
-            }
-            if let Some(found) = base
-                .iter()
-                .find(|other| other.artifact_id == id && other.version == version)
-            {
-                seen.insert((id, version));
-                included.push(found);
-                frontier.push(found);
-            }
-        }
-    }
-    included.sort_by(|left, right| {
-        (&left.artifact_id, &left.version).cmp(&(&right.artifact_id, &right.version))
-    });
-    included
-}
-
 #[derive(Default)]
 struct Rows {
     artifacts: BTreeSet<CatalogArtifact>,
@@ -335,9 +172,6 @@ struct Rows {
     depends_on: BTreeSet<DependsOnRow>,
     mappings: BTreeSet<MappingRow>,
     laws: BTreeSet<LawRow>,
-    bindings: Bindings,
-    /// Every projected type, by the exact artifact that declares it.
-    declared: BTreeMap<PinnedType, TypeInfo>,
 }
 
 fn at(artifact: &ArtifactEnvelope, member: Member) -> MemberRef {
@@ -384,14 +218,6 @@ impl Rows {
             EntityRoot::V2(root) => self.object_type(artifact, &root.object_type),
             EntityRoot::V2Interface(root) => {
                 let name = root.interface.name.as_str().to_owned();
-                self.declared.insert(
-                    PinnedType::of(artifact, &name),
-                    TypeInfo {
-                        kind: TypeKind::Interface,
-                        extends: None,
-                        children: Vec::new(),
-                    },
-                );
                 self.types.insert(TypeRow {
                     at: at(
                         artifact,
@@ -453,18 +279,6 @@ impl Rows {
         for property in &def.properties {
             self.property(artifact, &name, property, &def.lifecycles);
         }
-        self.declared.insert(
-            PinnedType::of(artifact, &name),
-            TypeInfo {
-                kind: TypeKind::ObjectType,
-                extends: def.extends.as_ref().map(|n| n.as_str().to_owned()),
-                children: def
-                    .owned_collections
-                    .iter()
-                    .map(|collection| collection.child_type.as_str().to_owned())
-                    .collect(),
-            },
-        );
         for link in &def.links {
             self.link(artifact, &name, link.id.as_str(), link.target.as_str());
         }
@@ -513,15 +327,6 @@ impl Rows {
         });
     }
 
-    /// The projected type `name` binds to.
-    fn pin(&self, name: &str) -> Option<PinnedType> {
-        let pinned = PinnedType {
-            artifact: self.bindings.artifact(name)?.clone(),
-            name: name.to_owned(),
-        };
-        self.declared.contains_key(&pinned).then_some(pinned)
-    }
-
     fn depends_on(&mut self, artifact: &ArtifactEnvelope, all: &[&ArtifactEnvelope]) {
         let present = |id: &str, version: &str| {
             all.iter()
@@ -558,21 +363,20 @@ impl Rows {
         }
     }
 
-    fn action(&mut self, artifact: &ArtifactEnvelope) {
+    fn action(&mut self, artifact: &ArtifactEnvelope, admission: &Admission<'_>) {
         let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact)) else {
             return;
         };
         let Some(program) = &action.effect_program else {
             return;
         };
-        let target = program.target();
-        let pinned = PinnedType {
-            artifact: ArtifactKey {
-                artifact_id: target.entity_artifact_id.to_owned(),
-                version: target.entity_artifact_version.to_owned(),
-            },
-            name: target.object_kind.to_owned(),
+        // The definition admission binds the effect to; none when the
+        // checker refuses the pin.
+        let Some(target) = admission.effect_target(program) else {
+            return;
         };
+        let lineage = PinnedType::lineage(target, admission);
+        let pinned = PinnedType::of(target);
         let mut writes: Vec<MemberRef> = Vec::new();
         let via = match program {
             ActionEffectProgram::FireTransition {
@@ -587,43 +391,30 @@ impl Rows {
                         lifecycle: lifecycle.as_str().to_owned(),
                         transition: transition.as_str().to_owned(),
                     },
-                    &pinned,
+                    &lineage,
                 ));
                 WriteVia::FireTransition
             }
             ActionEffectProgram::UpsertInputObject { .. } => {
-                writes.extend(
-                    self.declared
-                        .contains_key(&pinned)
-                        .then(|| pinned.type_ref()),
-                );
+                writes.push(pinned.type_ref());
                 WriteVia::UpsertObject
             }
             ActionEffectProgram::MutateParentWithRows { .. } => {
-                writes.extend(
-                    self.declared
-                        .contains_key(&pinned)
-                        .then(|| pinned.type_ref()),
-                );
+                writes.push(pinned.type_ref());
                 // The rows it creates, changes, and deletes are objects of the
-                // child types of the owned collections the pinned type and its
-                // supertypes declare.
-                let children: BTreeSet<&String> = self
-                    .lineage(&pinned)
-                    .iter()
-                    .filter_map(|owner| self.declared.get(owner))
-                    .flat_map(|info| &info.children)
-                    .collect();
+                // child types of its effective owned collections, inherited
+                // ones included.
+                let children: BTreeSet<&str> = target.owned_child_types().into_iter().collect();
                 writes.extend(
                     children
                         .into_iter()
-                        .filter_map(|child| self.pin(child))
-                        .map(|child| child.type_ref()),
+                        .filter_map(|child| admission.named(child))
+                        .map(|child| PinnedType::of(child).type_ref()),
                 );
                 WriteVia::MutateRows
             }
         };
-        for target in writes {
+        for target in writes.into_iter().filter(|target| self.declares(target)) {
             self.writes.insert(WritesRow {
                 writer: at(artifact, Member::Artifact {}),
                 target,
@@ -632,39 +423,19 @@ impl Rows {
         }
     }
 
-    /// `start`, then its supertypes, nearest first, each the projected type
-    /// its name binds to. A cycle (refused by the entity check) ends after at
-    /// most one pass over the types.
-    fn lineage(&self, start: &PinnedType) -> Vec<PinnedType> {
-        let mut out = vec![start.clone()];
-        while out.len() <= self.declared.len() {
-            let Some(parent) = out
-                .last()
-                .and_then(|current| self.declared.get(current))
-                .filter(|info| info.kind == TypeKind::ObjectType)
-                .and_then(|info| info.extends.as_deref())
-                .and_then(|name| self.pin(name))
-            else {
-                break;
-            };
-            out.push(parent);
-        }
-        out
-    }
-
-    /// The row declaring a property, link, or transition of the type `start`
-    /// pins: on that type or its nearest supertype that declares it. A row
-    /// binds when the pinned type's own artifact declares it, or an
-    /// extension (an artifact that declares no type). `None` when no row
-    /// does.
-    fn resolve(&self, member: &Member, start: &PinnedType) -> Option<MemberRef> {
+    /// The row declaring a property, link, or transition along an admitted
+    /// `lineage` (the type, then its supertypes): on the nearest type that
+    /// declares it. A row binds when that type's own artifact declares it,
+    /// or an extension (an artifact that declares no type). `None` when no
+    /// row does.
+    fn resolve(&self, member: &Member, lineage: &[PinnedType]) -> Option<MemberRef> {
         let extension = |at: &MemberRef| {
-            !self.declared.keys().any(|pinned| {
-                pinned.artifact.artifact_id == at.artifact_id
-                    && pinned.artifact.version == at.version
-            })
+            !self
+                .types
+                .iter()
+                .any(|row| row.at.artifact_id == at.artifact_id && row.at.version == at.version)
         };
-        self.lineage(start).into_iter().find_map(|owner| {
+        lineage.iter().find_map(|owner| {
             let wanted = with_type(member, owner.name.clone());
             let admitted = |at: &&MemberRef| {
                 at.member == wanted
@@ -689,13 +460,22 @@ impl Rows {
     }
 
     /// Every write a decide graph's closed fact-change schema admits.
-    fn fact_writes(&mut self, artifact: &ArtifactEnvelope, schema: &FactSchema<'_>) {
+    fn fact_writes(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        schema: &FactSchema<'_>,
+        admission: &Admission<'_>,
+    ) {
         let ops = schema.ops();
         let values = |name: &str| schema.values(name).unwrap_or_default();
         for type_name in values("objectType") {
-            let Some(owner) = self.pin(type_name) else {
+            // The definition admission binds the `objectType` value to, as
+            // the lifecycle-write check resolves it.
+            let Some(admitted) = admission.named(type_name) else {
                 continue;
             };
+            let lineage = PinnedType::lineage(admitted, admission);
+            let owner = PinnedType::of(admitted);
             let mut candidates = Vec::new();
             if ops.contains(&FactChangeOp::Transition) {
                 for lifecycle in values("lifecycle") {
@@ -706,7 +486,7 @@ impl Rows {
                                 lifecycle: lifecycle.to_owned(),
                                 transition: transition.to_owned(),
                             },
-                            &owner,
+                            &lineage,
                         ) {
                             candidates.push((declared, WriteVia::FactTransition));
                         }
@@ -716,7 +496,7 @@ impl Rows {
             if ops.contains(&FactChangeOp::Set) {
                 for property in values("property") {
                     if let Some(declared) =
-                        self.resolve(&property_member(type_name, property), &owner)
+                        self.resolve(&property_member(type_name, property), &lineage)
                     {
                         candidates.push((declared, WriteVia::FactSet));
                     }
@@ -758,29 +538,16 @@ impl Rows {
         }
     }
 
-    /// The projected type a mapping target's entity artifact id declares:
-    /// the version its name binds to, when several are projected.
-    fn map_target(&self, entity: &str) -> Option<PinnedType> {
-        let declared: Vec<&PinnedType> = self
-            .declared
-            .keys()
-            .filter(|pinned| pinned.artifact.artifact_id == entity)
-            .collect();
-        declared
-            .iter()
-            .find(|pinned| self.pin(&pinned.name).as_ref() == Some(**pinned))
-            .or_else(|| declared.first())
-            .map(|pinned| (*pinned).clone())
-    }
-
-    fn mapping(&mut self, artifact: &ArtifactEnvelope) {
+    fn mapping(&mut self, artifact: &ArtifactEnvelope, admission: &Admission<'_>) {
         let Ok(mapping) = serde_json::from_value::<MappingIr>(payload_json(artifact)) else {
             return;
         };
         for map in &mapping.maps {
-            let Some(owner) = self.map_target(&map.target.entity) else {
+            let Some(admitted) = admission.declared_by(&map.target.entity) else {
                 continue;
             };
+            let lineage = PinnedType::lineage(admitted, admission);
+            let owner = PinnedType::of(admitted);
             let type_name = owner.name.as_str();
             let link = |id: &str| Member::Link {
                 type_name: type_name.to_owned(),
@@ -808,7 +575,7 @@ impl Rows {
                 ));
             }
             for gap in &map.gaps {
-                let member = if self.resolve(&link(&gap.member), &owner).is_some() {
+                let member = if self.resolve(&link(&gap.member), &lineage).is_some() {
                     link(&gap.member)
                 } else {
                     property_member(type_name, &gap.member)
@@ -821,7 +588,7 @@ impl Rows {
                 let target = if matches!(member, Member::Type { .. }) {
                     Some(owner.type_ref())
                 } else {
-                    self.resolve(&member, &owner)
+                    self.resolve(&member, &lineage)
                 };
                 let Some(target) = target else {
                     continue;
@@ -843,11 +610,21 @@ impl Rows {
 
     /// A law whose subject or binding the set does not define has no row:
     /// the law check (`law.model.unknown_binding`) already refuses it.
-    fn law(&mut self, artifact: &ArtifactEnvelope, all: &[&ArtifactEnvelope]) {
+    fn law(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        all: &[&ArtifactEnvelope],
+        admission: &Admission<'_>,
+    ) {
         let Ok(law) = serde_json::from_value::<LawIR>(payload_json(artifact)) else {
             return;
         };
-        let Some(subject) = self.pin(&law.subject).map(|pinned| pinned.type_ref()) else {
+        let pin = |name: &str| {
+            admission
+                .named(name)
+                .map(|admitted| PinnedType::of(admitted).type_ref())
+        };
+        let Some(subject) = pin(&law.subject) else {
             return;
         };
         let binds = match law.response {
@@ -859,7 +636,7 @@ impl Rows {
             } => {
                 // An inherited transition binds the row of the supertype
                 // that declares it.
-                let Some(owner) = self.pin(&object_type) else {
+                let Some(admitted) = admission.named(&object_type) else {
                     return;
                 };
                 let Some(target) = self.resolve(
@@ -868,7 +645,7 @@ impl Rows {
                         lifecycle: property,
                         transition: transition_id,
                     },
-                    &owner,
+                    &PinnedType::lineage(admitted, admission),
                 ) else {
                     return;
                 };
@@ -878,7 +655,7 @@ impl Rows {
                 object_type,
                 invariant_id,
             } => {
-                let Some(owner) = self.pin(&object_type).map(|pinned| pinned.type_ref()) else {
+                let Some(owner) = pin(&object_type) else {
                     return;
                 };
                 Some(LawBinding::Invariant {

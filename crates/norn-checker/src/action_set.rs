@@ -1824,6 +1824,113 @@ impl<'a> Model<'a> {
     }
 }
 
+/// The object types admission binds, through the same [`Model`] the action
+/// and lifecycle-write checks resolve with: the single source for consumers
+/// that must agree with admission, such as the definition catalog.
+pub(crate) struct Admission<'a> {
+    model: Model<'a>,
+    artifacts: &'a [ArtifactEnvelope],
+    base: &'a [ArtifactEnvelope],
+}
+
+/// One admitted object type definition.
+#[derive(Clone, Copy)]
+pub(crate) struct AdmittedType<'m, 'a> {
+    defined: &'m Defined<'a>,
+}
+
+impl<'a> Admission<'a> {
+    pub(crate) fn new(
+        artifacts: &'a [ArtifactEnvelope],
+        base: &'a [ArtifactEnvelope],
+        registry: &BTreeSet<PropertyTypeName>,
+    ) -> Self {
+        Self {
+            model: Model::new(artifacts, base, registry, true),
+            artifacts,
+            base,
+        }
+    }
+
+    /// The definition an object type name binds to (decide-graph
+    /// `objectType` values, supertypes, owned-collection child types).
+    pub(crate) fn named(&self, name: &str) -> Option<AdmittedType<'_, 'a>> {
+        self.model
+            .object_type(name)
+            .map(|defined| AdmittedType { defined })
+    }
+
+    /// The definition an entity artifact id declares (mapping targets).
+    pub(crate) fn declared_by(&self, artifact_id: &str) -> Option<AdmittedType<'_, 'a>> {
+        self.model
+            .by_name
+            .values()
+            .flatten()
+            .find(|defined| defined.artifact.artifact_id == artifact_id)
+            .map(|defined| AdmittedType { defined })
+    }
+
+    /// The definition an action effect pins, when its pinned entity artifact
+    /// defines the effect's object kind ([`effect_target_findings`]).
+    pub(crate) fn effect_target(
+        &self,
+        program: &ActionEffectProgram,
+    ) -> Option<AdmittedType<'_, 'a>> {
+        let target = program.target();
+        let pinned = self.artifacts.iter().chain(self.base).find(|candidate| {
+            candidate.artifact_id == target.entity_artifact_id
+                && candidate.version == target.entity_artifact_version
+        })?;
+        self.model
+            .defined_by(pinned)
+            .filter(|defined| defined.name == target.object_kind)
+            .map(|defined| AdmittedType { defined })
+    }
+}
+
+impl<'a> AdmittedType<'_, 'a> {
+    /// The entity artifact that defines the type.
+    pub(crate) const fn artifact(&self) -> &'a ArtifactEnvelope {
+        self.defined.artifact
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.defined.name
+    }
+
+    fn effective(&self) -> Option<&EffectiveObjectType> {
+        self.defined.effective_object_type.as_ref()?.as_ref().ok()
+    }
+
+    /// The effective supertype names, nearest first.
+    pub(crate) fn supertypes(&self) -> Vec<&str> {
+        self.effective()
+            .map(|effective| {
+                effective
+                    .lineage
+                    .iter()
+                    .skip(1)
+                    .map(ObjectTypeName::as_str)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The child type names of every effective owned collection, inherited
+    /// ones included.
+    pub(crate) fn owned_child_types(&self) -> Vec<&str> {
+        self.effective()
+            .map(|effective| {
+                effective
+                    .owned_collections
+                    .iter()
+                    .map(|collection| collection.child_type.as_str())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
 /// The typed root of an `action` artifact, when its payload decodes.
 fn decode_action(artifact: &ArtifactEnvelope) -> Option<ActionRoot> {
     let ArtifactPayload::Action(payload) = &artifact.payload else {
