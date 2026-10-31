@@ -1,6 +1,6 @@
 //! Thin remote client: the server's live MCP catalog supplies every tool.
 
-use std::io::{Read as _, Write as _};
+use std::io::{BufRead as _, Read as _, Write as _};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -99,6 +99,9 @@ fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
         }
     }
     let body = request(&args.command, &input)?;
+    if args.token_env.is_some() && !args.url.starts_with("https://") {
+        return Err("bearer authentication requires an HTTPS endpoint".into());
+    }
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(30)))
@@ -122,12 +125,12 @@ fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     let mut response = call
         .send(body.as_bytes())
         .map_err(|_e| "MCP HTTP request failed")?;
-    let text = response
-        .body_mut()
-        .with_config()
-        .limit(8 * 1024 * 1024)
-        .read_to_string()
-        .map_err(|_e| "MCP response could not be read")?;
+    let is_sse = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.split(';').next() == Some("text/event-stream"));
+    let text = response_text(response.body_mut().as_reader(), is_sse)?;
     let value: Value = serde_json::from_str(&text).map_err(|_e| "invalid MCP JSON response")?;
     if value.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
         || value.get("id") != Some(&json!(1))
@@ -138,6 +141,39 @@ fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     let failed = value.get("error").is_some()
         || value.pointer("/result/isError").and_then(Value::as_bool) == Some(true);
     Ok((text, failed))
+}
+
+fn response_text(reader: impl std::io::Read, is_sse: bool) -> Result<String, String> {
+    let mut reader = std::io::BufReader::new(reader.take(8 * 1024 * 1024));
+    if !is_sse {
+        let mut text = String::new();
+        reader
+            .read_to_string(&mut text)
+            .map_err(|_e| "MCP response could not be read")?;
+        return Ok(text);
+    }
+    let mut data = String::new();
+    loop {
+        let mut line = String::new();
+        if reader
+            .read_line(&mut line)
+            .map_err(|_e| "MCP stream could not be read")?
+            == 0
+        {
+            return Err("MCP stream ended before its response".into());
+        }
+        if line.trim_end_matches(['\r', '\n']).is_empty() {
+            if serde_json::from_str::<Value>(&data)
+                .ok()
+                .is_some_and(|value| value.get("id") == Some(&json!(1)))
+            {
+                return Ok(data);
+            }
+            data.clear();
+        } else if let Some(field) = line.strip_prefix("data:") {
+            data.push_str(field.strip_prefix(' ').unwrap_or(field));
+        }
+    }
 }
 
 #[cfg(test)]
