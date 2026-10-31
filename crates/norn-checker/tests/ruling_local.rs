@@ -229,6 +229,7 @@ fn a_ruling_is_dated_decided_and_never_its_own_successor() {
 }
 
 #[test]
+<<<<<<< HEAD
 fn the_typed_authoring_goldens_pass_the_local_checks() {
     // `fixtures/ruling-ir/rulings.json` is compiled from `rulings.source.ts`
     // by `tools/norn-ts` (`test/ruling.test.ts` keeps it byte-identical).
@@ -243,4 +244,28 @@ fn the_typed_authoring_goldens_pass_the_local_checks() {
     for artifact in &golden {
         assert_eq!(findings(artifact), [], "{}", artifact["artifactId"]);
     }
+||||||| b2b79d2
+=======
+fn scoped_cases_are_disjoint_and_revisit_evidence_is_pinned() {
+    let mut overlapping = ruling();
+    overlapping["payload"]["outcome"] = json!({ "kind": "scoped", "cases": [
+        { "scope": { "tenantId": "a" }, "definition": total("0.1.0") },
+        { "scope": { "tenantId": "a" }, "definition": total("0.1.0") }
+    ]});
+    assert_eq!(
+        findings(&overlapping),
+        refused(INVALID_RULING, "/payload/outcome/cases/1/scope")
+    );
+    let mut disjoint = overlapping.clone();
+    disjoint["payload"]["outcome"]["cases"][1]["scope"] = json!({ "tenantId": "b" });
+    assert_eq!(findings(&disjoint), []);
+
+    let mut deferred = ruling();
+    deferred["payload"]["outcome"] = json!({ "kind": "defer", "revisit": { "kind": "evidence",
+        "source": { "kind": "artifact", "artifactId": "", "version": "", "sha256": "bad" } } });
+    assert_eq!(
+        findings(&deferred),
+        refused(INVALID_RULING, "/payload/outcome/revisit/source")
+    );
+>>>>>>> ruling/c3-obligations
 }

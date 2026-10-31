@@ -2181,7 +2181,7 @@
     },
     {
       "path": "crates/norn-checker/src/claims.rs",
-      "sha256": "738cec280669d332f761c9a328e32d748cf06b39510ea2c51e6ce12fe8f17cf1",
+      "sha256": "7bfce68e994a1fe536618d9994dbfd8afb43f812f3894172816a72154cf59c9e",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -2235,7 +2235,7 @@
     },
     {
       "path": "crates/norn-checker/src/definition_catalog.rs",
-      "sha256": "3ff4d9b8162b742cd83e63f3d52debf24a00a12b2914d1bc91c8e8de775ae39a",
+      "sha256": "1fad93c95ea998174d9f4e348403b2960db36385d49018593772ff364c990ceb",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3207,7 +3207,7 @@
     },
     {
       "path": "crates/norn-checker/src/ruling.rs",
-      "sha256": "80076a67cd4a9a69a0dad997a94c443cad8baae33f8091e791d08c881eacf22e",
+      "sha256": "fe86a3b54ca96cea14f2cc485b02e44aef4421ca4d2fbffc3a9d2b0bcc0c56c2",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3459,7 +3459,7 @@
     },
     {
       "path": "crates/norn-checker/tests/claims.rs",
-      "sha256": "4a9011eacc9c78c0420903488a199fc0b17c8ccc6a206f9c95e86956213232cd",
+      "sha256": "f27a31f48a6a3264f2b381b9c808039b306cfa787831df3cddf9ea63bb1461a6",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3495,7 +3495,7 @@
     },
     {
       "path": "crates/norn-checker/tests/definition_catalog.rs",
-      "sha256": "d48cbf3cae3fcec52a2f9f28b732b67cd5cfe494dde56e57e13b8ffe7620c69e",
+      "sha256": "48255bb843a78930e1cab0cf825714af1abfd17b5f3c1a19b09bfbbbd4b6a4c3",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -4248,7 +4248,7 @@
     },
     {
       "path": "crates/norn-checker/tests/ruling_local.rs",
-      "sha256": "b29ce07ef7a24532f05f0a987c0c0a8e2173411a4875dcfe1fc85e2e0bf2dfb2",
+      "sha256": "c78aed7bba0816ea61584447c6bba84bf20f4a9d4c36e027279c9579cf8f5294",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

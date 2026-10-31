@@ -455,3 +455,48 @@ fn a_witness_through_a_missing_mapping_fails_closed() {
         ])
     );
 }
+
+#[test]
+fn a_witness_mapping_without_the_target_value_fails_closed() {
+    // Both mappings stop mapping `total`: no value is not agreement.
+    let mut artifacts = conflict_set("0.1.0", Vec::new());
+    for artifact in &mut artifacts {
+        if artifact["kind"] == "mapping" {
+            artifact["payload"]["maps"][0]["properties"]
+                .as_array_mut()
+                .expect("properties")
+                .retain(|rule| rule["property"] != "total");
+            artifact["payload"]["maps"][0]["gaps"] =
+                json!([{ "member": "total", "reason": "deferred" }]);
+        }
+    }
+    assert_eq!(
+        obligations(artifacts),
+        expect(&[
+            (codes::UNRULED_DIVERGENCE, TOTALS),
+            (codes::WITNESS_UNEVALUABLE, TOTALS)
+        ])
+    );
+}
+
+#[test]
+fn a_witness_mapping_to_another_type_fails_closed() {
+    // The storefront map is redirected to another type with a `total`.
+    let mut artifacts = conflict_set("0.1.0", Vec::new());
+    let mut other = model()[1].clone();
+    other["artifactId"] = json!("shop.Quote.entity");
+    other["payload"]["objectType"]["name"] = json!("shop.Quote");
+    artifacts.push(other);
+    for artifact in &mut artifacts {
+        if artifact["artifactId"] == STOREFRONT {
+            artifact["payload"]["maps"][0]["target"]["entity"] = json!("shop.Quote.entity");
+        }
+    }
+    assert_eq!(
+        obligations(artifacts),
+        expect(&[
+            (codes::UNRULED_DIVERGENCE, TOTALS),
+            (codes::WITNESS_UNEVALUABLE, TOTALS)
+        ])
+    );
+}

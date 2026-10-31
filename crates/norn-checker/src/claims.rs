@@ -29,7 +29,7 @@ use norn_ir::definition_catalog::{ArtifactKey, DefinitionCatalog, Member, Member
 use norn_ir::mapping::MappingIr;
 use norn_ir::provenance::UtcTimestamp;
 use norn_ir::ruling::{ClaimIr, ClaimStatement, DivergenceWitness, Observation, RulingIr};
-use norn_ir::{ArtifactEnvelope, ArtifactLifecycle, ArtifactPayload, RuntimeValue, ScopeRef};
+use norn_ir::{ArtifactEnvelope, ArtifactLifecycle, ArtifactPayload, RuntimeValue};
 
 use crate::artifact_set::ResolvedArtifactSet;
 use crate::mapping::{SourceDocument, compile_mapping_artifact};
@@ -324,7 +324,11 @@ fn divergence(
             "no ratified ruling resolves this divergence and governs a definition its witness depends on".to_owned(),
         ));
     }
-    let Member::Property { property, .. } = &witness.target.member else {
+    let Member::Property {
+        type_name,
+        property,
+    } = &witness.target.member
+    else {
         return out;
     };
     let mut values = Vec::new();
@@ -342,7 +346,7 @@ fn divergence(
             ));
             return out;
         };
-        match observe(mapping, observation, property, artifacts, base) {
+        match observe(mapping, observation, (type_name, property), artifacts, base) {
             Ok(value) => values.push((mapping, value)),
             Err(reason) => {
                 out.push(finding(
@@ -357,7 +361,7 @@ fn divergence(
     }
     if let [(left, left_value), (right, right_value)] = values.as_slice()
         && left_value != right_value
-        && !disjoint(&left.scope, &right.scope)
+        && !crate::ruling::disjoint(&left.scope, &right.scope)
     {
         out.push(finding(
             codes::CONTRADICTION_PERSISTS,
@@ -393,28 +397,16 @@ fn ruled(claim: &ArtifactKey, governed: &BTreeSet<ArtifactKey>, rulings: &[Rulin
     })
 }
 
-/// Whether no object can be in both scopes: some dimension is set on both
-/// to different values.
-fn disjoint(left: &ScopeRef, right: &ScopeRef) -> bool {
-    [
-        (&left.org_id, &right.org_id),
-        (&left.tenant_id, &right.tenant_id),
-        (&left.workspace_id, &right.workspace_id),
-        (&left.environment_id, &right.environment_id),
-        (&left.business_unit_id, &right.business_unit_id),
-    ]
-    .into_iter()
-    .any(|(left, right)| matches!((left, right), (Some(left), Some(right)) if left != right))
-}
-
-/// The value `mapping`'s object map gives `property` for the observed record.
+/// The value `mapping`'s object map gives the target `(type, property)` for
+/// the observed record. A map that produces another type, or no value for the
+/// property, cannot witness anything.
 fn observe(
     mapping: &ArtifactEnvelope,
     observation: &Observation,
-    property: &str,
+    (type_name, property): (&str, &str),
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
-) -> Result<Option<RuntimeValue>, String> {
+) -> Result<RuntimeValue, String> {
     let document: MappingIr = serde_json::from_value(payload_json(mapping))
         .map_err(|error| format!("{} is not a mapping: {error}", mapping.artifact_id))?;
     let map = document.map(&observation.map).ok_or_else(|| {
@@ -451,8 +443,21 @@ fn observe(
                 observation.map
             )
         })?;
-    Ok(mapped
+    if mapped.object_type.as_str() != type_name {
+        return Err(format!(
+            "map {:?} produces {}, not the witness target {type_name}",
+            observation.map,
+            mapped.object_type.as_str()
+        ));
+    }
+    mapped
         .invocations
         .iter()
-        .find_map(|invocation| invocation.input.get(property).cloned()))
+        .find_map(|invocation| invocation.input.get(property).cloned())
+        .ok_or_else(|| {
+            format!(
+                "map {:?} gives no value for {property:?} of the witness record",
+                observation.map
+            )
+        })
 }
