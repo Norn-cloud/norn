@@ -122,11 +122,21 @@ fn resolve<'a>(
     packs: &'a BTreeMap<String, PackIndex>,
     report: &mut impl FnMut(String, String),
 ) -> Option<(&'a PackIndex, String)> {
-    let endpoint = link.get(field).and_then(as_object)?;
-    let (pack_id, version) = (
-        string_field(endpoint, "packId")?,
-        string_field(endpoint, "version")?,
-    );
+    let endpoint = link.get(field).and_then(as_object);
+    let pinned = endpoint.and_then(|endpoint| {
+        Some((
+            string_field(endpoint, "packId")?,
+            string_field(endpoint, "version")?,
+        ))
+    });
+    let Some((pack_id, version)) = pinned else {
+        // A malformed link never drops out of the coverage silently.
+        report(
+            format!("{field} must pin a packId and a version"),
+            format!("payload.{field}"),
+        );
+        return None;
+    };
     match packs.get(pack_id) {
         Some(pack) if pack.version == version => Some((pack, pack_id.to_owned())),
         Some(pack) => {
@@ -155,7 +165,15 @@ fn validate_link(
     packs: &BTreeMap<String, PackIndex>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<LinkCoverage> {
-    let link = as_object(link)?;
+    let Some(link) = as_object(link) else {
+        diagnostics.push(diagnostic(
+            REGISTRY_CODE,
+            "link payload must be an object",
+            "payload",
+            Some(link_id),
+        ));
+        return None;
+    };
     let before = diagnostics.len();
     let mut report = |message: String, path: String| {
         diagnostics.push(diagnostic(REGISTRY_CODE, message, path, Some(link_id)));
