@@ -79,7 +79,7 @@
           "runtime": "missing",
           "model": "bounded_model_checked",
           "proof": "partial",
-          "residual": "Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in #2764 (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, #2583), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted.",
+          "residual": "Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in #2764 (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, #2583), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted. The L1 reference checks single-object atomic updates, and its extracted successor theorem covers only the version increment/overflow fragment; no whole-transition correspondence is claimed.",
           "evidence": {
             "runtime": [],
             "model": [
@@ -104,6 +104,13 @@
                 "command": "scripts/verify-kernel-l1-lean.sh",
                 "selectors": [
                   "theorem:fresh_atomic"
+                ]
+              },
+              {
+                "artifact": "verification/kernel-l1/VersionProof.lean",
+                "command": "scripts/verify-kernel-l1-aeneas.sh",
+                "selectors": [
+                  "theorem:version_correspondence"
                 ]
               }
             ]
@@ -132,13 +139,6 @@
                 "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
                 "selectors": [
                   "theorem:stale_commit_rejects"
-                ]
-              },
-              {
-                "artifact": "verification/kernel-l1/VersionProof.lean",
-                "command": "scripts/verify-kernel-l1-aeneas.sh",
-                "selectors": [
-                  "theorem:version_correspondence"
                 ]
               }
             ]
