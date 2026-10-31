@@ -2161,6 +2161,7 @@
         "crates/norn-checker/src/naming_series.rs",
         "crates/norn-checker/src/object_types.rs",
         "crates/norn-checker/src/obligations.rs",
+        "crates/norn-checker/src/obligations/induction.rs",
         "crates/norn-checker/src/property_codec.rs",
         "crates/norn-checker/src/property_types.rs",
         "crates/norn-checker/src/receipt.rs",

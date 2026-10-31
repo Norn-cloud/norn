@@ -83,6 +83,8 @@ fn required_inventory_is_reconstructed_and_every_mutated_echo_is_rejected() {
         ("/semantics/numeric", json!("float")),
         ("/assurance/required", json!("sampled")),
         ("/obligations/0/goal", json!({"kind":"trivial"})),
+        ("/obligations/0/statement/rule", json!("trivial")),
+        ("/obligations/0/assessment", json!("proven")),
     ] {
         let mut altered = challenge.body().clone();
         *altered.pointer_mut(path).expect("path") = value;
@@ -264,15 +266,22 @@ fn an_artifact_and_a_transition_with_the_same_display_name_remain_distinct_write
         transition: "shipped".into()
     }));
     let goals = challenge.body()["obligations"].as_array().expect("goals");
+    let writers = challenge.body()["writerStatements"]
+        .as_array()
+        .expect("writer statements");
     assert!(
         goals
             .iter()
-            .any(|g| g["goal"]["writer"]["kind"] == "artifact")
+            .any(|g| g["goal"]["writer"].as_u64().is_some_and(|index| writers
+                [usize::try_from(index).expect("writer index")]["identity"]["kind"]
+                == "artifact"))
     );
     assert!(
         goals
             .iter()
-            .any(|g| g["goal"]["writer"]["kind"] == "transition")
+            .any(|g| g["goal"]["writer"].as_u64().is_some_and(|index| writers
+                [usize::try_from(index).expect("writer index")]["identity"]["kind"]
+                == "transition"))
     );
 }
 #[test]
@@ -737,4 +746,48 @@ fn public_challenges_bind_original_source_bytes_and_accepted_law_edits() {
             Err(ChallengeError::InvalidSubmission)
         );
     }
+}
+
+#[test]
+fn transition_frames_only_assess_conditional_preservation() {
+    let mut documents = pool();
+    documents[3]["payload"]["modality"] = json!({"kind":"always"});
+    documents[3]["payload"]["response"]["expression"] = json!("self.paid == true");
+    let definitions = source(&documents);
+    let challenge = approve(&definitions)
+        .challenge(&definitions, &BTreeSet::new())
+        .expect("challenge");
+    let body = challenge.body();
+    let law = body["lawStatements"]
+        .as_array()
+        .expect("laws")
+        .iter()
+        .position(|entry| entry["artifactId"] == documents[3]["artifactId"])
+        .expect("law");
+    let transition = LawWriter::Transition {
+        object_type: "erpnext.SalesOrder".into(),
+        property: "status".into(),
+        transition: "shipped".into(),
+    };
+    let writer = body["writerStatements"]
+        .as_array()
+        .expect("writers")
+        .iter()
+        .position(|entry| entry["identity"] == transition.to_json())
+        .expect("writer");
+    let mut preservation = false;
+    for goal in body["obligations"]
+        .as_array()
+        .expect("goals")
+        .iter()
+        .filter(|entry| entry["law"] == json!(law))
+    {
+        if goal["goal"]["kind"] == "preservation" && goal["goal"]["writer"] == json!(writer) {
+            assert_eq!(goal["assessment"], "transition_frame");
+            preservation = true;
+        } else {
+            assert_eq!(goal["assessment"], "unknown");
+        }
+    }
+    assert!(preservation);
 }
