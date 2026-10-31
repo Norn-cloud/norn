@@ -1221,6 +1221,8 @@ def evidence_inventory_canaries() -> None:
     helper = "scripts/verification_attestation.py"
     if helper not in paths:
         raise AssertionError("shared attestation helper is absent from content-addressed evidence")
+    if "scripts/coverage_manifest.py" not in paths:
+        raise AssertionError("coverage manifest loader is absent from content-addressed evidence")
 
     result_validator = load_module("norn_validate_result_inventory_canary", RESULT_VALIDATOR)
     result_validator.reconcile_evidence_paths(paths, set(paths))

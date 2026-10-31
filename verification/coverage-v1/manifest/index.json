@@ -48,6 +48,7 @@
     "scripts/check-verification-tools.sh",
     "scripts/validate-executed-test-selectors.py",
     "scripts/verification_attestation.py",
+    "scripts/coverage_manifest.py",
     "scripts/quint_apalache.py",
     "scripts/verify-artifact-governance-extraction.sh",
     "scripts/verify-promoted-subsystems.sh",
