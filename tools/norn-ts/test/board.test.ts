@@ -32,7 +32,7 @@ test("Norn.board lowers typed metrics to one norn.board/1 document with a builde
 test("Norn.json lowers to EntityIR json-ext", () => {
   const result = compile("board.source.ts")
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
-  const row = result.artifacts.find((a) => typeof a === "object" && a !== null && !Array.isArray(a) && a.artifactId === "boards.Row.entity")
+  const row = result.artifacts.find((a) => typeof a === "object" && a !== null && !Array.isArray(a) && "artifactId" in a && a.artifactId === "boards.Row.entity")
   expect(row).toMatchObject({ payload: { objectType: { properties: expect.arrayContaining([{ id: "buckets", type: { kind: "json-ext" } }]) } } })
   expect(E.json).toEqual({ kind: "json-ext" })
 })

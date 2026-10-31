@@ -88,7 +88,7 @@ export function deployToDir(artifacts: ReadonlyArray<Json>, dir: string): DirDep
 export function prepareBoardsDeploy(boards: ReadonlyArray<Json>, dir: string): () => ReadonlyArray<string> {
   const target = join(dir, "boards")
   const ids = boards.map((b) => {
-    if (typeof b !== "object" || b === null || Array.isArray(b) || typeof b.id !== "string") throw new DeployRefused("a board needs a string id")
+    if (typeof b !== "object" || b === null || Array.isArray(b) || !("id" in b) || typeof b.id !== "string") throw new DeployRefused("a board needs a string id")
     return b.id
   })
   for (const id of ids) if (!FILE_SAFE.test(id) || id.startsWith(".")) throw new DeployRefused(`board id ${JSON.stringify(id)} cannot name a file`)
