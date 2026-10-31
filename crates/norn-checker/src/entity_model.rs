@@ -871,7 +871,6 @@ impl<'a> Checker<'a, '_> {
             .map(|(parent, _)| *parent)
     }
 
-    /// The registered supertypes of `name`, nearest first.
     fn protected(&self, name: &ObjectTypeName, property: &PropertyId) -> bool {
         std::iter::once(name)
             .chain(self.ancestors(name))
@@ -880,6 +879,7 @@ impl<'a> Checker<'a, '_> {
             .any(|candidate| candidate.id == *property && candidate.protected)
     }
 
+    /// The registered supertypes of `name`, nearest first.
     fn ancestors(&self, name: &ObjectTypeName) -> Vec<&'a ObjectTypeName> {
         let mut ancestors = Vec::new();
         let mut current = self.parent(name);
