@@ -107,7 +107,9 @@ pub fn check_duties(graph: &DutyGraph, sequence: &[String], budget: usize) -> Du
             Err(()) => return DutyCheck::Exhausted,
         };
         if let Some(end) = end {
-            let (trace, sensitive_start) = trace(&parents, end);
+            let Some((trace, sensitive_start)) = trace(&parents, end) else {
+                return DutyCheck::Invalid;
+            };
             return DutyCheck::Counterexample {
                 role: role.clone(),
                 trace,
@@ -140,10 +142,11 @@ fn search(
             };
             // Until this role starts the sensitive sequence, any granted
             // action can be an unrestricted prefix, even a sensitive action.
-            if progress == 0 && role.is_some() {
-                if let Some(actor) = grants.first() {
-                    insert(&mut parents, &mut queue, node, (edge.to, 0), edge, actor);
-                }
+            if progress == 0
+                && role.is_some()
+                && let Some(actor) = grants.first()
+            {
+                insert(&mut parents, &mut queue, node, (edge.to, 0), edge, actor);
             }
             let actor = match role {
                 Some(role) if grants.contains(role) => role,
@@ -155,7 +158,7 @@ fn search(
             };
             let next = (
                 edge.to,
-                progress + usize::from(sequence.get(progress) == Some(&edge.action)),
+                progress.saturating_add(usize::from(sequence.get(progress) == Some(&edge.action))),
             );
             insert(&mut parents, &mut queue, node, next, edge, actor);
         }
@@ -183,7 +186,7 @@ fn insert(
     }
 }
 
-fn trace(parents: &Parents, mut end: Node) -> (Vec<DutyStep>, usize) {
+fn trace(parents: &Parents, mut end: Node) -> Option<(Vec<DutyStep>, usize)> {
     let mut steps = Vec::new();
     let mut start_from_end = 0;
     while let Some(Some((previous, step))) = parents.get(&end) {
@@ -193,7 +196,7 @@ fn trace(parents: &Parents, mut end: Node) -> (Vec<DutyStep>, usize) {
         steps.push(step.clone());
         end = *previous;
     }
-    let sensitive_start = steps.len() - start_from_end - 1;
+    let sensitive_start = steps.len().checked_sub(start_from_end)?.checked_sub(1)?;
     steps.reverse();
-    (steps, sensitive_start)
+    Some((steps, sensitive_start))
 }

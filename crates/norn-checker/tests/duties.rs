@@ -21,7 +21,7 @@ fn order() -> (DutyGraph, Vec<String>) {
         .map(|(from, action)| DutyEdge {
             action: action.clone(),
             from,
-            to: from + 1,
+            to: from.saturating_add(1),
         })
         .collect();
     let grants = ids
@@ -36,7 +36,7 @@ fn order() -> (DutyGraph, Vec<String>) {
             edges,
             grants,
         },
-        ids[2..].to_vec(),
+        ids.iter().skip(2).cloned().collect(),
     )
 }
 
@@ -50,7 +50,7 @@ fn distinct_roles_separate_the_sensitive_path() {
 }
 
 #[test]
-fn sales_only_prefix_cannot_hide_an_overprivileged_approver() {
+fn sales_only_prefix_cannot_hide_an_overprivileged_approver() -> Result<(), String> {
     let (mut graph, sequence) = order();
     for action in &sequence {
         graph
@@ -66,24 +66,26 @@ fn sales_only_prefix_cannot_hide_an_overprivileged_approver() {
         sensitive_start,
     } = result
     else {
-        panic!("expected counterexample: {result:?}");
+        return Err(format!("expected counterexample: {result:?}"));
     };
     assert_eq!(role, "approver");
     assert_eq!(sensitive_start, 2);
     assert_eq!(trace.len(), 5);
-    assert!(trace[..2].iter().all(|step| step.role == "sales"));
-    assert!(trace[2..].iter().all(|step| step.role == "approver"));
+    assert!(trace.iter().take(2).all(|step| step.role == "sales"));
+    assert!(trace.iter().skip(2).all(|step| step.role == "approver"));
     assert_eq!(
-        trace[2..]
+        trace
             .iter()
+            .skip(2)
             .map(|s| &s.edge.action)
             .collect::<Vec<_>>(),
         sequence.iter().collect::<Vec<_>>()
     );
+    Ok(())
 }
 
 #[test]
-fn intervening_actions_also_require_the_same_role() {
+fn intervening_actions_also_require_the_same_role() -> Result<(), String> {
     let (mut graph, sequence) = order();
     for action in &sequence {
         graph
@@ -102,18 +104,21 @@ fn intervening_actions_also_require_the_same_role() {
         "alpha.order.route".into(),
         BTreeSet::from(["billing".into()]),
     );
-    graph.edges[3].from = 6;
+    graph.edges.get_mut(3).ok_or("missing invoice edge")?.from = 6;
     assert_eq!(
         check_duties(&graph, &sequence, 1000),
         DutyCheck::Separated { roles_checked: 4 }
     );
+    Ok(())
 }
 
 #[test]
 fn unknown_invalid_and_vacuous_are_never_separated() {
     let (mut graph, sequence) = order();
     assert_eq!(check_duties(&graph, &sequence, 0), DutyCheck::Exhausted);
-    graph.grants.insert(sequence[2].clone(), BTreeSet::new());
+    graph
+        .grants
+        .insert("alpha.order.record_payment".into(), BTreeSet::new());
     assert_eq!(
         check_duties(&graph, &sequence, 1000),
         DutyCheck::Unreachable
