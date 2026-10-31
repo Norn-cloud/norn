@@ -392,9 +392,10 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     workflow = yaml.safe_load(source)
     jobs = workflow["jobs"]
 
-    def has_shell_override(job: dict, step: dict) -> bool:
-        return ("shell" in step or "shell" in job.get("defaults", {}).get("run", {})
-                or "shell" in workflow.get("defaults", {}).get("run", {}))
+    def has_execution_override(job: dict, step: dict) -> bool:
+        return any(key in step or key in job.get("defaults", {}).get("run", {})
+                   or key in workflow.get("defaults", {}).get("run", {})
+                   for key in ("shell", "working-directory"))
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
         "plan": 'echo "plan=$(bash scripts/ci/core.sh plan)" >> "$GITHUB_OUTPUT"',
@@ -409,7 +410,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         require(not job.get("continue-on-error"), f"{name}: gate must fail closed")
         steps = [step for step in job.get("steps", []) if step.get("run", "").strip() == command]
         require(len(steps) == 1 and "if" not in steps[0] and not steps[0].get("continue-on-error")
-                and not has_shell_override(job, steps[0]),
+                and not has_execution_override(job, steps[0]),
                 f"{name}: required gate command missing or conditional")
         if name == "plan":
             require(steps[0].get("id") == "plan" and job.get("outputs", {}).get("plan") == "${{ steps.plan.outputs.plan }}",
@@ -429,7 +430,7 @@ done
 [ "$(echo $RESULTS | wc -w)" -eq 4 ]'''
     require(any(step.get("run", "").strip() == verdict and "if" not in step
                 and not step.get("continue-on-error")
-                and not has_shell_override(full, step)
+                and not has_execution_override(full, step)
                 and step.get("env", {}).get("RESULTS") == "${{ join(needs.*.result, ' ') }}"
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = (ROOT / "scripts/ci/core.sh").read_text()
