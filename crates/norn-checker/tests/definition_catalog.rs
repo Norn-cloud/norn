@@ -817,3 +817,90 @@ fn a_subtype_row_mutation_writes_its_inherited_child_types() {
         ]
     );
 }
+
+#[test]
+fn a_row_mutation_writes_the_child_types_of_the_version_it_pins() {
+    // Two installed versions of the parent declare different owned
+    // collections; each action writes the child types of the version it pins.
+    let parent = |version: &str, child: &str| {
+        let mut parent = serde_json::to_value(entity(
+            "shop.Order.entity",
+            &json!({ "entityVersion": "2.0", "objectType": {
+                "name": "shop.Order",
+                "properties": [{ "id": "id", "type": { "kind": "text" } }],
+                "links": [{ "id": "lines", "target": child,
+                    "cardinality": { "to": "many", "from": "one" } }],
+                "ownedCollections": [{ "id": "lines", "childType": child,
+                    "rowIdProperty": "row_id", "orderingKey": "idx",
+                    "cascadeOnParentDelete": true, "maxRows": 20 }]
+            }}),
+        ))
+        .expect("envelope encodes");
+        parent["version"] = json!(version);
+        envelope(parent)
+    };
+    let child = |id: &str, name: &str| {
+        entity(
+            id,
+            &json!({ "entityVersion": "2.0", "objectType": {
+                "name": name,
+                "properties": [
+                    { "id": "row_id", "type": { "kind": "text" } },
+                    { "id": "idx", "type": { "kind": "integer" } }
+                ]
+            }}),
+        )
+    };
+    let action = |id: &str, version: &str| {
+        envelope(json!({
+            "irVersion": "0.1", "artifactId": id, "kind": "action",
+            "namespace": "shop", "name": "edit", "version": "1.0.0", "lifecycle": "draft",
+            "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+            "payload": {
+                "actionId": "shop.edit_order", "scopeRequired": [], "idempotent": false,
+                "ledgered": false, "inputSchema": { "type": "object" },
+                "outputSchema": { "type": "object" },
+                "effectProgram": {
+                    "kind": "mutate_parent_with_rows", "objectIdField": "id",
+                    "objectKind": "shop.Order", "entityArtifactId": "shop.Order.entity",
+                    "entityArtifactVersion": version, "parentValuesField": "values",
+                    "rowOpsField": "rows", "parentVersionField": "version",
+                    "collections": [{ "id": "lines" }]
+                }
+            }
+        }))
+    };
+    let catalog = catalog(
+        &[
+            action("shop.edit_v1.action", "1.0.0"),
+            action("shop.edit_v2.action", "2.0.0"),
+            child("shop.OrderLine.entity", "shop.OrderLine"),
+            child("shop.OrderItem.entity", "shop.OrderItem"),
+        ],
+        &[
+            parent("2.0.0", "shop.OrderItem"),
+            parent("1.0.0", "shop.OrderLine"),
+        ],
+    );
+    let targets: Vec<String> = catalog
+        .writes
+        .iter()
+        .map(|row| {
+            format!(
+                "{}@{} {}",
+                row.target.artifact_id,
+                row.target.version,
+                row.target.member.id()
+            )
+        })
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            "shop.edit_v1.action -> shop.Order.entity@1.0.0 type:shop.Order",
+            "shop.edit_v1.action -> shop.OrderLine.entity@1.0.0 type:shop.OrderLine",
+            "shop.edit_v2.action -> shop.Order.entity@2.0.0 type:shop.Order",
+            "shop.edit_v2.action -> shop.OrderItem.entity@1.0.0 type:shop.OrderItem"
+        ]
+    );
+}

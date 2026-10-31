@@ -72,7 +72,7 @@ pub fn project(
         )
         .collect();
     let mut rows = Rows {
-        bound: bound_types(set, base),
+        bindings: Bindings::of(set, base),
         ..Rows::default()
     };
     for (artifact, candidate) in &all {
@@ -89,13 +89,12 @@ pub fn project(
     for artifact in &envelopes {
         rows.entity(artifact);
     }
-    let types = rows.type_index();
     for artifact in &envelopes {
         rows.depends_on(artifact, &envelopes);
         match &artifact.payload {
-            ArtifactPayload::Action(_) => rows.action(artifact, &types),
-            ArtifactPayload::Mapping(_) => rows.mapping(artifact, &types),
-            ArtifactPayload::Law(_) => rows.law(artifact, &types, &envelopes),
+            ArtifactPayload::Action(_) => rows.action(artifact),
+            ArtifactPayload::Mapping(_) => rows.mapping(artifact),
+            ArtifactPayload::Law(_) => rows.law(artifact, &envelopes),
             // Entities were projected above; decide graphs below. The other
             // kinds declare no catalog member yet.
             ArtifactPayload::Entity(_)
@@ -113,7 +112,7 @@ pub fn project(
     }
     for (artifact, output) in fact_decisions(envelopes.iter().copied()) {
         if let Some(schema) = FactSchema::of(&output) {
-            rows.fact_writes(artifact, &schema, &types);
+            rows.fact_writes(artifact, &schema);
         }
     }
     Ok(rows.finish())
@@ -206,23 +205,66 @@ fn type_names(artifact: &ArtifactEnvelope) -> (Option<String>, Vec<String>) {
     }
 }
 
-/// The one artifact each type name binds to, as the entity model binds it:
-/// a candidate's own declaration, else the first installed artifact (in
-/// base order) that declares it.
-fn bound_types(
-    set: &ResolvedArtifactSet<'_>,
-    base: &[ArtifactEnvelope],
-) -> BTreeMap<String, ArtifactKey> {
-    let mut bound = BTreeMap::new();
-    for artifact in set.artifacts.iter().copied().chain(base) {
-        if let Some(name) = type_names(artifact).0 {
-            bound.entry(name).or_insert_with(|| ArtifactKey {
-                artifact_id: artifact.artifact_id.clone(),
-                version: artifact.version.clone(),
-            });
+/// Type name → the one artifact the name binds to, as the entity model binds
+/// it: a candidate's own declaration, else the first installed artifact (in
+/// base order) that declares it. It is the only name-keyed structure, and it
+/// yields an artifact to pin, never per-type data.
+#[derive(Default)]
+struct Bindings(BTreeMap<String, ArtifactKey>);
+
+impl Bindings {
+    fn of(set: &ResolvedArtifactSet<'_>, base: &[ArtifactEnvelope]) -> Self {
+        let mut bound = BTreeMap::new();
+        for artifact in set.artifacts.iter().copied().chain(base) {
+            if let Some(name) = type_names(artifact).0 {
+                bound.entry(name).or_insert_with(|| key(artifact));
+            }
+        }
+        Self(bound)
+    }
+
+    /// The artifact `name` binds to.
+    fn artifact(&self, name: &str) -> Option<&ArtifactKey> {
+        self.0.get(name)
+    }
+}
+
+/// One type as one exact artifact declares it. Every per-type lookup takes
+/// this key; a name reaches it only through [`Rows::pin`].
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PinnedType {
+    artifact: ArtifactKey,
+    name: String,
+}
+
+impl PinnedType {
+    fn of(artifact: &ArtifactEnvelope, name: &str) -> Self {
+        Self {
+            artifact: key(artifact),
+            name: name.to_owned(),
         }
     }
-    bound
+
+    /// `member` of the declaring artifact.
+    fn member(&self, member: Member) -> MemberRef {
+        member_of(&self.artifact, member)
+    }
+
+    /// The type's own row.
+    fn type_ref(&self) -> MemberRef {
+        self.member(Member::Type {
+            type_name: self.name.clone(),
+        })
+    }
+}
+
+/// What lookups need of one projected type.
+struct TypeInfo {
+    kind: TypeKind,
+    /// An object type's supertype name.
+    extends: Option<String>,
+    /// The child type names of its own owned collections.
+    children: Vec<String>,
 }
 
 /// The base artifacts the candidates reach, transitively, starting from
@@ -247,13 +289,13 @@ fn base_closure<'a>(
     // A subtype, implementor, or extension reaches the types it names even
     // without an envelope dependency on them: the one artifact each name is
     // bound to.
-    let bound = bound_types(set, base);
+    let bindings = Bindings::of(set, base);
     while let Some(artifact) = frontier.pop() {
         let mut next = references(artifact);
         for name in type_names(artifact).1 {
             next.extend(
-                bound
-                    .get(&name)
+                bindings
+                    .artifact(&name)
                     .map(|key| (key.artifact_id.clone(), key.version.clone())),
             );
         }
@@ -293,10 +335,9 @@ struct Rows {
     depends_on: BTreeSet<DependsOnRow>,
     mappings: BTreeSet<MappingRow>,
     laws: BTreeSet<LawRow>,
-    /// Type name → the artifact the name binds to ([`bound_types`]).
-    bound: BTreeMap<String, ArtifactKey>,
-    /// Object type name → the child types of its owned collections.
-    children: BTreeMap<String, Vec<String>>,
+    bindings: Bindings,
+    /// Every projected type, by the exact artifact that declares it.
+    declared: BTreeMap<PinnedType, TypeInfo>,
 }
 
 fn at(artifact: &ArtifactEnvelope, member: Member) -> MemberRef {
@@ -343,6 +384,14 @@ impl Rows {
             EntityRoot::V2(root) => self.object_type(artifact, &root.object_type),
             EntityRoot::V2Interface(root) => {
                 let name = root.interface.name.as_str().to_owned();
+                self.declared.insert(
+                    PinnedType::of(artifact, &name),
+                    TypeInfo {
+                        kind: TypeKind::Interface,
+                        extends: None,
+                        children: Vec::new(),
+                    },
+                );
                 self.types.insert(TypeRow {
                     at: at(
                         artifact,
@@ -404,12 +453,17 @@ impl Rows {
         for property in &def.properties {
             self.property(artifact, &name, property, &def.lifecycles);
         }
-        self.children.insert(
-            name.clone(),
-            def.owned_collections
-                .iter()
-                .map(|collection| collection.child_type.as_str().to_owned())
-                .collect(),
+        self.declared.insert(
+            PinnedType::of(artifact, &name),
+            TypeInfo {
+                kind: TypeKind::ObjectType,
+                extends: def.extends.as_ref().map(|n| n.as_str().to_owned()),
+                children: def
+                    .owned_collections
+                    .iter()
+                    .map(|collection| collection.child_type.as_str().to_owned())
+                    .collect(),
+            },
         );
         for link in &def.links {
             self.link(artifact, &name, link.id.as_str(), link.target.as_str());
@@ -459,24 +513,13 @@ impl Rows {
         });
     }
 
-    /// Type name → the artifact it binds to, for names with a projected type
-    /// row.
-    fn type_index(&self) -> BTreeMap<String, ArtifactKey> {
-        // Only names whose bound artifact has a projected type row.
-        self.bound
-            .iter()
-            .filter(|(name, key)| {
-                let wanted = Member::Type {
-                    type_name: (*name).clone(),
-                };
-                self.types.iter().any(|row| {
-                    row.at.artifact_id == key.artifact_id
-                        && row.at.version == key.version
-                        && row.at.member == wanted
-                })
-            })
-            .map(|(name, key)| (name.clone(), key.clone()))
-            .collect()
+    /// The projected type `name` binds to.
+    fn pin(&self, name: &str) -> Option<PinnedType> {
+        let pinned = PinnedType {
+            artifact: self.bindings.artifact(name)?.clone(),
+            name: name.to_owned(),
+        };
+        self.declared.contains_key(&pinned).then_some(pinned)
     }
 
     fn depends_on(&mut self, artifact: &ArtifactEnvelope, all: &[&ArtifactEnvelope]) {
@@ -515,7 +558,7 @@ impl Rows {
         }
     }
 
-    fn action(&mut self, artifact: &ArtifactEnvelope, types: &BTreeMap<String, ArtifactKey>) {
+    fn action(&mut self, artifact: &ArtifactEnvelope) {
         let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact)) else {
             return;
         };
@@ -523,67 +566,63 @@ impl Rows {
             return;
         };
         let target = program.target();
-        let type_name = target.object_kind.to_owned();
-        let mut targets = Vec::new();
+        let pinned = PinnedType {
+            artifact: ArtifactKey {
+                artifact_id: target.entity_artifact_id.to_owned(),
+                version: target.entity_artifact_version.to_owned(),
+            },
+            name: target.object_kind.to_owned(),
+        };
+        let mut writes: Vec<MemberRef> = Vec::new();
         let via = match program {
             ActionEffectProgram::FireTransition {
                 lifecycle,
                 transition,
                 ..
             } => {
-                targets.push(Member::Transition {
-                    type_name,
-                    lifecycle: lifecycle.as_str().to_owned(),
-                    transition: transition.as_str().to_owned(),
-                });
+                // A transition may be inherited: it binds the declaring row.
+                writes.extend(self.resolve(
+                    &Member::Transition {
+                        type_name: pinned.name.clone(),
+                        lifecycle: lifecycle.as_str().to_owned(),
+                        transition: transition.as_str().to_owned(),
+                    },
+                    &pinned,
+                ));
                 WriteVia::FireTransition
             }
             ActionEffectProgram::UpsertInputObject { .. } => {
-                targets.push(Member::Type { type_name });
+                writes.extend(
+                    self.declared
+                        .contains_key(&pinned)
+                        .then(|| pinned.type_ref()),
+                );
                 WriteVia::UpsertObject
             }
             ActionEffectProgram::MutateParentWithRows { .. } => {
-                targets.push(Member::Type { type_name });
+                writes.extend(
+                    self.declared
+                        .contains_key(&pinned)
+                        .then(|| pinned.type_ref()),
+                );
+                // The rows it creates, changes, and deletes are objects of the
+                // child types of the owned collections the pinned type and its
+                // supertypes declare.
+                let children: BTreeSet<&String> = self
+                    .lineage(&pinned)
+                    .iter()
+                    .filter_map(|owner| self.declared.get(owner))
+                    .flat_map(|info| &info.children)
+                    .collect();
+                writes.extend(
+                    children
+                        .into_iter()
+                        .filter_map(|child| self.pin(child))
+                        .map(|child| child.type_ref()),
+                );
                 WriteVia::MutateRows
             }
         };
-        let pinned = ArtifactKey {
-            artifact_id: target.entity_artifact_id.to_owned(),
-            version: target.entity_artifact_version.to_owned(),
-        };
-        // A transition may be inherited: it binds the declaring row. Writes
-        // to members the catalog does not hold are not projected.
-        let mut writes: Vec<MemberRef> = targets
-            .into_iter()
-            .filter_map(|member| {
-                if matches!(member, Member::Transition { .. }) {
-                    self.resolve(&member, Some(&pinned))
-                } else {
-                    Some(member_of(&pinned, member)).filter(|target| self.declares(target))
-                }
-            })
-            .collect();
-        // The rows a parent mutation creates, changes, and deletes are
-        // objects of its owned collections' child types, declared on the
-        // type or inherited from a supertype.
-        if via == WriteVia::MutateRows {
-            let children: BTreeSet<&String> = self
-                .lineage(target.object_kind, Some(&pinned))
-                .iter()
-                .filter_map(|name| self.children.get(name))
-                .flatten()
-                .collect();
-            for child in children {
-                if let Some(owner) = types.get(child) {
-                    writes.push(member_of(
-                        owner,
-                        Member::Type {
-                            type_name: child.clone(),
-                        },
-                    ));
-                }
-            }
-        }
         for target in writes {
             self.writes.insert(WritesRow {
                 writer: at(artifact, Member::Artifact {}),
@@ -593,119 +632,69 @@ impl Rows {
         }
     }
 
-    /// `type_name`, then its supertypes, nearest first. A cycle (refused by
-    /// the entity check) ends after at most one pass over the types.
-    fn lineage(&self, type_name: &str, owner: Option<&ArtifactKey>) -> Vec<String> {
-        let mut out = vec![type_name.to_owned()];
-        while out.len() <= self.types.len() {
-            let current = Member::Type {
-                type_name: out.last().cloned().unwrap_or_default(),
-            };
-            // The type itself is the version the reference pins; each
-            // supertype, the artifact its name is bound to.
-            let bound = if out.len() == 1 {
-                owner.or_else(|| self.bound.get(type_name))
-            } else {
-                self.bound.get(&*out.last().cloned().unwrap_or_default())
-            };
-            let Some(parent) = self
-                .types
-                .iter()
-                .find(|row| {
-                    row.at.member == current
-                        && row.kind == TypeKind::ObjectType
-                        && bound.is_none_or(|key| {
-                            row.at.artifact_id == key.artifact_id && row.at.version == key.version
-                        })
-                })
-                .and_then(|row| row.extends.first())
+    /// `start`, then its supertypes, nearest first, each the projected type
+    /// its name binds to. A cycle (refused by the entity check) ends after at
+    /// most one pass over the types.
+    fn lineage(&self, start: &PinnedType) -> Vec<PinnedType> {
+        let mut out = vec![start.clone()];
+        while out.len() <= self.declared.len() {
+            let Some(parent) = out
+                .last()
+                .and_then(|current| self.declared.get(current))
+                .filter(|info| info.kind == TypeKind::ObjectType)
+                .and_then(|info| info.extends.as_deref())
+                .and_then(|name| self.pin(name))
             else {
                 break;
             };
-            out.push(parent.clone());
+            out.push(parent);
         }
         out
     }
 
-    /// The row declaring a property, link, or transition of a type: on the
-    /// type or its nearest supertype that declares it, in whichever artifact
-    /// declares it (the type's or an extension's). `None` when no row does.
-    /// On the type itself, `owner` (the exact artifact a reference pins)
-    /// excludes rows of another version of the type's own artifact.
-    fn resolve(&self, member: &Member, owner: Option<&ArtifactKey>) -> Option<MemberRef> {
-        let (Member::Property { type_name, .. }
-        | Member::Link { type_name, .. }
-        | Member::Transition { type_name, .. }) = member
-        else {
-            return None;
+    /// The row declaring a property, link, or transition of the type `start`
+    /// pins: on that type or its nearest supertype that declares it. A row
+    /// binds when the pinned type's own artifact declares it, or an
+    /// extension (an artifact that declares no type). `None` when no row
+    /// does.
+    fn resolve(&self, member: &Member, start: &PinnedType) -> Option<MemberRef> {
+        let extension = |at: &MemberRef| {
+            !self.declared.keys().any(|pinned| {
+                pinned.artifact.artifact_id == at.artifact_id
+                    && pinned.artifact.version == at.version
+            })
         };
-        let declares_type = |at: &MemberRef| {
-            self.types
-                .iter()
-                .any(|row| row.at.artifact_id == at.artifact_id && row.at.version == at.version)
-        };
-        // The type itself binds the version the reference pins; each
-        // supertype, the artifact its name is bound to. Extensions (artifacts
-        // that declare no type) bind their own rows.
-        let admitted = |at: &MemberRef, step: usize, name: &str| {
-            let pinned = if step == 0 {
-                owner
-            } else {
-                self.bound.get(name)
+        self.lineage(start).into_iter().find_map(|owner| {
+            let wanted = with_type(member, owner.name.clone());
+            let admitted = |at: &&MemberRef| {
+                at.member == wanted
+                    && ((at.artifact_id == owner.artifact.artifact_id
+                        && at.version == owner.artifact.version)
+                        || extension(at))
             };
-            pinned.is_none_or(|key| {
-                (at.artifact_id == key.artifact_id && at.version == key.version)
-                    || !declares_type(at)
-            })
-        };
-        self.lineage(type_name, owner)
-            .into_iter()
-            .enumerate()
-            .find_map(|(step, name)| {
-                let wanted = with_type(member, name.clone());
-                let found = match &wanted {
-                    Member::Property { .. } => self
-                        .properties
-                        .iter()
-                        .map(|row| &row.at)
-                        .find(|at| at.member == wanted && admitted(at, step, &name)),
-                    Member::Link { .. } => self
-                        .links
-                        .iter()
-                        .map(|row| &row.at)
-                        .find(|at| at.member == wanted && admitted(at, step, &name)),
-                    Member::Transition { .. } => self
-                        .transitions
-                        .iter()
-                        .map(|row| &row.at)
-                        .find(|at| at.member == wanted && admitted(at, step, &name)),
-                    Member::Artifact {}
-                    | Member::Type { .. }
-                    | Member::State { .. }
-                    | Member::ObjectMap { .. }
-                    | Member::Law { .. } => None,
-                };
-                found.cloned()
-            })
+            let found = match &wanted {
+                Member::Property { .. } => self.properties.iter().map(|row| &row.at).find(admitted),
+                Member::Link { .. } => self.links.iter().map(|row| &row.at).find(admitted),
+                Member::Transition { .. } => {
+                    self.transitions.iter().map(|row| &row.at).find(admitted)
+                }
+                Member::Artifact {}
+                | Member::Type { .. }
+                | Member::State { .. }
+                | Member::ObjectMap { .. }
+                | Member::Law { .. } => None,
+            };
+            found.cloned()
+        })
     }
 
     /// Every write a decide graph's closed fact-change schema admits.
-    fn fact_writes(
-        &mut self,
-        artifact: &ArtifactEnvelope,
-        schema: &FactSchema<'_>,
-        types: &BTreeMap<String, ArtifactKey>,
-    ) {
+    fn fact_writes(&mut self, artifact: &ArtifactEnvelope, schema: &FactSchema<'_>) {
         let ops = schema.ops();
         let values = |name: &str| schema.values(name).unwrap_or_default();
         for type_name in values("objectType") {
-            let Some(owner) = types.get(type_name) else {
+            let Some(owner) = self.pin(type_name) else {
                 continue;
-            };
-            let target = |member: Member| MemberRef {
-                artifact_id: owner.artifact_id.clone(),
-                version: owner.version.clone(),
-                member,
             };
             let mut candidates = Vec::new();
             if ops.contains(&FactChangeOp::Transition) {
@@ -717,7 +706,7 @@ impl Rows {
                                 lifecycle: lifecycle.to_owned(),
                                 transition: transition.to_owned(),
                             },
-                            Some(owner),
+                            &owner,
                         ) {
                             candidates.push((declared, WriteVia::FactTransition));
                         }
@@ -727,7 +716,7 @@ impl Rows {
             if ops.contains(&FactChangeOp::Set) {
                 for property in values("property") {
                     if let Some(declared) =
-                        self.resolve(&property_member(type_name, property), Some(owner))
+                        self.resolve(&property_member(type_name, property), &owner)
                     {
                         candidates.push((declared, WriteVia::FactSet));
                     }
@@ -739,12 +728,7 @@ impl Rows {
                     FactChangeOp::Create | FactChangeOp::Patch | FactChangeOp::Delete
                 )
             }) {
-                candidates.push((
-                    target(Member::Type {
-                        type_name: type_name.to_owned(),
-                    }),
-                    WriteVia::FactObject,
-                ));
+                candidates.push((owner.type_ref(), WriteVia::FactObject));
             }
             for (target, via) in candidates {
                 // Only members the target declares: the closed schema
@@ -774,27 +758,37 @@ impl Rows {
         }
     }
 
-    fn mapping(&mut self, artifact: &ArtifactEnvelope, types: &BTreeMap<String, ArtifactKey>) {
+    /// The projected type a mapping target's entity artifact id declares:
+    /// the version its name binds to, when several are projected.
+    fn map_target(&self, entity: &str) -> Option<PinnedType> {
+        let declared: Vec<&PinnedType> = self
+            .declared
+            .keys()
+            .filter(|pinned| pinned.artifact.artifact_id == entity)
+            .collect();
+        declared
+            .iter()
+            .find(|pinned| self.pin(&pinned.name).as_ref() == Some(**pinned))
+            .or_else(|| declared.first())
+            .map(|pinned| (*pinned).clone())
+    }
+
+    fn mapping(&mut self, artifact: &ArtifactEnvelope) {
         let Ok(mapping) = serde_json::from_value::<MappingIr>(payload_json(artifact)) else {
             return;
         };
-        // Map targets name entity artifacts by id; a resolved set holds one
-        // version of each.
-        let by_artifact: BTreeMap<&str, (&str, &ArtifactKey)> = types
-            .iter()
-            .map(|(name, key)| (key.artifact_id.as_str(), (name.as_str(), key)))
-            .collect();
         for map in &mapping.maps {
-            let Some((type_name, owner)) = by_artifact.get(map.target.entity.as_str()) else {
+            let Some(owner) = self.map_target(&map.target.entity) else {
                 continue;
             };
+            let type_name = owner.name.as_str();
             let link = |id: &str| Member::Link {
-                type_name: (*type_name).to_owned(),
+                type_name: type_name.to_owned(),
                 link: id.to_owned(),
             };
             let mut observed: Vec<(Member, MapRule)> = vec![(
                 Member::Type {
-                    type_name: (*type_name).to_owned(),
+                    type_name: type_name.to_owned(),
                 },
                 MapRule::Object {},
             )];
@@ -814,7 +808,7 @@ impl Rows {
                 ));
             }
             for gap in &map.gaps {
-                let member = if self.resolve(&link(&gap.member), Some(owner)).is_some() {
+                let member = if self.resolve(&link(&gap.member), &owner).is_some() {
                     link(&gap.member)
                 } else {
                     property_member(type_name, &gap.member)
@@ -825,9 +819,9 @@ impl Rows {
                 // The object type row is the map's own target; members bind
                 // their declaring row, and an undeclared one has no row.
                 let target = if matches!(member, Member::Type { .. }) {
-                    Some(member_of(owner, member))
+                    Some(owner.type_ref())
                 } else {
-                    self.resolve(&member, Some(owner))
+                    self.resolve(&member, &owner)
                 };
                 let Some(target) = target else {
                     continue;
@@ -849,26 +843,11 @@ impl Rows {
 
     /// A law whose subject or binding the set does not define has no row:
     /// the law check (`law.model.unknown_binding`) already refuses it.
-    fn law(
-        &mut self,
-        artifact: &ArtifactEnvelope,
-        types: &BTreeMap<String, ArtifactKey>,
-        all: &[&ArtifactEnvelope],
-    ) {
+    fn law(&mut self, artifact: &ArtifactEnvelope, all: &[&ArtifactEnvelope]) {
         let Ok(law) = serde_json::from_value::<LawIR>(payload_json(artifact)) else {
             return;
         };
-        let type_of = |name: &str| {
-            types.get(name).map(|owner| {
-                member_of(
-                    owner,
-                    Member::Type {
-                        type_name: name.to_owned(),
-                    },
-                )
-            })
-        };
-        let Some(subject) = type_of(&law.subject) else {
+        let Some(subject) = self.pin(&law.subject).map(|pinned| pinned.type_ref()) else {
             return;
         };
         let binds = match law.response {
@@ -880,14 +859,16 @@ impl Rows {
             } => {
                 // An inherited transition binds the row of the supertype
                 // that declares it.
-                let owner = types.get(&object_type);
+                let Some(owner) = self.pin(&object_type) else {
+                    return;
+                };
                 let Some(target) = self.resolve(
                     &Member::Transition {
-                        type_name: object_type.clone(),
+                        type_name: object_type,
                         lifecycle: property,
                         transition: transition_id,
                     },
-                    owner,
+                    &owner,
                 ) else {
                     return;
                 };
@@ -897,7 +878,7 @@ impl Rows {
                 object_type,
                 invariant_id,
             } => {
-                let Some(owner) = type_of(&object_type) else {
+                let Some(owner) = self.pin(&object_type).map(|pinned| pinned.type_ref()) else {
                     return;
                 };
                 Some(LawBinding::Invariant {
