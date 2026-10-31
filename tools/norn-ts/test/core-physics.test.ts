@@ -16,9 +16,9 @@ function pack() {
   return result
 }
 
-const PRIMITIVES = ["core.Agent", "core.AgentRole", "core.Claim", "core.Commitment", "core.EconomicEvent", "core.Resource"]
+const PRIMITIVES = ["core.Agent", "core.AgentRole", "core.Claim", "core.Commitment", "core.EconomicEvent", "core.Hold", "core.LedgerEffect", "core.Resource"]
 
-test("the core physics pack declares exactly the six primitives", () => {
+test("the core physics pack declares exactly its primitives", () => {
   const ids = pack().artifacts.map((artifact) => (artifact as { artifactId: string }).artifactId).sort()
   expect(ids).toEqual(PRIMITIVES.map((name) => `${name}.interface`))
 })
@@ -42,4 +42,42 @@ test.skipIf(!checker)("Rust admits the core physics interfaces over the shared v
   const report = checkPack(checker!, JSON.parse(JSON.stringify(compiled.artifacts)), JSON.parse(JSON.stringify(base)))
   expect(report.diagnostics.diagnostics).toEqual([])
   expect(report.admitted).toBe(true)
+})
+
+// Commitment ⊓ Claim = ∅. Until the checker enforces disjoint primitives, this
+// holds the published registry to it: no type implements both, directly or
+// through interface parents.
+type Payload = { payload?: { objectType?: { name: string; extends?: string; implements?: string[] }; interface?: { name: string; extends?: string[] } } }
+
+function bothCommitmentAndClaim(artifacts: ReadonlyArray<Payload>): string[] {
+  const parents = new Map<string, string[]>()
+  for (const { payload } of artifacts) {
+    if (payload?.interface) parents.set(payload.interface.name, payload.interface.extends ?? [])
+    if (payload?.objectType) {
+      const { name, extends: supertype, implements: implemented = [] } = payload.objectType
+      parents.set(name, supertype === undefined ? [...implemented] : [supertype, ...implemented])
+    }
+  }
+  const ancestors = (name: string, seen: Set<string>): Set<string> => {
+    for (const parent of parents.get(name) ?? []) if (!seen.has(parent)) ancestors(parent, seen.add(parent))
+    return seen
+  }
+  return [...parents.keys()].filter((name) => {
+    const kinds = ancestors(name, new Set([name]))
+    return kinds.has("core.Commitment") && kinds.has("core.Claim")
+  })
+}
+
+test("no registry type is both a core.Commitment and a core.Claim", () => {
+  const compiled = pack()
+  const all = [...compiled.artifacts, ...compiled.baseArtifacts] as Payload[]
+  expect(bothCommitmentAndClaim(all)).toEqual([])
+  // The check bites: a type implementing both, even through a parent, is found.
+  const bad: Payload[] = [
+    { payload: { interface: { name: "x.Promise", extends: ["core.Commitment"] } } },
+    { payload: { objectType: { name: "x.Both", implements: ["x.Promise", "core.Claim"] } } },
+    { payload: { objectType: { name: "x.Order", implements: ["core.Commitment"] } } },
+    { payload: { objectType: { name: "x.InvoicedOrder", extends: "x.Order", implements: ["core.Claim"] } } },
+  ]
+  expect(bothCommitmentAndClaim([...all, ...bad])).toEqual(["x.Both", "x.InvoicedOrder"])
 })

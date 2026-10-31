@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "interface": {
-      "description": "An economic claim: a right to receive resources that arises from a fulfilled commitment or an event, such as an invoice or a receivable, and is settled by economic events. Not a catalog claim about definitions.",
+      "description": "An economic claim: a right to receive resources, such as an invoice or a receivable, settled by economic events. Not a catalog claim about definitions. Disjoint from core.Commitment (Commitment ⊓ Claim = ∅): a promise is not yet a right, and no type is both. A fulfilled or accepted commitment gives rise to claims (givesRiseTo); the relation is recorded on the claim as `arises_from`, because a commitment is not edited when a claim arises.",
       "links": [
         {
           "cardinality": {
@@ -36,7 +36,7 @@
             "from": "many",
             "to": "one"
           },
-          "description": "The commitment whose fulfilment created the claim.",
+          "description": "The commitment that gave rise to the claim (givesRiseTo, seen from the claim).",
           "id": "arises_from",
           "target": "core.Commitment"
         }
