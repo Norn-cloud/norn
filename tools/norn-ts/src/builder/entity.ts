@@ -150,7 +150,13 @@ interface TypeMetaBase {
   readonly properties: ReadonlyArray<PropertyDecl>
 }
 
+export interface ControlsDeclaration {
+  readonly format: "norn.controls/1"
+  readonly sensitivePaths: ReadonlyArray<{ readonly objectType: string; readonly actions: ReadonlyArray<string> }>
+}
+
 export interface ObjectTypeDef extends TypeMetaBase {
+  readonly controls?: ControlsDeclaration
   readonly immutable?: boolean
   readonly _tag: "ObjectType"
   readonly extends?: string
@@ -312,6 +318,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
             name: def.name,
             markings: omitEmpty(def.markings ?? []),
             description: def.description,
+            controls: def.controls,
             immutable: def.immutable === true ? true : undefined,
             extends: def.extends,
             implements: omitEmpty(def.implements),

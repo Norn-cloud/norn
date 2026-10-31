@@ -25,6 +25,10 @@ export const SalesOrder = Norn.type({
   }),
   identity: [{ name: "primary", properties: ["id"] }],
   links: [{ id: "counterparty", target: Customer, cardinality: { to: "one", from: "many", required: true } }],
+  controls: { format: "norn.controls/1", sensitivePaths: [{
+    objectType: "alpha.SalesOrder",
+    actions: ["alpha.order.approve", "alpha.order.record_invoice", "alpha.order.record_payment"],
+  }] },
   protected: ["invoice_count", "invoiced_total", "allocated_total"],
   defaults: { status: "draft", invoice_count: 0, invoiced_total: 0, allocated_total: 0 },
   computed: {

@@ -203,6 +203,7 @@ declare module "@norn/authoring" {
       readonly extends?: E
       readonly implements?: I
       /** Append-only records; the kernel enforces this after creation. */
+      readonly controls?: import("../src/builder/entity.ts").ControlsDeclaration
       readonly immutable?: boolean
       /** Stored properties maintained by declared rules, never action inputs. */
       readonly protected?: ReadonlyArray<keyof S["Type"] & string>
