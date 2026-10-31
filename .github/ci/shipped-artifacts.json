@@ -1854,7 +1854,7 @@
     },
     {
       "path": "crates/norn-cell/tests/value_commitments.rs",
-      "sha256": "33ebf32f6379b0daf18b75ca56c2a7f14ae6b069956c140b51137e8de0c53c8b",
+      "sha256": "24ba8ffc6e88f6d1d7b56220b28ca8aaa57049f7fca8fa0654e49e448bb2cd6b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

@@ -64,13 +64,16 @@ fn cursor_selects_latest_committed_incarnation_including_tombstones() {
     use norn_cell::reactive::BudgetedRead;
     let mut store = CellStore::open_in_memory(model()).expect("store");
     let first = store
-        .commit(&batch(vec![put("proof.Item", "item", "one")]))
+        .commit(&batch(vec![
+            put("proof.Item", "item", "one"),
+            put("proof.Item", "item", "two"),
+        ]))
         .expect("first")
         .receipt()
         .body
         .commit_seq;
     let second = store
-        .commit(&batch(vec![put("proof.Item", "item", "two")]))
+        .commit(&batch(vec![put("proof.Item", "item", "three")]))
         .expect("second")
         .receipt()
         .body
@@ -86,7 +89,7 @@ fn cursor_selects_latest_committed_incarnation_including_tombstones() {
         .commit_seq;
     let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
     let mut budget = DecodeBudget::new(&limits);
-    for (cursor, expected) in [(first, "one"), (second, "two")] {
+    for (cursor, expected) in [(first, "two"), (second, "three")] {
         let BudgetedRead::Found(record) = store
             .read()
             .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", cursor, &mut budget)
