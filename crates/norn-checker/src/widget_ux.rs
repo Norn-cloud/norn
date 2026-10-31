@@ -7033,6 +7033,10 @@ fn inferred_matches_schema(
         (InferredType::Enum(values), Schema::String(Some(allowed))) => Err(format!(
             "{path} produces string values {values:?} outside ActionIR values {allowed:?}"
         )),
+        (
+            InferredType::String | InferredType::Const(_) | InferredType::Enum(_),
+            Schema::Decimal(_),
+        ) => Ok(()),
         (InferredType::Null, Schema::Null)
         | (
             InferredType::String
