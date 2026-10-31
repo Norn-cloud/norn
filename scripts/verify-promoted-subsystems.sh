@@ -503,6 +503,9 @@ run_gate full quantity-runtime \
 run_gate full generic-posting-runtime \
   "cargo test --locked -p norn-kernel --test accounting_commit" rust-tests \
   cargo test --locked -p norn-kernel --test accounting_commit
+run_gate full core-physics-inheritance-runtime \
+  "cargo test --locked -p norn-kernel --test core_physics_inheritance" rust-tests \
+  cargo test --locked -p norn-kernel --test core_physics_inheritance
 
 run_gate full quantity-authority-runtime-unit \
   "cargo test --locked -p norn-cell --test quantity_reservations" \
