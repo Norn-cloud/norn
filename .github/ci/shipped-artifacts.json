@@ -12267,7 +12267,7 @@
     },
     {
       "path": "crates/norn-metrics/src/analysis.rs",
-      "sha256": "fb92dadb97ae2d726753626399d1cb6aff17c120c00007b8da167867efac675e",
+      "sha256": "abb44f45320015918fc623c0693a2d2480959fdfda93b6e5a8e25b5e18022eed",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12340,6 +12340,24 @@
     {
       "path": "crates/norn-metrics/tests/demand.source.ts",
       "sha256": "a0153dd3bccc59f637ee21f632e371a3a9de752fb5d5b7a1b87d167bcf58d67e",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-metrics/tests/ols.rs",
+      "sha256": "4fed542a6ad84f65898547f0d17ad6ce2f6dc04a6b6b29acadb2bbb95184a5f6",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30079,7 +30097,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "20819d68c1f8788ee7b7fc6076b0ebe3bf88fd2b102b89f00f4be11a169e3dbc",
+      "sha256": "d562e2cc97df482816081c940c5152d4fe0f5d2f447c6175f20a0ccf022afa9a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

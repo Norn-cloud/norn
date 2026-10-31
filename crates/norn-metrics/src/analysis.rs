@@ -244,7 +244,10 @@ fn fit(pairs: &[(f64, f64)], alpha: f64) -> Result<OlsReport, AnalysisError> {
     let centered_y = pairs.iter().map(|p| p.1 - origin_y).sum::<f64>() / n;
     let mean_x = origin_x + centered_x;
     let mean_y = origin_y + centered_y;
-    let sxx = pairs.iter().map(|p| ((p.0 - origin_x) - centered_x).powi(2)).sum::<f64>();
+    let sxx = pairs
+        .iter()
+        .map(|p| ((p.0 - origin_x) - centered_x).powi(2))
+        .sum::<f64>();
     let sxy = pairs
         .iter()
         .map(|p| ((p.0 - origin_x) - centered_x) * ((p.1 - origin_y) - centered_y))
@@ -384,4 +387,3 @@ fn fit(pairs: &[(f64, f64)], alpha: f64) -> Result<OlsReport, AnalysisError> {
     }
     Ok(report)
 }
-
