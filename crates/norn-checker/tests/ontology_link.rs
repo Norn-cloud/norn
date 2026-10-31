@@ -85,6 +85,15 @@ fn a_link_with_subsumed_derived_and_residual_terms_validates() {
 }
 
 #[test]
+fn reserved_extension_slots_pass_envelope_validation() {
+    // The envelope strips `extensions` before the link validator runs and
+    // checks the slots generically, as for every payload root.
+    let mut candidate = link();
+    candidate["payload"]["extensions"] = json!({"example.links/0.1.0": {"note": "x"}});
+    validate(candidate).expect("a link with reserved extension slots validates");
+}
+
+#[test]
 fn link_identity_and_endpoints_are_pinned() {
     let mut candidate = link();
     candidate["payload"]["packId"] = json!("shop.to.canon");
