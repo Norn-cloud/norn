@@ -168,3 +168,149 @@ fn executable_unicode_spelling_has_a_distinct_protected_identity() {
         decomposed.artifact_exact_digest
     );
 }
+
+#[test]
+fn admitted_inline_layout_preserves_check_and_install_table_evidence_in_both_layers() {
+    let expected = check(&[table_rule()]).analysis.expect("canonical analysis");
+    assert_eq!(expected.tables.len(), 1);
+    assert_eq!(
+        expected.tables[0]
+            .result
+            .as_ref()
+            .expect("finite")
+            .uncovered,
+        Some(json!({"approved":false}))
+    );
+    for fields in [1, 2, 4, 7] {
+        let mut rule = table_rule();
+        if fields & 1 != 0 {
+            rule["payload"]["graph"]["viewport"] = json!({"x":12.5,"y":-4,"zoom":1.25});
+        }
+        if fields & 2 != 0 {
+            rule["payload"]["graph"]["nodes"][1]["description"] = json!("Editor table description");
+        }
+        if fields & 4 != 0 {
+            rule["payload"]["graph"]["edges"][0]["targetHandle"] = json!("input");
+        }
+        let artifact = serde_json::from_value::<ArtifactEnvelope>(rule).expect("rule");
+        for in_base in [false, true] {
+            let rules = [artifact.clone()];
+            let (artifacts, base) = if in_base {
+                (&[][..], rules.as_slice())
+            } else {
+                (rules.as_slice(), &[][..])
+            };
+            let registry = BTreeSet::new();
+            let context = EntityArtifactSetContext {
+                registry: &registry,
+                base,
+                tenant: None,
+            };
+            let limits = ResourceLimitProfile::norn_limits_v1();
+            let checked =
+                check_artifact_set_with_receipt(artifacts, &context, &limits).expect("check");
+            let installed = check_artifact_set_for_install(artifacts, &context, &limits, None)
+                .expect("install");
+            assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+            assert!(installed.receipt.admitted, "{:?}", installed.diagnostics);
+            assert_eq!(
+                checked.analysis.as_ref(),
+                Ok(&expected),
+                "fields {fields}, base {in_base}"
+            );
+            assert_eq!(installed.analysis, checked.analysis);
+        }
+    }
+}
+
+#[test]
+fn unsupported_rule_graphs_never_disappear_from_analysis() {
+    for (path, value, base_unknown) in [
+        (
+            "/payload/graph/viewport",
+            json!({"x":"bad","y":-4,"zoom":1.25}),
+            Unknown::NotAdmitted,
+        ),
+        (
+            "/payload/graph/viewport",
+            json!({"x":12.5,"y":-4,"zoom":1.25,"unknown":true}),
+            Unknown::NotAdmitted,
+        ),
+        (
+            "/payload/graph/nodes/1/semanticUnknown",
+            json!(true),
+            Unknown::GraphInput,
+        ),
+        (
+            "/payload/graph/edges/0/semanticUnknown",
+            json!(true),
+            Unknown::GraphInput,
+        ),
+    ] {
+        let mut rule = table_rule();
+        // Object indexing inserts the unsupported field, including at nested nodes/edges.
+        let (parent, key) = path.rsplit_once('/').expect("field path");
+        rule.pointer_mut(parent).expect("parent")[key] = value;
+        let checked = check(&[rule.clone()]);
+        assert!(!checked.receipt.admitted, "{path}");
+        assert_eq!(checked.analysis, Err(Unknown::NotAdmitted));
+        // Malformed layout is refused even in the base: viewport coordinates must
+        // be decimals and unknown viewport fields are rejected. Base semantic
+        // admission is external to this API; unsupported admitted graphs must
+        // still yield GraphInput rather than a successful empty report.
+        let base = [serde_json::from_value(rule).expect("base rule")];
+        let checked = check_artifact_set_with_receipt(
+            &[],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None,
+            },
+            &ResourceLimitProfile::norn_limits_v1(),
+        )
+        .expect("check base");
+        assert_eq!(
+            checked.receipt.admitted,
+            base_unknown != Unknown::NotAdmitted,
+            "{path}: {:?}",
+            checked.diagnostics
+        );
+        assert_eq!(checked.analysis, Err(base_unknown), "{path}");
+    }
+    // Non-rule definitions still produce ordinary evidence, without a graph requirement.
+    assert!(check(&[order()]).analysis.is_ok());
+}
+
+#[test]
+fn retained_table_witnesses_are_bounded_across_the_admitted_set() {
+    let mut template = table_rule();
+    for field in ["a", "b", "c", "d", "e"] {
+        template["payload"]["inputSchema"]["properties"][field] =
+            json!({"type":"string","enum":["x".repeat(70),"y".repeat(70)]});
+        template["payload"]["inputSchema"]["required"]
+            .as_array_mut()
+            .expect("required")
+            .push(json!(field));
+    }
+    let single = check(std::slice::from_ref(&template));
+    assert!(single.receipt.admitted, "{:?}", single.diagnostics);
+    assert_eq!(
+        single.analysis.expect("finite").tables[0]
+            .result
+            .as_ref()
+            .expect("table")
+            .inputs_checked,
+        64
+    );
+    let rules: Vec<_> = (0..26)
+        .map(|index| {
+            let mut rule = template.clone();
+            rule["artifactId"] = json!(format!("erpnext.budget{index}.rule"));
+            rule["payload"]["ruleId"] = json!(format!("erpnext.budget{index}"));
+            rule
+        })
+        .collect();
+    let checked = check(&rules);
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+    assert_eq!(checked.analysis, Err(Unknown::Limit));
+}
