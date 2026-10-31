@@ -3,7 +3,8 @@
   "ring": "One",
   "allowed_norn": [
     "norn-cell",
-    "norn-kernel"
+    "norn-kernel",
+    "norn-ir"
   ],
   "dev_only_norn": [],
   "third_party": []
