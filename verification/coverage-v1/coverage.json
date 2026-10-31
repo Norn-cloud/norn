@@ -1526,6 +1526,7 @@
         "crates/norn-checker/src/mapping/vendor.rs",
         "crates/norn-checker/src/ontology.rs",
         "crates/norn-checker/src/ontology/link.rs",
+        "crates/norn-checker/src/ontology/link_registry.rs",
         "crates/norn-checker/tests/consistency.rs",
         "crates/norn-checker/tests/ontology_link.rs",
         "crates/norn-ir/src/mapping.rs",

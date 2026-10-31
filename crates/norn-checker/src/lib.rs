@@ -182,8 +182,8 @@ pub use markings::marking_catalog_from_artifacts;
 pub use naming_series::{NamingPatternError, NamingPatternToken, parse_naming_series_pattern};
 pub use object_types::check_object_type_defs;
 pub use ontology::{
-    ontology_term_is_a, validate_ontology_instance, validate_ontology_instance_in_registry,
-    validate_ontology_pack, validate_ontology_registry,
+    LinkCoverage, ontology_term_is_a, validate_link_registry, validate_ontology_instance,
+    validate_ontology_instance_in_registry, validate_ontology_pack, validate_ontology_registry,
 };
 pub use property_types::{check_property_type_defs, resolved_property_type};
 pub use receipt::{
