@@ -156,6 +156,29 @@ impl<'a> TypeCatalog<'a> {
         self
     }
 
+    /// Declared stored property names for an object or one of its links.
+    /// Resolves inheritance and shared properties without encoding defaults
+    /// or validating absent caller values.
+    #[must_use]
+    pub fn stored_property_names(
+        &self,
+        object_type: &ObjectTypeName,
+        link: Option<&str>,
+    ) -> BTreeSet<&str> {
+        let model = self.effective_model();
+        let properties = match link {
+            Some(link) => model.links.get(object_type)
+                .and_then(|links| links.iter().find(|candidate| candidate.id.as_str() == link))
+                .map(|link| link.properties.as_slice()),
+            None => model.object_types.get(object_type)
+                .map(|object_type| object_type.properties.as_slice()),
+        };
+        properties.into_iter().flatten()
+            .filter(|property| !property.computed)
+            .map(|property| property.id.as_str())
+            .collect()
+    }
+
     /// Build the complete stored value of an object after a put: preserve
     /// submitted values and fill each effective stored property with its
     /// declared default or `null`. Computed properties are not materialized.

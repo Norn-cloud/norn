@@ -292,12 +292,7 @@ impl WireCommit {
                         expected: write.expected,
                         mutation: match &write.mutation {
                             WireMutation::Put { values } => {
-                                let declared = catalog
-                                    .effective_object_values(
-                                        &write.key.object_type,
-                                        &JsonObject::new(),
-                                    )
-                                    .map_err(invalid("model"))?;
+                                let declared = catalog.stored_property_names(&write.key.object_type, None);
                                 let values = values.project(&declared)?;
                                 FactMutation::Put { values }
                             }
@@ -334,13 +329,7 @@ impl WireCommit {
                                             .and_then(|object| object.concrete.as_ref())
                                     })
                                     .unwrap_or(&link.key.source.object_type);
-                                let declared = catalog
-                                    .effective_link_values(
-                                        source,
-                                        link.key.link.as_str(),
-                                        &JsonObject::new(),
-                                    )
-                                    .map_err(invalid("model"))?;
+                                let declared = catalog.stored_property_names(source, Some(&link.key.link));
                                 LinkMutation::Add {
                                     values: values.project(&declared)?,
                                 }
@@ -399,11 +388,11 @@ impl ObjectText {
     }
 
     /// Decode only declared stored fields; never parse opaque numeric payloads.
-    fn project(&self, declared: &JsonObject) -> Result<JsonObject, AbiError> {
+    fn project(&self, declared: &BTreeSet<&str>) -> Result<JsonObject, AbiError> {
         let raw: BTreeMap<String, Box<RawValue>> =
             serde_json::from_str(self.0.get()).map_err(invalid("commit"))?;
         raw.into_iter()
-            .filter(|(name, _)| declared.contains_key(name))
+            .filter(|(name, _)| declared.contains(name.as_str()))
             .map(|(name, value)| {
                 RuntimeValue::from_json_text(value.get())
                     .map(|value| (name.clone(), value))
