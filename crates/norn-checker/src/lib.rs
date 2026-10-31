@@ -30,6 +30,7 @@ pub mod connector_path;
 pub mod consistency;
 pub mod definitions_diff;
 pub mod deontic;
+pub mod duties;
 mod diagnostic;
 pub mod entity_artifacts;
 pub mod entity_instance;
