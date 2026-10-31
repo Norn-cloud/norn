@@ -726,6 +726,10 @@ run_gate full kernel-l1-version-correspondence \
   scripts/verify-kernel-l1-aeneas.sh
 
 # Validate observed selectors only after every producing gate has run.
+run_gate fast cell-abi-runtime \
+  "cargo test --locked -p norn-cell-wasm" rust-tests \
+  cargo test --locked -p norn-cell-wasm
+
 run_gate full verification-executed-test-selectors \
   "python3 scripts/validate-executed-test-selectors.py" command \
   python3 scripts/validate-executed-test-selectors.py

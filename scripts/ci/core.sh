@@ -146,6 +146,7 @@ PY
       ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-authz -p norn-kernel -p norn-projections -p norn-decisions -p norn-api
+      cargo check --locked -p norn-cell-wasm --target wasm32-unknown-unknown
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
       ;;

@@ -10,6 +10,7 @@
     "crates/norn-api/Cargo.toml",
     "crates/norn-authz/Cargo.toml",
     "crates/norn-canonical/Cargo.toml",
+    "crates/norn-cell-wasm/Cargo.toml",
     "crates/norn-cell/Cargo.toml",
     "crates/norn-checker-wasm/Cargo.toml",
     "crates/norn-checker/Cargo.toml",
