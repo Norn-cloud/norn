@@ -170,6 +170,38 @@ fn references(artifact: &ArtifactEnvelope) -> Vec<(String, String)> {
     out
 }
 
+/// The type an entity artifact declares (an object type or interface), and
+/// the type names it refers to: supertypes, interfaces, an extension's
+/// target.
+fn type_names(artifact: &ArtifactEnvelope) -> (Option<String>, Vec<String>) {
+    let Decoded::Root(root) = decode_v2(artifact) else {
+        return (None, Vec::new());
+    };
+    match *root {
+        EntityRoot::V2(root) => {
+            let def = root.object_type;
+            let mut refs: Vec<String> = def.extends.iter().map(|n| n.as_str().to_owned()).collect();
+            refs.extend(def.implements.iter().map(|n| n.as_str().to_owned()));
+            (Some(def.name.as_str().to_owned()), refs)
+        }
+        EntityRoot::V2Interface(root) => (
+            Some(root.interface.name.as_str().to_owned()),
+            root.interface
+                .extends
+                .iter()
+                .map(|n| n.as_str().to_owned())
+                .collect(),
+        ),
+        EntityRoot::V2Extension(root) => (
+            None,
+            vec![root.object_type_extension.target.as_str().to_owned()],
+        ),
+        EntityRoot::V2PropertyTypes(_) | EntityRoot::V2Markings(_) | EntityRoot::V1(_) => {
+            (None, Vec::new())
+        }
+    }
+}
+
 /// The base artifacts the candidates reach, transitively, starting from
 /// the ones they reference directly.
 fn base_closure<'a>(
@@ -189,8 +221,22 @@ fn base_closure<'a>(
         .chain(&set.base_dependencies)
         .copied()
         .collect();
+    // Installed types by name: a subtype, implementor, or extension reaches
+    // the types it names even without an envelope dependency on them.
+    let mut by_type: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for artifact in base {
+        if let Some(name) = type_names(artifact).0 {
+            by_type
+                .entry(name)
+                .or_default()
+                .push((artifact.artifact_id.clone(), artifact.version.clone()));
+        }
+    }
     while let Some(artifact) = frontier.pop() {
         let mut next = references(artifact);
+        for name in type_names(artifact).1 {
+            next.extend(by_type.get(&name).into_iter().flatten().cloned());
+        }
         if !candidates.contains(&(artifact.artifact_id.as_str(), artifact.version.as_str())) {
             next.push((artifact.artifact_id.clone(), artifact.version.clone()));
         }
@@ -488,7 +534,7 @@ impl Rows {
             .into_iter()
             .filter_map(|member| {
                 if matches!(member, Member::Transition { .. }) {
-                    self.resolve(&member)
+                    self.resolve(&member, Some(&pinned))
                 } else {
                     Some(member_of(&pinned, member)).filter(|target| self.declares(target))
                 }
@@ -541,39 +587,56 @@ impl Rows {
     /// The row declaring a property, link, or transition of a type: on the
     /// type or its nearest supertype that declares it, in whichever artifact
     /// declares it (the type's or an extension's). `None` when no row does.
-    fn resolve(&self, member: &Member) -> Option<MemberRef> {
+    /// On the type itself, `owner` (the exact artifact a reference pins)
+    /// excludes rows of another version of the type's own artifact.
+    fn resolve(&self, member: &Member, owner: Option<&ArtifactKey>) -> Option<MemberRef> {
         let (Member::Property { type_name, .. }
         | Member::Link { type_name, .. }
         | Member::Transition { type_name, .. }) = member
         else {
             return None;
         };
-        self.lineage(type_name).into_iter().find_map(|owner| {
-            let wanted = with_type(member, owner);
-            let found = match &wanted {
-                Member::Property { .. } => self
-                    .properties
-                    .iter()
-                    .map(|row| &row.at)
-                    .find(|at| at.member == wanted),
-                Member::Link { .. } => self
-                    .links
-                    .iter()
-                    .map(|row| &row.at)
-                    .find(|at| at.member == wanted),
-                Member::Transition { .. } => self
-                    .transitions
-                    .iter()
-                    .map(|row| &row.at)
-                    .find(|at| at.member == wanted),
-                Member::Artifact {}
-                | Member::Type { .. }
-                | Member::State { .. }
-                | Member::ObjectMap { .. }
-                | Member::Law { .. } => None,
-            };
-            found.cloned()
-        })
+        let declares_type = |at: &MemberRef| {
+            self.types
+                .iter()
+                .any(|row| row.at.artifact_id == at.artifact_id && row.at.version == at.version)
+        };
+        let admitted = |at: &MemberRef, step: usize| match owner {
+            Some(owner) if step == 0 => {
+                (at.artifact_id == owner.artifact_id && at.version == owner.version)
+                    || !declares_type(at)
+            }
+            Some(_) | None => true,
+        };
+        self.lineage(type_name)
+            .into_iter()
+            .enumerate()
+            .find_map(|(step, name)| {
+                let wanted = with_type(member, name);
+                let found = match &wanted {
+                    Member::Property { .. } => self
+                        .properties
+                        .iter()
+                        .map(|row| &row.at)
+                        .find(|at| at.member == wanted && admitted(at, step)),
+                    Member::Link { .. } => self
+                        .links
+                        .iter()
+                        .map(|row| &row.at)
+                        .find(|at| at.member == wanted && admitted(at, step)),
+                    Member::Transition { .. } => self
+                        .transitions
+                        .iter()
+                        .map(|row| &row.at)
+                        .find(|at| at.member == wanted && admitted(at, step)),
+                    Member::Artifact {}
+                    | Member::Type { .. }
+                    | Member::State { .. }
+                    | Member::ObjectMap { .. }
+                    | Member::Law { .. } => None,
+                };
+                found.cloned()
+            })
     }
 
     /// Every write a decide graph's closed fact-change schema admits.
@@ -598,11 +661,14 @@ impl Rows {
             if ops.contains(&FactChangeOp::Transition) {
                 for lifecycle in values("lifecycle") {
                     for transition in values("transition") {
-                        if let Some(declared) = self.resolve(&Member::Transition {
-                            type_name: type_name.to_owned(),
-                            lifecycle: lifecycle.to_owned(),
-                            transition: transition.to_owned(),
-                        }) {
+                        if let Some(declared) = self.resolve(
+                            &Member::Transition {
+                                type_name: type_name.to_owned(),
+                                lifecycle: lifecycle.to_owned(),
+                                transition: transition.to_owned(),
+                            },
+                            Some(owner),
+                        ) {
                             candidates.push((declared, WriteVia::FactTransition));
                         }
                     }
@@ -610,7 +676,9 @@ impl Rows {
             }
             if ops.contains(&FactChangeOp::Set) {
                 for property in values("property") {
-                    if let Some(declared) = self.resolve(&property_member(type_name, property)) {
+                    if let Some(declared) =
+                        self.resolve(&property_member(type_name, property), Some(owner))
+                    {
                         candidates.push((declared, WriteVia::FactSet));
                     }
                 }
@@ -696,7 +764,7 @@ impl Rows {
                 ));
             }
             for gap in &map.gaps {
-                let member = if self.resolve(&link(&gap.member)).is_some() {
+                let member = if self.resolve(&link(&gap.member), Some(owner)).is_some() {
                     link(&gap.member)
                 } else {
                     property_member(type_name, &gap.member)
@@ -709,7 +777,7 @@ impl Rows {
                 let target = if matches!(member, Member::Type { .. }) {
                     Some(member_of(owner, member))
                 } else {
-                    self.resolve(&member)
+                    self.resolve(&member, Some(owner))
                 };
                 let Some(target) = target else {
                     continue;
@@ -762,11 +830,15 @@ impl Rows {
             } => {
                 // An inherited transition binds the row of the supertype
                 // that declares it.
-                let Some(target) = self.resolve(&Member::Transition {
-                    type_name: object_type,
-                    lifecycle: property,
-                    transition: transition_id,
-                }) else {
+                let owner = types.get(&object_type);
+                let Some(target) = self.resolve(
+                    &Member::Transition {
+                        type_name: object_type.clone(),
+                        lifecycle: property,
+                        transition: transition_id,
+                    },
+                    owner,
+                ) else {
                     return;
                 };
                 Some(LawBinding::Transition { target })
