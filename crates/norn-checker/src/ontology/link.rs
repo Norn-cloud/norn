@@ -400,11 +400,11 @@ fn string_list(
     };
     let mut out = Vec::new();
     for (index, item) in items.iter().enumerate() {
-        match item {
-            JsonValue::String(text) if !text.trim().is_empty() && !out.contains(text) => {
-                out.push(text.clone())
+        match item.as_string() {
+            Some(text) if !text.trim().is_empty() && !out.iter().any(|seen| seen == text) => {
+                out.push(text.to_owned());
             }
-            _ => diagnostics.push(diagnostic(
+            Some(_) | None => diagnostics.push(diagnostic(
                 LINK_CODE,
                 "entries must be distinct non-empty strings",
                 format!("{path}[{index}]"),
