@@ -1236,7 +1236,7 @@ fn observations_cannot_reconcile_a_protected_lifecycle() {
     let key = FactKey::new("test.SnapshotOrder", "PROTECTED");
     let provenance = provenance("protected.source");
     let mut cell = cell();
-    for (id, amount, state, refused) in [
+    for (id, amount, observed_state, refused) in [
         ("initialize", 5, None, false),
         ("unchanged", 6, Some("draft"), false),
         ("refuse-change", 7, Some("submitted"), true),
@@ -1245,7 +1245,7 @@ fn observations_cannot_reconcile_a_protected_lifecycle() {
         let slice = load_slice(&cell, [key.clone()]).unwrap();
         let before = cell.load(&key).unwrap();
         let ledger_len = cell.ledger().len();
-        let lifecycles = state.map(|state| ObservedLifecycleSnapshot {
+        let lifecycles = observed_state.map(|state| ObservedLifecycleSnapshot {
             property: PropertyId("status".to_owned()),
             state: state.to_owned(),
             provenance: provenance.clone(),
