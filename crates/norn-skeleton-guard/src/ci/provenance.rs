@@ -62,7 +62,7 @@ struct Manifest {
 struct LegacyManifest {
     version: u32,
     software_sources: Vec<SoftwareSource>,
-    artifacts: Vec<serde_json::Value>,
+    artifacts: Vec<Artifact>,
 }
 
 /// Artifact-specific software provenance; never an override of acquisition
@@ -145,8 +145,8 @@ struct SupportedVersions {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Artifact {
-    /// Derived from the record file path; never a claim inside the record.
-    #[serde(skip)]
+    /// Derived from the record file path; only version-1 records carry it.
+    #[serde(default)]
     path: String,
     sha256: String,
     origin: Origin,
@@ -909,6 +909,9 @@ fn load_records(root: &Path, paths: &[String], report: &mut Report) -> Vec<Artif
         match bytes(root, path)
             .and_then(|b| serde_json::from_slice::<Artifact>(&b).map_err(|e| e.to_string()))
         {
+            Ok(a) if !a.path.is_empty() => {
+                report.reject(path, "malformed provenance record: path is the file name");
+            }
             Ok(mut a) => {
                 target.clone_into(&mut a.path);
                 artifacts.push(a);
@@ -931,18 +934,13 @@ fn load_legacy(
     }
     let mut seen = BTreeSet::new();
     let mut artifacts = Vec::new();
-    for mut value in manifest.artifacts {
-        let path = value
-            .as_object_mut()
-            .and_then(|o| o.remove("path"))
-            .and_then(|p| p.as_str().map(str::to_owned))
-            .ok_or_else(|| format!("{LEGACY_MANIFEST}: record without path"))?;
-        let mut a: Artifact =
-            serde_json::from_value(value).map_err(|e| format!("{LEGACY_MANIFEST} {path}: {e}"))?;
-        if !seen.insert(path.clone()) {
-            report.reject(&path, "ambiguous duplicate artifact record");
+    for a in manifest.artifacts {
+        if a.path.is_empty() {
+            return Err(format!("{LEGACY_MANIFEST}: record without path"));
         }
-        a.path = path;
+        if !seen.insert(a.path.clone()) {
+            report.reject(&a.path, "ambiguous duplicate artifact record");
+        }
         artifacts.push(a);
     }
     Ok((manifest.software_sources, artifacts))

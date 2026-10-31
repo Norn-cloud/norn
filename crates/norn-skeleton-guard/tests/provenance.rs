@@ -177,6 +177,19 @@ fn legacy_manifest_reads_until_migrated_but_never_beside_records() {
     fs::remove_dir_all(f.root().join(CONTROL)).unwrap();
     let r = provenance::check_distribution(f.root());
     assert!(r.errors().is_empty(), "{:?}", r.errors());
+    // Typed parsing keeps version 1's duplicate-field refusal.
+    let mut bytes =
+        serde_json::to_vec(&json!({"version":1,"software_sources":[],"artifacts":f.records}))
+            .unwrap();
+    let at = bytes.windows(9).position(|w| w == b"\"origin\":").unwrap();
+    bytes.splice(at..at, br#""origin":"upstream","#.iter().copied());
+    f.write(LEGACY_MANIFEST, &bytes);
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.errors().iter().any(|e| e.contains("duplicate field")),
+        "{:?}",
+        r.errors()
+    );
     f.records.push(f.records[1].clone());
     legacy(&f);
     let r = provenance::check_distribution(f.root());
