@@ -167,13 +167,19 @@ impl<'a> TypeCatalog<'a> {
     ) -> BTreeSet<&str> {
         let model = self.effective_model();
         let properties = match link {
-            Some(link) => model.links.get(object_type)
+            Some(link) => model
+                .links
+                .get(object_type)
                 .and_then(|links| links.iter().find(|candidate| candidate.id.as_str() == link))
                 .map(|link| link.properties.as_slice()),
-            None => model.object_types.get(object_type)
+            None => model
+                .object_types
+                .get(object_type)
                 .map(|object_type| object_type.properties.as_slice()),
         };
-        properties.into_iter().flatten()
+        properties
+            .into_iter()
+            .flatten()
             .filter(|property| !property.computed)
             .map(|property| property.id.as_str())
             .collect()

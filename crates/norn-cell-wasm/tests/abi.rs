@@ -489,14 +489,15 @@ fn shared_admission_uses_interface_invariants_and_exact_put_values() {
 
     // Unrepresentable declared values are refused with a stable ABI code.
     let inexact = commit.replace("-0.0000000000000000000000000001", "1e100");
-    let verdict = parse(&check_commit_json(
-        &inexact,
-        &view(0, false, &[(0, None)], &[]),
-        &model,
-    ).expect("unrepresentable verdict"));
+    let verdict = parse(
+        &check_commit_json(&inexact, &view(0, false, &[(0, None)], &[]), &model)
+            .expect("unrepresentable verdict"),
+    );
     assert_eq!(verdict["accepted"], false);
-    assert_eq!(verdict["refusal"]["code"], "commit.unrepresentable_property");
-
+    assert_eq!(
+        verdict["refusal"]["code"],
+        "commit.unrepresentable_property"
+    );
 }
 
 #[test]

@@ -292,7 +292,8 @@ impl WireCommit {
                         expected: write.expected,
                         mutation: match &write.mutation {
                             WireMutation::Put { values } => {
-                                let declared = catalog.stored_property_names(&write.key.object_type, None);
+                                let declared =
+                                    catalog.stored_property_names(&write.key.object_type, None);
                                 let values = values.project(&declared)?;
                                 FactMutation::Put { values }
                             }
@@ -329,7 +330,8 @@ impl WireCommit {
                                             .and_then(|object| object.concrete.as_ref())
                                     })
                                     .unwrap_or(&link.key.source.object_type);
-                                let declared = catalog.stored_property_names(source, Some(&link.key.link));
+                                let declared =
+                                    catalog.stored_property_names(source, Some(&link.key.link));
                                 LinkMutation::Add {
                                     values: values.project(&declared)?,
                                 }
