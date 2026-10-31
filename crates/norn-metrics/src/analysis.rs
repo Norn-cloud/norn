@@ -11,10 +11,10 @@
 
 use norn_ir::RuntimeValue;
 use serde::Serialize;
-use statrs::distribution::{ContinuousCDF, StudentsT};
+use statrs::distribution::{ChiSquared, ContinuousCDF, Normal, StudentsT};
 use thiserror::Error;
 
-use crate::temporal::TemporalTable;
+use crate::temporal::{TemporalRow, TemporalTable};
 
 /// A statistical computation cannot produce a meaningful finite report.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -25,6 +25,54 @@ pub enum AnalysisError {
     /// Insufficient or degenerate data, including numerical instability.
     #[error("analysis.data: {0}")]
     Data(&'static str),
+}
+
+/// A computed diagnostic; passing a diagnostic never proves its assumption.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Diagnostic {
+    /// The check actually performed, rather than an interchangeable assumption name.
+    pub method: &'static str,
+    /// Statistic in the method's own scale.
+    pub statistic: f64,
+    /// Tail probability when the diagnostic has a specified null distribution.
+    pub p_value: Option<f64>,
+    /// Whether the declared diagnostic threshold passed.
+    pub passed: bool,
+}
+
+/// Points for server-declared residual, QQ and influence plots.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticPlots {
+    /// (fitted, residual), in admitted row order.
+    pub residuals: Vec<(f64, f64)>,
+    /// (standard normal quantile, sorted standardized residual).
+    pub qq: Vec<(f64, f64)>,
+    /// Cook's distance, in admitted row order.
+    pub cooks_distance: Vec<f64>,
+}
+
+/// Simple OLS (one predictor plus intercept). Interpretation is associational.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OlsReport {
+    /// Included observations; no rows are dropped implicitly.
+    pub n: u32,
+    /// Outcome-unit estimate at predictor zero.
+    pub intercept: f64,
+    /// Outcome units per predictor unit.
+    pub slope: f64,
+    /// Conventional, non-robust standard error of slope.
+    pub slope_standard_error: f64,
+    /// Two-sided slope test against zero.
+    pub p_value: f64,
+    /// Slope confidence interval at the supplied alpha.
+    pub interval: (f64, f64),
+    /// Computed diagnostics, each with its actual test/threshold identity.
+    pub diagnostics: Vec<Diagnostic>,
+    /// Plot data; the renderer makes no statistical decisions.
+    pub plots: DiagnosticPlots,
 }
 
 /// Welch's unequal-variance two-sample t-test, group zero minus group one.
@@ -65,6 +113,14 @@ fn number(value: &RuntimeValue) -> Result<f64, AnalysisError> {
         return Err(AnalysisError::Data("non-finite conversion"));
     }
     Ok(value)
+}
+
+fn pair(row: &TemporalRow) -> Result<(f64, f64), AnalysisError> {
+    let feature = row
+        .features
+        .first()
+        .ok_or(AnalysisError::Data("missing feature"))?;
+    Ok((number(&feature.value)?, number(&row.outcome.value)?))
 }
 
 fn profile(table: &TemporalTable, alpha: f64) -> Result<(), AnalysisError> {
@@ -159,3 +215,173 @@ pub fn welch(table: &TemporalTable, alpha: f64) -> Result<WelchReport, AnalysisE
         sample_size_passed: na >= 30.0 && nb >= 30.0,
     })
 }
+
+/// Fit a one-predictor associative model and return named diagnostics and plot points.
+///
+/// # Errors
+/// Invalid profile, insufficient or degenerate observations, or non-finite computations.
+pub fn ols(table: &TemporalTable, alpha: f64) -> Result<OlsReport, AnalysisError> {
+    profile(table, alpha)?;
+    let pairs = table
+        .rows()
+        .iter()
+        .map(pair)
+        .collect::<Result<Vec<_>, _>>()?;
+    fit(&pairs, alpha)
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one bounded OLS fit with its residual-derived diagnostic pack"
+)]
+fn fit(pairs: &[(f64, f64)], alpha: f64) -> Result<OlsReport, AnalysisError> {
+    let n = count(pairs.len())?;
+    if n < 4.0 {
+        return Err(AnalysisError::Data("OLS needs at least four rows"));
+    }
+    let (origin_x, origin_y) = *pairs.first().ok_or(AnalysisError::Data("empty fit"))?;
+    let centered_x = pairs.iter().map(|p| p.0 - origin_x).sum::<f64>() / n;
+    let centered_y = pairs.iter().map(|p| p.1 - origin_y).sum::<f64>() / n;
+    let mean_x = origin_x + centered_x;
+    let mean_y = origin_y + centered_y;
+    let sxx = pairs.iter().map(|p| ((p.0 - origin_x) - centered_x).powi(2)).sum::<f64>();
+    let sxy = pairs
+        .iter()
+        .map(|p| ((p.0 - origin_x) - centered_x) * ((p.1 - origin_y) - centered_y))
+        .sum::<f64>();
+    if !sxx.is_finite() || sxx <= 0.0 {
+        return Err(AnalysisError::Data("constant or unstable predictor"));
+    }
+    let slope = sxy / sxx;
+    let intercept = mean_y - slope * mean_x;
+    let residuals: Vec<_> = pairs
+        .iter()
+        .map(|p| {
+            let fitted = mean_y + slope * ((p.0 - origin_x) - centered_x);
+            (fitted, p.1 - fitted)
+        })
+        .collect();
+    let sse = residuals.iter().map(|p| p.1.powi(2)).sum::<f64>();
+    if !sse.is_finite() || sse <= 0.0 {
+        return Err(AnalysisError::Data("zero or unstable residual variance"));
+    }
+    let variance = sse / (n - 2.0);
+    let standard_error = (variance / sxx).sqrt();
+    let t = student(n - 2.0)?;
+    let p_value = 2.0 * t.sf((slope / standard_error).abs());
+    let margin = t.inverse_cdf(1.0 - alpha / 2.0) * standard_error;
+    let mut standardized: Vec<_> = residuals.iter().map(|p| p.1 / variance.sqrt()).collect();
+    standardized.sort_by(f64::total_cmp);
+    let normal =
+        Normal::new(0.0, 1.0).map_err(|_error| AnalysisError::Data("normal distribution"))?;
+    let qq = standardized
+        .iter()
+        .enumerate()
+        .map(|(index, value)| Ok((normal.inverse_cdf((count(index)? + 0.5) / n), *value)))
+        .collect::<Result<Vec<_>, AnalysisError>>()?;
+    let cooks = pairs
+        .iter()
+        .zip(&residuals)
+        .map(|(p, residual)| {
+            let h = 1.0 / n + ((p.0 - origin_x) - centered_x).powi(2) / sxx;
+            if h >= 1.0 {
+                return Err(AnalysisError::Data("unit leverage"));
+            }
+            Ok(residual.1.powi(2) / (2.0 * variance) * h / (1.0 - h).powi(2))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let m2 = sse / n;
+    let skew = residuals.iter().map(|p| p.1.powi(3)).sum::<f64>() / n / m2.powf(1.5);
+    let kurtosis = residuals.iter().map(|p| p.1.powi(4)).sum::<f64>() / n / m2.powi(2);
+    let jb = n / 6.0 * (skew.powi(2) + (kurtosis - 3.0).powi(2) / 4.0);
+    let chi2 =
+        ChiSquared::new(2.0).map_err(|_error| AnalysisError::Data("chi-squared distribution"))?;
+    let squared_mean = sse / n;
+    let squared_residual_spread = residuals
+        .iter()
+        .map(|p| (p.1.powi(2) - squared_mean).powi(2))
+        .sum::<f64>();
+    let squared_residual_cross_product = pairs
+        .iter()
+        .zip(&residuals)
+        .map(|(p, r)| ((p.0 - origin_x) - centered_x) * (r.1.powi(2) - squared_mean))
+        .sum::<f64>();
+    let bp = if squared_residual_spread > 0.0 {
+        n * (squared_residual_cross_product.powi(2) / sxx / squared_residual_spread).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let chi1 =
+        ChiSquared::new(1.0).map_err(|_error| AnalysisError::Data("chi-squared distribution"))?;
+    let dw = residuals
+        .windows(2)
+        .filter_map(|w| w.first().zip(w.get(1)))
+        .map(|(a, b)| (b.1 - a.1).powi(2))
+        .sum::<f64>()
+        / sse;
+    let max_cook = cooks.iter().copied().fold(0.0_f64, f64::max);
+    let report = OlsReport {
+        n: u32::try_from(pairs.len()).map_err(|_error| AnalysisError::Data("sample bound"))?,
+        intercept,
+        slope,
+        slope_standard_error: standard_error,
+        p_value,
+        interval: (slope - margin, slope + margin),
+        diagnostics: vec![
+            Diagnostic {
+                method: "sample_size_min_20",
+                statistic: n,
+                p_value: None,
+                passed: n >= 20.0,
+            },
+            Diagnostic {
+                method: "jarque_bera",
+                statistic: jb,
+                p_value: Some(chi2.sf(jb)),
+                passed: chi2.sf(jb) >= alpha,
+            },
+            Diagnostic {
+                method: "breusch_pagan_lm",
+                statistic: bp,
+                p_value: Some(chi1.sf(bp)),
+                passed: chi1.sf(bp) >= alpha,
+            },
+            Diagnostic {
+                method: "durbin_watson_1_to_3_heuristic",
+                statistic: dw,
+                p_value: None,
+                passed: (1.0..=3.0).contains(&dw),
+            },
+            Diagnostic {
+                method: "cooks_distance_4_over_n",
+                statistic: max_cook,
+                p_value: None,
+                passed: max_cook <= 4.0 / n,
+            },
+        ],
+        plots: DiagnosticPlots {
+            residuals,
+            qq,
+            cooks_distance: cooks,
+        },
+    };
+    if ![intercept, slope, standard_error, p_value, margin]
+        .iter()
+        .all(|x| x.is_finite())
+        || report
+            .diagnostics
+            .iter()
+            .any(|d| !d.statistic.is_finite() || d.p_value.is_some_and(|p| !p.is_finite()))
+        || report
+            .plots
+            .residuals
+            .iter()
+            .chain(&report.plots.qq)
+            .any(|p| !p.0.is_finite() || !p.1.is_finite())
+        || report.plots.cooks_distance.iter().any(|v| !v.is_finite())
+    {
+        return Err(AnalysisError::Data("non-finite computation"));
+    }
+    Ok(report)
+}
+
