@@ -487,27 +487,16 @@ fn shared_admission_uses_interface_invariants_and_exact_put_values() {
         json!("amount must be positive")
     );
 
-    // A decimal too large for the exact runtime profile is malformed input,
-    // rather than silently rounded invariant data.
+    // Unrepresentable declared values are refused with a stable ABI code.
     let inexact = commit.replace("-0.0000000000000000000000000001", "1e100");
-    assert!(matches!(
-        check_commit_json(
-            &inexact,
-            &json!({
-                "seq": 0,
-                "pending": false,
-                "objects": [{ "version": 0, "concrete": null, "links": [] }],
-                "linkVersions": [],
-                "linkReads": []
-            })
-            .to_string(),
-            &model,
-        ),
-        Err(AbiError::InvalidInput {
-            argument: "commit",
-            ..
-        })
-    ));
+    let verdict = parse(&check_commit_json(
+        &inexact,
+        &view(0, false, &[(0, None)], &[]),
+        &model,
+    ).expect("unrepresentable verdict"));
+    assert_eq!(verdict["accepted"], false);
+    assert_eq!(verdict["refusal"]["code"], "commit.unrepresentable_property");
+
 }
 
 #[test]
@@ -1095,7 +1084,7 @@ fn declared_link_values_reach_native_admission_through_base_alias() {
     let mut types = serde_json::to_value(law_object_types()).expect("model");
     types[1]["links"] = json!([{
         "id":"rel", "target":"law.Thing", "cardinality":{"to":"many","from":"many"},
-        "properties":[{"id":"when","type":{"kind":"timestamp"}}]
+        "properties":[{"id":"when","type":{"kind":"timestamp","timezone":"utc"}}]
     }]);
     let model = types.to_string();
     for (values, accepted, code) in [
