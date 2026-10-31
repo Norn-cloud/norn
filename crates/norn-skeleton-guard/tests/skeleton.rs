@@ -313,6 +313,8 @@ fn guard_detects_rusqlite_outside_norn_cell() {
 fn guard_confines_workers_rs_to_the_cloudflare_adapter() {
     let v = check_dependencies(&with_dep("norn-api", "worker"));
     assert!(rules_of(&v).contains(&"single-owner"), "{}", render(&v));
+    let v = check_dependencies(&with_dep("norn-ir", "worker"));
+    assert!(rules_of(&v).contains(&"single-owner"), "{}", render(&v));
     assert!(rules_of(&v).contains(&"ring0-unlisted"), "{}", render(&v));
     let v = check_dependencies(&metadata());
     assert!(v.is_empty(), "{}", render(&v));
