@@ -69,3 +69,35 @@ export const RecordPayment = Norn.action({
   writes: [{ type: PaymentAllocation, change: "created" }],
   effect: { kind: "upsert_input_object", type: PaymentAllocation, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
+
+const OrderInput = Schema.Struct({ id: Schema.String })
+export const Submit = Norn.action({
+  id: "alpha.order.submit", title: "Submit order", version: "0.1.0",
+  input: OrderInput, output: OrderInput,
+  scopeRequired: ["orgId", "environmentId"], idempotent: false, ledgered: true,
+  writes: [{ type: SalesOrder, change: "modified" }],
+  effect: { kind: "fire_transition", type: SalesOrder, objectIdField: "id", lifecycle: "status", transition: "submit" },
+})
+export const Approve = Norn.action({
+  id: "alpha.order.approve", title: "Approve order", version: "0.1.0",
+  input: OrderInput, output: OrderInput,
+  scopeRequired: ["orgId", "environmentId"], idempotent: false, ledgered: true,
+  writes: [{ type: SalesOrder, change: "modified" }],
+  effect: { kind: "fire_transition", type: SalesOrder, objectIdField: "id", lifecycle: "status", transition: "approve" },
+})
+export const Cancel = Norn.action({
+  id: "alpha.order.cancel", title: "Cancel order", version: "0.1.0",
+  input: OrderInput, output: OrderInput,
+  scopeRequired: ["orgId", "environmentId"], idempotent: false, ledgered: true,
+  writes: [{ type: SalesOrder, change: "modified" }],
+  effect: { kind: "fire_transition", type: SalesOrder, objectIdField: "id", lifecycle: "status", transition: "cancel" },
+})
+export const Access = Norn.access({
+  id: "alpha.order.access", title: "Alpha duty separation", version: "0.1.0",
+  rules: [
+    { ruleId: "sales_submit", actions: [Submit], resourceType: SalesOrder, scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["sales"] } }] },
+    { ruleId: "approver_decides", actions: [Approve, Cancel], resourceType: SalesOrder, scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["approver"] } }] },
+    { ruleId: "billing_invoices", actions: [RecordInvoice], resourceType: SalesInvoice, scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["billing"] } }] },
+    { ruleId: "treasury_allocates", actions: [RecordPayment], resourceType: PaymentAllocation, scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["treasury"] } }] },
+  ],
+})
