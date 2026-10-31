@@ -350,7 +350,8 @@ impl Meter {
 struct State {
     records: Vec<Record>,
     seen: BTreeSet<Fact>,
-    next_null: usize,
+    /// The next unused label; `None` once every label is taken.
+    next_null: Option<usize>,
     created_nulls: usize,
     meter: Meter,
     budget: ChaseBudget,
@@ -367,7 +368,7 @@ fn run(
     let mut state = State {
         records: Vec::new(),
         seen: BTreeSet::new(),
-        next_null: 0,
+        next_null: Some(0),
         created_nulls: 0,
         meter: Meter {
             steps: 0,
@@ -381,7 +382,10 @@ fn run(
         };
         for value in &fact.values {
             if let Value::Null(id) = value {
-                state.next_null = state.next_null.max(id.saturating_add(1));
+                state.next_null = state
+                    .next_null
+                    .zip(id.checked_add(1))
+                    .map(|(next, after)| next.max(after));
             }
         }
         state.insert(fact.clone(), BTreeSet::new(), BTreeSet::from([index]))?;
@@ -440,8 +444,14 @@ impl State {
                 limit: self.budget.max_nulls,
             }));
         }
-        let id = self.next_null;
-        self.next_null = id.saturating_add(1);
+        // A label is never reused, so exhausting them is a refusal.
+        let Some(id) = self.next_null else {
+            return Err(Halt::Refused(ChaseError::BudgetExceeded {
+                resource: "null labels",
+                limit: usize::MAX,
+            }));
+        };
+        self.next_null = id.checked_add(1);
         self.created_nulls = self.created_nulls.saturating_add(1);
         Ok(Value::Null(id))
     }
