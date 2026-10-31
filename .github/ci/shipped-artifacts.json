@@ -266,7 +266,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "16ea272834d1a8a7b56cbfb551968cffd33a2ea3e553484c529eed914670a00b",
+      "sha256": "4bc2c308012749587620888846b50d9c259609adb74eb0a1be8ae5c85058f3b5",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -306,7 +306,7 @@
     },
     {
       "path": "Cargo.toml",
-      "sha256": "365908b779b62520c0d24f4591a6553a2ffa5301179e742f516d32e7aeda1836",
+      "sha256": "e65c06f37cbc6c35fdd7d0db3feb33d3f4001632b4e3f27f66ff386860c8d9af",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -6817,8 +6817,98 @@
       "connector": null
     },
     {
+      "path": "crates/norn-host/Cargo.toml",
+      "sha256": "c651d0f259255bf495ec8edf713f35060ea4d9ea1e0437e4987ec18ccbb4164e",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-host/README.md",
+      "sha256": "9e16810e16896d09a4c42c2c3b4bcc5a5549784bbf6736d534bb1f9e22862cbd",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-host/boundary.json",
+      "sha256": "4527b305f6f30e800214d253e0e94c830e05c4d522d3da29813253823eee28dc",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-host/src/lib.rs",
+      "sha256": "3546d81445de95a472f6121dc2eb3025724e65f9cfb91b140aa7637c8f1b2772",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-host/src/refusal.rs",
+      "sha256": "9cc5d7cb4015487725ac5b317b1a27e9d4f77b87c30ac22e183cae02ba0decc1",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "crates/norn-host/src/scope.rs",
-      "sha256": "09432c504e08f852bca35664f7167025c01eea86f1d2db5101817c76b469c483",
+      "sha256": "17374b3dd68c52747c72d7ad39e94cac2370062bd0b29ebebbb47ee3bc49e100",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12789,7 +12879,7 @@
     },
     {
       "path": "crates/norn-skeleton-guard/src/lib.rs",
-      "sha256": "1ad1f84af912e625588d9f29aaf75a0350abcc4a039091bbdd689c9bb046e523",
+      "sha256": "42881b14f9609fa658887d0918a71619ba225fd47c9d7fcddec60d087af5c824",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29935,7 +30025,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "733dff6ea6f2e98a8e3b8d914992924cd2c479eb6ca33d8e08365687e8075504",
+      "sha256": "21350c8ff29ba153992cac039e94ebf78acd5de2b0c643d27f31989fdb0c0ffc",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

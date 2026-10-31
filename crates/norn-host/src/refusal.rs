@@ -166,7 +166,7 @@ impl Refusal {
 
     /// Preserve the projection resource limit across a kernel commit wrapper.
     #[must_use]
-    pub(crate) fn commit(error: CommitError<CellError>) -> Self {
+    pub fn commit(error: CommitError<CellError>) -> Self {
         let refusal = match &error {
             CommitError::TraversalLimitExceeded { .. } => Self::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
