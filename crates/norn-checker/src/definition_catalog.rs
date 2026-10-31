@@ -85,7 +85,7 @@ pub fn project(set: &ResolvedArtifactSet<'_>) -> Result<DefinitionCatalog, Catal
     for artifact in &envelopes {
         rows.depends_on(artifact, &envelopes);
         match &artifact.payload {
-            ArtifactPayload::Action(_) => rows.action(artifact),
+            ArtifactPayload::Action(_) => rows.action(artifact, &types),
             ArtifactPayload::Mapping(_) => rows.mapping(artifact, &types),
             ArtifactPayload::Law(_) => rows.law(artifact),
             // Entities were projected above; decide graphs below. The other
@@ -122,6 +122,8 @@ struct Rows {
     depends_on: BTreeSet<DependsOnRow>,
     mappings: BTreeSet<MappingRow>,
     laws: BTreeSet<LawRow>,
+    /// Object type name → the child types of its owned collections.
+    children: BTreeMap<String, Vec<String>>,
 }
 
 fn at(artifact: &ArtifactEnvelope, member: Member) -> MemberRef {
@@ -229,6 +231,13 @@ impl Rows {
         for property in &def.properties {
             self.property(artifact, &name, property, &def.lifecycles);
         }
+        self.children.insert(
+            name.clone(),
+            def.owned_collections
+                .iter()
+                .map(|collection| collection.child_type.as_str().to_owned())
+                .collect(),
+        );
         for link in &def.links {
             self.link(artifact, &name, link.id.as_str(), link.target.as_str());
         }
@@ -332,7 +341,7 @@ impl Rows {
         }
     }
 
-    fn action(&mut self, artifact: &ArtifactEnvelope) {
+    fn action(&mut self, artifact: &ArtifactEnvelope, types: &BTreeMap<String, ArtifactKey>) {
         let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact)) else {
             return;
         };
@@ -341,35 +350,85 @@ impl Rows {
         };
         let target = program.target();
         let type_name = target.object_kind.to_owned();
-        let (member, via) = match program {
+        let mut targets = Vec::new();
+        let via = match program {
             ActionEffectProgram::FireTransition {
                 lifecycle,
                 transition,
                 ..
-            } => (
-                Member::Transition {
+            } => {
+                targets.push(Member::Transition {
                     type_name,
                     lifecycle: lifecycle.as_str().to_owned(),
                     transition: transition.as_str().to_owned(),
-                },
-                WriteVia::FireTransition,
-            ),
+                });
+                WriteVia::FireTransition
+            }
             ActionEffectProgram::UpsertInputObject { .. } => {
-                (Member::Type { type_name }, WriteVia::UpsertObject)
+                targets.push(Member::Type { type_name });
+                WriteVia::UpsertObject
             }
             ActionEffectProgram::MutateParentWithRows { .. } => {
-                (Member::Type { type_name }, WriteVia::MutateRows)
+                targets.push(Member::Type { type_name });
+                WriteVia::MutateRows
             }
         };
-        self.writes.insert(WritesRow {
-            writer: at(artifact, Member::Artifact {}),
-            target: MemberRef {
-                artifact_id: target.entity_artifact_id.to_owned(),
-                version: target.entity_artifact_version.to_owned(),
-                member,
-            },
-            via,
-        });
+        let pinned = ArtifactKey {
+            artifact_id: target.entity_artifact_id.to_owned(),
+            version: target.entity_artifact_version.to_owned(),
+        };
+        let mut writes: Vec<MemberRef> = targets
+            .into_iter()
+            .map(|member| member_of(&pinned, member))
+            .collect();
+        // The rows a parent mutation creates, changes, and deletes are
+        // objects of its owned collections' child types.
+        if via == WriteVia::MutateRows {
+            for child in self.children.get(target.object_kind).into_iter().flatten() {
+                if let Some(owner) = types.get(child) {
+                    writes.push(member_of(
+                        owner,
+                        Member::Type {
+                            type_name: child.clone(),
+                        },
+                    ));
+                }
+            }
+        }
+        for target in writes {
+            self.writes.insert(WritesRow {
+                writer: at(artifact, Member::Artifact {}),
+                target,
+                via,
+            });
+        }
+    }
+
+    /// The row declaring a property or link of a type, in whichever artifact
+    /// declares it (the type's, or an extension's); otherwise `member` of
+    /// `owner`, which no row declares.
+    fn pin(&self, owner: &ArtifactKey, member: Member) -> MemberRef {
+        let declared = match &member {
+            Member::Property { .. } => self
+                .properties
+                .iter()
+                .map(|row| &row.at)
+                .find(|at| at.member == member),
+            Member::Link { .. } => self
+                .links
+                .iter()
+                .map(|row| &row.at)
+                .find(|at| at.member == member),
+            Member::Artifact {}
+            | Member::Type { .. }
+            | Member::State { .. }
+            | Member::Transition { .. }
+            | Member::ObjectMap { .. }
+            | Member::Law { .. } => None,
+        };
+        declared
+            .cloned()
+            .unwrap_or_else(|| member_of(owner, member))
     }
 
     /// Every write a decide graph's closed fact-change schema admits.
@@ -408,7 +467,7 @@ impl Rows {
             if ops.contains(&FactChangeOp::Set) {
                 for property in values("property") {
                     candidates.push((
-                        target(property_member(type_name, property)),
+                        self.pin(owner, property_member(type_name, property)),
                         WriteVia::FactSet,
                     ));
                 }
@@ -468,16 +527,16 @@ impl Rows {
             let Some((type_name, owner)) = by_artifact.get(map.target.entity.as_str()) else {
                 continue;
             };
-            let target = |member: Member| MemberRef {
-                artifact_id: owner.artifact_id.clone(),
-                version: owner.version.clone(),
-                member,
-            };
             let link = |id: &str| Member::Link {
                 type_name: (*type_name).to_owned(),
                 link: id.to_owned(),
             };
-            let mut observed: Vec<(Member, MapRule)> = Vec::new();
+            let mut observed: Vec<(Member, MapRule)> = vec![(
+                Member::Type {
+                    type_name: (*type_name).to_owned(),
+                },
+                MapRule::Object {},
+            )];
             for property in &map.properties {
                 observed.push((
                     property_member(type_name, property.property.as_str()),
@@ -494,7 +553,7 @@ impl Rows {
                 ));
             }
             for gap in &map.gaps {
-                let member = if self.declares(&target(link(&gap.member))) {
+                let member = if self.declares(&self.pin(owner, link(&gap.member))) {
                     link(&gap.member)
                 } else {
                     property_member(type_name, &gap.member)
@@ -510,7 +569,7 @@ impl Rows {
                         },
                     ),
                     dataset: map.source.dataset.clone(),
-                    target: target(member),
+                    target: self.pin(owner, member),
                     rule,
                 });
             }
@@ -561,6 +620,14 @@ impl Rows {
             mappings: self.mappings.into_iter().collect(),
             laws: self.laws.into_iter().collect(),
         }
+    }
+}
+
+fn member_of(key: &ArtifactKey, member: Member) -> MemberRef {
+    MemberRef {
+        artifact_id: key.artifact_id.clone(),
+        version: key.version.clone(),
+        member,
     }
 }
 

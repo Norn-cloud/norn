@@ -295,6 +295,7 @@ fn a_mapping_observes_members_and_declares_gaps() {
                 "property:commerce.SalesOrder#total_amount".to_owned(),
                 MapRule::Property {}
             ),
+            ("type:commerce.SalesOrder".to_owned(), MapRule::Object {}),
         ]
     );
     // Observation is not authorship: a mapping adds no write.
@@ -343,4 +344,139 @@ fn the_projection_is_deterministic_and_order_independent() {
     assert!(bytes.starts_with(r#"{"format":"norn.catalog/1","#));
     let round_trip: DefinitionCatalog = serde_json::from_str(&bytes).expect("catalog decodes");
     assert_eq!(round_trip, forward);
+}
+
+fn entity(id: &str, payload: &Value) -> ArtifactEnvelope {
+    envelope(json!({
+        "irVersion": "0.1", "artifactId": id, "kind": "entity", "namespace": "shop",
+        "name": id, "version": "1.0.0", "lifecycle": "draft", "scope": {},
+        "dependencies": [], "provenance": { "source": "system" }, "payload": payload
+    }))
+}
+
+fn toy_mapping(maps: &Value) -> ArtifactEnvelope {
+    envelope(json!({
+        "irVersion": "0.1", "artifactId": "shop.orders.mapping", "kind": "mapping",
+        "namespace": "shop", "name": "orders", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "format": "norn.mapping/1",
+            "source": { "schemaId": "shop.source", "version": "1.0.0", "sha256": "a".repeat(64) },
+            "interfaces": ["shop.Order.entity"],
+            "maps": maps
+        }
+    }))
+}
+
+#[test]
+fn extension_members_bind_to_the_extension_that_declares_them() {
+    let order = entity(
+        "shop.Order.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.Order", "properties": [{ "id": "id", "type": { "kind": "text" } }]
+        }}),
+    );
+    let extension = entity(
+        "acme.Order.extension",
+        &json!({ "entityVersion": "2.0", "objectTypeExtension": {
+            "namespace": "acme", "target": "shop.Order",
+            "properties": [{ "id": "acme_tier", "type": { "kind": "text" } }]
+        }}),
+    );
+    let mapping = toy_mapping(&json!([{
+        "id": "order", "source": { "dataset": "orders" },
+        "target": { "entity": "shop.Order.entity", "interface": "shop.Order.entity" },
+        "subject": "input.id", "sourceRecord": "input.id",
+        "properties": [{ "property": "acme_tier", "value": "input.tier" }]
+    }]));
+    let catalog = catalog(&[order, extension, mapping], &[]);
+    let tier = catalog
+        .mappings
+        .iter()
+        .find(|row| row.rule == MapRule::Property {})
+        .expect("the extension property is mapped");
+    assert_eq!(tier.target.artifact_id, "acme.Order.extension");
+    assert!(catalog.contains(&tier.target));
+}
+
+#[test]
+fn a_map_with_no_member_rules_is_still_a_member() {
+    let order = entity(
+        "shop.Order.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.Order", "properties": [{ "id": "id", "type": { "kind": "text" } }]
+        }}),
+    );
+    let mapping = toy_mapping(&json!([{
+        "id": "order", "source": { "dataset": "orders" },
+        "target": { "entity": "shop.Order.entity", "interface": "shop.Order.entity" },
+        "subject": "input.id", "sourceRecord": "input.id"
+    }]));
+    let catalog = catalog(&[order, mapping], &[]);
+    assert!(catalog.contains(&MemberRef {
+        artifact_id: "shop.orders.mapping".to_owned(),
+        version: "1.0.0".to_owned(),
+        member: Member::ObjectMap {
+            map: "order".to_owned()
+        },
+    }));
+}
+
+#[test]
+fn a_parent_row_mutation_writes_its_child_types() {
+    let parent = entity(
+        "shop.Order.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.Order",
+            "properties": [{ "id": "id", "type": { "kind": "text" } }],
+            "links": [{ "id": "lines", "target": "shop.OrderLine",
+                "cardinality": { "to": "many", "from": "one" } }],
+            "ownedCollections": [{ "id": "lines", "childType": "shop.OrderLine",
+                "rowIdProperty": "row_id", "orderingKey": "idx",
+                "cascadeOnParentDelete": true, "maxRows": 20 }]
+        }}),
+    );
+    let child = entity(
+        "shop.OrderLine.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.OrderLine",
+            "properties": [
+                { "id": "row_id", "type": { "kind": "text" } },
+                { "id": "idx", "type": { "kind": "integer" } }
+            ]
+        }}),
+    );
+    let action = envelope(json!({
+        "irVersion": "0.1", "artifactId": "shop.edit_order.action", "kind": "action",
+        "namespace": "shop", "name": "edit", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "actionId": "shop.edit_order", "scopeRequired": [], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object" },
+            "outputSchema": { "type": "object" },
+            "effectProgram": {
+                "kind": "mutate_parent_with_rows", "objectIdField": "id",
+                "objectKind": "shop.Order", "entityArtifactId": "shop.Order.entity",
+                "entityArtifactVersion": "1.0.0", "parentValuesField": "values",
+                "rowOpsField": "rows", "parentVersionField": "version",
+                "collections": [{ "id": "lines" }]
+            }
+        }
+    }));
+    let catalog = catalog(&[parent, child, action], &[]);
+    let targets: Vec<String> = catalog
+        .writes
+        .iter()
+        .map(|row| {
+            assert_eq!(row.via, WriteVia::MutateRows);
+            format!("{} {}", row.target.artifact_id, row.target.member.id())
+        })
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            "shop.Order.entity type:shop.Order",
+            "shop.OrderLine.entity type:shop.OrderLine"
+        ]
+    );
 }

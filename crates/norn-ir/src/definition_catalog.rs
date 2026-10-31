@@ -278,6 +278,8 @@ pub struct DependsOnRow {
     deny_unknown_fields
 )]
 pub enum MapRule {
+    /// The map produces objects of the target type (one row per map).
+    Object {},
     /// A property rule.
     Property {},
     /// A link rule.
@@ -295,7 +297,8 @@ pub struct MappingRow {
     pub map: MemberRef,
     /// The source dataset the map reads.
     pub dataset: String,
-    /// A property or link of the target object type.
+    /// The target object type (for [`MapRule::Object`]), or one of its
+    /// properties or links, in the artifact that declares it.
     pub target: MemberRef,
     pub rule: MapRule,
 }
