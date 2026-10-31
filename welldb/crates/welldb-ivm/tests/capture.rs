@@ -3,7 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use welldb_ivm::{
     Access, Aggregate, ClassId, Decimal, Field, JoinedTarget, LinkSpec, MetricError, ObjectKey,
-    Placement, Plan, Property, Record, RowRef, Value, VisibilityOutcome, capture,
+    Placement, Plan, Property, Record, RowRef, ScalarConstraints, Value, VisibilityOutcome,
+    capture,
 };
 fn class() -> ClassId {
     ClassId {
@@ -152,4 +153,95 @@ fn hidden_target_short_circuits_later_masks_but_missing_links_refuse_at_capture_
     let result = capture(&p, &class(), row(&id, &r), JoinedTarget::Missing);
     assert_eq!(result.visibility, VisibilityOutcome::HiddenMeasure);
     assert!(result.refusal.is_none());
+}
+#[test]
+fn decimal_constraints_compare_unbounded_literals_and_lineage_keeps_last_write_evidence() {
+    let mut p = plan();
+    p.fields.push(field(
+        "amount",
+        Property::Constrained {
+            base: Box::new(Property::Decimal { scale: 2 }),
+            constraints: vec![ScalarConstraints {
+                min: Some("-1000000000000000000000000000000".into()),
+                max: Some("1000000000000000000000000000000".into()),
+                ..ScalarConstraints::default()
+            }],
+        },
+    ));
+    p.aggregate = Aggregate::Sum {
+        amount: 1,
+        scale: 2,
+        currency: None,
+    };
+    p.validate().expect("admitted shape");
+    let id = key(&p.measure_type);
+    let mut r = record();
+    r.values.insert(
+        "amount".into(),
+        Value::Decimal(Decimal::new(123, 2).expect("amount")),
+    );
+    let contribution = capture(&p, &class(), row(&id, &r), JoinedTarget::NotRequired)
+        .contribution
+        .expect("valid contribution");
+    assert_eq!(
+        contribution.aggregate.sum.decimal(2).expect("exact"),
+        Decimal::new(123, 2).expect("1.23")
+    );
+    assert_eq!(contribution.member.key, id);
+    assert_eq!(contribution.member.seq, 7);
+    assert_eq!(contribution.member.hash, "synthetic-receipt-7");
+    if let Property::Constrained { constraints, .. } =
+        &mut p.fields.get_mut(1).expect("amount").kind
+    {
+        constraints.first_mut().expect("rules").max = Some("1".into());
+    }
+    assert_eq!(
+        capture(&p, &class(), row(&id, &r), JoinedTarget::NotRequired)
+            .refusal
+            .expect("bound")
+            .kind,
+        MetricError::InvalidField
+    );
+}
+#[test]
+fn unicode_lengths_count_scalars_and_malformed_text_patterns_refuse() {
+    let mut p = plan();
+    p.fields.push(field(
+        "customer",
+        Property::Constrained {
+            base: Box::new(Property::Text),
+            constraints: vec![ScalarConstraints {
+                min_length: Some(2),
+                max_length: Some(2),
+                pattern: Some("🙂".into()),
+                ..ScalarConstraints::default()
+            }],
+        },
+    ));
+    p.group = Some(1);
+    p.validate().expect("admitted shape");
+    let id = key(&p.measure_type);
+    let mut r = record();
+    r.values
+        .insert("customer".into(), Value::Text("é🙂".into()));
+    assert_eq!(
+        capture(&p, &class(), row(&id, &r), JoinedTarget::NotRequired)
+            .contribution
+            .expect("unicode")
+            .group
+            .as_deref(),
+        Some("é🙂")
+    );
+    if let Property::Constrained { constraints, .. } =
+        &mut p.fields.get_mut(1).expect("customer").kind
+    {
+        constraints.first_mut().expect("rules").pattern = Some("(".into());
+    }
+    assert_eq!(
+        capture(&p, &class(), row(&id, &r), JoinedTarget::NotRequired)
+            .refusal
+            .expect("pattern")
+            .kind,
+        MetricError::InvalidField
+    );
 }
