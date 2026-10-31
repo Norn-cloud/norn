@@ -18638,7 +18638,7 @@
     },
     {
       "path": "registry/packs/odoo/odoo.link.ts",
-      "sha256": "25d8f91c3576b3f7d8d38d60d05d390212f026c4cf09e29a1053df1a90f6f21b",
+      "sha256": "250223acbe900a6878bfdec90ab022d22ba34adafbc632a34daacf5f204b0821",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18656,7 +18656,7 @@
     },
     {
       "path": "registry/packs/odoo/odoo.pack.ts",
-      "sha256": "7f937c4a19185d2ddb305c8f0aca7ec4300d14fe78009efe19d77d5594599e47",
+      "sha256": "4ecb7f15e3682064ede49b4bb5fb7dff04d2c0ff99877ce0d01364d5aae5a01d",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
