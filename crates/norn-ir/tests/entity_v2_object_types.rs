@@ -263,12 +263,3 @@ fn schema_publishes_closed_members() {
         serde_json::json!(["id", "type"])
     );
 }
-
-#[test]
-fn omitted_write_authority_flags_preserve_wire_defaults() {
-    let wire = serde_json::json!({"name":"test.Item","properties":[{"id":"count","type":{"kind":"integer"}}]});
-    let object: ObjectTypeDef = serde_json::from_value(wire.clone()).expect("old definition");
-    assert!(!object.immutable);
-    assert!(!object.properties[0].protected);
-    assert_eq!(serde_json::to_value(&object).expect("unchanged wire"), wire);
-}

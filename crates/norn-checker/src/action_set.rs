@@ -775,7 +775,7 @@ impl Defined<'_> {
                     .as_ref()
                     .and_then(|effective| effective.as_ref().ok())
                     .and_then(|effective| effective.property(property))
-                    .is_some_and(|property| property.protected)
+                    .is_some_and(|property| property.protected())
             }) {
                 findings.push(finding(
                     codes::TARGET_NOT_WRITABLE,
@@ -1229,7 +1229,7 @@ fn owned_rows_effect_findings(
             });
             let computed = child_effective
                 .and_then(|child| child.property(property.as_str()))
-                .is_none_or(|property| property.computed || property.protected);
+                .is_none_or(|property| property.computed || property.protected());
             let lifecycle =
                 child_effective.is_some_and(|child| child.lifecycle(property.as_str()).is_some());
             if lifecycle {
@@ -1298,7 +1298,7 @@ fn owned_rows_effect_findings(
         {
             continue;
         }
-        if property.computed || property.protected {
+        if property.computed || property.protected() {
             findings.push(finding(
                 codes::TARGET_NOT_WRITABLE,
                 format!(
