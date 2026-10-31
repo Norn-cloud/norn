@@ -353,6 +353,76 @@ declare module "@norn/authoring" {
       readonly dependencies: import("../src/builder/law.ts").LawDef["dependencies"]
     }): LawDefinition
 
+    /**
+     * Claims and rulings (norn#62). Every argument is a typed handle built by
+     * the calls below, never raw IR: the compiler lowers each handle call to
+     * ClaimIR / RulingIR. Ratification is governance, not authoring.
+     */
+    interface ArtifactPin { readonly _tag: "NornPin" }
+    interface MemberHandle { readonly _tag: "NornMember" }
+    interface EvidenceHandle { readonly _tag: "NornEvidence" }
+    interface StatementHandle { readonly _tag: "NornStatement" }
+    interface ObservationHandle { readonly _tag: "NornObservation" }
+    interface OutcomeHandle { readonly _tag: "NornOutcome" }
+    type EvidenceStrength = "structural" | "exhaustive_finite" | "bounded" | "checked_proof" | "runtime_enforced" | "sampled" | "refuted" | "unknown"
+    /** An exact artifact identity. */
+    function pin(artifactId: string, version: string): ArtifactPin
+    /** Definition-level members of an exact artifact (the catalog's member references). */
+    namespace meta {
+      function artifact(at: ArtifactPin): MemberHandle
+      function type(at: ArtifactPin, typeName: string): MemberHandle
+      function property(at: ArtifactPin, typeName: string, property: string): MemberHandle
+      function link(at: ArtifactPin, typeName: string, link: string): MemberHandle
+      function state(at: ArtifactPin, typeName: string, lifecycle: string, state: string): MemberHandle
+      function transition(at: ArtifactPin, typeName: string, lifecycle: string, transition: string): MemberHandle
+      function objectMap(at: ArtifactPin, map: string): MemberHandle
+      function law(at: ArtifactPin, law: string): MemberHandle
+    }
+    /** Evidence with its strength; strength is not decision authority. */
+    namespace evidence {
+      function upstream(system: string, release: string, locator: string, strength: EvidenceStrength, note?: string): EvidenceHandle
+      function artifact(at: ArtifactPin, sha256: string, strength: EvidenceStrength, note?: string): EvidenceHandle
+    }
+    namespace statement {
+      /** The state is derived from `from`; no declared transition may target it. */
+      function derivedState(state: MemberHandle, from: ReadonlyArray<MemberHandle>): StatementHandle
+      /** Two mappings observe one object and disagree on `target`. */
+      function divergence(target: MemberHandle, left: ObservationHandle, right: ObservationHandle): StatementHandle
+    }
+    /** One source record read by an object map of an exact mapping. */
+    function observe(mapping: ArtifactPin, map: string, record: { readonly [field: string]: JsonData }): ObservationHandle
+    namespace outcome {
+      function choose(definition: MemberHandle): OutcomeHandle
+      function parameterise(parameter: MemberHandle, defaultValue: JsonData, setBy: ReadonlyArray<"tenant" | "jurisdiction" | "normative_profile">): OutcomeHandle
+      function scoped(cases: ReadonlyArray<{ readonly scope: { readonly [dimension in "orgId" | "tenantId" | "workspaceId" | "environmentId" | "businessUnitId"]?: string }; readonly definition: MemberHandle }>): OutcomeHandle
+      function deferUntil(on: string): OutcomeHandle
+      function reject(): OutcomeHandle
+    }
+    interface ClaimDefinition { readonly _tag: "NornClaim" }
+    function claim(meta: {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      readonly statement: StatementHandle
+      readonly evidence: ReadonlyArray<EvidenceHandle>
+      readonly note?: string
+    }): ClaimDefinition
+    interface RulingDefinition { readonly _tag: "NornRuling" }
+    function ruling(meta: {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      readonly resolves: ReadonlyArray<ArtifactPin>
+      readonly outcome: OutcomeHandle
+      readonly affects: ReadonlyArray<MemberHandle>
+      readonly decidedBy: { readonly principal: string; readonly authority: "owner" | "lead" | "agent" }
+      readonly decidedAt: string
+      readonly evidence?: ReadonlyArray<EvidenceHandle>
+      readonly alternatives?: ReadonlyArray<{ readonly outcome: OutcomeHandle; readonly note?: string }>
+      readonly supersedes?: ArtifactPin
+      readonly note?: string
+    }): RulingDefinition
+
     /** Opaque decision definition; the syntax compiler lowers the call. */
     interface DecisionDefinition<I = unknown, O = unknown> {
       readonly __types?: { readonly input: I; readonly output: O }

@@ -1,0 +1,248 @@
+[
+  {
+    "artifactId": "commerce.sales_order_invoiced_is_derived.claim",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "claim",
+    "lifecycle": "draft",
+    "name": "A sales order's invoiced state is derived",
+    "namespace": "commerce",
+    "payload": {
+      "claimVersion": "0.1",
+      "evidence": [
+        {
+          "note": "status follows per_billed, computed from Sales Invoice items",
+          "source": {
+            "kind": "upstream",
+            "locator": "erpnext/selling/doctype/sales_order/sales_order.py#set_status",
+            "release": "v16.0.0",
+            "system": "erpnext"
+          },
+          "strength": "structural"
+        }
+      ],
+      "id": "commerce.sales_order_invoiced_is_derived",
+      "statement": {
+        "from": [
+          {
+            "artifactId": "commerce.SalesOrder.entity",
+            "member": {
+              "kind": "link",
+              "link": "lines",
+              "typeName": "commerce.SalesOrder"
+            },
+            "version": "0.1.0"
+          }
+        ],
+        "kind": "derived_state",
+        "state": {
+          "artifactId": "commerce.SalesOrder.entity",
+          "member": {
+            "kind": "state",
+            "lifecycle": "status",
+            "state": "invoiced",
+            "typeName": "commerce.SalesOrder"
+          },
+          "version": "0.1.0"
+        }
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/ruling-ir/rulings.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "shop.order_total_divergence.claim",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "claim",
+    "lifecycle": "draft",
+    "name": "ERP and storefront disagree on an order's total",
+    "namespace": "shop",
+    "payload": {
+      "claimVersion": "0.1",
+      "evidence": [
+        {
+          "source": {
+            "kind": "upstream",
+            "locator": "admin/api/orders.json#subtotal_price",
+            "release": "2026-10",
+            "system": "storefront"
+          },
+          "strength": "sampled"
+        }
+      ],
+      "id": "shop.order_total_divergence",
+      "statement": {
+        "kind": "divergence",
+        "witness": {
+          "left": {
+            "map": "order",
+            "mapping": {
+              "artifactId": "shop.erp.mapping",
+              "version": "0.1.0"
+            },
+            "record": {
+              "grand_total": 114,
+              "name": "SO-1"
+            }
+          },
+          "right": {
+            "map": "order",
+            "mapping": {
+              "artifactId": "shop.storefront.mapping",
+              "version": "0.1.0"
+            },
+            "record": {
+              "id": "1001",
+              "subtotal_price": 100,
+              "total_price": 114
+            }
+          },
+          "target": {
+            "artifactId": "shop.Order.entity",
+            "member": {
+              "kind": "property",
+              "property": "total",
+              "typeName": "shop.Order"
+            },
+            "version": "0.1.0"
+          }
+        }
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/ruling-ir/rulings.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "shop.order_total_is_gross.ruling",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "ruling",
+    "lifecycle": "draft",
+    "name": "An order's total is tax-inclusive",
+    "namespace": "shop",
+    "payload": {
+      "affects": [
+        {
+          "artifactId": "shop.storefront.mapping",
+          "member": {
+            "kind": "artifact"
+          },
+          "version": "0.2.0"
+        }
+      ],
+      "alternatives": [
+        {
+          "note": "keep both totals",
+          "outcome": {
+            "kind": "reject"
+          }
+        },
+        {
+          "outcome": {
+            "default": "gross",
+            "kind": "parameterise",
+            "parameter": {
+              "artifactId": "shop.order_total_basis.setting",
+              "member": {
+                "kind": "artifact"
+              },
+              "version": "0.1.0"
+            },
+            "setBy": [
+              "tenant",
+              "jurisdiction"
+            ]
+          }
+        },
+        {
+          "outcome": {
+            "cases": [
+              {
+                "definition": {
+                  "artifactId": "shop.storefront.mapping",
+                  "member": {
+                    "kind": "artifact"
+                  },
+                  "version": "0.2.0"
+                },
+                "scope": {
+                  "tenantId": "eu"
+                }
+              },
+              {
+                "definition": {
+                  "artifactId": "shop.storefront.mapping",
+                  "member": {
+                    "kind": "artifact"
+                  },
+                  "version": "0.1.0"
+                },
+                "scope": {
+                  "tenantId": "us"
+                }
+              }
+            ],
+            "kind": "scoped"
+          }
+        },
+        {
+          "note": "wait for the storefront tax API",
+          "outcome": {
+            "kind": "defer",
+            "revisit": {
+              "kind": "date",
+              "on": "2026-12-01"
+            }
+          }
+        }
+      ],
+      "decidedAt": "2026-10-31",
+      "decidedBy": {
+        "authority": "owner",
+        "principal": "owner"
+      },
+      "id": "shop.order_total_is_gross",
+      "outcome": {
+        "definition": {
+          "artifactId": "shop.storefront.mapping",
+          "member": {
+            "kind": "artifact"
+          },
+          "version": "0.2.0"
+        },
+        "kind": "choose"
+      },
+      "resolves": [
+        {
+          "artifactId": "shop.order_total_divergence.claim",
+          "version": "0.1.0"
+        }
+      ],
+      "rulingVersion": "0.1"
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/ruling-ir/rulings.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  }
+]

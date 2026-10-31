@@ -229,6 +229,23 @@ fn a_ruling_is_dated_decided_and_never_its_own_successor() {
 }
 
 #[test]
+fn the_typed_authoring_goldens_pass_the_local_checks() {
+    // `fixtures/ruling-ir/rulings.json` is compiled from `rulings.source.ts`
+    // by `tools/norn-ts` (`test/ruling.test.ts` keeps it byte-identical).
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/ruling-ir/rulings.json"
+    );
+    let golden: Vec<Value> =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("the golden is readable"))
+            .expect("the golden is a list of artifacts");
+    assert_eq!(golden.len(), 3);
+    for artifact in &golden {
+        assert_eq!(findings(artifact), [], "{}", artifact["artifactId"]);
+    }
+}
+
+#[test]
 fn scoped_cases_are_disjoint_and_revisit_evidence_is_pinned() {
     let mut overlapping = ruling();
     overlapping["payload"]["outcome"] = json!({ "kind": "scoped", "cases": [
