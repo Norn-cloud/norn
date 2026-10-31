@@ -487,6 +487,8 @@ def workflow_verdict_canaries(source: str) -> None:
 
 def workflow_context_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
+    if True in workflow:
+        workflow["on"] = workflow.pop(True)
     validator = load_module("norn_workflow_context_canary", VALIDATOR)
     with tempfile.TemporaryDirectory() as directory:
         candidate = Path(directory) / "ci-policy.yml"

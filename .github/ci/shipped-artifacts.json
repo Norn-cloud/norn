@@ -29935,7 +29935,7 @@
     },
     {
       "path": "verification/coverage-v1/negative_canaries.py",
-      "sha256": "e93b16cf96c0a098782a2486026f8c7124a99ddc0261fd5f3b917837138acd9f",
+      "sha256": "92c2500c17bfcb8d761d06923196e8d648fff443cfb5229749ce1e2f5cc364cc",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
