@@ -32706,7 +32706,7 @@
     },
     {
       "path": "welldb/crates/welldb-ivm/src/lib.rs",
-      "sha256": "2b654474ce0844babad79d0f918b4ed102e34a8dc85d9c83c8e9a1b7d6e7839d",
+      "sha256": "f8bf16aaeaa7cd69dcf5812ae22044de72433bd93ea7409e33f11c1420f44773",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32725,6 +32725,42 @@
     {
       "path": "welldb/crates/welldb-ivm/src/plan.rs",
       "sha256": "f88297b548d2aa51593cae81682eaf5a21bcc3a39018f754a338eb19f9cd5fa1",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/src/source.rs",
+      "sha256": "3b2eb94068d55be03b70601aca502219488b3326ab3fc310d5f521efda96d9a8",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/src/state.rs",
+      "sha256": "cd35bd2b4b0d470e47356268e07dfeb06eb996ec7efeebf1ab27cbbb60b0f4a5",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32779,6 +32815,24 @@
     {
       "path": "welldb/crates/welldb-ivm/tests/plan.rs",
       "sha256": "a4919c7f052d2c6c24fad66f6e3f35d993fdec880d16717aefc515a1c9a8a96b",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/tests/source.rs",
+      "sha256": "ffccf03d8e8e05780677c74cde3367be7900307ef51199575917ffac9d39af98",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

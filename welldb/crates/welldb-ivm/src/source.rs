@@ -1,5 +1,8 @@
 //! Pure source-state updates; delivery continuity remains the backend's responsibility.
-use crate::{JoinedTarget, RowRef, Batch, ClassId, ClassSpec, MetricError, ObjectKey, Op, Plan, Record, Seq, Snapshot, Unsupported, Value};
+use crate::{
+    Batch, ClassSpec, JoinedTarget, MetricError, ObjectKey, Op, Plan, Record, RowRef, Seq,
+    Snapshot, Unsupported,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Source decoder/rebuild state, never prescribed as an incremental engine store.
