@@ -168,6 +168,15 @@ declare module "@norn/authoring" {
       readonly properties: S
     }
 
+    /** A link every implementing type must declare, at most this wide (EntityIR `InterfaceLink`). */
+    interface InterfaceLinkSpec {
+      readonly id: string
+      readonly description?: string
+      /** The widest target: an object type or an interface, by reference or qualified name. */
+      readonly target: TypeDefinition<unknown> | InterfaceDefinition<unknown> | string
+      readonly cardinality: { readonly to: "one" | "many"; readonly from: "one" | "many"; readonly required?: boolean }
+    }
+
     interface InterfaceInvariantMeta {
       /** Invariants over the required interface members, read through `self`. */
       readonly invariants?: ReadonlyArray<InvariantSpec>
@@ -213,7 +222,7 @@ declare module "@norn/authoring" {
       S extends Schema.Top,
       const P extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
     >(
-      meta: InterfaceMeta<S> & InterfaceInvariantMeta & { readonly extends?: P },
+      meta: InterfaceMeta<S> & InterfaceInvariantMeta & { readonly extends?: P; readonly links?: ReadonlyArray<InterfaceLinkSpec> },
     ): InterfaceDefinition<EffectiveProperties<undefined, P, S["Type"]>>
 
     /** Opaque action definition; the syntax compiler lowers the call. */

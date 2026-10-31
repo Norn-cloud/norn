@@ -2316,6 +2316,7 @@
         "tools/norn-ts/test/entity-builders.test.ts",
         "tools/norn-ts/test/flow-builder.test.ts",
         "tools/norn-ts/test/interface-inheritance.test.ts",
+        "tools/norn-ts/test/interface-links.test.ts",
         "tools/norn-ts/test/law.test.ts",
         "tools/norn-ts/test/profile-corpus.test.ts",
         "tools/norn-ts/test/schema-lowering.test.ts",
