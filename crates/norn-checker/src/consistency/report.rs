@@ -66,6 +66,14 @@ fn link_report(link: &PackLink, budget: ChaseBudget) -> Value {
         "chase budget: {} facts, {} nulls, {} steps per run",
         budget.max_facts, budget.max_nulls, budget.max_steps
     );
+    let mut divergence = obligation(
+        "divergence",
+        "not evaluated: divergences need mapped instance records, and none are supplied".to_owned(),
+        &[],
+    );
+    if let Some(object) = divergence.as_object_mut() {
+        object.insert("evaluated".to_owned(), Value::Bool(false));
+    }
     json!({
         "link": link.link_id,
         "lowered": {
@@ -96,17 +104,7 @@ fn link_report(link: &PackLink, budget: ChaseBudget) -> Value {
                 "structural: every source term is read by a lowered correspondence or is a declared gap (residual, derived or canon → system only)".to_owned(),
                 &with(&totality, &[codes::NON_TOTAL]),
             ),
-            {
-                let mut divergence = obligation(
-                    "divergence",
-                    "not evaluated: divergences need mapped instance records, and none are supplied".to_owned(),
-                    &[],
-                );
-                if let Some(object) = divergence.as_object_mut() {
-                    object.insert("evaluated".to_owned(), Value::Bool(false));
-                }
-                divergence
-            },
+            divergence,
         ],
     })
 }
