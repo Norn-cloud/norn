@@ -14,7 +14,7 @@ use super::{
 
 pub(super) const LINK_CODE: &str = "ontology_link.validation.invalid_payload";
 const RELATIONS: [&str; 4] = ["equivalent", "subsumed_by", "subsumes", "derived"];
-const RESIDUAL_REASONS: [&str; 2] = ["system_specific", "canon_gap"];
+const RESIDUAL_REASONS: [&str; 3] = ["system_specific", "canon_gap", "non_conforming"];
 
 /// Validates one link-pack payload in isolation.
 pub(crate) fn validate_link_payload(

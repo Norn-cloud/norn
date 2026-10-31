@@ -2,7 +2,7 @@ import { Norn } from "@norn/authoring"
 
 export const Pack = Norn.ontologyPack({
   id: "norn.ontology-pack.canon",
-  title: "Norn canon handles (core physics and accounting, proposed)",
+  title: "Norn canon handles: provisional stand-ins for the lane A and B types",
   version: "0.1.0",
   sources: [
     {"sourceId": "source.schema-org", "releaseId": "30.0", "releasedAt": "2026-03-19", "retrievedAt": "2026-08-25", "canonicalUrl": "https://schema.org/version/30.0/", "license": "CC-BY-SA-3.0", "redistribution": "reference_only", "importMode": "map_only", "files": [{"path": "https://schema.org/version/latest/schemaorg-current-https.jsonld", "sha256": "0f0c97a4f666b2f8563573fe48453782fd51b87a504523cf0c9aff6a71c3eec4"}]},
@@ -17,6 +17,7 @@ export const Pack = Norn.ontologyPack({
     {"termId": "norn.core.event.fulfils", "label": "Fulfils", "definition": "The commitment an event fulfils, wholly or in part.", "termKind": "property", "status": "active", "semanticAuthority": "semantic_only", "domainTermId": "norn.core.event"},
     {"termId": "norn.core.commitment", "label": "Commitment", "definition": "A promise by an agent to take part in future economic events.", "termKind": "class", "status": "active", "semanticAuthority": "semantic_only"},
     {"termId": "norn.core.claim", "label": "Claim", "definition": "A right to receive resources that arises when one side of an exchange has happened and its reciprocal has not.", "termKind": "class", "status": "active", "semanticAuthority": "semantic_only"},
+    {"termId": "norn.core.commitment.gives.rise.to", "label": "Gives rise to", "definition": "The claim a commitment gives rise to once one side of it is performed; a commitment is never itself a claim.", "termKind": "property", "status": "active", "semanticAuthority": "semantic_only", "domainTermId": "norn.core.commitment"},
     {"termId": "norn.finance.invoice", "label": "Invoice", "definition": "A claim document that states what a party owes for goods or services; a credit note is an invoice with the opposite sign.", "termKind": "class", "status": "active", "semanticAuthority": "semantic_only", "parentTermId": "norn.core.claim"},
     {"termId": "norn.finance.invoice.line", "label": "Invoice line", "definition": "One charged resource on an invoice.", "termKind": "class", "status": "active", "semanticAuthority": "semantic_only"},
     {"termId": "norn.finance.invoice.party", "label": "Party", "definition": "The agent the invoice is issued to or received from.", "termKind": "property", "status": "active", "semanticAuthority": "semantic_only", "domainTermId": "norn.finance.invoice"},
@@ -32,6 +33,7 @@ export const Pack = Norn.ontologyPack({
     {"termId": "norn.finance.invoice.line.quantity", "label": "Quantity", "definition": "How much of it.", "termKind": "property", "status": "active", "semanticAuthority": "semantic_only", "domainTermId": "norn.finance.invoice.line"},
     {"termId": "norn.finance.invoice.line.amount", "label": "Amount", "definition": "The line's charged amount.", "termKind": "property", "status": "active", "semanticAuthority": "semantic_only", "domainTermId": "norn.finance.invoice.line"},
     {"termId": "norn.finance.invoice.post", "label": "Post invoice", "definition": "Admit the invoice into the ledger; after posting it is immutable.", "termKind": "action", "status": "active", "semanticAuthority": "semantic_only", "domainTermId": "norn.finance.invoice"},
+    {"termId": "norn.finance.invoice.gives.rise.to", "label": "Gives rise to", "definition": "The accounting transaction posting the invoice gives rise to; an invoice is not itself an accounting transaction.", "termKind": "property", "status": "active", "semanticAuthority": "semantic_only", "domainTermId": "norn.finance.invoice"},
     {"termId": "norn.finance.invoice.reverse", "label": "Reverse invoice", "definition": "Cancel a posted invoice by a reversing entry; the original stays.", "termKind": "action", "status": "active", "semanticAuthority": "semantic_only", "domainTermId": "norn.finance.invoice"},
     {"termId": "norn.finance.payment", "label": "Payment", "definition": "A transfer of money that settles claims between parties.", "termKind": "class", "status": "active", "semanticAuthority": "semantic_only", "parentTermId": "norn.core.event.transfer"},
     {"termId": "norn.finance.payment.allocation", "label": "Payment allocation", "definition": "The part of a payment applied to one invoice.", "termKind": "class", "status": "active", "semanticAuthority": "semantic_only"},

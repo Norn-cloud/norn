@@ -25,6 +25,8 @@ pub struct LinkCoverage {
     pub residual: BTreeSet<String>,
     /// Source terms the canon lacks a term for.
     pub canon_gaps: BTreeSet<String>,
+    /// Source behaviour that breaks a canon law; flagged, never mapped.
+    pub non_conforming: BTreeSet<String>,
 }
 
 #[derive(Default)]
@@ -180,6 +182,7 @@ fn validate_link(
         mapped: BTreeMap::new(),
         residual: BTreeSet::new(),
         canon_gaps: BTreeSet::new(),
+        non_conforming: BTreeSet::new(),
     };
     let correspondences = link
         .get("correspondences")
@@ -285,6 +288,8 @@ fn validate_link(
             );
         } else if string_field(item, "reason") == Some("canon_gap") {
             coverage.canon_gaps.insert(term.to_owned());
+        } else if string_field(item, "reason") == Some("non_conforming") {
+            coverage.non_conforming.insert(term.to_owned());
         } else {
             coverage.residual.insert(term.to_owned());
         }
@@ -292,7 +297,8 @@ fn validate_link(
     for (term, (status, _)) in &from.terms {
         let accounted = coverage.mapped.contains_key(term)
             || coverage.residual.contains(term)
-            || coverage.canon_gaps.contains(term);
+            || coverage.canon_gaps.contains(term)
+            || coverage.non_conforming.contains(term);
         if status == "active" && !accounted {
             report(
                 format!("active term '{term}' has neither a correspondence nor a residual"),
