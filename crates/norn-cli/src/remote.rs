@@ -103,6 +103,7 @@ fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
         return Err("bearer authentication requires an HTTPS endpoint".into());
     }
     let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(30)))
         .build()
