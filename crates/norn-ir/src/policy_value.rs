@@ -37,8 +37,12 @@ impl<'de> Deserialize<'de> for PolicyValue {
 }
 
 impl JsonTree for PolicyValue {
-    fn null() -> Self { Self::Null }
-    fn boolean(value: bool) -> Self { Self::Bool(value) }
+    fn null() -> Self {
+        Self::Null
+    }
+    fn boolean(value: bool) -> Self {
+        Self::Bool(value)
+    }
     fn number(value: JsonNumber) -> Self {
         match value.kind() {
             JsonNumberKind::NegativeInteger(value) => Self::Signed(value),
@@ -46,15 +50,27 @@ impl JsonTree for PolicyValue {
             JsonNumberKind::Float => Self::Float(value.as_f64()),
         }
     }
-    fn string(value: String) -> Self { Self::String(value) }
-    fn array(values: Vec<Self>) -> Self { Self::Array(values) }
-    fn object(entries: Vec<(String, Self)>) -> Self { Self::Object(entries.into_iter().collect()) }
+    fn string(value: String) -> Self {
+        Self::String(value)
+    }
+    fn array(values: Vec<Self>) -> Self {
+        Self::Array(values)
+    }
+    fn object(entries: Vec<(String, Self)>) -> Self {
+        Self::Object(entries.into_iter().collect())
+    }
 }
 
 impl JsonSchema for PolicyValue {
-    fn schema_name() -> std::borrow::Cow<'static, str> { JsonValue::schema_name() }
-    fn schema_id() -> std::borrow::Cow<'static, str> { JsonValue::schema_id() }
-    fn json_schema(generator: &mut SchemaGenerator) -> Schema { JsonValue::json_schema(generator) }
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        JsonValue::schema_name()
+    }
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        JsonValue::schema_id()
+    }
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        JsonValue::json_schema(generator)
+    }
 }
 
 impl PolicyValue {
@@ -77,8 +93,15 @@ impl PolicyValue {
             Self::Unsigned(value) => integer_projection(&value.to_string()),
             Self::Float(value) => JsonValue::Number(*value),
             Self::String(value) => JsonValue::String(value.clone()),
-            Self::Array(values) => JsonValue::Array(values.iter().map(Self::structural_projection).collect()),
-            Self::Object(values) => JsonValue::Object(values.iter().map(|(key, value)| (key.clone(), value.structural_projection())).collect()),
+            Self::Array(values) => {
+                JsonValue::Array(values.iter().map(Self::structural_projection).collect())
+            }
+            Self::Object(values) => JsonValue::Object(
+                values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.structural_projection()))
+                    .collect(),
+            ),
         }
     }
 }
@@ -96,7 +119,12 @@ impl From<JsonValue> for PolicyValue {
             JsonValue::Number(value) => Self::Float(value),
             JsonValue::String(value) => Self::String(value),
             JsonValue::Array(values) => Self::Array(values.into_iter().map(Self::from).collect()),
-            JsonValue::Object(values) => Self::Object(values.into_iter().map(|(key, value)| (key, Self::from(value))).collect()),
+            JsonValue::Object(values) => Self::Object(
+                values
+                    .into_iter()
+                    .map(|(key, value)| (key, Self::from(value)))
+                    .collect(),
+            ),
         }
     }
 }
