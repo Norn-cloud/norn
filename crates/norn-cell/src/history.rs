@@ -1483,7 +1483,7 @@ impl<E: SqlEngine> CellStore<E> {
             } else {
                 if record.model_hash != store.model().model_hash()
                     || record.ddl_hash != store.model().ddl_hash()
-                    || record.ddl_sql != store.model().schema().to_sql()
+                    || record.ddl_sql != store.model().ddl_sql()
                 {
                     return Err(refused());
                 }
