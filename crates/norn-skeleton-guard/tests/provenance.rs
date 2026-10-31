@@ -638,7 +638,10 @@ fn trusted_policy_refuses_a_dropped_subsystem_a_missing_index_and_stray_entries(
     };
     let mut dropped = policy_fixture();
     drop_file(&mut dropped, COVERAGE_LEDGER);
-    refused(&dropped, "quantity-ledger: retained core obligations were removed");
+    refused(
+        &dropped,
+        "quantity-ledger: retained core obligations were removed",
+    );
     let mut headless = policy_fixture();
     drop_file(&mut headless, COVERAGE_INDEX);
     refused(&headless, "manifest/index.json is missing");
