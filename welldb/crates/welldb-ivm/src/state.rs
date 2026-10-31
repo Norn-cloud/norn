@@ -1,5 +1,8 @@
 //! Pure export-delivery, snapshot and drill-through contracts.
-use crate::{Access, BucketAgg, ClassId, ClassSpec, Decimal, MetricError, ObjectKey, Plan, Record, RecordHash, Seq, Unsupported, Value};
+use crate::{
+    Access, BucketAgg, ClassId, ClassSpec, Decimal, MetricError, ObjectKey, Plan, Record,
+    RecordHash, Seq, Unsupported, Value,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Scalar group, absent for an ungrouped aggregate.
