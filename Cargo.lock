@@ -1490,6 +1490,7 @@ name = "norn-api"
 version = "0.1.0"
 dependencies = [
  "norn-ir",
+ "norn-kernel",
  "serde",
  "serde_json",
  "utoipa",
