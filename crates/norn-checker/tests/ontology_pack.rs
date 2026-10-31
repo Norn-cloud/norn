@@ -174,7 +174,13 @@ fn imported_source_names_its_importer_and_has_a_redistributable_license() {
 
     for (field, value, message) in [
         ("name", "Frappe", "lowercase dotted identifier"),
+        ("name", "norn..frappe", "lowercase dotted identifier"),
+        ("name", ".frappe", "lowercase dotted identifier"),
+        ("name", "frappe", "lowercase dotted identifier"),
         ("version", "latest", "strict semantic version"),
+        ("version", "1.2", "strict semantic version"),
+        ("version", "01.2.3", "strict semantic version"),
+        ("version", "1.0.0-01", "strict semantic version"),
     ] {
         let mut candidate = fixture_json();
         candidate["payload"]["sources"][index]["importer"][field] = serde_json::json!(value);
@@ -184,6 +190,29 @@ fn imported_source_names_its_importer_and_has_a_redistributable_license() {
             message,
         );
     }
+}
+
+#[test]
+fn importer_versions_follow_semver_with_prerelease_and_build() {
+    let index = source_index(&fixture_json(), "source.norn-synthetic-taxonomy");
+    for version in ["1.0.0-rc.1", "1.0.0+build.7", "0.1.0-alpha.0+sha.5114f85"] {
+        let mut candidate = fixture_json();
+        candidate["payload"]["sources"][index]["importer"]["version"] = serde_json::json!(version);
+        validate_fixture(candidate).expect("a strict SemVer importer version is valid");
+    }
+}
+
+#[test]
+fn reference_only_file_pins_are_absolute_https_urls() {
+    let index = source_index(&fixture_json(), "source.schema-org");
+    let mut candidate = fixture_json();
+    candidate["payload"]["sources"][index]["files"][0]["path"] =
+        serde_json::json!("verification/ontology/schema.jsonld");
+    assert_source_diagnostic(
+        candidate,
+        &format!("payload.sources[{index}].files[0].path"),
+        "absolute HTTPS URL",
+    );
 }
 
 #[test]
