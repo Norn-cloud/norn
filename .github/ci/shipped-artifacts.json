@@ -18174,7 +18174,7 @@
     },
     {
       "path": "packages/norn-sdk/src/generated/norn-api.ts",
-      "sha256": "b171f106380ef58aff165e5d898e4382d55905dcfe5abd5e024f58943a3f6093",
+      "sha256": "c265befceffdff70aa3a0488f0a72c85e66bd83ed706d2a1a77bb5e96037ba86",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -18889,7 +18889,7 @@
     },
     {
       "path": "sdks/openapi/norn-api.openapi.json",
-      "sha256": "d3c30e4e0981850971f6aff9e9d943d0aad89603a500904898a8664ce7731462",
+      "sha256": "16fb47833e267579f9efcd953f1bad1eeea242411477614ae0a59dd67520af0f",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",

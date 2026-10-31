@@ -8782,7 +8782,7 @@
             "items": {
               "$ref": "#/components/schemas/NornIrOntologyShape"
             },
-            "description": "Non-empty; one closed promotion shape per active shaped term."
+            "description": "Non-empty; one closed promotion shape per active term."
           },
           "sources": {
             "type": "array",
@@ -8969,10 +8969,6 @@
           "definition": {
             "type": "string"
           },
-          "domainTermId": {
-            "type": "string",
-            "description": "The active class term a `property` or `action` term belongs to\n(required on those, optional on `predicate`, absent on shaped kinds;\nchecker rule)."
-          },
           "label": {
             "type": "string"
           },
@@ -9001,32 +8997,14 @@
         "additionalProperties": false
       },
       "NornIrOntologyTermKind": {
-        "oneOf": [
-          {
-            "type": "string",
-            "enum": [
-              "class",
-              "property",
-              "value_object",
-              "concept_scheme_root"
-            ]
-          },
-          {
-            "type": "string",
-            "description": "A business operation on its domain class (posting an invoice).",
-            "enum": [
-              "action"
-            ]
-          },
-          {
-            "type": "string",
-            "description": "A condition over canon state, such as an admission refusal.",
-            "enum": [
-              "predicate"
-            ]
-          }
-        ],
-        "description": "What an ontology term denotes. `class`, `value_object` and\n`concept_scheme_root` terms take one closed promotion shape; `property`,\n`action` and `predicate` terms are vocabulary handles and take none."
+        "type": "string",
+        "description": "What an ontology term denotes.",
+        "enum": [
+          "class",
+          "property",
+          "value_object",
+          "concept_scheme_root"
+        ]
       },
       "NornIrOntologyTermStatus": {
         "type": "string",

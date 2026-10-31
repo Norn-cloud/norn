@@ -3520,7 +3520,7 @@ export interface components {
             packId: string;
             packKind: components["schemas"]["NornIrOntologyPackKind"];
             packVersion: components["schemas"]["NornIrIrVersion01"];
-            /** @description Non-empty; one closed promotion shape per active shaped term. */
+            /** @description Non-empty; one closed promotion shape per active term. */
             shapes: components["schemas"]["NornIrOntologyShape"][];
             /** @description Non-empty; pinned upstream source releases. */
             sources: components["schemas"]["NornIrOntologySource"][];
@@ -3598,12 +3598,6 @@ export interface components {
         /** @description A Norn-owned ontology term. */
         NornIrOntologyTerm: {
             definition: string;
-            /**
-             * @description The active class term a `property` or `action` term belongs to
-             *     (required on those, optional on `predicate`, absent on shaped kinds;
-             *     checker rule).
-             */
-            domainTermId?: string;
             label: string;
             /** @description Resolves within the pack to a compatible, acyclic parent. */
             parentTermId?: string;
@@ -3616,11 +3610,10 @@ export interface components {
             termKind: components["schemas"]["NornIrOntologyTermKind"];
         };
         /**
-         * @description What an ontology term denotes. `class`, `value_object` and
-         *     `concept_scheme_root` terms take one closed promotion shape; `property`,
-         *     `action` and `predicate` terms are vocabulary handles and take none.
+         * @description What an ontology term denotes.
+         * @enum {string}
          */
-        NornIrOntologyTermKind: ("class" | "property" | "value_object" | "concept_scheme_root") | "action" | "predicate";
+        NornIrOntologyTermKind: "class" | "property" | "value_object" | "concept_scheme_root";
         /**
          * @description Lifecycle status of an ontology term.
          * @enum {string}
