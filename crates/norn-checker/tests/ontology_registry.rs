@@ -213,6 +213,58 @@ fn registry_rejects_duplicate_ids_and_unresolved_targets() {
 }
 
 #[test]
+fn term_refs_never_target_vocabulary_handles() {
+    for kind in ["action", "predicate"] {
+        let mut registry = packs();
+        let mut company: serde_json::Value =
+            serde_json::from_str(COMPANY_PACK).expect("company pack must decode");
+        let mut handle = serde_json::json!({
+            "termId": "norn.commerce.product.handle",
+            "label": "Handle",
+            "definition": "A vocabulary handle, which has no instances.",
+            "termKind": kind,
+            "status": "active",
+            "semanticAuthority": "semantic_only"
+        });
+        if kind == "action" {
+            handle["domainTermId"] = serde_json::json!("norn.commerce.product");
+        }
+        company["payload"]["terms"]
+            .as_array_mut()
+            .expect("terms must be an array")
+            .push(handle);
+        find_entry_mut(
+            &mut find_entry_mut(
+                &mut company["payload"]["shapes"],
+                "shapeId",
+                "shape.commerce.product",
+            )["fields"],
+            "fieldId",
+            "measurementUnit",
+        )["targetTermId"] = serde_json::json!("norn.commerce.product.handle");
+        let expected_path = field_diagnostic_path(
+            "registry.packs[0]",
+            &company["payload"],
+            "shape.commerce.product",
+            "measurementUnit",
+        );
+        replace_pack(
+            &mut registry,
+            "norn.ontology-pack.company-commerce",
+            serde_json::from_value(company["payload"].clone()).expect("payload must decode"),
+        );
+        let diagnostics = validate_ontology_registry(&registry)
+            .expect_err("a term_ref to a vocabulary handle must fail closed");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.path.as_deref() == Some(expected_path.as_str())),
+            "{kind}: {diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
 fn pack_rejects_unbounded_term_refs_and_incompatible_hierarchy() {
     let mut company: serde_json::Value =
         serde_json::from_str(COMPANY_PACK).expect("company pack must decode");
