@@ -542,3 +542,53 @@ fn a_redundant_self_join_does_not_hide_an_unmapped_column() {
         report(&parent, &t_id)
     );
 }
+
+#[test]
+fn a_mapping_unknown_value_is_not_a_false_unpreserved_witness() {
+    // CodeRabbit on #70: `SA(i) -> Invoice(i, c)` invents an unknown customer
+    // that the canon's equation may resolve to `SB`'s, so no concrete source
+    // instance breaks the one-customer EGD.
+    let schema = BTreeMap::from([
+        ("SA".to_owned(), vec!["i".to_owned()]),
+        ("SB".to_owned(), vec!["i".to_owned(), "c".to_owned()]),
+    ]);
+    let source = Theory::default();
+    let mapping = Theory {
+        dependencies: vec![
+            tgd(
+                "map.a",
+                &[atom("SA", &[var("i")])],
+                &[atom("Invoice", &[var("i"), var("c")])],
+            ),
+            tgd(
+                "map.b",
+                &[atom("SB", &[var("i"), var("c")])],
+                &[atom("Invoice", &[var("i"), var("c")])],
+            ),
+        ],
+    };
+    let target = Theory {
+        dependencies: vec![egd(
+            "canon.invoice_one_customer",
+            &[
+                atom("Invoice", &[var("i"), var("c1")]),
+                atom("Invoice", &[var("i"), var("c2")]),
+            ],
+            var("c1"),
+            var("c2"),
+        )],
+    };
+    let exchange = Exchange {
+        source_schema: &schema,
+        source: &source,
+        mapping: &mapping,
+        target: &target,
+    };
+    let findings = check_schema_compatibility(&exchange, ChaseBudget::default());
+    // `SB` alone still permits two customers for one invoice; only the
+    // `map.a`/`map.b` pairing was a false witness.
+    let messages: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
+    assert!(messages.iter().all(|m| !m.contains("SA(")), "{messages:?}");
+    let data = [fact("SA", &["x"]), fact("SB", &["x", "acme"])];
+    assert!(check_instance(&exchange, &data, ChaseBudget::default()).is_empty());
+}

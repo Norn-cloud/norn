@@ -101,7 +101,14 @@ pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) 
         .map(String::as_str)
         .collect();
     for constraint in &exchange.target.dependencies {
-        match unpreserved(constraint, exchange.mapping, &source_side, &source, budget) {
+        match unpreserved(
+            constraint,
+            exchange.mapping,
+            exchange.target,
+            &source_side,
+            &source,
+            budget,
+        ) {
             Ok(None) => {}
             Ok(Some(witness)) => findings.push(finding(
                 codes::UNPRESERVED,
@@ -124,12 +131,14 @@ pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) 
 
 /// A source instance, chased with the source constraints and the mapping,
 /// whose image violates `constraint` closed-world. Candidates come from
-/// unfolding the constraint's body through the mapping heads; each one is
-/// verified by a real chase, so a reported witness is genuine, while an
+/// unfolding the constraint's body through the mapping heads. Each one is
+/// verified as concrete data (its nulls grounded to distinct values) the way
+/// [`check_instance`] checks it, so a reported witness is genuine, while an
 /// unfolding the procedure does not try can be missed.
 fn unpreserved(
     constraint: &Dependency,
     mapping: &Theory,
+    target: &Theory,
     source_side: &Theory,
     source: &BTreeSet<&str>,
     budget: ChaseBudget,
@@ -138,17 +147,51 @@ fn unpreserved(
         Dependency::Tgd(tgd) => &tgd.body,
         Dependency::Egd(egd) => &egd.body,
     };
+    // The target side as `check_instance` sees it: the mapping plus the
+    // target's equations, which may still resolve a mapping's unknown
+    // (existential) values.
+    let mut equations = mapping.clone();
+    equations.dependencies.extend(
+        target
+            .dependencies
+            .iter()
+            .filter(|d| matches!(d, Dependency::Egd(_)))
+            .cloned(),
+    );
     for candidate in unfoldings(body, mapping, budget)? {
-        if let ChaseOutcome::Model(model) = chase(source_side, &candidate, budget)?
-            && first_violation(constraint, &model, budget)?.is_some()
-        {
-            // Report the verified source instance, not the unfolding seed.
-            return Ok(Some(
-                model
-                    .into_iter()
-                    .filter(|fact| source.contains(fact.relation.as_str()))
+        let ChaseOutcome::Model(model) = chase(source_side, &candidate, budget)? else {
+            continue;
+        };
+        // Report the verified source instance, not the unfolding seed.
+        let witness: Vec<Fact> = model
+            .into_iter()
+            .filter(|fact| source.contains(fact.relation.as_str()))
+            .collect();
+        // Source data is concrete: each of the witness's nulls is its own
+        // value, distinct from every other.
+        let grounded: Vec<Fact> = witness
+            .iter()
+            .map(|fact| Fact {
+                relation: fact.relation.clone(),
+                values: fact
+                    .values
+                    .iter()
+                    .map(|value| match value {
+                        Value::Null(id) => Value::Const(format!("\u{0}witness:{id}")),
+                        Value::Const(_) => value.clone(),
+                    })
                     .collect(),
-            ));
+            })
+            .collect();
+        let violated = match chase(&equations, &grounded, budget)? {
+            ChaseOutcome::Conflict(conflict) => conflict.egd == constraint.id(),
+            ChaseOutcome::Model(mapped) => {
+                matches!(constraint, Dependency::Tgd(_))
+                    && first_violation(constraint, &mapped, budget)?.is_some()
+            }
+        };
+        if violated {
+            return Ok(Some(witness));
         }
     }
     Ok(None)
