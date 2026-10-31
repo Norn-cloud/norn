@@ -154,14 +154,14 @@ def load_coverage(root: Path) -> dict:
     if monolith.exists() == manifest.exists():
         raise ValueError(f"exactly one of {MONOLITH} and {MANIFEST} must exist")
     if monolith.exists():
-        return json.loads(monolith.read_text())
+        return json.loads(monolith.read_text(encoding="utf-8"))
     if not (manifest / "index.json").is_file():
         raise ValueError(f"{MANIFEST}/index.json is missing")
     subsystems = []
     for path in sorted((manifest / "subsystems").iterdir()):
         if path.is_symlink() or not path.is_file() or path.suffix != ".json":
             raise ValueError(f"{MANIFEST}/subsystems/{path.name} is not a subsystem file")
-        body = json.loads(path.read_text())
+        body = json.loads(path.read_text(encoding="utf-8"))
         if "id" in body:
             raise ValueError(f"{MANIFEST}/subsystems/{path.name}: the file name is the subsystem id")
         subsystems.append({"id": path.stem, **body})
