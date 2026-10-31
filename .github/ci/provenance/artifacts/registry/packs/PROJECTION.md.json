@@ -1,0 +1,22 @@
+{
+  "sha256": "4b65455572c8f2858c9b53c46cda0151502e772d8e9cf20c3cb3007c9d59725b",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
+    "registry/packs/odoo/artifacts/norn.link.odoo.canon.json",
+    "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
+    "crates/norn-checker/tests/registry_packs.rs"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
