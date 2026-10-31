@@ -33,7 +33,9 @@ export async function runAlpha(definitions: Definitions, surfaces: Surfaces, run
     for (const surface of ["api", "mcp", "cli"] satisfies Surface[]) {
       const orderId = `alpha-${surface}`;
       const query = { tenant, orderId };
-      const create = { id: orderId, order_number: orderId, order_date: "2026-10-31", currency: "USD", counterparty: "alpha-customer", total_amount: "10" };
+      const customerId = `customer-${surface}`;
+      await invoke(surface, "alpha.customer.create", { id: customerId, name: "Synthetic customer" });
+      const create = { id: orderId, order_number: orderId, order_date: "2026-10-31", currency: "USD", counterparty: customerId, total_amount: "10" };
       await invoke(surface, "alpha.order.create", create);
       const initial = await snapshot(query);
       strictEqual(initial.state.status, "draft");
