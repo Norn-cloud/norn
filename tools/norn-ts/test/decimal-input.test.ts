@@ -18,3 +18,10 @@ test("decimal action arguments lower to exact text wire contracts", () => {
     expect(admission.admitted).toBe(true)
   }
 }, 30_000)
+test("decimal output is refused before Rust admission", () => {
+  const result = compileDefinitions(join(TOOL_ROOT, "fixtures/schema/invalid/decimal-output.ts"), {
+    scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "decimal-output.ts",
+  })
+  expect(result.ok).toBe(false)
+  if (!result.ok) expect(result.diagnostics.some((d) => d.code === "NORN-FLOW-SCHEMA-PROJECTION")).toBe(true)
+})
