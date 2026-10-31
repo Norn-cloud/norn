@@ -18,11 +18,15 @@
 //! - **mapping totality** ([`check_mapping_totality`]): source relations and
 //!   columns that never reach the target.
 //!
+//! [`lower_pack_links`] lowers the ontology and link packs into these
+//! theories, and [`check_pack_link`] runs every obligation on one link.
+//!
 //! Behavioural equivalence is a separate obligation, not checked here.
 
 mod chase;
 mod divergence;
 mod exchange;
+mod packs;
 mod theory;
 
 pub use chase::{
@@ -30,6 +34,7 @@ pub use chase::{
 };
 pub use divergence::{CanonKey, Divergence, MappedObservation, WitnessIdentity, find_divergences};
 pub use exchange::{Exchange, check_instance, check_mapping_totality, check_schema_compatibility};
+pub use packs::{PackLink, check_pack_link, lower_pack_links};
 pub use theory::{Atom, Dependency, Egd, RuleOrigin, Term, Tgd, Theory, TheoryError};
 
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
