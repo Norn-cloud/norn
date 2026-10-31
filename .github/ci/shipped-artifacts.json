@@ -18457,7 +18457,7 @@
     },
     {
       "path": "registry/packs/PROJECTION.md",
-      "sha256": "b18d09b5d7ee31686bf7d6e708a901a1c0a39619dbea5564785a07a87d7dff36",
+      "sha256": "4b65455572c8f2858c9b53c46cda0151502e772d8e9cf20c3cb3007c9d59725b",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",

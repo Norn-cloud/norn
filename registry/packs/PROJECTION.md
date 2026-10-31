@@ -7,7 +7,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 
 | Link | Terms | Mapped | Residual | Canon gaps | Non-conforming |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `norn.link.erpnext.canon` | 59 | 41 | 8 | 10 | 0 |
+| `norn.link.erpnext.canon` | 59 | 40 | 8 | 11 | 0 |
 | `norn.link.odoo.canon` | 42 | 27 | 3 | 11 | 1 |
 | `norn.link.shopify.canon` | 35 | 14 | 5 | 16 | 0 |
 
@@ -55,7 +55,6 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 - `norn.erpnext.sales.order` subsumed_by `norn.commerce.order`
 - `norn.erpnext.sales.order.customer` subsumed_by `norn.commerce.order.party`
 - `norn.erpnext.sales.order.grand.total` subsumed_by `norn.commerce.order.amount.total`
-- `norn.erpnext.sales.order.per.delivered` derived `norn.core.event.fulfils`, `norn.core.resource.quantity`
 - `norn.erpnext.stock.entry` subsumed_by `norn.core.event`
 - `norn.erpnext.supplier` subsumed_by `norn.core.agent`
 
@@ -81,6 +80,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 - `norn.erpnext.payment.entry`
 - `norn.erpnext.sales.invoice.status`
 - `norn.erpnext.sales.order.per.billed`
+- `norn.erpnext.sales.order.per.delivered`
 - `norn.erpnext.sales.order.status`
 
 ### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
