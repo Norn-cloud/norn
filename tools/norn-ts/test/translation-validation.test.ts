@@ -102,6 +102,144 @@ describe("opt-in literal marking translation validation", () => {
     }
   }, 30_000)
 
+  for (const name of [
+    "await", "private", "yield", "let", "eval", "arguments", "Norn", "async",
+    "aw\\u0061it", "priv\\u0061te", "yi\\u0065ld", "l\\u0065t",
+    "ev\\u0061l", "arg\\u0075ments", "N\\u006frn", "as\\u0079nc",
+  ]) test(`declines reserved decoded binding ${name}`, () => {
+    const changed = source.replace("const Privacy", `const ${name}`)
+    expect(changed).not.toBe(source)
+    expect(validateMarkingsTranslation(changed, candidate(), context).status).toBe("unsupported")
+  }, 30_000)
+
+  test("accepts ordinary Unicode and escaped binding names", () => {
+    const ir = candidate()
+    for (const name of ["Confidentialité", "Priv\\u0061cy"]) {
+      const changed = source.replace("const Privacy", `const ${name}`)
+      expect(changed).not.toBe(source)
+      expect(validateMarkingsTranslation(changed, ir, context).status).toBe("checked")
+    }
+  }, 30_000)
+
+  const decoratedMembers = [
+    'label?: "Contact"',
+    'label!: "Contact"',
+    'label?!: "Contact"',
+    '"label"?: "Contact"',
+    '"label"!: "Contact"',
+    ...["readonly", "public", "private", "protected", "static", "abstract", "override", "accessor", "async", "declare", "in", "out", "export"]
+      .map((modifier) => `${modifier} label: "Contact"`),
+  ]
+  for (const member of decoratedMembers) test(`declines recovered property decoration ${member}`, () => {
+    const changed = source.replace('label: "Contact"', member)
+    expect(changed).not.toBe(source)
+    // This exact reason also requires the pinned parser to retain the member
+    // and reach its recovery-field guard, rather than decline a parse error.
+    expect(validateMarkingsTranslation(changed, candidate(), context)).toMatchObject({
+      status: "unsupported", reason: "decorated literal members are unsupported",
+    })
+  }, 30_000)
+
+  test("declines malformed recovered property decoration as malformed syntax", () => {
+    const changed = source.replace('label: "Contact"', 'readonly @decorate label: "Contact"')
+    expect(changed).not.toBe(source)
+    expect(validateMarkingsTranslation(changed, candidate(), context)).toMatchObject({
+      status: "unsupported", evidence: "unknown", reason: "malformed syntax",
+    })
+  }, 30_000)
+
+  test("retains ordinary comments and directive-like data", () => {
+    const ir = candidate()
+    for (const changed of [
+      `\uFEFF\t// ordinary comment\n${source}`,
+      `/* ordinary block comment\n/// <reference path="./not-a-directive.ts" />\n*/\n${source}`,
+      `${source}\n// text mentioning @ts-ignore is ordinary prose\n`,
+    ]) {
+      expect(changed).not.toBe(source)
+      expect(validateMarkingsTranslation(changed, ir, context).status).toBe("checked")
+    }
+    const text = '/// <reference path="./just-data.ts" />'
+    const changedSource = source.replace('label: "Contact"', `label: ${JSON.stringify(text)}`)
+    const artifacts = JSON.parse(ir) as Artifact[]
+    artifacts[0]!.payload.markings[0]!.label = text
+    expect(changedSource).not.toBe(source)
+    expect(validateMarkingsTranslation(changedSource, JSON.stringify(artifacts), context).status).toBe("checked")
+  }, 30_000)
+
+  const unsupported: Array<[string, (s: string) => string]> = [
+    ["missing import", (s) => s.replace('import { Norn } from "@norn/authoring"', "")],
+    ["foreign module", (s) => s.replace("@norn/authoring", "./spoof")],
+    ["import alias", (s) => s.replace("{ Norn }", "{ Norn as N }").replace("Norn.markings", "N.markings")],
+    ["namespace import", (s) => s.replace("{ Norn }", "* as Norn")],
+    ["extra import", (s) => `import { Schema } from "effect"\n${s}`],
+    ["reference directive", (s) => `/// <reference path="./other.ts" />\n${s}`],
+    ["BOM reference directive", (s) => `\uFEFF/// <reference path="./other.ts" />\n${s}`],
+    ["Unicode whitespace reference directive", (s) => `\uFEFF\t\u00A0/// <reference path="./other.ts" />\n${s}`],
+    ["Unicode line separator reference directive", (s) => `\u2028/// <reference path="./other.ts" />\n${s}`],
+    ["BOM types directive", (s) => `\uFEFF/// <reference types="other" />\n${s}`],
+    ["BOM lib directive", (s) => `\uFEFF/// <reference lib="esnext" />\n${s}`],
+    ["BOM no-default-lib directive", (s) => `\uFEFF/// <reference no-default-lib="true" />\n${s}`],
+    ["BOM AMD dependency directive", (s) => `\uFEFF/// <amd-dependency path="./other" />\n${s}`],
+    ["BOM AMD module directive", (s) => `\uFEFF/// <amd-module name="other" />\n${s}`],
+    ["non-leading reference comment", (s) => `${s}\n\uFEFF/// <reference path="./other.ts" />`],
+    ["TS check pragma", (s) => `\uFEFF// @ts-check\n${s}`],
+    ["TS nocheck pragma", (s) => `\uFEFF// @ts-nocheck\n${s}`],
+    ["TS ignore directive", (s) => `\uFEFF// @ts-ignore\n${s}`],
+    ["TS expect-error directive", (s) => `/* @ts-expect-error */\n${s}`],
+    ["JSX pragma", (s) => `/** @jsx h */\n${s}`],
+    ["JSX fragment pragma", (s) => `/** @jsxFrag Fragment */\n${s}`],
+    ["JSX import source pragma", (s) => `/** @jsxImportSource other */\n${s}`],
+    ["JSX runtime pragma", (s) => `/** @jsxRuntime automatic */\n${s}`],
+    ["hashbang directive", (s) => `#!/usr/bin/env bun\n${s}`],
+    ["type-only import", (s) => s.replace("import {", "import type {")],
+    ["type-only import specifier", (s) => s.replace("{ Norn }", "{ type Norn }")],
+    ["deferred import phase", (s) => s.replace("import {", "import defer {")],
+    ["import modifiers", (s) => s.replace("import {", "export import {")],
+    ["import attributes", (s) => s.replace('from "@norn/authoring"', 'from "@norn/authoring" with { type: "json" }')],
+    ["shadow binding", (s) => s.replace("const Privacy", "const Norn")],
+    ["duplicate binding", (s) => `${s}\nexport const Privacy = 1`],
+    ["duplicate key", (s) => s.replace('title: "Privacy catalog",', 'title: "First", title: "Privacy catalog",')],
+    ["escaped duplicate key", (s) => s.replace('title: "Privacy catalog",', '"\\u0074itle": "First", title: "Privacy catalog",')],
+    ["duplicate marking id", (s) => s.replace('id: "pii.account"', 'id: "pii.contact"')],
+    ["extra source member", (s) => s.replace('version: "0.1.0",', 'version: "0.1.0", ignored: true,')],
+    ["wrong source root", (s) => s.replace("Norn.markings", "Norn.type")],
+    ["mutable binding", (s) => s.replace("export const", "export let")],
+    ["using binding", (s) => s.replace("export const", "export using")],
+    ["await using binding", (s) => s.replace("export const", "export await using")],
+    ["binding modifiers", (s) => s.replace("export const", "export declare const")],
+    ["typed binding", (s) => s.replace("const Privacy", "const Privacy: unknown")],
+    ["definite binding", (s) => s.replace("const Privacy", "const Privacy!")],
+    ["optional call", (s) => s.replace("Norn.markings(", "Norn.markings?.(")],
+    ["generic call", (s) => s.replace("Norn.markings(", "Norn.markings<unknown>(")],
+    ["optional root", (s) => s.replace("Norn.markings", "Norn?.markings")],
+    ["asserted root", (s) => s.replace("Norn.markings", "Norn!.markings")],
+    ["private root", (s) => s.replace("Norn.markings", "Norn.#markings")],
+    ["constant alias", (s) => s.replace("category: \"pii\"", "category: category")],
+    ["spread", (s) => s.replace('mask: { kind: "null" }', 'mask: { ...{ kind: "null" } }')],
+    ["shorthand", (s) => s.replace('label: "Contact"', "label")],
+    ["computed key", (s) => s.replace('label: "Contact"', '["label"]: "Contact"')],
+    ["property decorator", (s) => s.replace('label: "Contact"', '@decorate label: "Contact"')],
+    ["optional metadata member", (s) => s.replace('title: "Privacy catalog"', 'title?: "Privacy catalog"')],
+    ["definite mask member", (s) => s.replace('count: 4', 'count!: 4')],
+    ["decorated mask member", (s) => s.replace('count: 4', 'readonly count: 4')],
+    ["array hole", (s) => s.replace("markings: [", "markings: [, ")],
+    ["function call", (s) => s.replace('label: "Contact"', 'label: dangerous()')],
+    ["syntax recovery", (s) => s.replace('title: "Privacy catalog",', 'title: "Privacy catalog"')],
+    ["prototype key", (s) => s.replace('label: "Contact"', '__proto__: "Contact"')],
+    ["number rounding", (s) => s.replace("count: 4", "count: 9007199254740993")],
+    ["fraction", (s) => s.replace("count: 4", "count: 4.0000000000000001")],
+    ["exponent", (s) => s.replace("count: 4", "count: 4e0")],
+    ["separator", (s) => s.replace("count: 4", "count: 0_4")],
+    ["negative zero", (s) => s.replace("count: 4", "count: -0")],
+    ["u32 overflow", (s) => s.replace("count: 4", "count: 4294967296")],
+    ["zero count", (s) => s.replace("count: 4", "count: 0")],
+  ]
+  for (const [name, change] of unsupported) test(`declines unsupported ${name}`, () => {
+    const changed = change(source)
+    expect(changed).not.toBe(source)
+    expect(validateMarkingsTranslation(changed, candidate(), context).status).toBe("unsupported")
+  }, 30_000)
+
   test("inspects raw candidate keys and numeric spelling before comparing", () => {
     const ir = candidate()
     for (const changed of [
