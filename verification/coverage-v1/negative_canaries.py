@@ -503,6 +503,9 @@ def workflow_canaries() -> None:
         source.replace("      - env:\n          RESULTS:",
                        "      - shell: /usr/bin/true {0}\n        env:\n          RESULTS:", 1),
     )
+    shell_mutations += tuple(mutation.replace("shell: /usr/bin/true {0}",
+                                               "working-directory: /tmp/other-checkout")
+                             for mutation in shell_mutations[:3])
     with tempfile.TemporaryDirectory() as directory:
         candidate = Path(directory) / "ci-policy.yml"
         for index, mutation in enumerate(shell_mutations):
