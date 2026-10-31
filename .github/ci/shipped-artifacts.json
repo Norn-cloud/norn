@@ -2991,7 +2991,7 @@
     },
     {
       "path": "crates/norn-checker/src/ontology.rs",
-      "sha256": "f01df3f7de8e4749f1ace3c484f4945a357807baf5c46c3d5674fb60ffcacfd5",
+      "sha256": "9fe408eadedccf0d98789d60f39adf3599aee24e8c6b4ebee8c1b3aff46a09cc",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3996,7 +3996,7 @@
     },
     {
       "path": "crates/norn-checker/tests/ontology_pack.rs",
-      "sha256": "7b7d82148d19937f564a036309ad8feac87ff3f16df1a3b1a543bcd7e027a15f",
+      "sha256": "04b8575753779724d1051f2b578af2fe6134d8cc92f6d3b4ce55c97299a1bc22",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -4140,7 +4140,7 @@
     },
     {
       "path": "crates/norn-checker/tests/quantity_unit_ontology_pack.rs",
-      "sha256": "6b936d84ff3a2c25a67cd4f5c1782d06c5ec72538919bc7125ccee9567de5f99",
+      "sha256": "41b53239cf629af1b3156db75da8a7d44c9957601736486041a8a8943de7e7b0",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -6945,7 +6945,7 @@
     },
     {
       "path": "crates/norn-ir/schema/artifact_envelope.schema.json",
-      "sha256": "057b715fe0a545812f781fcd9bb8ec13cd20a3f7fbbf6cb332736e973aef92cc",
+      "sha256": "02306a7d25b004a29d8624d2c19e1eae87a163f02d45f37c8f2dcba3462d33dd",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -7018,7 +7018,7 @@
     },
     {
       "path": "crates/norn-ir/schema/business_pack.schema.json",
-      "sha256": "951faf9ba8c8c0e0cf63cf9a041ac39d9f87811ee1a52a5b199a34619b93013c",
+      "sha256": "77ee8d90727d911ad4cb136f68998db5fa12a3a7ae7710738c3bd6d3fd4da6d3",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -8952,7 +8952,7 @@
     },
     {
       "path": "crates/norn-ir/src/business_pack.rs",
-      "sha256": "3e2dc1e5d5e840d11e7e1fac4eb6ad4352335902f75cf5154d7fed87aed008c6",
+      "sha256": "d5903ad3534f357526cdef26355cfe3fc58c5f65036dabadee22847927dae61a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -9384,7 +9384,7 @@
     },
     {
       "path": "crates/norn-ir/src/lib.rs",
-      "sha256": "ed97c48f7277f0df04330adb644a504c7d4cbabf3afc28396ba110764396be8a",
+      "sha256": "e57c11947a4ea6d9f0aa1ec9301b40891e5b90b7b0f18739f034a7a5788c9aab",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11349,7 +11349,7 @@
     },
     {
       "path": "crates/norn-ir/tests/typed_payload_roots_fixtures.rs",
-      "sha256": "231d158dd4a438631411463d3e30a7cb163f7b4f61b2ee2e6e48dc82aca531ce",
+      "sha256": "70787229c1104c921d1fdfb6e9d03a5537d0660128ef958db61af165a8828f57",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18138,7 +18138,7 @@
     },
     {
       "path": "packages/norn-sdk/src/generated/norn-api.ts",
-      "sha256": "95d4518f21f9a8394aa26d8e943e5c5cf5c81c23ea399ac5df63adf11a5ed57b",
+      "sha256": "58afa1a68b0bdc547eb34f3fe2fd514a095d1fcd6f553762b44ec5f7aa3220ac",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -18979,7 +18979,7 @@
     },
     {
       "path": "sdks/openapi/norn-api.openapi.json",
-      "sha256": "4b1c70772045ca956430e7f42628d91ffead10d563fd6ca1c253dc3fd6f6fafb",
+      "sha256": "f3eca9922839fbdd6b0dc0cdd2b4f5d75a951d45c527637cf58d0c49fbe0baac",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -31807,7 +31807,7 @@
     },
     {
       "path": "verification/ontology/packs/company-commerce-v0/pack.json",
-      "sha256": "6be7cc762b7d16ba695b933070e8d191c2da4ffdbcda89d23f531706d189694f",
+      "sha256": "6583550e7184a5e513c11a56aef713b53fb891474a78ce7d35fb58aab535577e",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -31829,7 +31829,7 @@
     },
     {
       "path": "verification/ontology/packs/company-commerce-v0/projection-contract.json",
-      "sha256": "3a38f9e2cb0ddc87bb9e0b78bde0ba554cbaef317deecd040ec45b5b24df6b50",
+      "sha256": "311375517fc722a8fc00aa938dda99503914d58786ceb5977ba03664b2457f38",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -31959,7 +31959,7 @@
     },
     {
       "path": "verification/ontology/packs/quantity-units-v0/pack.json",
-      "sha256": "fc885fcaabbed29071054e5dff28db243f84250d37ce5a4bb53bf88f27923de6",
+      "sha256": "612fce414c7f0c44dfbe6f45649d0503d414694893b980cba0190e0b5380688a",
       "origin": "authored",
       "category": "authored-law",
       "license": "Apache-2.0",
@@ -31977,7 +31977,7 @@
     },
     {
       "path": "verification/ontology/packs/quantity-units-v0/projection-contract.json",
-      "sha256": "edaf42bdd4c8e27c6f46e50e071f53a4def10ed82ddac5beb0361a1a108c3acf",
+      "sha256": "643773dfc0f5044698f0b77ce5f234e33e111b152dce44e216e37a9fb15ba51e",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32031,7 +32031,7 @@
     },
     {
       "path": "verification/ontology/registry-v0.json",
-      "sha256": "9be27a9222ccd1c3b8975e7da2d4e5b7bec8d66fc18a1e8276b3f63ad3a93d94",
+      "sha256": "aec86dd24e6cc1918da1d44ee97e577600f8088ae06e652acca0ad296604ed4f",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32049,7 +32049,7 @@
     },
     {
       "path": "verification/ontology/scripts/build_company_commerce_pack.py",
-      "sha256": "92efd939d37e838b8c9a575bede8e9b40cf7b792e3e93bd83adff1ec3f356861",
+      "sha256": "690b8c530ddc37e532b9ac1e4b6da3c88b4c9bc4a3a2efff91381ebbcb89b918",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
