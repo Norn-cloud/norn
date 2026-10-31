@@ -2379,7 +2379,7 @@
     },
     {
       "path": "crates/norn-checker/src/envelope.rs",
-      "sha256": "df4a5b44b4ec1a2fd940cee0ceebcc9655c14351ce8c4bbb537d965004b78b1d",
+      "sha256": "828f706fff117c8e2e12ea59178aec6133c4007a488e1dc6c6de2d35ebc11e7b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3798,7 +3798,7 @@
     },
     {
       "path": "crates/norn-checker/tests/law_ir.rs",
-      "sha256": "04ab524b9845709f9d59f6632a44d1a231103bc84a3de7daa7b61a69658c574c",
+      "sha256": "883e9324ddee49b3e09d65878f6449544f6bf5d0e0459d94741abc40f9ea2a3d",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

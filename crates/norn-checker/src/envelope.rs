@@ -3107,12 +3107,21 @@ fn validate_composition_pack_payload(
                 );
                 match artifact_ref.get("kind") {
                     None => diagnostics.push(invalid_diagnostic(
-                        CODE, "kind is required", format!("{path}.kind"), artifact_id)),
+                        CODE,
+                        "kind is required",
+                        format!("{path}.kind"),
+                        artifact_id,
+                    )),
                     Some(kind) => {
                         if let Err(error) = serde_json::to_value(kind)
-                            .and_then(serde_json::from_value::<PackArtifactKind>) {
+                            .and_then(serde_json::from_value::<PackArtifactKind>)
+                        {
                             diagnostics.push(invalid_diagnostic(
-                                CODE, format!("{path}.kind {error}"), format!("{path}.kind"), artifact_id));
+                                CODE,
+                                format!("{path}.kind {error}"),
+                                format!("{path}.kind"),
+                                artifact_id,
+                            ));
                         }
                     }
                 }

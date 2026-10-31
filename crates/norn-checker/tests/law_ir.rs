@@ -274,18 +274,32 @@ fn conditions_until_state_action_transition_and_deadline_slots_are_checked() {
 #[test]
 fn composition_pack_member_kinds_follow_the_canonical_enum() {
     let mut values = laws();
-    let mut pack: Value = serde_json::from_str(include_str!("../../../fixtures/ir/retail-core.business_pack.json")).expect("pack");
+    let mut pack: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/retail-core.business_pack.json"
+    ))
+    .expect("pack");
     pack["artifactId"] = json!("erpnext.pack.core");
     pack["namespace"] = json!("erpnext");
     pack["payload"]["packId"] = json!("erpnext.pack.core");
-    pack["payload"]["artifacts"] = Value::Array(values.iter().map(|law| json!({
-        "artifactId": law["artifactId"], "version": law["version"], "kind": "law"
-    })).collect());
+    pack["payload"]["artifacts"] = Value::Array(
+        values
+            .iter()
+            .map(|law| {
+                json!({
+                    "artifactId": law["artifactId"], "version": law["version"], "kind": "law"
+                })
+            })
+            .collect(),
+    );
     values.push(pack);
     assert!(run(values.clone(), &entities()).is_empty());
     for kind in ["derived", "unknown"] {
         let mut invalid = values.clone();
         invalid.last_mut().expect("pack")["payload"]["artifacts"][0]["kind"] = json!(kind);
-        assert!(run(invalid, &entities()).iter().any(|code| code == "business_pack.validation.invalid_payload"));
+        assert!(
+            run(invalid, &entities())
+                .iter()
+                .any(|code| code == "business_pack.validation.invalid_payload")
+        );
     }
 }
