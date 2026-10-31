@@ -24,6 +24,7 @@ COVERAGE = ROOT / "verification/coverage-v1/coverage.json"
 CENTRAL_OBLIGATIONS = (
     ROOT / "verification/stripmine-2026-08-22/obligations.json"
 )
+CORE_PHYSICS_OBLIGATIONS = ROOT / "verification/core-physics-v1/obligations.json"
 KERNEL_OBLIGATIONS = ROOT / "verification/archive/kernel-v1/obligations.json"
 KERNEL_OBLIGATIONS_SCHEMA = (
     ROOT / "verification/archive/kernel-v1/schemas/obligations.schema.json"
@@ -66,6 +67,7 @@ MANDATORY = {
     "cala-boundary",
     "verification-integrity",
     "kernel-v2",
+    "core-physics",
 }
 LAYERS = ("runtime", "model", "proof")
 GATE_ROLES = {
@@ -643,9 +645,16 @@ def validate(
         f"unexpected={sorted(central_ids - REQUIRED_CENTRAL_OBLIGATION_IDS)}",
     )
     phase1_registry = load(ROOT / "verification/kernel-v2/manifest.json")
-    known_obligations = central_ids | obligation_ids(phase1_registry)
-    p0_obligations = p0_obligation_ids(central_registry) | p0_obligation_ids(
-        kernel_registry, default_priority="P0"
+    core_physics_registry = load(CORE_PHYSICS_OBLIGATIONS)
+    known_obligations = (
+        central_ids
+        | obligation_ids(phase1_registry)
+        | obligation_ids(core_physics_registry)
+    )
+    p0_obligations = (
+        p0_obligation_ids(central_registry)
+        | p0_obligation_ids(kernel_registry, default_priority="P0")
+        | p0_obligation_ids(core_physics_registry)
     )
 
     subsystems = coverage.get("subsystems")
