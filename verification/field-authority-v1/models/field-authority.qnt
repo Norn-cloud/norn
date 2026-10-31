@@ -20,22 +20,22 @@ module field_authority {
     nondet pr = Set(false, true).oneOf()
     initial(im, pr)
   }
-  action write(kind: str, producer: str, supplies: bool, next: int): bool = {
+  action write(kind: str, producer: str, supplies: bool, nextValue: int): bool = {
     val allowed = if (kind == "create") not(present) and (not(protected) or not(supplies) or producer == "rule")
       else present and not(immutable) and (kind == "delete" or not(protected) or producer == "rule")
     all {
       beforeExists' = present, beforeValue' = stored, immutable' = immutable, protected' = protected,
       refused' = not(allowed), op' = kind, origin' = producer,
       present' = if (allowed) kind != "delete" else present,
-      stored' = if (allowed) (if (kind == "delete" or not(supplies)) 0 else next) else stored,
+      stored' = if (allowed) (if (kind == "delete" or not(supplies)) 0 else nextValue) else stored,
     }
   }
   action step = {
     nondet kind = Set("create", "set", "delete").oneOf()
     nondet producer = Set("action", "rule", "observation", "owned_rows").oneOf()
     nondet supplies = Set(false, true).oneOf()
-    nondet next = 0.to(2).oneOf()
-    write(kind, producer, supplies, next)
+    nondet nextValue = 0.to(2).oneOf()
+    write(kind, producer, supplies, nextValue)
   }
   def invariant = (refused implies (present == beforeExists and stored == beforeValue))
     and ((immutable and beforeExists) implies (present and stored == beforeValue))
