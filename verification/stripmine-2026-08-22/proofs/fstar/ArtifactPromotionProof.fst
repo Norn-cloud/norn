@@ -16,8 +16,10 @@ let authority_bearing (kind: t_ArtifactKind) : bool =
   | ArtifactKind_BusinessPack
   | ArtifactKind_Policy
   | ArtifactKind_Derived
-  | ArtifactKind_Mapping -> true
-  | ArtifactKind_SourceSchema -> false
+  | ArtifactKind_Mapping
+  | ArtifactKind_Ruling -> true
+  | ArtifactKind_SourceSchema
+  | ArtifactKind_Claim -> false
 
 let active_authority_bearing_rejected (kind: t_ArtifactKind)
   : Lemma

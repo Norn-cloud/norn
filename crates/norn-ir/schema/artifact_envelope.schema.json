@@ -259,6 +259,38 @@
         "kind",
         "payload"
       ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "claim"
+        },
+        "payload": {
+          "$ref": "#/$defs/ClaimPayload"
+        }
+      },
+      "required": [
+        "kind",
+        "payload"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "ruling"
+        },
+        "payload": {
+          "$ref": "#/$defs/RulingPayload"
+        }
+      },
+      "required": [
+        "kind",
+        "payload"
+      ]
     }
   ],
   "required": [
@@ -1206,6 +1238,23 @@
         "required"
       ]
     },
+    "ArtifactKey": {
+      "description": "Exact identity of an artifact: one version of one id.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version"
+      ]
+    },
     "ArtifactKind": {
       "oneOf": [
         {
@@ -1242,6 +1291,16 @@
           "description": "Scoped temporal laws over ZEN predicates.",
           "type": "string",
           "const": "law"
+        },
+        {
+          "description": "ClaimIR (norn#62): a typed statement about definitions, with its\nevidence. No decision authority.",
+          "type": "string",
+          "const": "claim"
+        },
+        {
+          "description": "RulingIR (norn#62): a governed decision on claims. Ratified only\nthrough the governed review path.",
+          "type": "string",
+          "const": "ruling"
         }
       ]
     },
@@ -1365,6 +1424,89 @@
       "description": "An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone.",
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "ClaimPayload": {
+      "description": "The payload of a `claim` artifact ([`ruling::ClaimIr`], norn#62).",
+      "type": "object",
+      "properties": {
+        "claimVersion": {
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "evidence": {
+          "description": "Non-empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "id": {
+          "description": "Stable identity, unique in a set.",
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "statement": {
+          "$ref": "#/$defs/ClaimStatement"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "claimVersion",
+        "id",
+        "statement",
+        "evidence"
+      ]
+    },
+    "ClaimStatement": {
+      "description": "What a claim states. Closed: a new statement is a checker change.",
+      "oneOf": [
+        {
+          "description": "A lifecycle state is a function of other facts, so no declared\ntransition may target it.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "The members it is derived from (non-empty).",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MemberRef"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "derived_state"
+            },
+            "state": {
+              "description": "A `state` member.",
+              "$ref": "#/$defs/MemberRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "state",
+            "from"
+          ]
+        },
+        {
+          "description": "Two mappings observe the same object and disagree on one member.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "divergence"
+            },
+            "witness": {
+              "$ref": "#/$defs/DivergenceWitness"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "witness"
+          ]
+        }
+      ]
     },
     "CodeSet": {
       "description": "A closed set of values of one field.",
@@ -3231,10 +3373,36 @@
         "queue"
       ]
     },
+    "Decider": {
+      "description": "Who decided a ruling.",
+      "type": "object",
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/DecisionAuthority"
+        },
+        "principal": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "authority"
+      ]
+    },
     "DecimalLiteral": {
       "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
       "type": "string",
       "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "DecisionAuthority": {
+      "description": "The authority level of a decider.",
+      "type": "string",
+      "enum": [
+        "owner",
+        "lead",
+        "agent"
+      ]
     },
     "DefaultValue": {
       "description": "A literal default value of a property's type (any JSON except `null`).\n\nThe literal's shape per kind (checked by `norn-checker`): a string for\n`text`, `enum`, `date`, and `timestamp`; an exact decimal string for\n`integer` and `decimal`; a boolean for `boolean`; any JSON for `json-ext`.",
@@ -3316,6 +3484,28 @@
       "additionalProperties": false,
       "required": [
         "property"
+      ]
+    },
+    "DivergenceWitness": {
+      "description": "A concrete witness of a divergence: one real object, observed by two\nmappings, mapped to different values of `target`.",
+      "type": "object",
+      "properties": {
+        "left": {
+          "$ref": "#/$defs/Observation"
+        },
+        "right": {
+          "$ref": "#/$defs/Observation"
+        },
+        "target": {
+          "description": "The canonical `property` member both observations map.",
+          "$ref": "#/$defs/MemberRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "left",
+        "right"
       ]
     },
     "EntitlementActionMap": {
@@ -4183,6 +4373,26 @@
         "value"
       ]
     },
+    "Evidence": {
+      "description": "One piece of evidence and its strength.",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/EvidenceSource"
+        },
+        "strength": {
+          "$ref": "#/$defs/EvidenceStrength"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "strength"
+      ]
+    },
     "EvidenceRef": {
       "description": "A content-addressed reference to evidence (raw metadata, a profile\nquery result, a sample file).",
       "type": "object",
@@ -4200,6 +4410,80 @@
       "required": [
         "uri",
         "sha256"
+      ]
+    },
+    "EvidenceSource": {
+      "description": "Where a piece of evidence lives, pinned exactly.",
+      "oneOf": [
+        {
+          "description": "A Norn artifact by its Norn1 semantic hash (a definition, a proof\nreceipt, a test fixture).",
+          "type": "object",
+          "properties": {
+            "artifactId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "artifactId",
+            "version",
+            "sha256"
+          ]
+        },
+        {
+          "description": "A file of an upstream system at an immutable release.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "upstream"
+            },
+            "locator": {
+              "description": "A path (and optional `#anchor`) within that release.",
+              "type": "string"
+            },
+            "release": {
+              "description": "An immutable release, tag, or revision hash.",
+              "type": "string"
+            },
+            "system": {
+              "description": "The system (`erpnext`, `shopify`).",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "system",
+            "release",
+            "locator"
+          ]
+        }
+      ]
+    },
+    "EvidenceStrength": {
+      "description": "How strong one piece of evidence is: the AGENTS.md evidence labels.",
+      "type": "string",
+      "enum": [
+        "structural",
+        "exhaustive_finite",
+        "bounded",
+        "checked_proof",
+        "runtime_enforced",
+        "sampled",
+        "refuted",
+        "unknown"
       ]
     },
     "ExecutableBoundary": {
@@ -6314,6 +6598,196 @@
         }
       ]
     },
+    "Member": {
+      "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id.",
+      "oneOf": [
+        {
+          "description": "The artifact as a whole (an action, a decision, a mapping).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An object type or interface.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "type"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName"
+          ]
+        },
+        {
+          "description": "A property of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "property"
+            },
+            "property": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "property"
+          ]
+        },
+        {
+          "description": "A link of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "link"
+            },
+            "link": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "link"
+          ]
+        },
+        {
+          "description": "A state of a type's lifecycle (a value of its lifecycle property).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "state"
+          ]
+        },
+        {
+          "description": "A declared transition of a type's lifecycle.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transition"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "transition": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "transition"
+          ]
+        },
+        {
+          "description": "An object map of a mapping.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_map"
+            },
+            "map": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "map"
+          ]
+        },
+        {
+          "description": "A law.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "law"
+            },
+            "law": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "law"
+          ]
+        }
+      ]
+    },
+    "MemberRef": {
+      "description": "A member of one exact artifact.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "member": {
+          "$ref": "#/$defs/Member"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version",
+        "member"
+      ]
+    },
     "Multiplicity": {
       "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
       "oneOf": [
@@ -6813,6 +7287,33 @@
         "obligations"
       ]
     },
+    "Observation": {
+      "description": "One source record and the object map that reads it.",
+      "type": "object",
+      "properties": {
+        "map": {
+          "description": "The object map id.",
+          "type": "string"
+        },
+        "mapping": {
+          "description": "The mapping where the divergence was observed. Rechecking evaluates\nthe admitted version of this mapping id.",
+          "$ref": "#/$defs/ArtifactKey"
+        },
+        "record": {
+          "description": "The source record, as the map's dataset delivers it.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mapping",
+        "map",
+        "record"
+      ]
+    },
     "OntologyMapping": {
       "description": "A reviewed mapping from a Norn term to an external IRI of a pinned source.",
       "type": "object",
@@ -7262,6 +7763,16 @@
           "description": "Scoped temporal law.",
           "type": "string",
           "const": "law"
+        },
+        {
+          "description": "A claim about definitions.",
+          "type": "string",
+          "const": "claim"
+        },
+        {
+          "description": "A governed ruling.",
+          "type": "string",
+          "const": "ruling"
         }
       ]
     },
@@ -7286,6 +7797,15 @@
         "artifactId",
         "kind",
         "version"
+      ]
+    },
+    "ParameterAuthority": {
+      "description": "Who may set a parameter a ruling introduces.",
+      "type": "string",
+      "enum": [
+        "tenant",
+        "jurisdiction",
+        "normative_profile"
       ]
     },
     "PolicyObligation": {
@@ -8122,6 +8642,47 @@
         }
       ]
     },
+    "RevisitTrigger": {
+      "description": "When a deferred ruling is revisited.",
+      "oneOf": [
+        {
+          "description": "On a date (`YYYY-MM-DD`).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "date"
+            },
+            "on": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "on"
+          ]
+        },
+        {
+          "description": "When this evidence changes.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "evidence"
+            },
+            "source": {
+              "$ref": "#/$defs/EvidenceSource"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source"
+          ]
+        }
+      ]
+    },
     "RoleCondition": {
       "description": "`principal` is a member of at least one of `anyOf`.",
       "type": "object",
@@ -8773,6 +9334,195 @@
         "json"
       ]
     },
+    "RulingAlternative": {
+      "description": "An option considered and not chosen.",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/RulingOutcome"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "outcome"
+      ]
+    },
+    "RulingOutcome": {
+      "description": "The structured outcome of a ruling.",
+      "oneOf": [
+        {
+          "description": "One definition is chosen.",
+          "type": "object",
+          "properties": {
+            "definition": {
+              "$ref": "#/$defs/MemberRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "choose"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "definition"
+          ]
+        },
+        {
+          "description": "A parameter decides; its default and who may set it.",
+          "type": "object",
+          "properties": {
+            "default": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "kind": {
+              "type": "string",
+              "const": "parameterise"
+            },
+            "parameter": {
+              "description": "The `setting` artifact holding the parameter.",
+              "$ref": "#/$defs/MemberRef"
+            },
+            "setBy": {
+              "description": "Non-empty.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ParameterAuthority"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "parameter",
+            "default",
+            "setBy"
+          ]
+        },
+        {
+          "description": "Different definitions in disjoint scopes (two or more cases).",
+          "type": "object",
+          "properties": {
+            "cases": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ScopedCase"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "scoped"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "cases"
+          ]
+        },
+        {
+          "description": "Not decided yet.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "defer"
+            },
+            "revisit": {
+              "$ref": "#/$defs/RevisitTrigger"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "revisit"
+          ]
+        },
+        {
+          "description": "The claim is rejected.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "reject"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "RulingPayload": {
+      "description": "The payload of a `ruling` artifact ([`ruling::RulingIr`], norn#62).",
+      "type": "object",
+      "properties": {
+        "affects": {
+          "description": "The definitions it governs (non-empty), at the versions it ruled on.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberRef"
+          }
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RulingAlternative"
+          }
+        },
+        "decidedAt": {
+          "description": "`YYYY-MM-DD`.",
+          "type": "string"
+        },
+        "decidedBy": {
+          "$ref": "#/$defs/Decider"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "id": {
+          "description": "Stable identity, unique in a set.",
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/RulingOutcome"
+        },
+        "resolves": {
+          "description": "The `claim` artifacts it decides (non-empty, exact versions).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactKey"
+          }
+        },
+        "rulingVersion": {
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "supersedes": {
+          "description": "The ruling this one supersedes.",
+          "$ref": "#/$defs/ArtifactKey"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rulingVersion",
+        "id",
+        "resolves",
+        "outcome",
+        "affects",
+        "decidedBy",
+        "decidedAt"
+      ]
+    },
     "SamplePolicy": {
       "description": "The sample policy a [`SampleSet`] was taken under.",
       "type": "object",
@@ -8858,6 +9608,23 @@
           ]
         }
       }
+    },
+    "ScopedCase": {
+      "description": "One case of a scoped outcome.",
+      "type": "object",
+      "properties": {
+        "definition": {
+          "$ref": "#/$defs/MemberRef"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "definition"
+      ]
     },
     "SemanticAuthority": {
       "description": "Ontology terms are semantic only: they never grant mutation authority.",

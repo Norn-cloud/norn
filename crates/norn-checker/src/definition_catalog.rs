@@ -108,7 +108,9 @@ pub fn project(
             | ArtifactPayload::BusinessPack(_)
             | ArtifactPayload::Policy(_)
             | ArtifactPayload::Derived(_)
-            | ArtifactPayload::SourceSchema(_) => {}
+            | ArtifactPayload::SourceSchema(_)
+            | ArtifactPayload::Claim(_)
+            | ArtifactPayload::Ruling(_) => {}
         }
     }
     for (artifact, output) in fact_decisions(envelopes.iter().copied()) {
@@ -164,7 +166,9 @@ fn references(artifact: &ArtifactEnvelope) -> Vec<(String, String)> {
         | ArtifactPayload::Derived(_)
         | ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
-        | ArtifactPayload::Law(_) => {}
+        | ArtifactPayload::Law(_)
+        | ArtifactPayload::Claim(_)
+        | ArtifactPayload::Ruling(_) => {}
     }
     out
 }

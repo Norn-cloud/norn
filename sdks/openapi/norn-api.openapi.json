@@ -81,6 +81,12 @@
           },
           {
             "$ref": "#/components/schemas/NornArtifactEnvelopeLaw"
+          },
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeClaim"
+          },
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeRuling"
           }
         ],
         "title": "NornArtifactEnvelope",
@@ -90,6 +96,7 @@
           "mapping": {
             "action": "#/components/schemas/NornArtifactEnvelopeAction",
             "business_pack": "#/components/schemas/NornArtifactEnvelopeBusinessPack",
+            "claim": "#/components/schemas/NornArtifactEnvelopeClaim",
             "connector": "#/components/schemas/NornArtifactEnvelopeConnector",
             "customization": "#/components/schemas/NornArtifactEnvelopeCustomization",
             "derived": "#/components/schemas/NornArtifactEnvelopeDerived",
@@ -99,6 +106,7 @@
             "policy": "#/components/schemas/NornArtifactEnvelopePolicy",
             "relation": "#/components/schemas/NornArtifactEnvelopeRelation",
             "rule": "#/components/schemas/NornArtifactEnvelopeRule",
+            "ruling": "#/components/schemas/NornArtifactEnvelopeRuling",
             "setting": "#/components/schemas/NornArtifactEnvelopeSetting",
             "source_schema": "#/components/schemas/NornArtifactEnvelopeSourceSchema",
             "widget": "#/components/schemas/NornArtifactEnvelopeWidget"
@@ -156,6 +164,32 @@
           }
         ],
         "title": "NornArtifactEnvelopeBusinessPack"
+      },
+      "NornArtifactEnvelopeClaim": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "claim"
+                ]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/NornIrClaimPayload"
+              }
+            }
+          }
+        ],
+        "title": "NornArtifactEnvelopeClaim"
       },
       "NornArtifactEnvelopeCommon": {
         "type": "object",
@@ -438,6 +472,32 @@
           }
         ],
         "title": "NornArtifactEnvelopeRule"
+      },
+      "NornArtifactEnvelopeRuling": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "ruling"
+                ]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/NornIrRulingPayload"
+              }
+            }
+          }
+        ],
+        "title": "NornArtifactEnvelopeRuling"
       },
       "NornArtifactEnvelopeSetting": {
         "allOf": [
@@ -1876,6 +1936,23 @@
           }
         }
       },
+      "NornIrArtifactKey": {
+        "type": "object",
+        "description": "Exact identity of an artifact: one version of one id.",
+        "required": [
+          "artifactId",
+          "version"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrArtifactKind": {
         "oneOf": [
           {
@@ -1919,6 +1996,20 @@
             "description": "Scoped temporal laws over ZEN predicates.",
             "enum": [
               "law"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "ClaimIR (norn#62): a typed statement about definitions, with its\nevidence. No decision authority.",
+            "enum": [
+              "claim"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "RulingIR (norn#62): a governed decision on claims. Ratified only\nthrough the governed review path.",
+            "enum": [
+              "ruling"
             ]
           }
         ]
@@ -2053,6 +2144,99 @@
         "type": "string",
         "description": "An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone.",
         "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+      },
+      "NornIrClaimPayload": {
+        "type": "object",
+        "description": "The payload of a `claim` artifact ([`ruling::ClaimIr`], norn#62).",
+        "required": [
+          "claimVersion",
+          "id",
+          "statement",
+          "evidence"
+        ],
+        "properties": {
+          "claimVersion": {
+            "$ref": "#/components/schemas/NornIrIrVersion01"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrEvidence"
+            },
+            "description": "Non-empty."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, unique in a set."
+          },
+          "note": {
+            "type": "string"
+          },
+          "statement": {
+            "$ref": "#/components/schemas/NornIrClaimStatement"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrClaimStatement": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrClaimStatementOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrClaimStatementOneOf1"
+          }
+        ],
+        "description": "What a claim states. Closed: a new statement is a checker change."
+      },
+      "NornIrClaimStatementOneOf0": {
+        "type": "object",
+        "description": "A lifecycle state is a function of other facts, so no declared\ntransition may target it.",
+        "required": [
+          "kind",
+          "state",
+          "from"
+        ],
+        "properties": {
+          "from": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMemberRef"
+            },
+            "description": "The members it is derived from (non-empty)."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "derived_state"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "A `state` member."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrClaimStatementOneOf1": {
+        "type": "object",
+        "description": "Two mappings observe the same object and disagree on one member.",
+        "required": [
+          "kind",
+          "witness"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "divergence"
+            ]
+          },
+          "witness": {
+            "$ref": "#/components/schemas/NornIrDivergenceWitness"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrCodeSet": {
         "type": "object",
@@ -4070,10 +4254,36 @@
           "queue"
         ]
       },
+      "NornIrDecider": {
+        "type": "object",
+        "description": "Who decided a ruling.",
+        "required": [
+          "principal",
+          "authority"
+        ],
+        "properties": {
+          "authority": {
+            "$ref": "#/components/schemas/NornIrDecisionAuthority"
+          },
+          "principal": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrDecimalLiteral": {
         "type": "string",
         "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
         "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+      },
+      "NornIrDecisionAuthority": {
+        "type": "string",
+        "description": "The authority level of a decider.",
+        "enum": [
+          "owner",
+          "lead",
+          "agent"
+        ]
       },
       "NornIrDefaultValue": {
         "anyOf": [
@@ -4199,6 +4409,28 @@
             "type": "string",
             "description": "The terminal property.",
             "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrDivergenceWitness": {
+        "type": "object",
+        "description": "A concrete witness of a divergence: one real object, observed by two\nmappings, mapped to different values of `target`.",
+        "required": [
+          "target",
+          "left",
+          "right"
+        ],
+        "properties": {
+          "left": {
+            "$ref": "#/components/schemas/NornIrObservation"
+          },
+          "right": {
+            "$ref": "#/components/schemas/NornIrObservation"
+          },
+          "target": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "The canonical `property` member both observations map."
           }
         },
         "additionalProperties": false
@@ -5203,6 +5435,26 @@
         },
         "additionalProperties": false
       },
+      "NornIrEvidence": {
+        "type": "object",
+        "description": "One piece of evidence and its strength.",
+        "required": [
+          "source",
+          "strength"
+        ],
+        "properties": {
+          "note": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrEvidenceSource"
+          },
+          "strength": {
+            "$ref": "#/components/schemas/NornIrEvidenceStrength"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrEvidenceRef": {
         "type": "object",
         "description": "A content-addressed reference to evidence (raw metadata, a profile\nquery result, a sample file).",
@@ -5221,6 +5473,90 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrEvidenceSource": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrEvidenceSourceOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrEvidenceSourceOneOf1"
+          }
+        ],
+        "description": "Where a piece of evidence lives, pinned exactly."
+      },
+      "NornIrEvidenceSourceOneOf0": {
+        "type": "object",
+        "description": "A Norn artifact by its Norn1 semantic hash (a definition, a proof\nreceipt, a test fixture).",
+        "required": [
+          "kind",
+          "artifactId",
+          "version",
+          "sha256"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "artifact"
+            ]
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrEvidenceSourceOneOf1": {
+        "type": "object",
+        "description": "A file of an upstream system at an immutable release.",
+        "required": [
+          "kind",
+          "system",
+          "release",
+          "locator"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "upstream"
+            ]
+          },
+          "locator": {
+            "type": "string",
+            "description": "A path (and optional `#anchor`) within that release."
+          },
+          "release": {
+            "type": "string",
+            "description": "An immutable release, tag, or revision hash."
+          },
+          "system": {
+            "type": "string",
+            "description": "The system (`erpnext`, `shopify`)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrEvidenceStrength": {
+        "type": "string",
+        "description": "How strong one piece of evidence is: the AGENTS.md evidence labels.",
+        "enum": [
+          "structural",
+          "exhaustive_finite",
+          "bounded",
+          "checked_proof",
+          "runtime_enforced",
+          "sampled",
+          "refuted",
+          "unknown"
+        ]
       },
       "NornIrExecutableBoundary": {
         "type": "string",
@@ -8083,6 +8419,236 @@
         },
         "additionalProperties": false
       },
+      "NornIrMember": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf4"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf5"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf6"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf7"
+          }
+        ],
+        "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id."
+      },
+      "NornIrMemberOneOf0": {
+        "type": "object",
+        "description": "The artifact as a whole (an action, a decision, a mapping).",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "artifact"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf1": {
+        "type": "object",
+        "description": "An object type or interface.",
+        "required": [
+          "kind",
+          "typeName"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "type"
+            ]
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf2": {
+        "type": "object",
+        "description": "A property of a type.",
+        "required": [
+          "kind",
+          "typeName",
+          "property"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "property"
+            ]
+          },
+          "property": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf3": {
+        "type": "object",
+        "description": "A link of a type.",
+        "required": [
+          "kind",
+          "typeName",
+          "link"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "link"
+            ]
+          },
+          "link": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf4": {
+        "type": "object",
+        "description": "A state of a type's lifecycle (a value of its lifecycle property).",
+        "required": [
+          "kind",
+          "typeName",
+          "lifecycle",
+          "state"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "state"
+            ]
+          },
+          "lifecycle": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf5": {
+        "type": "object",
+        "description": "A declared transition of a type's lifecycle.",
+        "required": [
+          "kind",
+          "typeName",
+          "lifecycle",
+          "transition"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "transition"
+            ]
+          },
+          "lifecycle": {
+            "type": "string"
+          },
+          "transition": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf6": {
+        "type": "object",
+        "description": "An object map of a mapping.",
+        "required": [
+          "kind",
+          "map"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "object_map"
+            ]
+          },
+          "map": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf7": {
+        "type": "object",
+        "description": "A law.",
+        "required": [
+          "kind",
+          "law"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "law"
+            ]
+          },
+          "law": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberRef": {
+        "type": "object",
+        "description": "A member of one exact artifact.",
+        "required": [
+          "artifactId",
+          "version",
+          "member"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "member": {
+            "$ref": "#/components/schemas/NornIrMember"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrMultiplicity": {
         "type": "string",
         "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
@@ -8539,6 +9105,36 @@
       "NornIrObligationPolicyRootPropertyExtensions": {
         "type": "object",
         "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
+      "NornIrObservation": {
+        "type": "object",
+        "description": "One source record and the object map that reads it.",
+        "required": [
+          "mapping",
+          "map",
+          "record"
+        ],
+        "properties": {
+          "map": {
+            "type": "string",
+            "description": "The object map id."
+          },
+          "mapping": {
+            "$ref": "#/components/schemas/NornIrArtifactKey",
+            "description": "The mapping where the divergence was observed. Rechecking evaluates\nthe admitted version of this mapping id."
+          },
+          "record": {
+            "$ref": "#/components/schemas/NornIrObservationPropertyRecord"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrObservationPropertyRecord": {
+        "type": "object",
+        "description": "The source record, as the map's dataset delivers it.",
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
@@ -9012,6 +9608,20 @@
             "enum": [
               "law"
             ]
+          },
+          {
+            "type": "string",
+            "description": "A claim about definitions.",
+            "enum": [
+              "claim"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "A governed ruling.",
+            "enum": [
+              "ruling"
+            ]
           }
         ],
         "description": "Artifact kinds a composition pack may contain (not `derived`)."
@@ -9038,6 +9648,15 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrParameterAuthority": {
+        "type": "string",
+        "description": "Who may set a parameter a ruling introduces.",
+        "enum": [
+          "tenant",
+          "jurisdiction",
+          "normative_profile"
+        ]
       },
       "NornIrPolicyObligation": {
         "type": "object",
@@ -9991,6 +10610,57 @@
         },
         "additionalProperties": false
       },
+      "NornIrRevisitTrigger": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrRevisitTriggerOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrRevisitTriggerOneOf1"
+          }
+        ],
+        "description": "When a deferred ruling is revisited."
+      },
+      "NornIrRevisitTriggerOneOf0": {
+        "type": "object",
+        "description": "On a date (`YYYY-MM-DD`).",
+        "required": [
+          "kind",
+          "on"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "date"
+            ]
+          },
+          "on": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRevisitTriggerOneOf1": {
+        "type": "object",
+        "description": "When this evidence changes.",
+        "required": [
+          "kind",
+          "source"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "evidence"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrEvidenceSource"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRoleCondition": {
         "type": "object",
         "description": "`principal` is a member of at least one of `anyOf`.",
@@ -10753,6 +11423,220 @@
           "json"
         ]
       },
+      "NornIrRulingAlternative": {
+        "type": "object",
+        "description": "An option considered and not chosen.",
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "note": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/NornIrRulingOutcome"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRulingOutcome": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrRulingOutcomeOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrRulingOutcomeOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrRulingOutcomeOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrRulingOutcomeOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrRulingOutcomeOneOf4"
+          }
+        ],
+        "description": "The structured outcome of a ruling."
+      },
+      "NornIrRulingOutcomeOneOf0": {
+        "type": "object",
+        "description": "One definition is chosen.",
+        "required": [
+          "kind",
+          "definition"
+        ],
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "choose"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRulingOutcomeOneOf1": {
+        "type": "object",
+        "description": "A parameter decides; its default and who may set it.",
+        "required": [
+          "kind",
+          "parameter",
+          "default",
+          "setBy"
+        ],
+        "properties": {
+          "default": {
+            "$ref": "#/components/schemas/NornIrJsonValue"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "parameterise"
+            ]
+          },
+          "parameter": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "The `setting` artifact holding the parameter."
+          },
+          "setBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrParameterAuthority"
+            },
+            "description": "Non-empty."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRulingOutcomeOneOf2": {
+        "type": "object",
+        "description": "Different definitions in disjoint scopes (two or more cases).",
+        "required": [
+          "kind",
+          "cases"
+        ],
+        "properties": {
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrScopedCase"
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "scoped"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRulingOutcomeOneOf3": {
+        "type": "object",
+        "description": "Not decided yet.",
+        "required": [
+          "kind",
+          "revisit"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "defer"
+            ]
+          },
+          "revisit": {
+            "$ref": "#/components/schemas/NornIrRevisitTrigger"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRulingOutcomeOneOf4": {
+        "type": "object",
+        "description": "The claim is rejected.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "reject"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRulingPayload": {
+        "type": "object",
+        "description": "The payload of a `ruling` artifact ([`ruling::RulingIr`], norn#62).",
+        "required": [
+          "rulingVersion",
+          "id",
+          "resolves",
+          "outcome",
+          "affects",
+          "decidedBy",
+          "decidedAt"
+        ],
+        "properties": {
+          "affects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMemberRef"
+            },
+            "description": "The definitions it governs (non-empty), at the versions it ruled on."
+          },
+          "alternatives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrRulingAlternative"
+            }
+          },
+          "decidedAt": {
+            "type": "string",
+            "description": "`YYYY-MM-DD`."
+          },
+          "decidedBy": {
+            "$ref": "#/components/schemas/NornIrDecider"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrEvidence"
+            }
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, unique in a set."
+          },
+          "note": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/NornIrRulingOutcome"
+          },
+          "resolves": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrArtifactKey"
+            },
+            "description": "The `claim` artifacts it decides (non-empty, exact versions)."
+          },
+          "rulingVersion": {
+            "$ref": "#/components/schemas/NornIrIrVersion01"
+          },
+          "supersedes": {
+            "$ref": "#/components/schemas/NornIrArtifactKey",
+            "description": "The ruling this one supersedes."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrSamplePolicy": {
         "type": "object",
         "description": "The sample policy a [`SampleSet`] was taken under.",
@@ -10853,6 +11737,23 @@
             ]
           }
         }
+      },
+      "NornIrScopedCase": {
+        "type": "object",
+        "description": "One case of a scoped outcome.",
+        "required": [
+          "scope",
+          "definition"
+        ],
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NornIrScopeRef"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrSemanticAuthority": {
         "type": "string",

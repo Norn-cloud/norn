@@ -467,6 +467,16 @@
           "description": "Scoped temporal law.",
           "type": "string",
           "const": "law"
+        },
+        {
+          "description": "A claim about definitions.",
+          "type": "string",
+          "const": "claim"
+        },
+        {
+          "description": "A governed ruling.",
+          "type": "string",
+          "const": "ruling"
         }
       ]
     },

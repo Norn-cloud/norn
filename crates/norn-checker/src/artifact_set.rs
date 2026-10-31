@@ -150,8 +150,8 @@ pub struct ResolvedArtifactSet<'a> {
 #[must_use]
 pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
     use ArtifactKind::{
-        Action, BusinessPack, Connector, Customization, Derived, Entity, Law, Mapping, Policy,
-        Relation, Rule, Setting, SourceSchema, Widget,
+        Action, BusinessPack, Claim, Connector, Customization, Derived, Entity, Law, Mapping,
+        Policy, Relation, Rule, Ruling, Setting, SourceSchema, Widget,
     };
     match from {
         Entity => matches!(to, Entity),
@@ -195,6 +195,22 @@ pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
                 | Mapping
                 | Law
         ),
+        Claim => matches!(
+            to,
+            Entity
+                | Relation
+                | Derived
+                | Setting
+                | Rule
+                | Action
+                | Policy
+                | Connector
+                | SourceSchema
+                | Mapping
+                | Law
+                | Claim
+        ),
+        Ruling => !matches!(to, Widget | Customization | BusinessPack),
     }
 }
 
@@ -638,6 +654,8 @@ const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
         PackArtifactKind::SourceSchema => ArtifactKind::SourceSchema,
         PackArtifactKind::Mapping => ArtifactKind::Mapping,
         PackArtifactKind::Law => ArtifactKind::Law,
+        PackArtifactKind::Claim => ArtifactKind::Claim,
+        PackArtifactKind::Ruling => ArtifactKind::Ruling,
     }
 }
 
@@ -658,6 +676,8 @@ const fn kind_name(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema",
         ArtifactKind::Mapping => "mapping",
         ArtifactKind::Law => "law",
+        ArtifactKind::Claim => "claim",
+        ArtifactKind::Ruling => "ruling",
     }
 }
 

@@ -387,6 +387,13 @@
       "tier": "T2"
     },
     {
+      "code": "claim.validation.invalid_document",
+      "message": "claim document is invalid: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
       "code": "connector.validation.invalid_payload",
       "message": "ConnectorIR payload is invalid at {path}: {detail}",
       "severity": "error",
@@ -3072,6 +3079,13 @@
       "message": "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",
       "severity": "error",
       "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "ruling.validation.invalid_document",
+      "message": "ruling document is invalid: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
       "tier": "T2"
     },
     {

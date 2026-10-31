@@ -68,6 +68,7 @@ pub mod posting;
 pub mod provenance;
 pub mod quantity_ledger;
 pub mod rule;
+pub mod ruling;
 pub mod runtime;
 pub mod sealing;
 pub mod setting;
@@ -276,6 +277,12 @@ pub enum ArtifactKind {
     Mapping,
     /// Scoped temporal laws over ZEN predicates.
     Law,
+    /// ClaimIR (norn#62): a typed statement about definitions, with its
+    /// evidence. No decision authority.
+    Claim,
+    /// RulingIR (norn#62): a governed decision on claims. Ratified only
+    /// through the governed review path.
+    Ruling,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -316,6 +323,7 @@ pub const fn direct_artifact_write_allowed(
             | ArtifactKind::Derived
             | ArtifactKind::Mapping
             | ArtifactKind::Law
+            | ArtifactKind::Ruling
     );
     let grants_runtime_authority = matches!(
         lifecycle,
@@ -1373,6 +1381,42 @@ define_payload_root!(
     }
 );
 
+define_payload_root!(
+    /// The payload of a `claim` artifact ([`ruling::ClaimIr`], norn#62).
+    #[schemars(with = "ruling::ClaimIr")]
+    ClaimPayload {
+        required {
+            claim_version => "claimVersion" as IrVersion01,
+            id => "id" as String,
+            statement => "statement" as ruling::ClaimStatement,
+            evidence => "evidence" as Vec<ruling::Evidence>
+        }
+        optional { note => "note" as String }
+    }
+);
+
+define_payload_root!(
+    /// The payload of a `ruling` artifact ([`ruling::RulingIr`], norn#62).
+    #[schemars(with = "ruling::RulingIr")]
+    RulingPayload {
+        required {
+            ruling_version => "rulingVersion" as IrVersion01,
+            id => "id" as String,
+            resolves => "resolves" as Vec<definition_catalog::ArtifactKey>,
+            outcome => "outcome" as ruling::RulingOutcome,
+            affects => "affects" as Vec<definition_catalog::MemberRef>,
+            decided_by => "decidedBy" as ruling::Decider,
+            decided_at => "decidedAt" as String
+        }
+        optional {
+            evidence => "evidence" as Vec<ruling::Evidence>,
+            alternatives => "alternatives" as Vec<ruling::RulingAlternative>,
+            supersedes => "supersedes" as definition_catalog::ArtifactKey,
+            note => "note" as String
+        }
+    }
+);
+
 define_payload_root!(DerivedPayload {
     required {
         view_version => "viewVersion" as IrVersion01,
@@ -1412,6 +1456,8 @@ pub enum ArtifactPayload {
     SourceSchema(SourceSchemaPayload),
     Mapping(MappingPayload),
     Law(LawPayload),
+    Claim(ClaimPayload),
+    Ruling(RulingPayload),
 }
 
 /// The wire payload root must be a JSON object before it can select a closed kind root.
@@ -1462,6 +1508,8 @@ impl ArtifactPayload {
             }
             ArtifactKind::Mapping => Self::Mapping(MappingPayload::from_json_object(object)),
             ArtifactKind::Law => Self::Law(LawPayload::from_json_object(object)),
+            ArtifactKind::Claim => Self::Claim(ClaimPayload::from_json_object(object)),
+            ArtifactKind::Ruling => Self::Ruling(RulingPayload::from_json_object(object)),
         }
     }
 
@@ -1483,6 +1531,8 @@ impl ArtifactPayload {
             Self::SourceSchema(_) => ArtifactKind::SourceSchema,
             Self::Mapping(_) => ArtifactKind::Mapping,
             Self::Law(_) => ArtifactKind::Law,
+            Self::Claim(_) => ArtifactKind::Claim,
+            Self::Ruling(_) => ArtifactKind::Ruling,
         }
     }
 
@@ -1504,6 +1554,8 @@ impl ArtifactPayload {
             Self::SourceSchema(payload) => payload.to_json_value(),
             Self::Mapping(payload) => payload.to_json_value(),
             Self::Law(payload) => payload.to_json_value(),
+            Self::Claim(payload) => payload.to_json_value(),
+            Self::Ruling(payload) => payload.to_json_value(),
         }
     }
 
@@ -1525,6 +1577,8 @@ impl ArtifactPayload {
             Self::SourceSchema(payload) => payload.unknown_fields(),
             Self::Mapping(payload) => payload.unknown_fields(),
             Self::Law(payload) => payload.unknown_fields(),
+            Self::Claim(payload) => payload.unknown_fields(),
+            Self::Ruling(payload) => payload.unknown_fields(),
         }
     }
 
@@ -1546,6 +1600,8 @@ impl ArtifactPayload {
             Self::SourceSchema(payload) => payload.has_invalid_extensions(),
             Self::Mapping(payload) => payload.has_invalid_extensions(),
             Self::Law(payload) => payload.has_invalid_extensions(),
+            Self::Claim(payload) => payload.has_invalid_extensions(),
+            Self::Ruling(payload) => payload.has_invalid_extensions(),
         }
     }
 
@@ -2028,6 +2084,8 @@ pub fn artifact_payload_schema(kind: &ArtifactKind) -> Schema {
         ArtifactKind::SourceSchema => schema_for!(SourceSchemaPayload),
         ArtifactKind::Mapping => schema_for!(MappingPayload),
         ArtifactKind::Law => schema_for!(LawPayload),
+        ArtifactKind::Claim => schema_for!(ClaimPayload),
+        ArtifactKind::Ruling => schema_for!(RulingPayload),
     }
 }
 

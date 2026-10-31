@@ -1,0 +1,381 @@
+//! Local (T2) checks of `claim` and `ruling` artifacts
+//! ([`norn_ir::ruling`], norn#62).
+//!
+//! These are document rules only: identities and dates are well formed,
+//! lists that carry meaning are non-empty, each member reference has the
+//! shape its slot needs, and an outcome only names definitions the ruling
+//! declares it affects. Whether a referenced member exists at its pinned
+//! version, and whether a ruling actually resolves what it claims to, are
+//! artifact-set obligations over the definition catalog.
+
+use norn_ir::definition_catalog::{Member, MemberRef};
+use norn_ir::ruling::{
+    ClaimIr, ClaimStatement, Evidence, EvidenceSource, RevisitTrigger, RulingIr, RulingOutcome,
+};
+use norn_ir::{ArtifactEnvelope, ArtifactPayload, ScopeRef};
+
+use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
+
+/// Stable codes of the local claim and ruling checks.
+pub mod codes {
+    /// A malformed `ClaimIR` document.
+    pub const INVALID_CLAIM: &str = "claim.validation.invalid_document";
+    /// A malformed `RulingIR` document.
+    pub const INVALID_RULING: &str = "ruling.validation.invalid_document";
+}
+
+/// The local findings of a `claim` or `ruling` artifact; empty for any
+/// other kind.
+#[must_use]
+pub fn check_local(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
+    let payload = serde_json::to_value(artifact.payload.to_json_value()).unwrap_or_default();
+    let mut out = Findings {
+        artifact,
+        code: codes::INVALID_CLAIM,
+        found: Vec::new(),
+    };
+    if let ArtifactPayload::Claim(_) = &artifact.payload {
+        match serde_json::from_value::<ClaimIr>(payload) {
+            Ok(claim) => out.claim(&claim),
+            Err(error) => out.push("/payload", error.to_string()),
+        }
+    } else if let ArtifactPayload::Ruling(_) = &artifact.payload {
+        out.code = codes::INVALID_RULING;
+        match serde_json::from_value::<RulingIr>(payload) {
+            Ok(ruling) => out.ruling(&ruling),
+            Err(error) => out.push("/payload", error.to_string()),
+        }
+    }
+    out.found
+}
+
+/// A checker finding in the envelope's legacy wire form.
+pub(crate) fn legacy_diagnostic(finding: Diagnostic) -> norn_ir::Diagnostic {
+    norn_ir::Diagnostic {
+        code: finding.code.as_str().to_owned(),
+        severity: finding.severity,
+        message: finding.message,
+        artifact_id: finding.artifact_id,
+        path: finding
+            .span
+            .map(|span| span.pointer.trim_start_matches('/').replace('/', ".")),
+        remediation: finding.remediation,
+    }
+}
+
+struct Findings<'a> {
+    artifact: &'a ArtifactEnvelope,
+    code: &'static str,
+    found: Vec<Diagnostic>,
+}
+
+/// `YYYY-MM-DD` with a plausible month and day.
+fn is_date(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let digits = |range: std::ops::Range<usize>| {
+        bytes
+            .get(range)
+            .is_some_and(|part| part.iter().all(u8::is_ascii_digit))
+    };
+    let number = |range: std::ops::Range<usize>| {
+        text.get(range)
+            .and_then(|part| part.parse::<u16>().ok())
+            .unwrap_or(0)
+    };
+    if !(bytes.len() == 10
+        && digits(0..4)
+        && bytes.get(4) == Some(&b'-')
+        && digits(5..7)
+        && bytes.get(7) == Some(&b'-')
+        && digits(8..10))
+    {
+        return false;
+    }
+    let year = number(0..4);
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let days = match number(5..7) {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&number(8..10))
+}
+
+/// Whether no object can be in both scopes: some dimension is set on both
+/// to different values.
+pub(crate) fn disjoint(left: &ScopeRef, right: &ScopeRef) -> bool {
+    [
+        (&left.org_id, &right.org_id),
+        (&left.tenant_id, &right.tenant_id),
+        (&left.workspace_id, &right.workspace_id),
+        (&left.environment_id, &right.environment_id),
+        (&left.business_unit_id, &right.business_unit_id),
+    ]
+    .into_iter()
+    .any(|(left, right)| matches!((left, right), (Some(left), Some(right)) if left != right))
+}
+
+fn is_sha256(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn blank(text: &str) -> bool {
+    text.trim().is_empty()
+}
+
+impl Findings<'_> {
+    fn push(&mut self, pointer: &str, message: impl Into<String>) {
+        self.found.push(Diagnostic {
+            code: DiagnosticCode::new(self.code),
+            severity: DiagnosticSeverity::Error,
+            message: message.into(),
+            span: Some(Span::pointer(pointer)),
+            artifact_id: Some(self.artifact.artifact_id.clone()),
+            remediation: Some(DiagnosticRemediation::FixDefinition),
+        });
+    }
+
+    fn member(&mut self, pointer: &str, member: &MemberRef) {
+        let names: Vec<&str> = match &member.member {
+            Member::Artifact {} => Vec::new(),
+            Member::Type { type_name } => vec![type_name.as_str()],
+            Member::Property {
+                type_name,
+                property,
+            } => vec![type_name.as_str(), property.as_str()],
+            Member::Link { type_name, link } => vec![type_name.as_str(), link.as_str()],
+            Member::State {
+                type_name,
+                lifecycle,
+                state,
+            } => vec![type_name.as_str(), lifecycle.as_str(), state.as_str()],
+            Member::Transition {
+                type_name,
+                lifecycle,
+                transition,
+            } => vec![type_name.as_str(), lifecycle.as_str(), transition.as_str()],
+            Member::ObjectMap { map } => vec![map.as_str()],
+            Member::Law { law } => vec![law.as_str()],
+        };
+        if blank(&member.artifact_id) || blank(&member.version) || names.into_iter().any(blank) {
+            self.push(
+                pointer,
+                "a member reference names an exact artifact id, version and nonblank member",
+            );
+        }
+    }
+
+    fn evidence(&mut self, pointer: &str, evidence: &[Evidence]) {
+        for (index, item) in evidence.iter().enumerate() {
+            self.source(&format!("{pointer}/{index}/source"), &item.source);
+        }
+    }
+
+    fn source(&mut self, at: &str, source: &EvidenceSource) {
+        let pinned = match source {
+            EvidenceSource::Artifact {
+                artifact_id,
+                version,
+                sha256,
+            } => !blank(artifact_id) && !blank(version) && is_sha256(sha256),
+            EvidenceSource::Upstream {
+                system,
+                release,
+                locator,
+            } => !blank(system) && !blank(release) && !blank(locator),
+        };
+        if !pinned {
+            self.push(
+                at,
+                "evidence is pinned: an artifact by id, version and lower-case SHA-256, or an upstream file by system, release and locator",
+            );
+        }
+    }
+
+    fn claim(&mut self, claim: &ClaimIr) {
+        if blank(&claim.id) {
+            self.push("/payload/id", "a claim has a nonblank id");
+        }
+        if claim.evidence.is_empty() {
+            self.push(
+                "/payload/evidence",
+                "a claim cites at least one piece of evidence",
+            );
+        }
+        self.evidence("/payload/evidence", &claim.evidence);
+        match &claim.statement {
+            ClaimStatement::DerivedState { state, from } => {
+                self.member("/payload/statement/state", state);
+                if !matches!(state.member, Member::State { .. }) {
+                    self.push(
+                        "/payload/statement/state/member",
+                        "a derived-state claim names a lifecycle state",
+                    );
+                }
+                if from.is_empty() {
+                    self.push(
+                        "/payload/statement/from",
+                        "a derived state names the members it is derived from",
+                    );
+                }
+                for (index, member) in from.iter().enumerate() {
+                    self.member(&format!("/payload/statement/from/{index}"), member);
+                }
+            }
+            ClaimStatement::Divergence { witness } => {
+                self.member("/payload/statement/witness/target", &witness.target);
+                if !matches!(witness.target.member, Member::Property { .. }) {
+                    self.push(
+                        "/payload/statement/witness/target/member",
+                        "a divergence is over one property",
+                    );
+                }
+                for (side, observation) in [("left", &witness.left), ("right", &witness.right)] {
+                    if blank(&observation.mapping.artifact_id)
+                        || blank(&observation.mapping.version)
+                        || blank(&observation.map)
+                    {
+                        self.push(
+                            &format!("/payload/statement/witness/{side}"),
+                            "an observation names an exact mapping and an object map",
+                        );
+                    }
+                }
+                if witness.left == witness.right {
+                    self.push(
+                        "/payload/statement/witness",
+                        "a divergence needs two different observations",
+                    );
+                }
+            }
+        }
+    }
+
+    fn ruling(&mut self, ruling: &RulingIr) {
+        if blank(&ruling.id) {
+            self.push("/payload/id", "a ruling has a nonblank id");
+        }
+        if ruling.resolves.is_empty() {
+            self.push("/payload/resolves", "a ruling resolves at least one claim");
+        }
+        for (index, key) in ruling.resolves.iter().enumerate() {
+            if blank(&key.artifact_id) || blank(&key.version) {
+                self.push(
+                    &format!("/payload/resolves/{index}"),
+                    "a resolved claim is an exact artifact id and version",
+                );
+            }
+        }
+        if ruling
+            .supersedes
+            .as_ref()
+            .is_some_and(|key| blank(&key.artifact_id) || blank(&key.version))
+        {
+            self.push(
+                "/payload/supersedes",
+                "a superseded ruling is an exact artifact id and version",
+            );
+        }
+        if ruling.affects.is_empty() {
+            self.push(
+                "/payload/affects",
+                "a ruling names the definitions it governs",
+            );
+        }
+        for (index, member) in ruling.affects.iter().enumerate() {
+            self.member(&format!("/payload/affects/{index}"), member);
+        }
+        if blank(&ruling.decided_by.principal) {
+            self.push("/payload/decidedBy/principal", "a ruling names its decider");
+        }
+        if !is_date(&ruling.decided_at) {
+            self.push("/payload/decidedAt", "decidedAt is a YYYY-MM-DD date");
+        }
+        self.evidence("/payload/evidence", &ruling.evidence);
+        let own = ruling.supersedes.as_ref().is_some_and(|key| {
+            key.artifact_id == self.artifact.artifact_id && key.version == self.artifact.version
+        });
+        if own {
+            self.push("/payload/supersedes", "a ruling cannot supersede itself");
+        }
+        self.outcome("/payload/outcome", &ruling.outcome, &ruling.affects);
+        for (index, alternative) in ruling.alternatives.iter().enumerate() {
+            if alternative.outcome == ruling.outcome {
+                self.push(
+                    &format!("/payload/alternatives/{index}/outcome"),
+                    "an alternative differs from the outcome",
+                );
+            }
+        }
+    }
+
+    /// The definitions an outcome names are among those the ruling affects.
+    fn outcome(&mut self, pointer: &str, outcome: &RulingOutcome, affects: &[MemberRef]) {
+        let mut named: Vec<(String, &MemberRef)> = Vec::new();
+        match outcome {
+            RulingOutcome::Choose { definition } => {
+                named.push((format!("{pointer}/definition"), definition));
+            }
+            RulingOutcome::Parameterise {
+                parameter, set_by, ..
+            } => {
+                named.push((format!("{pointer}/parameter"), parameter));
+                if set_by.is_empty() {
+                    self.push(
+                        &format!("{pointer}/setBy"),
+                        "a parameter names who may set it",
+                    );
+                }
+            }
+            RulingOutcome::Scoped { cases } => {
+                if cases.len() < 2 {
+                    self.push(
+                        &format!("{pointer}/cases"),
+                        "a scoped outcome has two or more cases",
+                    );
+                }
+                for (index, case) in cases.iter().enumerate() {
+                    let overlaps = cases
+                        .get(..index)
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|earlier| !disjoint(&earlier.scope, &case.scope));
+                    if overlaps {
+                        self.push(
+                            &format!("{pointer}/cases/{index}/scope"),
+                            "the cases of a scoped outcome have disjoint scopes",
+                        );
+                    }
+                    named.push((
+                        format!("{pointer}/cases/{index}/definition"),
+                        &case.definition,
+                    ));
+                }
+            }
+            RulingOutcome::Defer { revisit } => match revisit {
+                RevisitTrigger::Date { on } => {
+                    if !is_date(on) {
+                        self.push(
+                            &format!("{pointer}/revisit/on"),
+                            "a revisit date is YYYY-MM-DD",
+                        );
+                    }
+                }
+                RevisitTrigger::Evidence { source } => {
+                    self.source(&format!("{pointer}/revisit/source"), source);
+                }
+            },
+            RulingOutcome::Reject {} => {}
+        }
+        for (at, member) in named {
+            if !affects.contains(member) {
+                self.push(&at, "an outcome names only definitions the ruling affects");
+            }
+        }
+    }
+}

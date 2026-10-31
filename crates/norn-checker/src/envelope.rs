@@ -342,7 +342,19 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         // and `crate::mapping` (run per document and over the artifact set).
         ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
-        | ArtifactPayload::Law(_) => {}
+        | ArtifactPayload::Law(_)
+        | ArtifactPayload::Claim(_)
+        | ArtifactPayload::Ruling(_) => {}
+    }
+    if matches!(
+        artifact.payload,
+        ArtifactPayload::Claim(_) | ArtifactPayload::Ruling(_)
+    ) {
+        diagnostics.extend(
+            crate::ruling::check_local(artifact)
+                .into_iter()
+                .map(crate::ruling::legacy_diagnostic),
+        );
     }
     if matches!(artifact.payload, ArtifactPayload::Law(_)) {
         diagnostics.extend(
@@ -420,6 +432,8 @@ const fn artifact_payload_validation_code(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema.validation.invalid_document",
         ArtifactKind::Mapping => "mapping.validation.invalid_document",
         ArtifactKind::Law => crate::verification::codes::INVALID_DOCUMENT,
+        ArtifactKind::Claim => crate::ruling::codes::INVALID_CLAIM,
+        ArtifactKind::Ruling => crate::ruling::codes::INVALID_RULING,
     }
 }
 
@@ -3121,6 +3135,9 @@ fn validate_composition_pack_payload(
                         "policy",
                         "source_schema",
                         "mapping",
+                        "law",
+                        "claim",
+                        "ruling",
                     ],
                     format!("{path}.kind"),
                     diagnostics,
@@ -5393,6 +5410,8 @@ fn artifact_kind_key(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema",
         ArtifactKind::Mapping => "mapping",
         ArtifactKind::Law => "law",
+        ArtifactKind::Claim => "claim",
+        ArtifactKind::Ruling => "ruling",
     }
 }
 
