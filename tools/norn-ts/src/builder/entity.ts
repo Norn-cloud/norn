@@ -125,6 +125,9 @@ export interface LinkDecl {
   readonly acyclic?: boolean
 }
 
+/** A link requirement on an interface: the widest target and cardinality an implementation may have. */
+export type InterfaceLinkDecl = Pick<LinkDecl, "id" | "description" | "target" | "cardinality">
+
 /** A boolean ZEN Expression required of every object type implementing an interface. */
 export interface InvariantDecl {
   readonly classification?: "integrity" | "quality"
@@ -158,6 +161,8 @@ export interface ObjectTypeDef extends TypeMetaBase {
 export interface InterfaceDef extends TypeMetaBase {
   readonly _tag: "Interface"
   readonly extends: ReadonlyArray<string>
+  /** Links every implementing type must declare, at most this wide. */
+  readonly links: ReadonlyArray<InterfaceLinkDecl>
   readonly invariants: ReadonlyArray<InvariantDecl>
   readonly at?: SourceLocation
 }
@@ -222,10 +227,14 @@ export function objectType(
 }
 
 export function interfaceType(
-  meta: TypeMetaBase & { readonly extends?: ReadonlyArray<string | InterfaceDef>; readonly invariants?: ReadonlyArray<InvariantDecl> } & At,
+  meta: TypeMetaBase & {
+    readonly extends?: ReadonlyArray<string | InterfaceDef>
+    readonly links?: ReadonlyArray<InterfaceLinkDecl>
+    readonly invariants?: ReadonlyArray<InvariantDecl>
+  } & At,
 ): InterfaceDef {
-  const { at, extends: parents = [], invariants = [], ...rest } = meta
-  return located({ _tag: "Interface" as const, ...rest, extends: parents.map((parent) => typeof parent === "string" ? parent : parent.name), invariants: [...invariants] }, at)
+  const { at, extends: parents = [], links = [], invariants = [], ...rest } = meta
+  return located({ _tag: "Interface" as const, ...rest, extends: parents.map((parent) => typeof parent === "string" ? parent : parent.name), links: [...links], invariants: [...invariants] }, at)
 }
 
 // ------------------------------------------------------------- lowering
@@ -254,6 +263,10 @@ function propertyJson(p: PropertyDecl, withDefault: boolean): Json {
   } as unknown as Json
 }
 
+function cardinalityJson(c: LinkDecl["cardinality"]): Json {
+  return { to: c.to, from: c.from, required: c.required === true ? true : undefined } as unknown as Json
+}
+
 /** Lower one object type or interface to its `entity` artifact (`<name>.entity` / `<name>.interface`). */
 export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBuildResult {
   const diagnostics = new Diagnostics()
@@ -277,6 +290,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
             markings: omitEmpty(def.markings ?? []),
             description: def.description,
             properties: omitEmpty(def.properties.map((p) => propertyJson(p, false))),
+            links: omitEmpty(def.links.map((l) => ({ ...l, cardinality: cardinalityJson(l.cardinality) }))),
             invariants: omitEmpty(def.invariants.map(({ classification, ...invariant }) => ({
               ...invariant,
               ...(classification === undefined || classification === "integrity" ? {} : { classification }),
@@ -296,7 +310,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
               def.links.map((l) => ({
                 ...l,
                 acyclic: l.acyclic === true ? true : undefined,
-                cardinality: { to: l.cardinality.to, from: l.cardinality.from, required: l.cardinality.required === true ? true : undefined },
+                cardinality: cardinalityJson(l.cardinality),
               })),
             ),
             identity: omitEmpty(def.identity),
