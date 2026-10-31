@@ -307,6 +307,77 @@ fn occurs(atoms: &[Atom], variable: &str) -> bool {
     variables(atoms).contains(variable)
 }
 
+/// The first match of `dependency` that `facts` leave unsatisfied, checked
+/// closed-world (nothing is repaired): a TGD body match with no head match,
+/// or an EGD body match whose sides differ. Returns the matched facts.
+///
+/// # Errors
+/// An exhausted step budget.
+pub fn first_violation(
+    dependency: &Dependency,
+    facts: &[Fact],
+    budget: ChaseBudget,
+) -> Result<Option<Vec<Fact>>, ChaseError> {
+    let records: Vec<Record> = facts
+        .iter()
+        .map(|fact| Record {
+            fact: fact.clone(),
+            rules: BTreeSet::new(),
+            inputs: BTreeSet::new(),
+        })
+        .collect();
+    let mut meter = Meter {
+        steps: 0,
+        limit: budget.max_steps,
+    };
+    let refused = |halt| match halt {
+        Halt::Refused(error) => error,
+        Halt::Conflict(_) => ChaseError::Internal("closed-world check cannot conflict".to_owned()),
+    };
+    let body = match dependency {
+        Dependency::Tgd(tgd) => &tgd.body,
+        Dependency::Egd(egd) => &egd.body,
+    };
+    let mut found = Vec::new();
+    extend(
+        &records,
+        &mut meter,
+        body,
+        &mut Binding::new(),
+        &mut Vec::new(),
+        &mut found,
+        false,
+    )
+    .map_err(refused)?;
+    for (mut binding, used) in found {
+        let violated = match dependency {
+            Dependency::Tgd(tgd) => {
+                let mut heads = Vec::new();
+                extend(
+                    &records,
+                    &mut meter,
+                    &tgd.head,
+                    &mut binding,
+                    &mut Vec::new(),
+                    &mut heads,
+                    true,
+                )
+                .map_err(refused)?;
+                heads.is_empty()
+            }
+            Dependency::Egd(egd) => resolve(&egd.left, &binding) != resolve(&egd.right, &binding),
+        };
+        if violated {
+            return Ok(Some(
+                used.iter()
+                    .filter_map(|&i| records.get(i).map(|r| r.fact.clone()))
+                    .collect(),
+            ));
+        }
+    }
+    Ok(None)
+}
+
 type Binding = BTreeMap<String, Value>;
 
 struct Record {
