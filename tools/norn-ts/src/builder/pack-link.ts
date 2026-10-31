@@ -18,7 +18,7 @@ export interface PackLinkSpec {
     readonly reviewedBy: string; readonly reviewedAt: string
     readonly transformRef?: string; readonly rulingRef?: string
   }>
-  readonly residuals?: ReadonlyArray<{ readonly termId: string; readonly reason: "system_specific" | "canon_gap"; readonly note: string }>
+  readonly residuals?: ReadonlyArray<{ readonly termId: string; readonly reason: "system_specific" | "canon_gap" | "non_conforming"; readonly note: string }>
 }
 export interface PackLinkDef extends PackLinkSpec { readonly _tag: "PackLink"; readonly at?: SourceLocation }
 export function packLink(meta: PackLinkSpec & { readonly at?: SourceLocation }): PackLinkDef { return { _tag: "PackLink", ...meta } }
