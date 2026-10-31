@@ -1232,6 +1232,18 @@ pub fn prepare_observed_snapshot(
             ));
         }
     }
+    for snapshot in lifecycles {
+        if catalog
+            .effective_type(&key.object_type)
+            .and_then(|effective| effective.property(snapshot.property.as_str()))
+            .is_some_and(|property| property.protected)
+        {
+            return Err(invalid(
+                &snapshot.property,
+                "protected lifecycle properties are writable only by rules",
+            ));
+        }
+    }
     let facts = property_changes(catalog, key, &original_for_changes, values);
     let ordinary = prepare_observed_properties::<Infallible>(catalog, slice, turn, &facts)
         .map_err(|error| ObservationRefusal::Properties(Box::new(error)))?;
@@ -1268,16 +1280,6 @@ pub fn prepare_observed_snapshot(
             return Err(invalid(
                 &snapshot.property,
                 "the snapshot repeats a lifecycle property",
-            ));
-        }
-        if catalog
-            .effective_type(&key.object_type)
-            .and_then(|effective| effective.property(snapshot.property.as_str()))
-            .is_some_and(|property| property.protected)
-        {
-            return Err(invalid(
-                &snapshot.property,
-                "protected lifecycle properties are writable only by rules",
             ));
         }
         reconcile(catalog, key, &mut current, snapshot, &turn.id, &mut events)?;
