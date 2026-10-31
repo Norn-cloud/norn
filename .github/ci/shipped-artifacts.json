@@ -2253,7 +2253,7 @@
     },
     {
       "path": "crates/norn-checker/src/consistency/exchange.rs",
-      "sha256": "cf6f3f63a7cd839a2b64ac91a4e7384df501a533f1b5095d885a6d6a97ed7972",
+      "sha256": "6fa602be53b43a42e0100914871bebb3e4dd0b9d82df99f515650f5815411c0c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

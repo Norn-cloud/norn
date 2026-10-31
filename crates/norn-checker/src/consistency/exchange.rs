@@ -85,7 +85,10 @@ pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) 
                 ),
                 origin_of(&merged, &conflict.egd),
             )),
-            Err(error) => return vec![refusal(&merged, &error)],
+            Err(error) => {
+                findings.push(refusal(&merged, &error));
+                return findings;
+            }
         }
     }
     let source_side = join(&[exchange.source, exchange.mapping], |_| true);
@@ -102,7 +105,10 @@ pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) 
                 ),
                 Some(constraint.origin()),
             )),
-            Err(error) => return vec![refusal(&merged, &error)],
+            Err(error) => {
+                findings.push(refusal(&merged, &error));
+                return findings;
+            }
         }
     }
     findings
@@ -332,7 +338,10 @@ fn closed_world(
                 ),
                 Some(constraint.origin()),
             )),
-            Err(error) => return vec![refusal(constraints, &error)],
+            Err(error) => {
+                findings.push(refusal(constraints, &error));
+                return findings;
+            }
         }
     }
     findings
