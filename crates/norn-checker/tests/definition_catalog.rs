@@ -471,7 +471,10 @@ fn a_parent_row_mutation_writes_its_child_types() {
             }
         }
     }));
-    let catalog = catalog(&[parent, child, action], &[]);
+    // The child type is installed and reached only through the owned
+    // collection; it is projected and pinned like any other reference.
+    let catalog = catalog(&[parent, action], &[child]);
+    assert!(catalog.artifact("shop.OrderLine.entity", "1.0.0").is_some());
     let targets: Vec<String> = catalog
         .writes
         .iter()

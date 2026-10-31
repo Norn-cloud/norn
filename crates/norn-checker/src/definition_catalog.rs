@@ -185,6 +185,11 @@ fn type_names(artifact: &ArtifactEnvelope) -> (Option<String>, Vec<String>) {
             let def = root.object_type;
             let mut refs: Vec<String> = def.extends.iter().map(|n| n.as_str().to_owned()).collect();
             refs.extend(def.implements.iter().map(|n| n.as_str().to_owned()));
+            refs.extend(
+                def.owned_collections
+                    .iter()
+                    .map(|collection| collection.child_type.as_str().to_owned()),
+            );
             (Some(def.name.as_str().to_owned()), refs)
         }
         EntityRoot::V2Interface(root) => (
@@ -458,9 +463,24 @@ impl Rows {
         });
     }
 
-    /// Object type name → the artifact declaring it, over every type row.
+    /// Type name → the artifact it binds to, for names with a projected type
+    /// row.
     fn type_index(&self) -> BTreeMap<String, ArtifactKey> {
-        self.bound.clone()
+        // Only names whose bound artifact has a projected type row.
+        self.bound
+            .iter()
+            .filter(|(name, key)| {
+                let wanted = Member::Type {
+                    type_name: (*name).clone(),
+                };
+                self.types.iter().any(|row| {
+                    row.at.artifact_id == key.artifact_id
+                        && row.at.version == key.version
+                        && row.at.member == wanted
+                })
+            })
+            .map(|(name, key)| (name.clone(), key.clone()))
+            .collect()
     }
 
     fn depends_on(&mut self, artifact: &ArtifactEnvelope, all: &[&ArtifactEnvelope]) {
