@@ -38,7 +38,7 @@ fn regression_matches_fit_diagnostic_and_plot_oracles() {
     assert!(diagnostic("breusch_pagan_lm").statistic.abs() < 1e-12);
     assert!((diagnostic("durbin_watson_1_to_3_heuristic").statistic - 2.5).abs() < 1e-12);
     assert!((report.plots.cooks_distance.first().expect("first") - 231.0/200.0).abs() < 1e-12);
-    assert!((report.plots.qq.get(1).expect("quartile").0 + 0.6744897501960817).abs() < 1e-12);
+    assert!((report.plots.qq.get(1).expect("quartile").0 + 0.674_489_750_196_081_7).abs() < 1e-12);
     for (actual, expected) in report.plots.residuals.iter().zip([-1.0,1.0,0.0,0.0,1.0,-1.0]) { assert!((actual.1-expected).abs() < 1e-12); }
     for alpha in [0.0, 1.0, f64::NAN] { assert!(ols(&admitted, alpha).is_err()); }
     assert!(ols(&table(&[1, 2, 3, 4, 5, 6], true), 0.05).is_err());
