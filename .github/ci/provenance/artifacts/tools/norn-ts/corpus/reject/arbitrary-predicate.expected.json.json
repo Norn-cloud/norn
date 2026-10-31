@@ -1,0 +1,20 @@
+{
+  "sha256": "d087bf030da9ba78a2f4f02b12472a6c24b847c516217d32c2ef7676a8a05244",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/norn-ts/corpus/reject/arbitrary-predicate.ts",
+    "tools/norn-ts/test/profile-corpus.test.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
