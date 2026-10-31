@@ -95,3 +95,99 @@ pub fn parse_time(text: &str) -> Option<i128> {
     }
     Some(nanos)
 }
+
+use crate::{Aggregate, Bucket, BucketAgg, CaptureKey, GroupKey, Lineage, Member, MetricError, MetricResult, Plan, Value, VisibilityOutcome};
+use std::collections::BTreeMap;
+
+/// Ordered row refusal, suitable for an incrementally maintained index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RowRefusal {
+    /// Capture/execution location.
+    pub key: CaptureKey,
+    /// Whole-result refusal kind.
+    pub kind: MetricError,
+}
+/// Minimum-key index; insert/remove per changed row, no recomputation needed.
+pub type RefusalIndex = BTreeMap<CaptureKey, MetricError>;
+/// One visible selected measure's exact contribution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Contribution {
+    /// Group (None when ungrouped).
+    pub group: GroupKey,
+    /// Single-row aggregate at plan scale.
+    pub aggregate: BucketAgg,
+    /// Last-write lineage.
+    pub member: Member,
+}
+/// Pure capture outcome. The optional row contains all captured values, even
+/// when outside the window, for the test-side native classifier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Captured {
+    /// Visibility gate outcome in field evaluation order.
+    pub visibility: VisibilityOutcome,
+    /// Selected contribution, if valid and in-window/unfiltered.
+    pub contribution: Option<Contribution>,
+    /// First refusal for this row; capture refusals globally precede validity.
+    pub refusal: Option<RowRefusal>,
+    /// Values in field order after successful capture (not necessarily valid).
+    pub row: Option<Vec<Value>>,
+}
+/// Finalize independently maintained refusal and bucket indices (§24.3).
+/// Row refusals precede per-bucket checks; within group order disclosure precedes
+/// exact Decimal representability. Empty grouped buckets are omitted.
+/// # Errors
+/// The first canonical refusal, including the strict u64 population bound.
+pub fn finalize(
+    plan: &Plan,
+    row_refusals: &RefusalIndex,
+    buckets: &BTreeMap<GroupKey, BucketAgg>,
+) -> MetricResult {
+    if let Some((_, kind)) = row_refusals.first_key_value() {
+        return Err(kind.clone());
+    }
+    let empty = BTreeMap::from([(None, BucketAgg::default())]);
+    let buckets = if plan.group.is_none() && buckets.is_empty() {
+        &empty
+    } else {
+        buckets
+    };
+    let mut result = Vec::new();
+    for (group, aggregate) in buckets {
+        if plan.group.is_some() && aggregate.population == 0 {
+            continue;
+        }
+        if aggregate.population == u64::MAX {
+            return Err(MetricError::PopulationOverflow);
+        }
+        if aggregate.population < plan.min_group_size {
+            return Err(MetricError::Disclosure);
+        }
+        let (scale, currency) = match &plan.aggregate {
+            Aggregate::Count => (0, None),
+            Aggregate::Sum {
+                scale, currency, ..
+            } => (*scale, currency.as_ref().map(|(_, code)| code.clone())),
+        };
+        result.push(Bucket {
+            group: group.clone(),
+            value: aggregate.sum.decimal(scale)?,
+            population: aggregate.population,
+            currency,
+        });
+    }
+    Ok(result)
+}
+/// Lineage from retained contributions (does not consult output bucket policy).
+#[must_use]
+pub fn lineage(contributions: &[Contribution], group: &GroupKey) -> Lineage {
+    let mut members: Lineage = contributions
+        .iter()
+        .filter(|c| &c.group == group)
+        .map(|c| c.member.clone())
+        .collect();
+    members.sort_by(|a, b| a.key.cmp(&b.key));
+    members
+}

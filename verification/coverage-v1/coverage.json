@@ -2580,6 +2580,7 @@
         "welldb/crates/welldb-ivm/src/state.rs",
         "welldb/crates/welldb-ivm/tests/arithmetic.rs",
         "welldb/crates/welldb-ivm/tests/decimal.rs",
+        "welldb/crates/welldb-ivm/tests/finalize.rs",
         "welldb/crates/welldb-ivm/tests/plan.rs",
         "welldb/crates/welldb-ivm/tests/source.rs",
         "welldb/crates/welldb-ivm/tests/time.rs",
