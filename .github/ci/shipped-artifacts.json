@@ -18559,7 +18559,7 @@
     },
     {
       "path": "registry/packs/erpnext/erpnext.link.ts",
-      "sha256": "8512f7e68af3ae633499e4e5b0f3093cd3218ae8bffe434e6b3769fad2b02ac8",
+      "sha256": "53c580f1b64bcfdeab9fd73a9dc14003dc6c5a57af963055b1be90ec45cab418",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
