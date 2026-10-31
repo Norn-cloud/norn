@@ -16,10 +16,15 @@ function pack() {
   return result
 }
 
+/** The artifacts compiled from one module of the core registry source. */
+function fromModule(compiled: ReturnType<typeof pack>, module: string) {
+  return compiled.artifacts.filter((artifact) => compiled.sources.get((artifact as { artifactId: string }).artifactId)?.endsWith(module))
+}
+
 const PRIMITIVES = ["core.Agent", "core.AgentRole", "core.Claim", "core.Commitment", "core.EconomicEvent", "core.Hold", "core.LedgerEffect", "core.Resource"]
 
 test("the core physics pack declares exactly its primitives", () => {
-  const ids = pack().artifacts.map((artifact) => (artifact as { artifactId: string }).artifactId).sort()
+  const ids = fromModule(pack(), "physics.ts").map((artifact) => (artifact as { artifactId: string }).artifactId).sort()
   expect(ids).toEqual(PRIMITIVES.map((name) => `${name}.interface`))
 })
 
@@ -39,7 +44,7 @@ test.skipIf(!checker)("Rust admits the core physics interfaces over the shared v
   const compiled = pack()
   const base = compiled.baseArtifacts.filter((artifact) => VALUE_TYPES.has((artifact as { artifactId: string }).artifactId))
   expect(base.length).toBe(VALUE_TYPES.size)
-  const report = checkPack(checker!, JSON.parse(JSON.stringify(compiled.artifacts)), JSON.parse(JSON.stringify(base)))
+  const report = checkPack(checker!, JSON.parse(JSON.stringify(fromModule(compiled, "physics.ts"))), JSON.parse(JSON.stringify(base)))
   expect(report.diagnostics.diagnostics).toEqual([])
   expect(report.admitted).toBe(true)
 })
