@@ -856,6 +856,13 @@ def validate(
                     f"{subsystem_id}.{layer_name}: aggregate {status} disagrees with obligation claims {sorted(obligation_statuses)}",
                 )
 
+    core_physics_claimed = set(by_id.get("core-physics", {}).get("obligations", []))
+    require(
+        core_physics_claimed == REQUIRED_CORE_PHYSICS_OBLIGATION_IDS,
+        "core-physics coverage must claim exactly the norn.core law closure, whatever their priority; "
+        f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_claimed)}, "
+        f"unexpected={sorted(core_physics_claimed - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
+    )
     require(set(by_id) == MANDATORY | present_domains, f"mandatory subsystem mismatch: expected {sorted(MANDATORY)}, got {sorted(by_id)}")
 
     lean_composite_gates = coverage.get("leanCompositeGates", {})
