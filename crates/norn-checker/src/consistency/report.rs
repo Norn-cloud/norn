@@ -34,6 +34,19 @@ fn obligation(name: &str, evidence: String, findings: &[&Diagnostic]) -> Value {
     })
 }
 
+/// The findings of `all` with a code in `keep`, and every refusal.
+fn select<'a>(all: &'a [Diagnostic], keep: &[&str]) -> Vec<&'a Diagnostic> {
+    let refusals: BTreeSet<&str> = [
+        codes::MALFORMED,
+        codes::NOT_WEAKLY_ACYCLIC,
+        codes::CHASE_REFUSED,
+    ]
+    .into();
+    all.iter()
+        .filter(|d| keep.contains(&d.code.as_str()) || refusals.contains(d.code.as_str()))
+        .collect()
+}
+
 fn link_report(link: &PackLink, budget: ChaseBudget) -> Value {
     let exchange = Exchange {
         source_schema: &link.source_schema,
@@ -51,17 +64,6 @@ fn link_report(link: &PackLink, budget: ChaseBudget) -> Value {
     let vacuity = check_non_vacuity(&merged, budget);
     let compatibility = check_schema_compatibility(&exchange, budget);
     let totality = check_mapping_totality(&exchange, &link.gaps);
-    let refusals: BTreeSet<&str> = [
-        codes::MALFORMED,
-        codes::NOT_WEAKLY_ACYCLIC,
-        codes::CHASE_REFUSED,
-    ]
-    .into();
-    let with = |all: &[Diagnostic], keep: &[&str]| -> Vec<&Diagnostic> {
-        all.iter()
-            .filter(|d| keep.contains(&d.code.as_str()) || refusals.contains(d.code.as_str()))
-            .collect()
-    };
     let bound = format!(
         "chase budget: {} facts, {} nulls, {} steps per run",
         budget.max_facts, budget.max_nulls, budget.max_steps
@@ -87,12 +89,12 @@ fn link_report(link: &PackLink, budget: ChaseBudget) -> Value {
             obligation(
                 "non_vacuity",
                 format!("exhaustive-finite over the lowered theory: a frozen tuple per relation is chased to a model or a conflict ({bound}); a refusal is reported, never a pass"),
-                &with(&vacuity, &[codes::VACUOUS]),
+                &select(&vacuity, &[codes::VACUOUS]),
             ),
             obligation(
                 "schema_incompatibility",
                 format!("exhaustive-finite over the lowered theory: each source relation's frozen tuple is chased with source, mapping and canon ({bound})"),
-                &with(&compatibility, &[codes::INCOMPATIBLE]),
+                &select(&compatibility, &[codes::INCOMPATIBLE]),
             ),
             obligation(
                 "unpreserved_constraint",
@@ -102,7 +104,7 @@ fn link_report(link: &PackLink, budget: ChaseBudget) -> Value {
             obligation(
                 "mapping_totality",
                 "structural: every source term is read by a lowered correspondence or is a declared gap (residual, derived or canon → system only)".to_owned(),
-                &with(&totality, &[codes::NON_TOTAL]),
+                &select(&totality, &[codes::NON_TOTAL]),
             ),
             divergence,
         ],
