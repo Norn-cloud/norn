@@ -2535,7 +2535,7 @@
           "runtime": "missing",
           "model": "missing",
           "proof": "missing",
-          "residual": "Vendor-only enrollment. The assurance ceiling is simulation and tests only; executable adapter qualification follows in the crates port. No formal or certified claim.",
+          "residual": "Vendor and decimal-contract enrollment. The assurance ceiling is simulation and tests only; executable adapter qualification follows in the crates port. No formal or certified claim.",
           "evidence": {
             "runtime": [],
             "model": [],

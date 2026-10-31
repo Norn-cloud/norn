@@ -1,5 +1,6 @@
 //! Synthetic decimal boundary cases, authored as typed Rust values.
 #![allow(clippy::expect_used, reason = "typed decimal regression inputs")]
+#[cfg(feature = "serde")]
 use serde::Serialize;
 use welldb_ivm::{Decimal, MetricError};
 
@@ -17,12 +18,14 @@ fn normalization_and_exact_domain_limits_are_enforced() {
     assert_eq!(value.scale(), 28);
 }
 
+#[cfg(feature = "serde")]
 #[derive(Serialize)]
 struct Wire {
     mantissa: i128,
     scale: u8,
 }
 
+#[cfg(feature = "serde")]
 #[test]
 fn serde_cannot_bypass_normalization_or_domain_validation() {
     for wire in [
