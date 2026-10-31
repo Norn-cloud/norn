@@ -401,6 +401,34 @@
       "tier": "T2"
     },
     {
+      "code": "consistency.chase.refused",
+      "message": "the chase exceeded its {resource} budget of {limit}; consistency is unknown",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.theory.malformed",
+      "message": "the lowered theory is malformed: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.theory.not_weakly_acyclic",
+      "message": "TGDs [{rules}] create existential values on a cycle, so the chase may not terminate",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.theory.vacuous",
+      "message": "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",
@@ -2646,6 +2674,13 @@
       "severity": "error",
       "since": "0.1.0",
       "tier": "T6"
+    },
+    {
+      "code": "ontology_link.validation.invalid_payload",
+      "message": "ontology link is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
     },
     {
       "code": "ontology_pack.validation.invalid_payload",
