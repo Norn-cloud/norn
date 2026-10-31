@@ -3511,8 +3511,22 @@ export interface components {
         NornIrOntologySource: {
             /** @description Absolute HTTPS URL. */
             canonicalUrl: string;
-            /** @description Required (non-empty) for vendored sources. */
+            /**
+             * @description Required (non-empty) for vendored sources. A source the pack imports
+             *     or maps from is content-pinned: by these hashes or by a commit or
+             *     hash in `releaseId` (checker rule).
+             */
             files?: components["schemas"]["NornIrOntologySourceFile"][];
+            /**
+             * @description How the pack uses the source (norn#56 source manifest).
+             * @enum {string}
+             */
+            importMode: "import" | "map_only" | "study_only";
+            /**
+             * @description The importer that read the source. Required for `import` (checker
+             *     rule); a reviewed hand mapping has none.
+             */
+            importer?: components["schemas"]["NornIrSourceImporter"];
             license: string;
             redistribution: components["schemas"]["NornIrSourceRedistribution"];
             /** @description A strict immutable version, dated-standard release, or content pin. */
@@ -3524,7 +3538,10 @@ export interface components {
             /** @description In the lowercase `source.*` namespace, unique within the pack. */
             sourceId: string;
         };
-        /** @description A hash-pinned file of a vendored source. */
+        /**
+         * @description A hash-pinned file of a source: a repository path for vendored files,
+         *     or the absolute HTTPS URL of the pinned bytes otherwise.
+         */
         NornIrOntologySourceFile: {
             path: string;
             /** @description 64 lowercase hexadecimal characters. */
@@ -4528,6 +4545,23 @@ export interface components {
             system: string;
             /** @description The system's version, when the source reports it. */
             version?: string;
+        };
+        /**
+         * @description How a pack uses one of its sources.
+         *
+         *     `import` takes content into the pack's own terms, so its licence must
+         *     permit redistribution. `map_only` only maps Norn terms to the source; no
+         *     source content enters the pack (the clean-room mode for copyleft and
+         *     API-terms sources). `study_only` informs review; no mapping may cite it.
+         * @enum {string}
+         */
+        NornIrSourceImportMode: "import" | "map_only" | "study_only";
+        /** @description The importer that read a source: an id and its strict version. */
+        NornIrSourceImporter: {
+            /** @description A lowercase dotted identifier (`norn.importers.frappe`). */
+            name: string;
+            /** @description A strict semantic version. */
+            version: string;
         };
         /** @description One lineage edge: `output` derives from `inputs`. */
         NornIrSourceLineage: {
