@@ -2075,6 +2075,7 @@
         "crates/norn-checker/src/graph.rs",
         "crates/norn-checker/src/interfaces.rs",
         "crates/norn-checker/src/jdm_profile.rs",
+        "crates/norn-checker/src/law_enrollment.rs",
         "crates/norn-checker/src/layout.rs",
         "crates/norn-checker/src/lib.rs",
         "crates/norn-checker/src/lifecycle_writes.rs",

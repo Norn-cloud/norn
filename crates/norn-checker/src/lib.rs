@@ -114,6 +114,7 @@ pub mod property_types;
     clippy::large_futures
 )]
 pub mod quantity_ledger;
+pub mod law_enrollment;
 pub mod receipt;
 pub mod rule_bindings;
 #[allow(

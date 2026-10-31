@@ -195,6 +195,31 @@ pub struct NornCheckReceipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(schema_with = flow_source_map_schema)]
     pub flow_source_map: Option<norn_ir::FlowSourceMap>,
+    /// Origins of laws inherited from installed versioned composition packs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub law_enrollment: Option<Vec<NornLawEnrollment>>,
+}
+
+/// One receipt-bound inherited law; this conveys provenance, not proof status.
+#[derive(Debug, Clone, ToSchema)]
+pub struct NornLawEnrollment {
+    /// Pack, artifact digest and stable law member identity.
+    pub inherited_from: NornInheritedLawOrigin,
+}
+
+/// Exact origin of a law inherited from an installed composition pack.
+#[derive(Debug, Clone, ToSchema)]
+pub struct NornInheritedLawOrigin {
+    /// Pack identity.
+    pub pack_id: String,
+    /// Pack version.
+    pub pack_version: String,
+    /// Artifact envelope identity.
+    pub artifact_id: String,
+    /// Norn1 semantic artifact digest.
+    pub artifact_digest: String,
+    /// Stable law member identity.
+    pub law_id: String,
 }
 
 /// Receipt format for a newly issued checker receipt.
@@ -206,6 +231,9 @@ pub enum NornCheckReceiptFormat {
     /// `norn-checker/receipt@3`.
     #[serde(rename = "norn-checker/receipt@3")]
     V3,
+    /// `norn-checker/receipt@4`, with inherited-law origins.
+    #[serde(rename = "norn-checker/receipt@4")]
+    V4,
 }
 
 /// Checker name and package version in a receipt.

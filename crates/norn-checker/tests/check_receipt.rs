@@ -698,6 +698,7 @@ fn historical_receipt_verification_does_not_rerun_current_admission() {
         diagnostics: empty_diagnostics_for("0.1.0"),
         admitted: true,
         flow_source_map: None,
+        law_enrollment: Vec::new(),
     };
     let mut historical_value: Value =
         serde_json::from_slice(&historical.canonical_json().expect("canonical receipt"))
@@ -754,4 +755,58 @@ fn retained_warning_evidence_verifies_but_unreconstructable_legacy_hash_is_refus
     // Artifact-set admission does not emit the BAC deprecation warning. A
     // hash alone cannot recover that historical finding, so it fails closed.
     assert!(recover_legacy_admission_receipt(&digest, &artifacts, &base, &limits).is_err());
+}
+
+fn inherited_pack_base() -> Vec<Value> {
+    let mut base: Vec<Value> = serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).expect("entities");
+    let laws: Vec<Value> = serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("laws");
+    let mut pack = json_of(include_str!("../../../fixtures/ir/retail-core.business_pack.json"));
+    pack["artifactId"] = json!("erpnext.pack.core");
+    pack["namespace"] = json!("erpnext");
+    pack["payload"]["packId"] = json!("erpnext.pack.core");
+    pack["payload"]["artifacts"] = Value::Array(laws.iter().map(|law| json!({
+        "artifactId":law["artifactId"], "version":law["version"], "kind":"law"
+    })).collect());
+    base.extend(laws);
+    base.push(pack);
+    base
+}
+
+#[test]
+fn inherited_law_enrollment_binds_pack_digest_and_stable_member() {
+    let mut base = inherited_pack_base();
+    assert!(check(&base).receipt.admitted, "fixture must be admitted");
+    let checked = check_with(&[], &base, &BTreeSet::new(), None, &ResourceLimitProfile::norn_limits_v1());
+    assert!(checked.receipt.admitted);
+    let receipt = checked.receipt;
+    assert!(!receipt.law_enrollment.is_empty());
+    for enrollment in &receipt.law_enrollment {
+        let origin = &enrollment.inherited_from;
+        let law = base.iter().find(|law| law["artifactId"] == origin.artifact_id).expect("law");
+        assert_eq!(origin.law_id, law["payload"]["id"].as_str().expect("member id"));
+        assert_eq!(origin.artifact_digest, ArtifactRef::of(&envelopes(&[law.clone()])[0]).expect("identity").sha256);
+        assert_eq!(enrollment.description(), format!("inherited from law {} of pack erpnext.pack.core version 0.1.0", origin.law_id));
+    }
+    let stored = String::from_utf8(receipt.canonical_json().expect("receipt")).expect("UTF8");
+    let hash = receipt.content_sha256().expect("hash");
+    let mut value: Value = serde_json::from_str(&stored).expect("JSON");
+    assert_eq!(value["format"], "norn-checker/receipt@4");
+    assert_eq!(value["lawEnrollment"][0], receipt.law_enrollment[0].to_json_value());
+    verify_admission_receipt(&stored, &hash, &[], &envelopes(&base), &ResourceLimitProfile::norn_limits_v1()).expect("bound receipt");
+    value["lawEnrollment"][0]["inherited_from"]["law_id"] = json!("forged.member");
+    let forged = String::from_utf8(norn_canonical::canonical_json_of(&value).expect("canonical")).expect("UTF8");
+    let forged_hash = admission_receipt_sha256(&forged).expect("recomputed hash");
+    assert!(verify_admission_receipt(&forged, &forged_hash, &[], &envelopes(&base), &ResourceLimitProfile::norn_limits_v1()).is_err());
+    base.reverse();
+    assert_eq!(check_with(&[], &base, &BTreeSet::new(), None, &ResourceLimitProfile::norn_limits_v1()).receipt.law_enrollment, receipt.law_enrollment);
+}
+
+#[test]
+fn candidate_pack_laws_are_not_labeled_as_inherited() {
+    let receipt = check(&inherited_pack_base()).receipt;
+    assert!(receipt.admitted);
+    assert!(receipt.law_enrollment.is_empty());
+    let value: Value = serde_json::from_slice(&receipt.canonical_json().expect("receipt")).expect("JSON");
+    assert_eq!(value["format"], RECEIPT_FORMAT);
+    assert!(value.get("lawEnrollment").is_none());
 }
