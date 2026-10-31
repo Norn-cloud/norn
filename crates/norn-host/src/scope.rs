@@ -118,6 +118,26 @@ mod tests {
     }
 
     #[test]
+    fn admission_requires_both_exact_nonblank_scope_dimensions() {
+        let cell = scope("org_demo", "dev");
+        assert!(cell.admit(Some("org_demo"), Some("dev")).is_ok());
+        for (org, env) in [
+            (None, None),
+            (Some("org_demo"), None),
+            (None, Some("dev")),
+            (Some(" "), Some("dev")),
+            (Some("org_demo"), Some("")),
+            (Some("other"), Some("dev")),
+            (Some("org_demo"), Some("prod")),
+        ] {
+            assert!(cell.admit(org, env).is_err());
+        }
+        assert_eq!(cell.admit(None, None).expect_err("missing").code, "scope.missing");
+        assert_eq!(cell.admit(Some("other"), Some("dev")).expect_err("cross scope").code, "scope.denied");
+        assert!(scope("", "dev").admit(Some(""), Some("dev")).is_err());
+    }
+
+    #[test]
     fn scope_keys_are_unambiguous() {
         assert_eq!(scope("org_demo", "dev").key(), "org_demo/dev");
         let pairs = [

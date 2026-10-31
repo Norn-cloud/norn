@@ -6817,6 +6817,24 @@
       "connector": null
     },
     {
+      "path": "crates/norn-host/src/scope.rs",
+      "sha256": "09432c504e08f852bca35664f7167025c01eea86f1d2db5101817c76b469c483",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "crates/norn-ir/Cargo.toml",
       "sha256": "062c88b96177cec20808e2f3ce0484d51e8440eb7b83eeaaf58fd46f2e548eb5",
       "origin": "authored",
