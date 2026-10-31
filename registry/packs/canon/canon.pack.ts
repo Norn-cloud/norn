@@ -5,7 +5,7 @@ export const Pack = Norn.ontologyPack({
   title: "Norn canon handles: provisional stand-ins for the lane A and B types",
   version: "0.1.0",
   sources: [
-    {"sourceId": "source.schema-org", "releaseId": "30.0", "releasedAt": "2026-03-19", "retrievedAt": "2026-08-25", "canonicalUrl": "https://schema.org/version/30.0/", "license": "CC-BY-SA-3.0", "redistribution": "reference_only", "importMode": "map_only", "files": [{"path": "https://schema.org/version/latest/schemaorg-current-https.jsonld", "sha256": "0f0c97a4f666b2f8563573fe48453782fd51b87a504523cf0c9aff6a71c3eec4"}]},
+    {"sourceId": "source.schema-org", "releaseId": "30.0", "releasedAt": "2026-03-19", "retrievedAt": "2026-10-31", "canonicalUrl": "https://schema.org/version/30.0/", "license": "CC-BY-SA-3.0", "redistribution": "reference_only", "importMode": "map_only", "files": [{"path": "https://raw.githubusercontent.com/schemaorg/schemaorg/420231f6bfac8372fc564abb121fae57ccb36a0c/data/releases/30.0/schemaorg-current-https.jsonld", "sha256": "4467fa19edcb1d7fb3c46c0adf3591b7f870c4a60b7838bdb61694fd02864cf6"}]},
   ],
   terms: [
     {"termId": "norn.core.agent", "label": "Agent", "definition": "A person or organisation that takes part in economic events.", "termKind": "class", "status": "active", "semanticAuthority": "semantic_only"},
