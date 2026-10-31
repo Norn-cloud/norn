@@ -1,0 +1,547 @@
+{
+  "artifactId": "norn.ontology-pack.shopify",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Shopify Admin API 2026-10 system pack (map-only)",
+  "namespace": "norn.ontology",
+  "payload": {
+    "mappings": [
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Order"
+        ],
+        "externalIri": "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Order",
+        "justification": "The term names this Admin API object of the pinned version.",
+        "mappingId": "map.norn.shopify.order",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.shopify-admin",
+        "termId": "norn.shopify.order"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/LineItem"
+        ],
+        "externalIri": "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/LineItem",
+        "justification": "The term names this Admin API object of the pinned version.",
+        "mappingId": "map.norn.shopify.order.line.item",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.shopify-admin",
+        "termId": "norn.shopify.order.line.item"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Customer"
+        ],
+        "externalIri": "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Customer",
+        "justification": "The term names this Admin API object of the pinned version.",
+        "mappingId": "map.norn.shopify.customer",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.shopify-admin",
+        "termId": "norn.shopify.customer"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Product"
+        ],
+        "externalIri": "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Product",
+        "justification": "The term names this Admin API object of the pinned version.",
+        "mappingId": "map.norn.shopify.product",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.shopify-admin",
+        "termId": "norn.shopify.product"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/ProductVariant"
+        ],
+        "externalIri": "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/ProductVariant",
+        "justification": "The term names this Admin API object of the pinned version.",
+        "mappingId": "map.norn.shopify.product.variant",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.shopify-admin",
+        "termId": "norn.shopify.product.variant"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Fulfillment"
+        ],
+        "externalIri": "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Fulfillment",
+        "justification": "The term names this Admin API object of the pinned version.",
+        "mappingId": "map.norn.shopify.fulfillment",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.shopify-admin",
+        "termId": "norn.shopify.fulfillment"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/OrderTransaction"
+        ],
+        "externalIri": "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/OrderTransaction",
+        "justification": "The term names this Admin API object of the pinned version.",
+        "mappingId": "map.norn.shopify.transaction",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.shopify-admin",
+        "termId": "norn.shopify.transaction"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Refund"
+        ],
+        "externalIri": "https://shopify.dev/docs/api/admin-graphql/2026-10/objects/Refund",
+        "justification": "The term names this Admin API object of the pinned version.",
+        "mappingId": "map.norn.shopify.refund",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.shopify-admin",
+        "termId": "norn.shopify.refund"
+      }
+    ],
+    "packId": "norn.ontology-pack.shopify",
+    "packKind": "ontology",
+    "packVersion": "0.1",
+    "shapes": [
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.shopify.order",
+        "termId": "norn.shopify.order"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.shopify.order.line.item",
+        "termId": "norn.shopify.order.line.item"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.shopify.customer",
+        "termId": "norn.shopify.customer"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.shopify.product",
+        "termId": "norn.shopify.product"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.shopify.product.variant",
+        "termId": "norn.shopify.product.variant"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.shopify.fulfillment",
+        "termId": "norn.shopify.fulfillment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.shopify.transaction",
+        "termId": "norn.shopify.transaction"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.shopify.refund",
+        "termId": "norn.shopify.refund"
+      }
+    ],
+    "sources": [
+      {
+        "canonicalUrl": "https://shopify.dev/docs/api/admin-graphql/2026-10",
+        "importMode": "map_only",
+        "importer": {
+          "name": "norn.importers.shopify",
+          "version": "0.1.0"
+        },
+        "license": "LicenseRef-Shopify-API-License-and-Terms-of-Use",
+        "redistribution": "reference_only",
+        "releaseId": "2026-10@c4e7141cd6b365a9e959a76bc8ec850bfffe72222b6c1c1adc7f407f8a43a169",
+        "releasedAt": "2026-10-01",
+        "retrievedAt": "2026-10-19",
+        "sourceId": "source.shopify-admin"
+      }
+    ],
+    "terms": [
+      {
+        "definition": "Shopify's record of a customer's purchase, carrying both what was ordered and what is still owed.",
+        "label": "Order",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order",
+        "termKind": "class"
+      },
+      {
+        "definition": "One purchased variant on an order.",
+        "label": "LineItem",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.line.item",
+        "termKind": "class"
+      },
+      {
+        "definition": "A buyer account of the shop.",
+        "label": "Customer",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.customer",
+        "termKind": "class"
+      },
+      {
+        "definition": "A sellable product of the shop.",
+        "label": "Product",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.product",
+        "termKind": "class"
+      },
+      {
+        "definition": "One purchasable version of a product.",
+        "label": "ProductVariant",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.product.variant",
+        "termKind": "class"
+      },
+      {
+        "definition": "A shipment of some or all of an order's items.",
+        "label": "Fulfillment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.fulfillment",
+        "termKind": "class"
+      },
+      {
+        "definition": "A payment gateway event on an order: authorisation, capture, sale, void or refund.",
+        "label": "OrderTransaction",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.transaction",
+        "termKind": "class"
+      },
+      {
+        "definition": "Money and items returned against an order.",
+        "label": "Refund",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.refund",
+        "termKind": "class"
+      },
+      {
+        "definition": "The customer field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "customer (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.customer",
+        "termKind": "property"
+      },
+      {
+        "definition": "The createdAt field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "createdAt (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.created.at",
+        "termKind": "property"
+      },
+      {
+        "definition": "The currencyCode field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "currencyCode (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.currency.code",
+        "termKind": "property"
+      },
+      {
+        "definition": "The subtotalPriceSet field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "subtotalPriceSet (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.subtotal.price",
+        "termKind": "property"
+      },
+      {
+        "definition": "The totalTaxSet field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "totalTaxSet (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.total.tax",
+        "termKind": "property"
+      },
+      {
+        "definition": "The totalPriceSet field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "totalPriceSet (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.total.price",
+        "termKind": "property"
+      },
+      {
+        "definition": "The totalOutstandingSet field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "totalOutstandingSet (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.total.outstanding",
+        "termKind": "property"
+      },
+      {
+        "definition": "The displayFinancialStatus field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "displayFinancialStatus (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.display.financial.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "The displayFulfillmentStatus field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "displayFulfillmentStatus (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.display.fulfillment.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "The cancelledAt field of order.",
+        "domainTermId": "norn.shopify.order",
+        "label": "cancelledAt (order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.cancelled.at",
+        "termKind": "property"
+      },
+      {
+        "definition": "The variant field of order.line.item.",
+        "domainTermId": "norn.shopify.order.line.item",
+        "label": "variant (order.line.item)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.line.item.variant",
+        "termKind": "property"
+      },
+      {
+        "definition": "The quantity field of order.line.item.",
+        "domainTermId": "norn.shopify.order.line.item",
+        "label": "quantity (order.line.item)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.line.item.quantity",
+        "termKind": "property"
+      },
+      {
+        "definition": "The originalTotalSet field of order.line.item.",
+        "domainTermId": "norn.shopify.order.line.item",
+        "label": "originalTotalSet (order.line.item)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.line.item.original.total",
+        "termKind": "property"
+      },
+      {
+        "definition": "The email field of customer.",
+        "domainTermId": "norn.shopify.customer",
+        "label": "email (customer)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.customer.email",
+        "termKind": "property"
+      },
+      {
+        "definition": "The state field of customer.",
+        "domainTermId": "norn.shopify.customer",
+        "label": "state (customer)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.customer.state",
+        "termKind": "property"
+      },
+      {
+        "definition": "The productType field of product.",
+        "domainTermId": "norn.shopify.product",
+        "label": "productType (product)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.product.product.type",
+        "termKind": "property"
+      },
+      {
+        "definition": "The sku field of product.variant.",
+        "domainTermId": "norn.shopify.product.variant",
+        "label": "sku (product.variant)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.product.variant.sku",
+        "termKind": "property"
+      },
+      {
+        "definition": "The status field of fulfillment.",
+        "domainTermId": "norn.shopify.fulfillment",
+        "label": "status (fulfillment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.fulfillment.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "The kind field of transaction.",
+        "domainTermId": "norn.shopify.transaction",
+        "label": "kind (transaction)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.transaction.kind",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amountSet field of transaction.",
+        "domainTermId": "norn.shopify.transaction",
+        "label": "amountSet (transaction)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.transaction.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "The status field of transaction.",
+        "domainTermId": "norn.shopify.transaction",
+        "label": "status (transaction)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.transaction.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "Cancels an order, optionally refunding and restocking.",
+        "domainTermId": "norn.shopify.order",
+        "label": "orderCancel",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.cancel",
+        "termKind": "action"
+      },
+      {
+        "definition": "Records that an order's outstanding amount was paid outside Shopify.",
+        "domainTermId": "norn.shopify.order",
+        "label": "orderMarkAsPaid",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.order.mark.as.paid",
+        "termKind": "action"
+      },
+      {
+        "definition": "Records a shipment of order items.",
+        "domainTermId": "norn.shopify.fulfillment",
+        "label": "fulfillmentCreate",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.fulfillment.create",
+        "termKind": "action"
+      },
+      {
+        "definition": "Returns money and optionally restocks items against an order.",
+        "domainTermId": "norn.shopify.refund",
+        "label": "refundCreate",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.shopify.refund.create",
+        "termKind": "action"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/shopify/artifacts/norn.ontology-pack.shopify.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

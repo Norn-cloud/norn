@@ -1,0 +1,402 @@
+{
+  "artifactId": "norn.link.shopify.canon",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Shopify Admin API 2026-10 to the Norn canon",
+  "namespace": "norn.ontology",
+  "payload": {
+    "correspondences": [
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.order",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order",
+        "justification": "An order is the buyer's commitment.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.order.claim",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order",
+        "justification": "Shopify has no invoice: totalOutstanding makes the same order carry the receivable.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.claim"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.order.line.item",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.line.item",
+        "justification": "Order lines are what the buyer is charged for.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.line"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.customer",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.customer",
+        "justification": "A customer is an agent in the customer role.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.agent"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.product",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.product",
+        "justification": "A product is a kind of good or service.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.resource.type"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.product.variant",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.product.variant",
+        "justification": "A variant is the purchasable resource type.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.resource.type"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.fulfillment",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.fulfillment",
+        "justification": "A fulfillment moves goods to the buyer.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event.transfer"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.refund",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.refund",
+        "justification": "A refund moves money (and goods) back.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event.transfer"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.order.customer",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.customer",
+        "justification": "The ordering customer.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order.party"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.order.total.price",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.total.price",
+        "justification": "The order total.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order.amount.total"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6500,
+        "correspondenceId": "corr.order.total.outstanding",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.total.outstanding",
+        "justification": "The amount still owed; a claim property on the order.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.outstanding"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.order.subtotal.price",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.subtotal.price",
+        "justification": "Total before taxes, after discounts.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.net"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.order.total.tax",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.total.tax",
+        "justification": "Total tax.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.tax"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.order.currency.code",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.currency.code",
+        "justification": "The shop currency of the amounts.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.currency"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 5500,
+        "correspondenceId": "corr.order.display.financial.status",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.display.financial.status",
+        "justification": "Paid, partly paid or pending follow from the outstanding amount.",
+        "relation": "derived",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.outstanding"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.order.display.fulfillment.status",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.display.fulfillment.status",
+        "justification": "Derived from how much has shipped.",
+        "relation": "derived",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order.state"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.order.line.item.variant",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.line.item.variant",
+        "justification": "The purchased variant.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.line.resource"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.order.line.item.quantity",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.line.item.quantity",
+        "justification": "Purchased quantity.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.line.quantity"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6500,
+        "correspondenceId": "corr.order.line.item.original.total",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.line.item.original.total",
+        "justification": "Line total before discounts.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.line.amount"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.order.mark.as.paid",
+        "evidenceRefs": [
+          "source.shopify-admin"
+        ],
+        "fromTermId": "norn.shopify.order.mark.as.paid",
+        "justification": "Marking as paid records a payment received elsewhere.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.post"
+        ]
+      }
+    ],
+    "fromPack": {
+      "packId": "norn.ontology-pack.shopify",
+      "version": "0.1.0"
+    },
+    "packId": "norn.link.shopify.canon",
+    "packKind": "link",
+    "packVersion": "0.1",
+    "residuals": [
+      {
+        "note": "The canon order has no placement time.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.order.created.at"
+      },
+      {
+        "note": "The canon has no order cancellation.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.order.cancelled.at"
+      },
+      {
+        "note": "The canon has no order cancellation.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.order.cancel"
+      },
+      {
+        "note": "The canon agent has no contact points.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.customer.email"
+      },
+      {
+        "note": "Shop account lifecycle.",
+        "reason": "system_specific",
+        "termId": "norn.shopify.customer.state"
+      },
+      {
+        "note": "A merchant-defined product grouping.",
+        "reason": "system_specific",
+        "termId": "norn.shopify.product.product.type"
+      },
+      {
+        "note": "The canon resource type has no code property.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.product.variant.sku"
+      },
+      {
+        "note": "Carrier and shipment workflow detail.",
+        "reason": "system_specific",
+        "termId": "norn.shopify.fulfillment.status"
+      },
+      {
+        "note": "Authorisations hold funds without transferring them; the canon has no hold or escrow primitive.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.transaction"
+      },
+      {
+        "note": "Gateway event kinds.",
+        "reason": "system_specific",
+        "termId": "norn.shopify.transaction.kind"
+      },
+      {
+        "note": "Follows the transaction gap.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.transaction.amount"
+      },
+      {
+        "note": "Gateway processing status.",
+        "reason": "system_specific",
+        "termId": "norn.shopify.transaction.status"
+      },
+      {
+        "note": "The canon has no action that records a fulfilling transfer.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.fulfillment.create"
+      },
+      {
+        "note": "A refund is a new reverse transfer, not a reversal of a posting; the canon has no refund action.",
+        "reason": "canon_gap",
+        "termId": "norn.shopify.refund.create"
+      }
+    ],
+    "toPack": {
+      "packId": "norn.ontology-pack.canon",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/shopify/artifacts/norn.link.shopify.canon.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
