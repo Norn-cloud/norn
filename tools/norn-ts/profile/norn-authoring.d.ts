@@ -202,10 +202,17 @@ declare module "@norn/authoring" {
       /** The one supertype, declared locally or named from the installed registry. */
       readonly extends?: E
       readonly implements?: I
+      /** Append-only records; the kernel enforces this after creation. */
+      readonly controls?: import("../src/builder/entity.ts").ControlsDeclaration
+      readonly immutable?: boolean
+      /** Stored properties maintained by declared rules, never action inputs. */
+      readonly protected?: ReadonlyArray<keyof S["Type"] & string>
       readonly links?: ReadonlyArray<LinkSpec>
       readonly identity?: ReadonlyArray<KeySpec<EffectiveProperties<E, I, S["Type"]>>>
       /** Literal defaults; numbers are exact decimal literals. */
       readonly defaults?: { readonly [P in keyof S["Type"]]?: S["Type"][P] }
+      /** Read-only EntityIR expressions over self; the Rust checker validates them. */
+      readonly computed?: { readonly [P in keyof S["Type"]]?: Expression<S["Type"][P]> }
       readonly lifecycles?: ReadonlyArray<LifecycleSpec<EffectiveProperties<E, I, S["Type"]>>>
     }
 

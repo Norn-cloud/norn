@@ -84,6 +84,8 @@ export interface PropertyDecl {
   readonly type: PropertyType
   readonly nullable?: boolean
   readonly markings?: ReadonlyArray<string>
+  readonly protected?: boolean
+  readonly computed?: string
   readonly default?: DefaultValue
   readonly at?: SourceLocation
 }
@@ -148,7 +150,14 @@ interface TypeMetaBase {
   readonly properties: ReadonlyArray<PropertyDecl>
 }
 
+export interface ControlsDeclaration {
+  readonly format: "norn.controls/1"
+  readonly sensitivePaths: ReadonlyArray<{ readonly objectType: string; readonly actions: ReadonlyArray<string> }>
+}
+
 export interface ObjectTypeDef extends TypeMetaBase {
+  readonly controls?: ControlsDeclaration
+  readonly immutable?: boolean
   readonly _tag: "ObjectType"
   readonly extends?: string
   readonly implements: ReadonlyArray<string>
@@ -259,6 +268,8 @@ function propertyJson(p: PropertyDecl, withDefault: boolean): Json {
     description: p.description,
     type: p.type as unknown as Json,
     constraints: p.nullable === true ? { nullable: true } : undefined,
+    protected: withDefault && p.protected === true ? true : undefined,
+    computed: withDefault ? p.computed : undefined,
     default: withDefault && p.default !== undefined ? defaultJson(p.default) : undefined,
   } as unknown as Json
 }
@@ -275,6 +286,8 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
   }
   if (def._tag === "Interface") {
     for (const p of def.properties) {
+      if (p.protected === true) diagnostics.report("NORN-FLOW-LITERAL", `interface property ${p.id} cannot declare protection`, p.at ?? def.at)
+      if (p.computed !== undefined) diagnostics.report("NORN-FLOW-LITERAL", `interface property ${p.id} cannot declare a computation`, p.at ?? def.at)
       if (p.default !== undefined) diagnostics.report("NORN-FLOW-LITERAL", `interface property ${p.id} cannot declare a default`, p.at ?? def.at)
     }
   }
@@ -305,6 +318,8 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
             name: def.name,
             markings: omitEmpty(def.markings ?? []),
             description: def.description,
+            controls: def.controls,
+            immutable: def.immutable === true ? true : undefined,
             extends: def.extends,
             implements: omitEmpty(def.implements),
             properties: omitEmpty(def.properties.map((p) => propertyJson(p, true))),

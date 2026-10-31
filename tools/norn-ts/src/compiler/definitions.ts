@@ -473,7 +473,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings"])
+    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "computed", "protected", "immutable", "controls", "lifecycles", "markings", "propertyMarkings"])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()
@@ -484,6 +484,18 @@ class DefinitionCompiler {
         defaults.set(key, this.defaultValue(value))
       }
     }
+    const protectedNode = members.get("protected")
+    const protectedProperties = new Set(protectedNode ? this.strings(protectedNode) : [])
+    for (const key of protectedProperties) {
+      if (!projected.some((property) => property.id === key)) throw new CompileError("NORN-FLOW-LITERAL", `protection for undeclared property ${key}`, protectedNode!)
+    }
+    const controlsNode = members.get("controls")
+    const immutableNode = members.get("immutable")
+    const computed = new Map<string, string>()
+    const computedNode = members.get("computed")
+    if (computedNode) for (const [key, value] of this.closedRecord(computedNode, projected.map((p) => p.id), [])) {
+      computed.set(key, this.zen(value, "self"))
+    }
     const implementsNode = members.get("implements")
     const extendsNode = members.get("extends")
     const linksNode = members.get("links")
@@ -491,6 +503,8 @@ class DefinitionCompiler {
     const lifecyclesNode = members.get("lifecycles")
     return E.objectType({
       ...rest,
+      ...(controlsNode ? { controls: this.controls(controlsNode) } : {}),
+      ...(immutableNode ? { immutable: this.boolean(immutableNode) } : {}),
       ...(extendsNode ? { extends: this.typeName(extendsNode, OBJECT_TYPES) } : {}),
       properties: projected.map((p) => {
         const value = defaults.get(p.id)
@@ -500,6 +514,8 @@ class DefinitionCompiler {
           type: p.projection.type,
           ...(p.projection.nullable ? { nullable: true } : {}),
           ...(value === undefined ? {} : { default: value }),
+          ...(computed.has(p.id) ? { computed: computed.get(p.id)! } : {}),
+          ...(protectedProperties.has(p.id) ? { protected: true } : {}),
           at: this.at(p.node),
         }
       }),
@@ -509,6 +525,15 @@ class DefinitionCompiler {
       lifecycles: lifecyclesNode ? this.list(lifecyclesNode).map((x) => this.lifecycle(x)) : [],
       at: this.at(call),
     })
+  }
+
+  private controls(input: ts.Expression): E.ControlsDeclaration {
+    const members = this.closedRecord(input, ["format", "sensitivePaths"], ["format", "sensitivePaths"])
+    if (this.string(members.get("format")!) !== "norn.controls/1") throw new CompileError("NORN-FLOW-LITERAL", "controls format must be norn.controls/1", input)
+    return { format: "norn.controls/1", sensitivePaths: this.list(members.get("sensitivePaths")!).map((entry) => {
+      const path = this.closedRecord(entry, ["objectType", "actions"], ["objectType", "actions"])
+      return { objectType: this.string(path.get("objectType")!), actions: this.strings(path.get("actions")!) }
+    }) }
   }
 
   private link(input: ts.Expression): E.LinkDecl {
