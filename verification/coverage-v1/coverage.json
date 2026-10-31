@@ -350,6 +350,7 @@
         "crates/norn-checker/Cargo.toml",
         "crates/norn-cli/Cargo.toml",
         "crates/norn-cli/src/main.rs",
+        "crates/norn-cli/src/remote.rs",
         "crates/norn-graph/Cargo.toml",
         "crates/norn-graph/src/algorithms.rs",
         "crates/norn-graph/src/graph.rs",
