@@ -245,6 +245,10 @@
             "$ref": "#/$defs/MarkingId"
           }
         },
+        "protected": {
+          "description": "System-maintained: declared rules may write it, actions may not.",
+          "type": "boolean"
+        },
         "type": {
           "description": "The value kind: inline, or a shared property type through `ref`.",
           "$ref": "#/$defs/PropertyType"
