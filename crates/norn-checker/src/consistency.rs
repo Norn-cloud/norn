@@ -9,9 +9,11 @@
 //! triggers them.
 
 mod chase;
+mod divergence;
 mod theory;
 
 pub use chase::{ChaseBudget, ChaseError, ChaseOutcome, Conflict, Fact, Value, chase};
+pub use divergence::{CanonKey, Divergence, MappedObservation, WitnessIdentity, find_divergences};
 pub use theory::{Atom, Dependency, Egd, RuleOrigin, Term, Tgd, Theory, TheoryError};
 
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};

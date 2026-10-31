@@ -2217,7 +2217,7 @@
     },
     {
       "path": "crates/norn-checker/src/consistency.rs",
-      "sha256": "700e4a95656903a6a48b3ab6517cdef730af81d1458c6abcfbdcdf07f78178b8",
+      "sha256": "ad7381f68c5b779ff2a5f5aedbc9b46cab7d3486ff40d9863aa2d61bbd5400bb",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -2236,6 +2236,24 @@
     {
       "path": "crates/norn-checker/src/consistency/chase.rs",
       "sha256": "1ed551c897ef4c63572ebaf7ed89ee36ec89ea4b0f0484b58b022334af15eda8",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-checker/src/consistency/divergence.rs",
+      "sha256": "8013f9ea7b9776c50191fe75c79ddab0b41f50956cd5c8446d10a74766e9c687",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3478,6 +3496,24 @@
     {
       "path": "crates/norn-checker/tests/consistency.rs",
       "sha256": "3877a70df512f8a5eb61a38539238746a6f97ab0a802ff75a9eb2921cf44ee4d",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-checker/tests/consistency_divergence.rs",
+      "sha256": "2c34272fd0440fcae67164b0d78f911cbe50264cf4142f48b77e608446221d59",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29989,7 +30025,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "a78540ce4649be9ba6f7028e9f2023987fad53d7a9b458159f0d2dd79c6a71d3",
+      "sha256": "55aa405a7d47d8a47f1282e551aa4c86655a8f0e966b161a2ec8e8f205ef4567",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
