@@ -118,8 +118,10 @@ pub fn welch(table: &TemporalTable, alpha: f64) -> Result<WelchReport, AnalysisE
         if n < 2.0 {
             return Err(AnalysisError::Data("two rows per group required"));
         }
-        let mean = ys.iter().sum::<f64>() / n;
-        let variance = ys.iter().map(|y| (y - mean).powi(2)).sum::<f64>() / (n - 1.0);
+        let origin = *ys.first().ok_or(AnalysisError::Data("empty group"))?;
+        let centered_mean = ys.iter().map(|y| y - origin).sum::<f64>() / n;
+        let mean = origin + centered_mean;
+        let variance = ys.iter().map(|y| ((y - origin) - centered_mean).powi(2)).sum::<f64>() / (n - 1.0);
         Ok((n, mean, variance / n))
     };
     let (na, ma, va) = summarize(&groups.0)?;

@@ -37,6 +37,21 @@ fn welch_matches_closed_form_and_refuses_invalid_groups() {
             })
             .collect::<Vec<_>>()
     };
+    let decimal_plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "weight", 0).expect("decimal plan");
+    let mut decimals = rows();
+    for (i, row) in decimals.iter_mut().enumerate() {
+        row.outcome.value = RuntimeValue::from_json_text(if i < 3 { "0.10" } else { "0.20" }).expect("typed decimal");
+    }
+    assert!(welch(&decimal_plan.materialize(200, 1, decimals).expect("decimal table"), 0.05).is_err());
+    let unequal = [1, 2, 3, 4, 6, 8, 10].into_iter().enumerate().map(|(i, y)| TemporalRow {
+        key: format!("unequal-{i}"), at: 100,
+        features: vec![value(i64::from(i >= 3), 100)], outcome: value(y, 200),
+    }).collect();
+    let unequal = welch(&plan.materialize(200, 1, unequal).expect("unequal table"), 0.05).expect("Welch");
+    assert_eq!(unequal.n, (3, 4));
+    assert!((unequal.difference + 5.0).abs() < 1e-12);
+    assert!((unequal.statistic + 5.0 / 2.0_f64.sqrt()).abs() < 1e-12);
+    assert!((unequal.degrees_of_freedom - 216.0 / 53.0).abs() < 1e-12);
     let table = plan.materialize(200, 1, rows()).expect("table");
     let report = welch(&table, 0.05).expect("report");
     assert_eq!(report.n, (3, 3));
