@@ -96,7 +96,10 @@ pub fn parse_time(text: &str) -> Option<i128> {
     Some(nanos)
 }
 
-use crate::{Aggregate, Bucket, BucketAgg, CaptureKey, GroupKey, Lineage, Member, MetricError, MetricResult, Plan, Value, VisibilityOutcome};
+use crate::{
+    Aggregate, Bucket, BucketAgg, CaptureKey, GroupKey, Lineage, Member, MetricError, MetricResult,
+    Plan, Value, VisibilityOutcome,
+};
 use std::collections::BTreeMap;
 
 /// Ordered row refusal, suitable for an incrementally maintained index.
