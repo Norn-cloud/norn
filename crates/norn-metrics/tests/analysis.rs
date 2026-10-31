@@ -21,30 +21,62 @@ fn catalog() -> EffectiveCatalog {
 }
 
 fn value(n: i64, at: i64) -> TemporalValue {
-    TemporalValue { value: RuntimeValue::from_json_text(n.to_string()).expect("number"),
-        valid_at: at, recorded_at: at, source: format!("synthetic:{n}:{at}") }
+    TemporalValue {
+        value: RuntimeValue::from_json_text(n.to_string()).expect("number"),
+        valid_at: at,
+        recorded_at: at,
+        source: format!("synthetic:{n}:{at}"),
+    }
 }
 
 fn rows() -> Vec<TemporalRow> {
-    (1..=6).map(|n| TemporalRow { key: format!("synthetic-{n}"), at: 100,
-        features: vec![value(i64::from(n > 3), 100)], outcome: value(n, 200) }).collect()
+    (1..=6)
+        .map(|n| TemporalRow {
+            key: format!("synthetic-{n}"),
+            at: 100,
+            features: vec![value(i64::from(n > 3), 100)],
+            outcome: value(n, 200),
+        })
+        .collect()
 }
 
 #[test]
 fn welch_refuses_constant_decimals_and_handles_unequal_variances() {
     let catalog = catalog();
-    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0).expect("plan");
-    let decimal_plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "weight", 0).expect("decimal plan");
+    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0)
+        .expect("plan");
+    let decimal_plan =
+        TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "weight", 0)
+            .expect("decimal plan");
     let mut decimals = rows();
     for (i, row) in decimals.iter_mut().enumerate() {
-        row.outcome.value = RuntimeValue::from_json_text(if i < 3 { "0.10" } else { "0.20" }).expect("typed decimal");
+        row.outcome.value = RuntimeValue::from_json_text(if i < 3 { "0.10" } else { "0.20" })
+            .expect("typed decimal");
     }
-    assert!(welch(&decimal_plan.materialize(200, 1, decimals).expect("decimal table"), 0.05).is_err());
-    let unequal = [1, 2, 3, 4, 6, 8, 10].into_iter().enumerate().map(|(i, y)| TemporalRow {
-        key: format!("unequal-{i}"), at: 100,
-        features: vec![value(i64::from(i >= 3), 100)], outcome: value(y, 200),
-    }).collect();
-    let unequal = welch(&plan.materialize(200, 1, unequal).expect("unequal table"), 0.05).expect("Welch");
+    assert!(
+        welch(
+            &decimal_plan
+                .materialize(200, 1, decimals)
+                .expect("decimal table"),
+            0.05
+        )
+        .is_err()
+    );
+    let unequal = [1, 2, 3, 4, 6, 8, 10]
+        .into_iter()
+        .enumerate()
+        .map(|(i, y)| TemporalRow {
+            key: format!("unequal-{i}"),
+            at: 100,
+            features: vec![value(i64::from(i >= 3), 100)],
+            outcome: value(y, 200),
+        })
+        .collect();
+    let unequal = welch(
+        &plan.materialize(200, 1, unequal).expect("unequal table"),
+        0.05,
+    )
+    .expect("Welch");
     assert_eq!(unequal.n, (3, 4));
     assert!((unequal.difference + 5.0).abs() < 1e-12);
     assert!((unequal.statistic + 5.0 / 2.0_f64.sqrt()).abs() < 1e-12);
@@ -54,7 +86,8 @@ fn welch_refuses_constant_decimals_and_handles_unequal_variances() {
 #[test]
 fn welch_matches_closed_form_and_refuses_invalid_groups() {
     let catalog = catalog();
-    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0).expect("plan");
+    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0)
+        .expect("plan");
     let table = plan.materialize(200, 1, rows()).expect("table");
     let report = welch(&table, 0.05).expect("report");
     assert_eq!(report.n, (3, 3));
