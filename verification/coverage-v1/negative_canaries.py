@@ -461,8 +461,13 @@ def central_obligation_closure_canaries() -> None:
 def workflow_canaries() -> None:
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
     mutations = [
-        ("missing full-core gate", "run: bash scripts/ci/core.sh", "run: echo skipped"),
-        ("floating action", "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "actions/checkout@v4"),
+        ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
+        ("missing test shards", "run: bash scripts/ci/core.sh test ${{ matrix.shard }}", "run: echo skipped"),
+        ("missing phases", "run: bash scripts/ci/core.sh ${{ matrix.phase }}", "run: echo skipped"),
+        ("missing shard matrix", "shard: ${{ fromJSON(needs.plan.outputs.plan).shard }}", "shard: [rest-1]"),
+        ("missing phase matrix", "phase: ${{ fromJSON(needs.plan.outputs.plan).phase }}", "phase: [cheap]"),
+        ("missing full verdict dependency", "needs: [core, plan, test, phase]", "needs: [core, plan, test]"),
+        ("floating action", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4"),
         ("floating Rust toolchain", "toolchain: 1.98.0", "toolchain: stable"),
         ("insufficient proof timeout", "timeout-minutes: 110", "timeout-minutes: 20"),
     ]
@@ -478,6 +483,33 @@ def workflow_canaries() -> None:
             "name: Public core\n", "name: Public core\nenv:\n  toolchain: 1.98.0\n", 1)
         candidate.write_text(decoy, encoding="utf-8")
         expect_coverage_validator_rejection("decoy toolchain key", formal_workflow_path=candidate)
+        command = "bash scripts/ci/core.sh test ${{ matrix.shard }}"
+        decoy = source.replace("run: " + command, "run: echo skipped", 1).replace(
+            "name: Public core\n", "name: Public core\nenv:\n  DECOY: '" + command + "'\n", 1)
+        candidate.write_text(decoy, encoding="utf-8")
+        expect_coverage_validator_rejection("decoy shard command", formal_workflow_path=candidate)
+        for option in ("if: false", "continue-on-error: true"):
+            candidate.write_text(source.replace(
+                "      - run: " + command,
+                "      - " + option + "\n        run: " + command, 1), encoding="utf-8")
+            expect_coverage_validator_rejection("disabled shard step: " + option,
+                                               formal_workflow_path=candidate)
+
+    shell_mutations = (
+        source.replace("      - run: " + command,
+                       "      - shell: /usr/bin/true {0}\n        run: " + command, 1),
+        source.replace("  test:\n", "  test:\n    defaults:\n      run:\n        shell: /usr/bin/true {0}\n", 1),
+        source.replace("jobs:\n", "defaults:\n  run:\n    shell: /usr/bin/true {0}\njobs:\n", 1),
+        source.replace("      - env:\n          RESULTS:",
+                       "      - shell: /usr/bin/true {0}\n        env:\n          RESULTS:", 1),
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+        for index, mutation in enumerate(shell_mutations):
+            if mutation == source:
+                raise AssertionError("shell override mutation target drifted")
+            candidate.write_text(mutation, encoding="utf-8")
+            expect_coverage_validator_rejection(f"shell override {index}", formal_workflow_path=candidate)
 
 
 def counterexampled(run: quint_apalache.QuintRun) -> bool:
