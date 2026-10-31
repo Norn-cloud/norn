@@ -3009,7 +3009,7 @@
     },
     {
       "path": "crates/norn-checker/src/ontology/link.rs",
-      "sha256": "20bf53cf63a23649b3238046bb21b9d1ff3e0aecef804f18cb4af719899d8d96",
+      "sha256": "62a0079999800bcd526967eecd4d7bf2743456af96a35d920a6d090781727b97",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3027,7 +3027,7 @@
     },
     {
       "path": "crates/norn-checker/src/ontology/link_registry.rs",
-      "sha256": "5531d246ceaa2a97823a66970ba78a3ccd18fa26468486c4b422b63df6bdfafc",
+      "sha256": "30b3d3028a2ebb2ff96e2855293a31fc3b0a718349e0c50e2ffe6840a81528da",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -4014,7 +4014,7 @@
     },
     {
       "path": "crates/norn-checker/tests/ontology_link.rs",
-      "sha256": "bb56f3e3738987ea20641615edf45b5f2e7843085713ef3a051f4e43ff1420b3",
+      "sha256": "239a04f1174348bb7d48446b5eaf5d00e752fc9c152386d55fad6c46fe152e4a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -4212,7 +4212,7 @@
     },
     {
       "path": "crates/norn-checker/tests/registry_packs.rs",
-      "sha256": "f9f868c77c12b31bb5495fefb487a9b614de7cbf1eb36924fdc42fa1405f72e5",
+      "sha256": "b876871be28c9a353741e7af4e7f55abb344733db7afd83c9f178c58f0f6bed1",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -9024,7 +9024,7 @@
     },
     {
       "path": "crates/norn-ir/src/business_pack.rs",
-      "sha256": "062d10c22c3fe263628cc73adf854e3ff5f1c88d8fbd1dfeb96427bf65851d87",
+      "sha256": "fa82a2f538a8c12ca8e8945f872ee9c083f39fada5a6581a058918c21b15085b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18500,7 +18500,7 @@
     },
     {
       "path": "registry/packs/canon/canon.pack.ts",
-      "sha256": "d096000ea6ef3f6de108dec8f70543010e890c60a383c557a794c21f248b2973",
+      "sha256": "1f53082930fce3bf387ae889a0fcbb959e84034bfc5c01b874295874eeddf7d5",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18716,7 +18716,7 @@
     },
     {
       "path": "registry/packs/shopify/shopify.link.ts",
-      "sha256": "32a650e308abb7709136e2483d18d8e9978d21f60dfe7f809f60d0b01ef5cecf",
+      "sha256": "749cfa1f604332bb3e05a229c92ec05855b08ca383787af3f408c13bb571ad2a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18734,7 +18734,7 @@
     },
     {
       "path": "registry/packs/shopify/shopify.pack.ts",
-      "sha256": "331447919557dd56c2c8192ce73b61f538e507ab3db1a696cb209114bf9accaa",
+      "sha256": "e835ff0f1d0487112f1255e121bf14941f5a2f0535646f4a0f3abe2c37d9d8ec",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

@@ -536,7 +536,8 @@ pub struct LinkResidual {
     pub note: String,
 }
 
-/// Why a source term has no correspondence (norn-platform#2986).
+/// Why a source term has no correspondence (norn-platform#2986; lead
+/// ruling 2026-10-31 for `non_conforming`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResidualReason {
@@ -544,4 +545,7 @@ pub enum ResidualReason {
     SystemSpecific,
     /// The target lacks a term for it; the canon should grow one.
     CanonGap,
+    /// Source behaviour that breaks a target law (editing posted data in
+    /// place). The law holds; the link flags the behaviour and never maps it.
+    NonConforming,
 }
