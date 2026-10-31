@@ -2591,7 +2591,7 @@ fn pre_marking_store_with_public_and_classified_live_facts_is_refused_atomically
     }
     raw.execute("INSERT INTO _norn_meta (key, value) VALUES ('format', 'norn.cell.store/2'), ('ddl_hash', ?1)", [model.ddl_hash()]).expect("old format");
     for object_type in ["marking.Public", "marking.Private"] {
-        raw.execute(&format!("INSERT INTO \"o:{object_type}\" (_world, _id, _type, _scope, _version, value) VALUES (?1, 'legacy', ?2, ?3, 1, 'retained raw value')"), rusqlite::params![MAIN_WORLD, object_type, SCOPE]).expect("old live row");
+        raw.execute(&format!("INSERT INTO \"o:{object_type}\" (_world, _id, _type, _scope, _version, \"p:value\") VALUES (?1, 'legacy', ?2, ?3, 1, 'retained raw value')"), rusqlite::params![MAIN_WORLD, object_type, SCOPE]).expect("old live row");
         raw.execute("INSERT INTO _norn_version (world, root_type, id, version) VALUES (?1, ?2, 'legacy', 1)", rusqlite::params![MAIN_WORLD, object_type]).expect("old high-water version");
     }
     drop(raw);
@@ -2610,7 +2610,7 @@ fn pre_marking_store_with_public_and_classified_live_facts_is_refused_atomically
     for object_type in ["marking.Public", "marking.Private"] {
         let value: String = raw
             .query_row(
-                &format!("SELECT value FROM \"o:{object_type}\" WHERE _id = 'legacy'"),
+                &format!("SELECT \"p:value\" FROM \"o:{object_type}\" WHERE _id = 'legacy'"),
                 [],
                 |row| row.get(0),
             )
