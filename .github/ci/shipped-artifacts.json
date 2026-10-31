@@ -22789,7 +22789,7 @@
     },
     {
       "path": "tools/norn-ts/profile/contract.json",
-      "sha256": "247b61e8a8637e974a6da181d75cbb3c50490b5734fcf73403d5a4570efd8327",
+      "sha256": "be091f9d621f9262c3348ba060d8e683c6432ce5d3177c6a0230bcd1f5a38746",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -23329,7 +23329,7 @@
     },
     {
       "path": "tools/norn-ts/src/deploy.ts",
-      "sha256": "9d27e19b0a211aee5e54557bbc7e42f54561a9edb3aeb6fe1d210fba1c5d224b",
+      "sha256": "43d95f3043fe78bd2c175502d0daf59748242251806b397ae6b65c0c7c5d728a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -23491,7 +23491,7 @@
     },
     {
       "path": "tools/norn-ts/test/board.test.ts",
-      "sha256": "f95d1fd4e3764c7f2748045eb5d4ec38de3a6414ee84a7afa82534be2fe7878e",
+      "sha256": "92e093dfbbd16aba33333f114ad4f0832fe8f5721fdb6de2527ac7df355306cd",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
