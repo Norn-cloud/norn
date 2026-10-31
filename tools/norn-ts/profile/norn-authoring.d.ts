@@ -516,6 +516,25 @@ declare module "@norn/authoring" {
     }
     function ontologyPack(meta: OntologyPackSpec): { readonly _tag: "NornOntologyPack" }
 
+    /** Checked correspondences from one ontology pack's terms into another's; lowers to a `business_pack` with `packKind: "link"`. */
+    interface PackLinkSpec {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      readonly fromPack: { readonly packId: string; readonly version: string }
+      readonly toPack: { readonly packId: string; readonly version: string }
+      readonly correspondences: ReadonlyArray<{
+        readonly correspondenceId: string; readonly fromTermId: string
+        readonly relation: "equivalent" | "subsumed_by" | "subsumes" | "derived"
+        readonly toTermIds: ReadonlyArray<string>; readonly justification: string
+        readonly evidenceRefs: ReadonlyArray<string>; readonly confidenceBasisPoints: number
+        readonly reviewedBy: string; readonly reviewedAt: string
+        readonly transformRef?: string; readonly rulingRef?: string
+      }>
+      readonly residuals?: ReadonlyArray<{ readonly termId: string; readonly reason: "system_specific" | "canon_gap" | "non_conforming"; readonly note: string }>
+    }
+    function packLink(meta: PackLinkSpec): { readonly _tag: "NornPackLink" }
+
     /** Opaque mapping definition; the syntax compiler lowers the call. */
     interface MappingDefinition {
       readonly _tag: "NornMapping"
