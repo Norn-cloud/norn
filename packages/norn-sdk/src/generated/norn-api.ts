@@ -780,10 +780,11 @@ export interface components {
         /**
          * @description The payload of a `business_pack` artifact: a composition pack
          *     (`packKind: "composition"`, or omitted by IR `0.1` packs; `provides`,
-         *     `artifacts`) or an ontology pack (`packKind: "ontology"`; `sources`,
-         *     `terms`, `mappings`, `shapes`).
+         *     `artifacts`), an ontology pack (`packKind: "ontology"`; `sources`,
+         *     `terms`, `mappings`, `shapes`) or a link pack (`packKind: "link"`;
+         *     `fromPack`, `toPack`, `correspondences`, `residuals`).
          */
-        NornIrBusinessPackPayload: components["schemas"]["NornIrOntologyPackRoot"] | components["schemas"]["NornIrCompositionPackRoot"];
+        NornIrBusinessPackPayload: components["schemas"]["NornIrOntologyPackRoot"] | components["schemas"]["NornIrOntologyLinkRoot"] | components["schemas"]["NornIrCompositionPackRoot"];
         /**
          * @description Serializable calc expression leaf for a Derived view.
          *
@@ -1341,6 +1342,11 @@ export interface components {
             op: components["schemas"]["NornIrCompareOp"];
             value: components["schemas"]["NornIrAccessLiteral"];
         };
+        /**
+         * @description How a source term relates to its target terms.
+         * @enum {string}
+         */
+        NornIrCorrespondenceRelation: "equivalent" | "subsumed_by" | "subsumes" | "derived";
         /**
          * @description Whether a distinct count is exact.
          * @enum {string}
@@ -3004,6 +3010,18 @@ export interface components {
              */
             targetMap?: string;
         };
+        /** @description A source term the link does not map. */
+        NornIrLinkResidual: {
+            note: string;
+            reason: components["schemas"]["NornIrResidualReason"];
+            /** @description An active term of `fromPack`. */
+            termId: string;
+        };
+        /** @description One linked pack, pinned by its artifact id and exact artifact version. */
+        NornIrLinkedPack: {
+            packId: string;
+            version: string;
+        };
         /** @description Locale-keyed user-facing text. */
         NornIrLocaleText: {
             [key: string]: string;
@@ -3421,6 +3439,36 @@ export interface components {
         };
         /** @description Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected. */
         NornIrObligationPolicyRootPropertyExtensions: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /**
+         * @description The only `packKind` literal of a link pack.
+         * @enum {string}
+         */
+        NornIrOntologyLinkKind: "link";
+        /**
+         * @description A link pack: checked correspondences from the terms of one ontology pack
+         *     (`fromPack`) to the terms of another (`toPack`). Every active term of the
+         *     source pack is accounted for, by a correspondence or a residual
+         *     (registry rule).
+         */
+        NornIrOntologyLinkRoot: {
+            /** @description Non-empty. */
+            correspondences: components["schemas"]["NornIrTermCorrespondence"][];
+            extensions?: components["schemas"]["NornIrOntologyLinkRootPropertyExtensions"];
+            /** @description The pack whose terms are mapped. */
+            fromPack: components["schemas"]["NornIrLinkedPack"];
+            /** @description In the opaque `norn.link.*` namespace (checker rule). */
+            packId: string;
+            packKind: components["schemas"]["NornIrOntologyLinkKind"];
+            packVersion: components["schemas"]["NornIrIrVersion01"];
+            /** @description Source terms with no correspondence, and why. */
+            residuals?: components["schemas"]["NornIrLinkResidual"][];
+            /** @description The pack the terms map into. */
+            toPack: components["schemas"]["NornIrLinkedPack"];
+        };
+        /** @description Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected. */
+        NornIrOntologyLinkRootPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
         /** @description A reviewed mapping from a Norn term to an external IRI of a pinned source. */
@@ -3947,6 +3995,11 @@ export interface components {
         NornIrRelationPayloadPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description Why a source term has no correspondence (norn-platform#2986).
+         * @enum {string}
+         */
+        NornIrResidualReason: "system_specific" | "canon_gap";
         /**
          * @description Dotted, lower-case name of an entity-resolution policy artifact
          *     (`party.email_exact`); same grammar as a property type name
@@ -4686,6 +4739,37 @@ export interface components {
          * @enum {string}
          */
         NornIrTemporalScopeMode: "current" | "as_of_param";
+        /** @description One checked correspondence from a source-pack term to target-pack terms. */
+        NornIrTermCorrespondence: {
+            /**
+             * Format: uint64
+             * @description 0 through 10000 (checker rule).
+             */
+            confidenceBasisPoints: number;
+            /** @description Unique within the link. */
+            correspondenceId: string;
+            /**
+             * @description Non-empty; at least one names a mapped source of `fromPack`'s
+             *     manifest (`source.*`), the others are absolute HTTPS IRIs.
+             */
+            evidenceRefs: string[];
+            /** @description An active term of `fromPack`. */
+            fromTermId: string;
+            justification: string;
+            relation: components["schemas"]["NornIrCorrespondenceRelation"];
+            /** @description UTC RFC 3339. */
+            reviewedAt: string;
+            reviewedBy: string;
+            /** @description The ruling that settled a divergence this correspondence resolves. */
+            rulingRef?: string;
+            /** @description Active terms of `toPack`: exactly one, or one or more for `derived`. */
+            toTermIds: string[];
+            /**
+             * @description The `mapping` artifact that executes a `derived` correspondence, when
+             *     one exists. The correspondence is semantic either way.
+             */
+            transformRef?: string;
+        };
         /**
          * @description Well-known string formats of a `text` property.
          * @enum {string}
