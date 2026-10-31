@@ -19,12 +19,14 @@
 //! Behavioural equivalence is a separate obligation, not checked here.
 
 mod chase;
+mod divergence;
 mod exchange;
 mod theory;
 
 pub use chase::{
     ChaseBudget, ChaseError, ChaseOutcome, Conflict, Fact, Value, chase, first_violation,
 };
+pub use divergence::{CanonKey, Divergence, MappedObservation, WitnessIdentity, find_divergences};
 pub use exchange::{Exchange, check_instance, check_mapping_totality, check_schema_compatibility};
 pub use theory::{Atom, Dependency, Egd, RuleOrigin, Term, Tgd, Theory, TheoryError};
 

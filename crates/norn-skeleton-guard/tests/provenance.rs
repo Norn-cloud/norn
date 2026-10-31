@@ -6,7 +6,7 @@
     reason = "synthetic policy fixtures"
 )]
 
-use norn_skeleton_guard::ci::provenance::{self, CONTROL, LEGACY_MANIFEST, MANIFEST, RECORDS};
+use norn_skeleton_guard::ci::provenance::{self, CONTROL, MANIFEST, RECORDS};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
@@ -150,50 +150,6 @@ fn unknown_ambiguous_and_cyclic_ancestry_fails_closed() {
     f.derived("a", "b", "generated");
     f.derived("b", "a", "generated");
     f.rejects("cyclic ancestry");
-}
-
-/// #121 transition: the version-1 manifest still reads, alone.
-#[test]
-fn legacy_manifest_reads_until_migrated_but_never_beside_records() {
-    let mut f = Fixture::new();
-    f.add("crates/a/src/lib.rs", b"// a", "code");
-    let legacy = |f: &Fixture| {
-        f.write(
-            LEGACY_MANIFEST,
-            &serde_json::to_vec(
-                &json!({"version":1,"software_sources":f.software,"artifacts":f.records}),
-            )
-            .unwrap(),
-        );
-    };
-    f.save();
-    legacy(&f);
-    let r = provenance::check_distribution(f.root());
-    assert!(
-        r.errors().iter().any(|e| e.contains("both")),
-        "{:?}",
-        r.errors()
-    );
-    fs::remove_dir_all(f.root().join(CONTROL)).unwrap();
-    let r = provenance::check_distribution(f.root());
-    assert!(r.errors().is_empty(), "{:?}", r.errors());
-    // Typed parsing keeps version 1's duplicate-field refusal.
-    let mut bytes =
-        serde_json::to_vec(&json!({"version":1,"software_sources":[],"artifacts":f.records}))
-            .unwrap();
-    let at = bytes.windows(9).position(|w| w == b"\"origin\":").unwrap();
-    bytes.splice(at..at, br#""origin":"upstream","#.iter().copied());
-    f.write(LEGACY_MANIFEST, &bytes);
-    let r = provenance::check_distribution(f.root());
-    assert!(
-        r.errors().iter().any(|e| e.contains("duplicate field")),
-        "{:?}",
-        r.errors()
-    );
-    f.records.push(f.records[1].clone());
-    legacy(&f);
-    let r = provenance::check_distribution(f.root());
-    assert!(r.errors().iter().any(|e| e.contains("duplicate artifact")));
 }
 
 /// #121: each refusal the single manifest gave survives per-file records.
@@ -652,6 +608,128 @@ fn trusted_policy_preserves_retained_core_obligations() {
         errors
             .iter()
             .any(|error| error.contains("retained core obligations were removed")),
+        "{errors:?}"
+    );
+}
+
+/// Move the fixture's coverage to the per-subsystem layout, as the codemod does.
+fn split_coverage(candidate: &mut Fixture, subsystems: &[(&str, &[u8])]) {
+    let monolith = "verification/coverage-v1/coverage.json";
+    candidate
+        .records
+        .retain(|record| record["path"] != monolith);
+    fs::remove_file(candidate.root().join(monolith)).unwrap();
+    candidate.add(
+        "verification/coverage-v1/manifest/index.json",
+        b"{}",
+        "code",
+    );
+    for (id, body) in subsystems {
+        candidate.add(
+            &format!("verification/coverage-v1/manifest/subsystems/{id}.json"),
+            body,
+            "code",
+        );
+    }
+    candidate.save();
+    index_fixture(candidate);
+}
+
+fn retained_errors(candidate: &Fixture, base: &Fixture) -> Vec<String> {
+    norn_skeleton_guard::ci::run(candidate.root(), base.root())
+}
+
+#[test]
+fn trusted_policy_reads_per_subsystem_coverage_against_a_monolith_base() {
+    let base = policy_fixture();
+    let mut candidate = policy_fixture();
+    split_coverage(
+        &mut candidate,
+        &[(
+            "quantity-ledger",
+            br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        )],
+    );
+    let errors = retained_errors(&candidate, &base);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(retained_errors(&candidate, &candidate).is_empty());
+}
+
+#[test]
+fn trusted_policy_refuses_per_subsystem_coverage_that_drops_obligations() {
+    let base = policy_fixture();
+    for subsystems in [
+        &[("quantity-ledger", &br#"{"obligations":[]}"#[..])][..],
+        &[(
+            "other",
+            &br#"{"obligations":["synthetic-preserved-obligation"]}"#[..],
+        )][..],
+    ] {
+        let mut candidate = policy_fixture();
+        split_coverage(&mut candidate, subsystems);
+        let errors = retained_errors(&candidate, &base);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error
+                    .contains("quantity-ledger: retained core obligations were removed")),
+            "{errors:?}"
+        );
+    }
+}
+
+#[test]
+fn trusted_policy_refuses_both_coverage_layouts_and_stray_entries() {
+    let base = policy_fixture();
+    let mut both = policy_fixture();
+    both.add(
+        "verification/coverage-v1/manifest/subsystems/quantity-ledger.json",
+        br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        "code",
+    );
+    both.save();
+    index_fixture(&both);
+    let errors = retained_errors(&both, &base);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("both verification/coverage-v1/coverage.json")),
+        "{errors:?}"
+    );
+    let index = "verification/coverage-v1/manifest/index.json";
+    let mut headless = policy_fixture();
+    split_coverage(&mut headless, &[]);
+    headless.records.retain(|record| record["path"] != index);
+    fs::remove_file(headless.root().join(index)).unwrap();
+    headless.save();
+    index_fixture(&headless);
+    let errors = retained_errors(&headless, &base);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("manifest/index.json is missing")),
+        "{errors:?}"
+    );
+    let mut stray = policy_fixture();
+    split_coverage(
+        &mut stray,
+        &[(
+            "quantity-ledger",
+            br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        )],
+    );
+    stray.add(
+        "verification/coverage-v1/manifest/subsystems/notes.txt",
+        b"synthetic",
+        "code",
+    );
+    stray.save();
+    index_fixture(&stray);
+    let errors = retained_errors(&stray, &base);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("unknown entry notes.txt")),
         "{errors:?}"
     );
 }

@@ -9,6 +9,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{Diagnostic, DiagnosticRemediation, DiagnosticSeverity, JsonValue};
 
+mod link;
+mod link_registry;
+pub(crate) use link::validate_link_payload;
+pub use link_registry::{LinkCoverage, validate_link_registry};
+
 const PACK_CODE: &str = "ontology_pack.validation.invalid_payload";
 const INSTANCE_CODE: &str = "ontology_instance.validation.invalid_payload";
 const REGISTRY_CODE: &str = "ontology_registry.validation.invalid_payload";
