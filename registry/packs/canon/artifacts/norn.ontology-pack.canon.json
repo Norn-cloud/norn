@@ -4,7 +4,7 @@
   "irVersion": "0.1",
   "kind": "business_pack",
   "lifecycle": "active",
-  "name": "Norn canon handles (core physics and accounting, proposed)",
+  "name": "Norn canon handles: provisional stand-ins for the lane A and B types",
   "namespace": "norn.ontology",
   "payload": {
     "mappings": [
@@ -379,6 +379,15 @@
         "termKind": "class"
       },
       {
+        "definition": "The claim a commitment gives rise to once one side of it is performed; a commitment is never itself a claim.",
+        "domainTermId": "norn.core.commitment",
+        "label": "Gives rise to",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.core.commitment.gives.rise.to",
+        "termKind": "property"
+      },
+      {
         "definition": "A claim document that states what a party owes for goods or services; a credit note is an invoice with the opposite sign.",
         "label": "Invoice",
         "parentTermId": "norn.core.claim",
@@ -511,6 +520,15 @@
         "status": "active",
         "termId": "norn.finance.invoice.post",
         "termKind": "action"
+      },
+      {
+        "definition": "The accounting transaction posting the invoice gives rise to; an invoice is not itself an accounting transaction.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Gives rise to",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.gives.rise.to",
+        "termKind": "property"
       },
       {
         "definition": "Cancel a posted invoice by a reversing entry; the original stays.",

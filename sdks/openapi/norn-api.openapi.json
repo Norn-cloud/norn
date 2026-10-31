@@ -9908,14 +9908,16 @@
       },
       "NornIrResidualReason": {
         "type": "string",
-        "description": "Why a source term has no correspondence (norn-platform#2986).",
+        "description": "Why a source term has no correspondence (norn-platform#2986; lead\nruling 2026-10-31 for `non_conforming`).",
         "enum": [
           "system_specific",
-          "canon_gap"
+          "canon_gap",
+          "non_conforming"
         ],
         "x-enumDescriptions": [
           "Detail specific to the source system; the canon drops it.",
-          "The target lacks a term for it; the canon should grow one."
+          "The target lacks a term for it; the canon should grow one.",
+          "Source behaviour that breaks a target law (editing posted data in\nplace). The law holds; the link flags the behaviour and never maps it."
         ]
       },
       "NornIrResolutionPolicyName": {

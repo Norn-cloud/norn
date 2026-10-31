@@ -3996,10 +3996,11 @@ export interface components {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
         /**
-         * @description Why a source term has no correspondence (norn-platform#2986).
+         * @description Why a source term has no correspondence (norn-platform#2986; lead
+         *     ruling 2026-10-31 for `non_conforming`).
          * @enum {string}
          */
-        NornIrResidualReason: "system_specific" | "canon_gap";
+        NornIrResidualReason: "system_specific" | "canon_gap" | "non_conforming";
         /**
          * @description Dotted, lower-case name of an entity-resolution policy artifact
          *     (`party.email_exact`); same grammar as a property type name
