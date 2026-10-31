@@ -491,18 +491,24 @@ def workflow_context_canaries(source: str) -> None:
     with tempfile.TemporaryDirectory() as directory:
         candidate = Path(directory) / "ci-policy.yml"
         candidate.write_text(yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8")
-        validator.validate(formal_workflow_path=candidate)
+        validator.validate_workflow_integrity([], formal_path=candidate)
 
         def rejected(label: str, document: dict[str, Any]) -> None:
             candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            expect_coverage_validator_rejection(label, formal_workflow_path=candidate)
+            try:
+                validator.validate_workflow_integrity([], formal_path=candidate)
+            except validator.InvalidCoverage:
+                return
+            raise AssertionError(f"workflow context mutation passed: {label}")
 
         for name in ("core", "plan", "test", "phase"):
-            for key, value in (("ref", "main"), ("repository", "other/repository"), ("path", "other-checkout")):
+            for key, value in (("ref", "main"), ("repository", "other/repository"),
+                               ("path", "other-checkout"), ("persist-credentials", True),
+                               ("persist-credentials", 0), ("fetch-depth", False)):
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["steps"][0]["with"][key] = value
                 rejected(f"{name} checkout {key}", document)
-            for key in ("BASH_ENV", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE"):
+            for key in ("BASH_ENV", "BASH_FUNC_exit%%", "LD_PRELOAD", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE"):
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
                 rejected(f"{name} step environment {key}", document)
@@ -512,6 +518,9 @@ def workflow_context_canaries(source: str) -> None:
                       if location == "job" else document["jobs"]["full"]["steps"][0])
             target.setdefault("env", {})["BASH_ENV"] = "/tmp/early-success"
             rejected(f"{location} inherited BASH_ENV", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["env"]["BASH_FUNC_cargo%%"] = "() { return 0; }"
+        rejected("job environment cannot replace gate commands", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["full"]["steps"].insert(0, {"run": "echo BASH_ENV=/tmp/early-success >> $GITHUB_ENV"})
         rejected("verdict preparation can change the shell environment", document)
@@ -568,7 +577,7 @@ def workflow_canaries() -> None:
         expect_coverage_validator_rejection("decoy toolchain key", formal_workflow_path=candidate)
         command = "bash scripts/ci/core.sh test ${{ matrix.shard }}"
         decoy = source.replace("run: " + command, "run: echo skipped", 1).replace(
-            "name: Public core\n", "name: Public core\nenv:\n  DECOY: '" + command + "'\n", 1)
+            "name: Public core\n", "name: 'Public core " + command + "'\n", 1)
         candidate.write_text(decoy, encoding="utf-8")
         expect_coverage_validator_rejection("decoy shard command", formal_workflow_path=candidate)
         for option in ("if: false", "continue-on-error: true"):

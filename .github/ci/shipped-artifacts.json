@@ -29935,7 +29935,7 @@
     },
     {
       "path": "verification/coverage-v1/negative_canaries.py",
-      "sha256": "1e3e15078a269c71cf3a2411c89ef2d365a97e4c1e7339dafc66b21f40bb9bc7",
+      "sha256": "e93b16cf96c0a098782a2486026f8c7124a99ddc0261fd5f3b917837138acd9f",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30007,7 +30007,7 @@
     },
     {
       "path": "verification/coverage-v1/validate.py",
-      "sha256": "30405c06f1ec5f9701d15e1d972a5cd08564490e70985308ca961c202cf6ef48",
+      "sha256": "64ac1f71a9d603fdb33dc17a19c11c882c69741b2d5c1f80405ac467326ec769",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
