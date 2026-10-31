@@ -125,6 +125,7 @@ fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     let mut response = call
         .send(body.as_bytes())
         .map_err(|_e| "MCP HTTP request failed")?;
+    let http_failed = !response.status().is_success();
     let is_sse = response
         .headers()
         .get("content-type")
@@ -138,7 +139,8 @@ fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     {
         return Err("invalid MCP response envelope".into());
     }
-    let failed = value.get("error").is_some()
+    let failed = http_failed
+        || value.get("error").is_some()
         || value.pointer("/result/isError").and_then(Value::as_bool) == Some(true);
     Ok((text, failed))
 }
