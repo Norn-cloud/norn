@@ -226,16 +226,16 @@ fn unfoldings(
                 }
             }
         }
-        let clash = body
-            .iter()
-            .zip(&combination)
-            .enumerate()
-            .any(|(copy, (atom, (_, head)))| {
-                atom.terms.iter().zip(&head.terms).any(|(left, right)| {
-                    find(&parent, key(left, None)) != find(&parent, key(right, Some(copy)))
-                })
-            });
-        if clash {
+        let inconsistent =
+            body.iter()
+                .zip(&combination)
+                .enumerate()
+                .any(|(copy, (atom, (_, head)))| {
+                    atom.terms.iter().zip(&head.terms).any(|(left, right)| {
+                        find(&parent, key(left, None)) != find(&parent, key(right, Some(copy)))
+                    })
+                });
+        if inconsistent {
             continue;
         }
         let mut nulls: BTreeMap<Key, usize> = BTreeMap::new();
@@ -247,7 +247,7 @@ fn unfoldings(
                     .iter()
                     .map(|term| match find(&parent, key(term, Some(copy))) {
                         Key::Const(text) => Value::Const(text),
-                        class => {
+                        class @ (Key::Body(_) | Key::Copy(..)) => {
                             let next = nulls.len();
                             Value::Null(*nulls.entry(class).or_insert(next))
                         }

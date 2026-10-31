@@ -2235,7 +2235,7 @@
     },
     {
       "path": "crates/norn-checker/src/consistency/chase.rs",
-      "sha256": "e27831db3690cab2776aab9fbdb47296cfecb49df944bba3409007c983fbf49f",
+      "sha256": "b78e748c0fd6fe94df88738b6c189679eeb13df0bf92287b05cf26061bb9e849",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -2253,7 +2253,7 @@
     },
     {
       "path": "crates/norn-checker/src/consistency/exchange.rs",
-      "sha256": "6fa602be53b43a42e0100914871bebb3e4dd0b9d82df99f515650f5815411c0c",
+      "sha256": "595a67d93d04125ae7c1566dd6aba3b85d67b036c4112926fe1ca6112059114f",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
