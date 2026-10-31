@@ -4878,7 +4878,7 @@
     },
     {
       "path": "crates/norn-checker/tests/table_analysis.rs",
-      "sha256": "8bd43b1cd9d9944ad50ad24a82caf26f3c726b80c35dd63c467aab73599dbcc0",
+      "sha256": "c7b1ce9f850f782ad0b4b3ce09c1c4e9fb6cc0dce0998644ce2a94fe947bbd43",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
