@@ -105,14 +105,21 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     let mut response = call
         .send(body.as_bytes())
         .map_err(|_e| "MCP HTTP request failed")?;
-    let http_failed = !response.status().is_success();
+    let status = response.status();
+    let http_failed = !status.is_success();
     let is_sse = response
         .headers()
         .get("content-type")
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.split(';').next() == Some("text/event-stream"));
     let text = response_text(response.body_mut().as_reader(), is_sse)?;
-    let value: Value = serde_json::from_str(&text).map_err(|_e| "invalid MCP JSON response")?;
+    let value: Value = serde_json::from_str(&text).map_err(|_e| {
+        if http_failed {
+            format!("MCP HTTP request failed ({status})")
+        } else {
+            "invalid MCP JSON response".to_owned()
+        }
+    })?;
     if value.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
         || value.get("id") != Some(&json!(1))
         || (value.get("result").is_some() == value.get("error").is_some())
