@@ -10,33 +10,30 @@ use norn_metrics::analysis::welch;
 use norn_metrics::temporal::{TemporalPlan, TemporalRow, TemporalValue};
 use std::path::PathBuf;
 
-#[test]
-fn welch_matches_closed_form_and_refuses_invalid_groups() {
+fn catalog() -> EffectiveCatalog {
     let root = PathBuf::from(
         std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR").expect("prepare typed fixtures"),
     );
     let artifacts: Vec<ArtifactEnvelope> =
         serde_json::from_slice(&std::fs::read(root.join("metric-demand.json")).expect("fixture"))
             .expect("artifacts");
-    let catalog = EffectiveCatalog::from_artifacts(&artifacts);
-    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0)
-        .expect("plan");
-    let value = |n: i64, at| TemporalValue {
-        value: RuntimeValue::from_json_text(n.to_string()).expect("number"),
-        valid_at: at,
-        recorded_at: at,
-        source: format!("synthetic:{n}:{at}"),
-    };
-    let rows = || {
-        (1..=6)
-            .map(|n| TemporalRow {
-                key: format!("synthetic-{n}"),
-                at: 100,
-                features: vec![value(i64::from(n > 3), 100)],
-                outcome: value(n, 200),
-            })
-            .collect::<Vec<_>>()
-    };
+    EffectiveCatalog::from_artifacts(&artifacts)
+}
+
+fn value(n: i64, at: i64) -> TemporalValue {
+    TemporalValue { value: RuntimeValue::from_json_text(n.to_string()).expect("number"),
+        valid_at: at, recorded_at: at, source: format!("synthetic:{n}:{at}") }
+}
+
+fn rows() -> Vec<TemporalRow> {
+    (1..=6).map(|n| TemporalRow { key: format!("synthetic-{n}"), at: 100,
+        features: vec![value(i64::from(n > 3), 100)], outcome: value(n, 200) }).collect()
+}
+
+#[test]
+fn welch_refuses_constant_decimals_and_handles_unequal_variances() {
+    let catalog = catalog();
+    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0).expect("plan");
     let decimal_plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "weight", 0).expect("decimal plan");
     let mut decimals = rows();
     for (i, row) in decimals.iter_mut().enumerate() {
@@ -52,6 +49,12 @@ fn welch_matches_closed_form_and_refuses_invalid_groups() {
     assert!((unequal.difference + 5.0).abs() < 1e-12);
     assert!((unequal.statistic + 5.0 / 2.0_f64.sqrt()).abs() < 1e-12);
     assert!((unequal.degrees_of_freedom - 216.0 / 53.0).abs() < 1e-12);
+}
+
+#[test]
+fn welch_matches_closed_form_and_refuses_invalid_groups() {
+    let catalog = catalog();
+    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0).expect("plan");
     let table = plan.materialize(200, 1, rows()).expect("table");
     let report = welch(&table, 0.05).expect("report");
     assert_eq!(report.n, (3, 3));
