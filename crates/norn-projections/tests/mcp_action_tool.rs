@@ -25,14 +25,15 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
     let mut action = fixture_action();
     action.input_schema = serde_json::from_value(json!({
         "type": "object", "additionalProperties": false,
-        "properties": {"code": {"type": "string"}, "brand": {"type": "string"}},
-        "required": ["code", "brand"]
+        "properties": {"code": {"type": "string"}, "brand": {"type": "string"}, "amount": {"type": "decimal", "scale": 2}},
+        "required": ["code", "brand", "amount"]
     }))
     .expect("schema decodes");
     action.derive = serde_json::from_value(json!([
         {"field": "code", "expression": "trim(input.code)"},
         {"field": "code", "expression": "upper(input.code)"},
-        {"field": "brand", "expression": "input.brand ?? 'NORN'", "inputRequired": false}
+        {"field": "brand", "expression": "input.brand ?? 'NORN'", "inputRequired": false},
+        {"field": "amount", "expression": "input.amount ?? 0", "inputRequired": false}
     ]))
     .expect("derivations decode");
     let hints = action_tool(&fixture_action())
@@ -50,11 +51,16 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
         json!([{"type": "string"}, {"type": "null"}])
     );
     assert_eq!(
+        tool["inputSchema"]["properties"]["amount"]["anyOf"],
+        json!([{"type":"string"},{"type":"null"}])
+    );
+    assert_eq!(
         tool["_meta"]["norn/inputDerivations"],
         json!([
             {"field": "code", "expression": "trim(input.code)", "inputRequired": true},
             {"field": "code", "expression": "upper(input.code)", "inputRequired": true},
-            {"field": "brand", "expression": "input.brand ?? 'NORN'", "inputRequired": false}
+            {"field": "brand", "expression": "input.brand ?? 'NORN'", "inputRequired": false},
+            {"field": "amount", "expression": "input.amount ?? 0", "inputRequired": false}
         ])
     );
     assert_eq!(
@@ -63,7 +69,7 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
             .get("required")
             .and_then(norn_ir::JsonValue::as_array)
             .map(<[norn_ir::JsonValue]>::len),
-        Some(2)
+        Some(3)
     );
 }
 

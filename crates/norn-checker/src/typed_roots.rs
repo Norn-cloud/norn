@@ -1418,7 +1418,7 @@ pub(crate) fn action_schema_type(schema: &JsonValue) -> Option<Type> {
     match type_value.as_string()? {
         "string" => Some(Type::text()),
         "integer" => Some(Type::Integer),
-        "number" => Some(Type::Number),
+        "number" | "decimal" => Some(Type::Number),
         "boolean" => Some(Type::Bool),
         "null" | "object" => Some(Type::Json),
         "array" => Some(action_schema_type(schema.get("items")?)?.list()),

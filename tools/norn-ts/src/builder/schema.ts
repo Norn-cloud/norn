@@ -11,11 +11,17 @@
  */
 import type { Json } from "../canonical.ts"
 
-export type ValueSchema = StringSchema | ScalarSchema | ArraySchema | ObjectSchema | NullableSchema
+export type ValueSchema = StringSchema | DecimalSchema | ScalarSchema | ArraySchema | ObjectSchema | NullableSchema
 
 export interface StringSchema {
   readonly type: "string"
   readonly enum?: ReadonlyArray<string>
+}
+
+/** Exact decimal text on ActionIR wire, decoded by the kernel. */
+export interface DecimalSchema {
+  readonly type: "decimal"
+  readonly scale: number
 }
 
 export interface ScalarSchema {
@@ -99,6 +105,7 @@ export function mergeSchemas(a: ValueSchema, b: ValueSchema, path = "$"): ValueS
     if (a.enum === undefined || b.enum === undefined) return text()
     return text([...new Set([...a.enum, ...b.enum])])
   }
+  if (a.type === "decimal" && b.type === "decimal") return { type: "decimal", scale: Math.max(a.scale, b.scale) }
   if (isNumeric(a) && isNumeric(b)) return a.type === b.type ? a : number
   if (a.type !== b.type) return `${path}: ${a.type} and ${b.type} have no closed union`
   if (a.type === "array" && b.type === "array") {
