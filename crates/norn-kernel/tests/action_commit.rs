@@ -4051,8 +4051,6 @@ fn protected_properties_refuse_action_input_and_accept_rule_output() {
     let mut rule_turn = action_call.turn.clone();
     rule_turn.id = "protected-rule-update".to_owned();
     commit_decision(&mut cell, &catalog, &slice, &rule_turn, &output).unwrap();
-    assert_eq!(
-        cell.load(&key).unwrap().values.unwrap().get("so_number"),
-        Some(&JsonValue::String("rule-updated".to_owned()))
-    );
+    let values = cell.load(&key).unwrap().values.unwrap();
+    assert_eq!(values["so_number"].as_str(), Some("rule-updated"));
 }
