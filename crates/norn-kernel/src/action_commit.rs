@@ -4498,8 +4498,14 @@ fn prepare_action_input_inner<'a, X>(
     .map_err(|violation| ActionRefusal::InvalidInput {
         field: violation.path,
     })?;
+    let mut supplied = raw_input.clone();
+    for step in action.derive.iter().filter(|step| !step.input_required) {
+        if supplied.get(&step.field) == Some(&RuntimeValue::Null) {
+            supplied.remove(&step.field);
+        }
+    }
     let normalized = schema
-        .decode_action_input(RuntimeValue::Object(raw_input.clone()), "$input")
+        .decode_action_input(RuntimeValue::Object(supplied), "$input")
         .map_err(|violation| ActionRefusal::InvalidInput {
             field: violation.path,
         })?;
@@ -5638,6 +5644,22 @@ mod reference_lineage_tests {
             prepare_action_input::<()>(&action, &number),
             Err(ActionRefusal::InvalidInput { .. })
         ));
+        action.derive = serde_json::from_str(
+            r#"[{"field":"amount","expression":"input.amount ?? 0","inputRequired":false}]"#,
+        )
+        .expect("default");
+        for raw in [
+            JsonObject::new(),
+            JsonObject::from([("amount".to_owned(), RuntimeValue::Null)]),
+        ] {
+            assert_eq!(
+                prepare_action_input::<()>(&action, &raw)
+                    .expect("defaulted decimal")
+                    .effective_input
+                    .get("amount"),
+                Some(&RuntimeValue::Number(Decimal::ZERO))
+            );
+        }
     }
 
     #[test]
