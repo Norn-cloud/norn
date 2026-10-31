@@ -66,12 +66,13 @@ prepare_inputs() {
 use_jsonschema() {
   [[ -x $upstream/venv/bin/python3 ]] || python3 -m venv "$upstream/venv"
   export PATH="$upstream/venv/bin:$PATH"
-  python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1
+  python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1 PyYAML==6.0.3
 }
 run_phase() {
   if [[ $1 != cheap && $1 != test-shards && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
     cheap)
+      use_jsonschema
       cargo metadata --locked --format-version 1 > /dev/null
       cargo fmt --all -- --check
       (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck)
