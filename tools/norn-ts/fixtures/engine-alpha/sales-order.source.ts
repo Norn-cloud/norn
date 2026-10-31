@@ -46,7 +46,7 @@ export const PaymentAllocation = Norn.type({
   links: [{ id: "order", target: SalesOrder, cardinality: { to: "one", from: "many", required: true } }],
 })
 
-const InvoiceInput = Schema.Struct({ id: Schema.String, order_id: Schema.String, amount: Norn.decimal(2), reference: Schema.String })
+const InvoiceInput = Schema.Struct({ id: Schema.String, order_id: Schema.String, amount: Schema.Number, reference: Schema.String })
 export const RecordInvoice = Norn.action({
   id: "alpha.order.record_invoice", title: "Record invoice", version: "0.1.0",
   input: InvoiceInput, output: Schema.Struct({ id: Schema.String }),
@@ -58,7 +58,7 @@ export const RecordInvoice = Norn.action({
   effect: { kind: "upsert_input_object", type: SalesInvoice, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
 
-const PaymentInput = Schema.Struct({ id: Schema.String, order_id: Schema.String, amount: Norn.decimal(2) })
+const PaymentInput = Schema.Struct({ id: Schema.String, order_id: Schema.String, amount: Schema.Number })
 export const RecordPayment = Norn.action({
   id: "alpha.order.record_payment", title: "Record payment allocation", version: "0.1.0",
   input: PaymentInput, output: Schema.Struct({ id: Schema.String }),
