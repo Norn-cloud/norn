@@ -151,6 +151,64 @@
           "outcome": {
             "kind": "reject"
           }
+        },
+        {
+          "outcome": {
+            "default": "gross",
+            "kind": "parameterise",
+            "parameter": {
+              "artifactId": "shop.order_total_basis.setting",
+              "member": {
+                "kind": "artifact"
+              },
+              "version": "0.1.0"
+            },
+            "setBy": [
+              "tenant",
+              "jurisdiction"
+            ]
+          }
+        },
+        {
+          "outcome": {
+            "cases": [
+              {
+                "definition": {
+                  "artifactId": "shop.storefront.mapping",
+                  "member": {
+                    "kind": "artifact"
+                  },
+                  "version": "0.2.0"
+                },
+                "scope": {
+                  "tenantId": "eu"
+                }
+              },
+              {
+                "definition": {
+                  "artifactId": "shop.storefront.mapping",
+                  "member": {
+                    "kind": "artifact"
+                  },
+                  "version": "0.1.0"
+                },
+                "scope": {
+                  "tenantId": "us"
+                }
+              }
+            ],
+            "kind": "scoped"
+          }
+        },
+        {
+          "note": "wait for the storefront tax API",
+          "outcome": {
+            "kind": "defer",
+            "revisit": {
+              "kind": "date",
+              "on": "2026-12-01"
+            }
+          }
         }
       ],
       "decidedAt": "2026-10-31",

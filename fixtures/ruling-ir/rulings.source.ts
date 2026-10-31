@@ -47,5 +47,21 @@ export const totalIsGross = Norn.ruling({
   affects: [Norn.meta.artifact(Norn.pin("shop.storefront.mapping", "0.2.0"))],
   decidedBy: { principal: "owner", authority: "owner" },
   decidedAt: "2026-10-31",
-  alternatives: [{ outcome: Norn.outcome.reject(), note: "keep both totals" }],
+  alternatives: [
+    { outcome: Norn.outcome.reject(), note: "keep both totals" },
+    {
+      outcome: Norn.outcome.parameterise(
+        Norn.meta.artifact(Norn.pin("shop.order_total_basis.setting", "0.1.0")),
+        "gross",
+        ["tenant", "jurisdiction"],
+      ),
+    },
+    {
+      outcome: Norn.outcome.scoped([
+        { scope: { tenantId: "eu" }, definition: Norn.meta.artifact(Norn.pin("shop.storefront.mapping", "0.2.0")) },
+        { scope: { tenantId: "us" }, definition: Norn.meta.artifact(Norn.pin("shop.storefront.mapping", "0.1.0")) },
+      ]),
+    },
+    { outcome: Norn.outcome.deferUntil("2026-12-01"), note: "wait for the storefront tax API" },
+  ],
 })

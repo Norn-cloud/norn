@@ -18340,7 +18340,7 @@
     },
     {
       "path": "fixtures/ruling-ir/rulings.json",
-      "sha256": "80297715aa98f52bc8225598770723313db038ca69fb5bc006006c5c68448dae",
+      "sha256": "c730a5c6d863bc3732dd99270deb312b8f100b16508944539c085a4567e0f131",
       "origin": "derived",
       "category": "synthetic-golden",
       "license": "Apache-2.0",
@@ -18360,7 +18360,7 @@
     },
     {
       "path": "fixtures/ruling-ir/rulings.source.ts",
-      "sha256": "ded25c3bf33213926f3f90b5fc3710698fac2fdd5be8096d1f491086648215e2",
+      "sha256": "410ce877ad403cc8788f43060bc42c7065c3a1b0f091e28aa997059e27622748",
       "origin": "authored",
       "category": "synthetic-fixture",
       "license": "Apache-2.0",
@@ -23931,7 +23931,7 @@
     },
     {
       "path": "tools/norn-ts/test/ruling.test.ts",
-      "sha256": "c8271b543ee6129557b78ded9ceac64e89b96882e1249ad8ce1cc5617251e13e",
+      "sha256": "fbae46b8e22d3f0eff06f1b5a7c0f149bc33081e89dada90ce48c1a1e75c6c77",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

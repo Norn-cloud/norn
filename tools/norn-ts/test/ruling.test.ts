@@ -29,6 +29,26 @@ test("typed claim and ruling handles compile to the ClaimIR and RulingIR goldens
   }), options)
   expect(canonicalJson(built.artifact)).toBe(canonicalJson(golden[0]))
 
+  // Every outcome handle, compiled and built, gives the same RulingIR.
+  const mapping = (version: string) => RU.meta.artifact(RU.pin("shop.storefront.mapping", version))
+  const ruling = RU.lowerRuling(RU.ruling({
+    id: "shop.order_total_is_gross.ruling",
+    title: "An order's total is tax-inclusive",
+    version: "0.1.0",
+    resolves: [RU.pin("shop.order_total_divergence.claim", "0.1.0")],
+    outcome: RU.outcome.choose(mapping("0.2.0")),
+    affects: [mapping("0.2.0")],
+    decidedBy: { principal: "owner", authority: "owner" },
+    decidedAt: "2026-10-31",
+    alternatives: [
+      { outcome: RU.outcome.reject(), note: "keep both totals" },
+      { outcome: RU.outcome.parameterise(RU.meta.artifact(RU.pin("shop.order_total_basis.setting", "0.1.0")), "gross", ["tenant", "jurisdiction"]) },
+      { outcome: RU.outcome.scoped([{ scope: { tenantId: "eu" }, definition: mapping("0.2.0") }, { scope: { tenantId: "us" }, definition: mapping("0.1.0") }]) },
+      { outcome: RU.outcome.deferUntil("2026-12-01"), note: "wait for the storefront tax API" },
+    ],
+  }), options)
+  expect(canonicalJson(ruling.artifact)).toBe(canonicalJson(golden[2]))
+
   // Registry mode emits `active` envelopes; a ruling must never be ratified by authoring.
   const registry = compileDefinitions(join(ROOT, "rulings.source.ts"), { ...options, registryPackagePath: "registry/core" })
   if (!registry.ok) throw new Error(JSON.stringify(registry.diagnostics))
