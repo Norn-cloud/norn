@@ -18457,7 +18457,7 @@
     },
     {
       "path": "registry/packs/canon/artifacts/norn.ontology-pack.canon.json",
-      "sha256": "6c7ffa3979f942a7bdf46fbdd4c523c4baa3af7ccf5d4cf4d62dd787787a931d",
+      "sha256": "16dba4f5994a6935180765d53b06cd16de18cdda7d351605837ce4aad33f2592",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -18495,7 +18495,7 @@
     },
     {
       "path": "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
-      "sha256": "d7219f3ebd582b0f27c2c7106507cdc2bbe963e5f37062e93566f492569811e9",
+      "sha256": "10d34105842829232527e69b68de8939e8f5945b62b513494008e9404d18934f",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",

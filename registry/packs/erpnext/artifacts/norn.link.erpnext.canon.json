@@ -84,21 +84,6 @@
         ]
       },
       {
-        "confidenceBasisPoints": 7500,
-        "correspondenceId": "corr.payment.entry",
-        "evidenceRefs": [
-          "source.erpnext"
-        ],
-        "fromTermId": "norn.erpnext.payment.entry",
-        "justification": "Every Payment Entry moves money; internal transfers settle no claim, so it is not subsumed by payment.",
-        "relation": "subsumed_by",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.core.event.transfer"
-        ]
-      },
-      {
         "confidenceBasisPoints": 7000,
         "correspondenceId": "corr.payment.entry.reference",
         "evidenceRefs": [
@@ -181,7 +166,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.customer",
         "justification": "The billed customer is the invoice party.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -196,7 +181,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.posting.date",
         "justification": "Same ledger date.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -211,7 +196,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.due.date",
         "justification": "Same due date.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -226,7 +211,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.currency",
         "justification": "Same document currency.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -241,7 +226,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.net.total",
         "justification": "Total before taxes.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -256,7 +241,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.total.taxes",
         "justification": "Total taxes and charges.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -271,7 +256,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.grand.total",
         "justification": "Amount owed before rounding adjustment; ERPNext keeps a separate rounded total.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -292,22 +277,6 @@
         "toTermIds": [
           "norn.finance.invoice.amount.total",
           "norn.finance.payment.allocation.amount"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.sales.invoice.status",
-        "evidenceRefs": [
-          "source.erpnext"
-        ],
-        "fromTermId": "norn.erpnext.sales.invoice.status",
-        "justification": "ERPNext stores a status field that the canon derives from outstanding amount and due date.",
-        "relation": "derived",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.finance.invoice.amount.outstanding",
-          "norn.finance.invoice.date.due"
         ]
       },
       {
@@ -333,7 +302,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.item.item.code",
         "justification": "The billed item.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -348,7 +317,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.item.qty",
         "justification": "Billed quantity; ERPNext keeps the unit in a separate field.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -363,7 +332,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.item.amount",
         "justification": "Line amount.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -393,7 +362,7 @@
         ],
         "fromTermId": "norn.erpnext.payment.entry.party",
         "justification": "The paying or paid party.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -408,7 +377,7 @@
         ],
         "fromTermId": "norn.erpnext.payment.entry.posting.date",
         "justification": "Same ledger date.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -423,7 +392,7 @@
         ],
         "fromTermId": "norn.erpnext.payment.entry.currency",
         "justification": "Currency of the paid-from account.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -438,7 +407,7 @@
         ],
         "fromTermId": "norn.erpnext.payment.entry.paid.amount",
         "justification": "Amount in the paid-from currency; multi-currency entries also carry a received amount.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -453,7 +422,7 @@
         ],
         "fromTermId": "norn.erpnext.payment.entry.unallocated.amount",
         "justification": "Both are the amount not applied to any document.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -483,7 +452,7 @@
         ],
         "fromTermId": "norn.erpnext.payment.entry.reference.allocated.amount",
         "justification": "Amount applied.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -498,7 +467,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.submit",
         "justification": "Submit posts and locks the invoice.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -513,7 +482,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.invoice.cancel",
         "justification": "Cancel reverses a submitted invoice and keeps it.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -528,7 +497,7 @@
         ],
         "fromTermId": "norn.erpnext.payment.entry.submit",
         "justification": "Submit posts the payment.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -543,7 +512,7 @@
         ],
         "fromTermId": "norn.erpnext.payment.entry.cancel",
         "justification": "Cancel reverses a submitted payment.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -572,8 +541,8 @@
           "source.erpnext"
         ],
         "fromTermId": "norn.erpnext.guard.journal.unbalanced",
-        "justification": "Unequal debits and credits are refused.",
-        "relation": "equivalent",
+        "justification": "Unequal debits and credits on a journal entry are refused; the canon guard covers every transaction.",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -618,7 +587,7 @@
         ],
         "fromTermId": "norn.erpnext.sales.order.customer",
         "justification": "The ordering customer.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -633,26 +602,11 @@
         ],
         "fromTermId": "norn.erpnext.sales.order.grand.total",
         "justification": "The committed total.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
           "norn.commerce.order.amount.total"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.sales.order.status",
-        "evidenceRefs": [
-          "source.erpnext"
-        ],
-        "fromTermId": "norn.erpnext.sales.order.status",
-        "justification": "ERPNext stores the status; the canon derives the order state.",
-        "relation": "derived",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.commerce.order.state"
         ]
       },
       {
@@ -680,6 +634,16 @@
     "packKind": "link",
     "packVersion": "0.1",
     "residuals": [
+      {
+        "note": "Internal transfers move money between one agent's own accounts; the canon has no account-to-account movement. Receive and pay entries are payments: see the member correspondences.",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.payment.entry"
+      },
+      {
+        "note": "The stored status also has Draft, Return, Cancelled, Discounted and Internal Transfer values that outstanding amount and due date cannot produce; the canon state has no discounting state.",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.sales.invoice.status"
+      },
       {
         "note": "ERPNext lets an invoice also move stock; the canon records that as a separate transfer event.",
         "reason": "system_specific",
@@ -739,6 +703,11 @@
         "note": "Projected as the event's class (transfer or transformation), not as a property.",
         "reason": "system_specific",
         "termId": "norn.erpnext.stock.entry.purpose"
+      },
+      {
+        "note": "On Hold and Closed are set by users; the canon order state is derived and has no hold or close.",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.sales.order.status"
       },
       {
         "note": "The canon has no link from an invoice to the order it bills.",
