@@ -1,4 +1,4 @@
-// #3762: finite model before runtime integration. Exact minor units, two cells,
+// Finite model before runtime integration. Exact minor units, two cells,
 // two orders per cell, two economic kinds. Bounds are not a production limit.
 module order_economics {
   type Event = { cell: int, order: int, kind: str, id: int, amount: int }
