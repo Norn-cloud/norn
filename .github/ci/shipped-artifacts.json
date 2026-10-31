@@ -29944,7 +29944,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "526fde6ea12885959ed9ee5eb73eaa5fc538a0ecb851990f92f40847ec3d197d",
+      "sha256": "8a9698c3ddf1c8ec5ef8027dd3b0289ea8735a567a19d94cd398dfa24b7651e8",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32706,7 +32706,7 @@
     },
     {
       "path": "welldb/crates/welldb-ivm/tests/decimal.rs",
-      "sha256": "1f65f67f5d0634c79f34cdd0f6ef780fe6222235038a52e91998b5c76534a666",
+      "sha256": "6a89866bcd7aff952bbbe5e0d19bb2e0c3e07cce16515b55f2af09054d04567b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
