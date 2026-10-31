@@ -197,27 +197,37 @@ fn every_generated_workflow_of_primitive_steps_inherits_conservation_and_immutab
                 }
             } else {
                 let keys: Vec<_> = posted.keys().cloned().collect();
-                let key = FactKey::new(LEG_TYPE, &keys[rng.below(keys.len())]);
+                let target = posted[&keys[rng.below(keys.len())]].clone();
+                let key = FactKey::new(LEG_TYPE, &target.key);
                 let live = cell.load(&key).unwrap();
-                let mutation = if choice == 2 {
-                    FactMutation::Put {
-                        values: live.values.clone().unwrap(),
-                    }
+                // An edit really changes the stored amount; each attempt must be
+                // refused by the immutability guard itself, not by another check.
+                let (write, expected_code) = if choice == 2 {
+                    let changed = Leg {
+                        amount: target.amount.checked_add(1).unwrap(),
+                        ..target
+                    };
+                    let mut write = put(&format!("j{step}"), &changed);
+                    write.expected = live.version;
+                    (write, "journal.posted_immutable")
                 } else {
-                    FactMutation::Delete
+                    let write = FactWrite {
+                        key,
+                        expected: live.version,
+                        mutation: FactMutation::Delete,
+                    };
+                    (write, "journal.delete_forbidden")
                 };
-                let write = FactWrite {
-                    key,
-                    expected: live.version,
-                    mutation,
-                };
-                assert!(
-                    cell.commit(CellCommit {
+                let refusal = cell
+                    .commit(CellCommit {
                         writes: vec![write],
                         ..CellCommit::empty()
                     })
-                    .is_err(),
-                    "seed {seed} step {step}: an edit or delete of a posted leg must be refused"
+                    .expect_err("an edit or delete of a posted leg must be refused");
+                assert_eq!(
+                    refusal.code(),
+                    expected_code,
+                    "seed {seed} step {step}: wrong refusal for a posted leg"
                 );
                 refused = refused.checked_add(1).unwrap();
             }

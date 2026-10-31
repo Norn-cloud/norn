@@ -11961,7 +11961,7 @@
     },
     {
       "path": "crates/norn-kernel/tests/core_physics_inheritance.rs",
-      "sha256": "95b6e0c025659e3ce7f26fb3d398aeb3859869d29f25acf5f227fc516c7dd937",
+      "sha256": "f4c75940c1e831f875b68464d5ec2955cf1278d3892e4104995d3c33e3c07de7",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
