@@ -428,7 +428,9 @@ pub fn forecast(table: &TemporalTable, boundary: i64) -> Result<ForecastReport, 
         .collect::<Result<Vec<_>, _>>()?;
     let fitted = fit(&pairs, 0.05)?;
     let n_train = count(pairs.len())?;
-    let (origin_x, origin_y) = *pairs.first().ok_or(AnalysisError::Data("empty training set"))?;
+    let (origin_x, origin_y) = *pairs
+        .first()
+        .ok_or(AnalysisError::Data("empty training set"))?;
     let centered_x = pairs.iter().map(|p| p.0 - origin_x).sum::<f64>() / n_train;
     let centered_y = pairs.iter().map(|p| p.1 - origin_y).sum::<f64>() / n_train;
     let mut predictions = Vec::with_capacity(test.len());
@@ -459,4 +461,3 @@ pub fn forecast(table: &TemporalTable, boundary: i64) -> Result<ForecastReport, 
         predictions,
     })
 }
-
