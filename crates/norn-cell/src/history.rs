@@ -101,6 +101,23 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             params![world, root, key, to_i64(commit_seq, "historical cursor")?],
             |row| row.get(0),
         )?;
+        // A corrupt index can hide the true latest incarnation beyond the cursor.
+        // Authenticate the next greater version independently of that filter.
+        let next: Option<i64> = self.conn.query_optional(
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND \"version\" > ?4 ORDER BY \"version\" ASC LIMIT 1"),
+            params![world, root, key, version.unwrap_or(0)],
+            |row| row.get(0),
+        )?;
+        if let Some(next) = next {
+            let Some(receipt) = self.receipt_for_fact_version_with_budget(
+                world, root, key, to_u64(next, "next historical version")?, budget,
+            )? else {
+                return Ok(crate::reactive::BudgetedRead::Exhausted);
+            };
+            if receipt.body.commit_seq <= commit_seq {
+                return Err(unproven_snapshot());
+            }
+        }
         let Some(version) = version else {
             return Ok(crate::reactive::BudgetedRead::Missing);
         };

@@ -191,6 +191,38 @@ fn cursor_checks_authenticated_historical_lineage_without_resurrecting_a_subtype
 }
 
 #[test]
+fn cursor_refuses_a_later_incarnation_hidden_by_postdated_index_metadata() {
+    use norn_cell::reactive::BudgetedRead;
+    for deletion in [false, true] {
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("cell.sqlite");
+        let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+        store.commit(&batch(vec![put("proof.Item", "item", "one")])).expect("first");
+        let write = if deletion {
+            FactWriteRow::Delete { object_type: "proof.Item".into(), key: "item".into() }
+        } else { put("proof.Item", "item", "two") };
+        let latest = store.commit(&batch(vec![write])).expect("latest").receipt().body.commit_seq;
+        store.commit(&batch(vec![put("proof.Item", "other", "unrelated")])).expect("later receipt");
+        let connection = rusqlite::Connection::open(path).expect("corruption fixture");
+        assert_eq!(connection.execute(
+            "UPDATE \"_norn_fact_values\" SET \"commit_seq\" = ?1 WHERE \"world\" = ?2 AND \"root_type\" = 'proof.Item' AND \"id\" = 'item' AND \"version\" = 2",
+            rusqlite::params![i64::try_from(latest + 1).expect("cursor"), MAIN_WORLD],
+        ).expect("postdate only index metadata"), 1);
+        assert_eq!(store.read().object_at_version(MAIN_WORLD, "proof.Item", "item", 2)
+            .expect("unchanged snapshot proof").is_none(), deletion);
+        let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        assert!(matches!(store.read().object_at_commit_with_budget(
+            MAIN_WORLD, "proof.Item", "item", latest, &mut DecodeBudget::new(&limits)),
+            Err(CellError::HistoricalValueUnproven(_))));
+        let mut exhausted = limits;
+        exhausted.max_candidate_bytes_per_commit = 0;
+        assert!(matches!(store.read().object_at_commit_with_budget(
+            MAIN_WORLD, "proof.Item", "item", latest, &mut DecodeBudget::new(&exhausted))
+            .expect("budget precedes proof decode"), BudgetedRead::Exhausted));
+    }
+}
+
+#[test]
 fn cursor_refuses_a_backdated_lookup_even_when_the_snapshot_hash_is_unchanged() {
     use norn_cell::reactive::BudgetedRead;
     let dir = tempfile::tempdir().expect("directory");
