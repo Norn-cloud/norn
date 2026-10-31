@@ -1,7 +1,8 @@
 //! Ordered row capture, exact scalar checks and canonical result finalization.
 use crate::{
-    Aggregate, Bucket, BucketAgg, CaptureKey, ClassId, ExactSum, JoinedTarget, Placement, Property, RecordView, RowRef, GroupKey, Lineage, Member, MetricError, MetricResult,
-    Plan, Value, VisibilityOutcome,
+    Aggregate, Bucket, BucketAgg, CaptureKey, ClassId, ExactSum, GroupKey, JoinedTarget, Lineage,
+    Member, MetricError, MetricResult, Placement, Plan, Property, RecordView, RowRef, Value,
+    VisibilityOutcome,
 };
 use std::collections::BTreeMap;
 /// Parse admitted UTC ISO tokens exactly, without the native i64 nanosecond limit.
@@ -100,8 +101,6 @@ pub fn parse_time(text: &str) -> Option<i128> {
     }
     Some(nanos)
 }
-
-
 
 /// Ordered row refusal, suitable for an incrementally maintained index.
 #[derive(Clone, Debug, PartialEq, Eq)]
