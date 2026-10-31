@@ -2106,7 +2106,7 @@
     },
     {
       "path": "crates/norn-checker/conformance/diagnostic-codes.json",
-      "sha256": "16416ef6d59def49b28ff361689f57bcd18164247d6447c961a60b579c67d0bb",
+      "sha256": "cd096bf9219ea3caf91b297c0bdd9e543239898b981ec9664792d15f2ccc0467",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -2181,7 +2181,7 @@
     },
     {
       "path": "crates/norn-checker/src/codes.rs",
-      "sha256": "2286ca7eab5c87b0b3e2b83c57912b0f1982d6da99fa9c3ab1b2f4cea13619bf",
+      "sha256": "3001569017869a193a907912063545fabc3cad42f03bcf4dbee1cf7730d96a32",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -2200,6 +2200,60 @@
     {
       "path": "crates/norn-checker/src/connector_path.rs",
       "sha256": "6e7944057b8372e29c687d3a9971ffb2e874ab0839cfbdfef5bc72fe9f383034",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-checker/src/consistency.rs",
+      "sha256": "340c350006c6c671f9f98e079cdd9ef22ad11f0048fd038f9e33218e9671d5e9",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-checker/src/consistency/chase.rs",
+      "sha256": "0474e8cbd4cec525abf6795b82fcdf0df8f9b7ed4c3a2ecae70cea7eab4d588d",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-checker/src/consistency/theory.rs",
+      "sha256": "0ba4642c81a0fda7af3f5f56a5bed1750699962aa3f3502f9f95c0b9aab8a40c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -2505,7 +2559,7 @@
     },
     {
       "path": "crates/norn-checker/src/lib.rs",
-      "sha256": "6f2727d5c0d5d2d583edb39e491b8a7723ce37f6ef4f9965cfa69cc9a180cc8b",
+      "sha256": "2a5dd34be0f150c916322aa93f64c5b1d575dd4cab07928c5e3e0ceb85e47543",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3406,6 +3460,24 @@
     {
       "path": "crates/norn-checker/tests/code_registry.rs",
       "sha256": "70e47eaf61b3b25251229cea4395b8c90e29069766b425b59cd2cd4f1a62067a",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-checker/tests/consistency.rs",
+      "sha256": "607d4e361ca6a97e95cac47e4b8e8de81d35dc64345def1a5c1d118e256376ee",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30187,7 +30259,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "0d1faf60f7c09dfa6bf62279d9e21aa8de5250a553cb1b34bcff5ed6e1bac88e",
+      "sha256": "a4dc06f5c12f1c745f1d0caf9210fbd5deb51678b53499b1175ed497c9638a7f",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
