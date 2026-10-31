@@ -223,7 +223,8 @@ case "${1:-all}" in
       --affected) [[ $# -eq 3 && $3 =~ ^[0-9a-f]{40}$ ]] || run_phase usage; changed=$(git diff --name-only --no-renames "$3" HEAD --) || exit 2 ;;
       *) run_phase usage ;;
     esac
-    NORN_CI_CHANGED=$changed python3 - "${2:-full}" "$(list_shards | tr '\n' ' ')" "${others[*]}" "$rest_shards" <<'PY'
+    # Changed paths go on fd 3: a large diff exceeds the per-variable size limit.
+    python3 - "${2:-full}" "$(list_shards | tr '\n' ' ')" "${others[*]}" "$rest_shards" 3<<<"$changed" <<'PY'
 import json, os, sys, tomllib
 from pathlib import Path
 mode, shards, phases, rest = sys.argv[1:]
@@ -233,7 +234,7 @@ def done(plan):
     sys.exit(0)
 if mode == "full":
     done({"mode": "full", "shard": shards.split(), "phase": phases.split() + ["test-shards"], "packages": "", "rest_shards": rest})
-changed = [line for line in os.environ["NORN_CI_CHANGED"].splitlines() if line]
+changed = [line for line in open(3).read().splitlines() if line]
 root = Path(".")
 workspace = tomllib.loads((root / "Cargo.toml").read_text())
 shared = workspace["workspace"].get("dependencies", {})
