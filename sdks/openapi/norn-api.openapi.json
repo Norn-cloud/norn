@@ -8782,7 +8782,7 @@
             "items": {
               "$ref": "#/components/schemas/NornIrOntologyShape"
             },
-            "description": "Non-empty; one closed promotion shape per active term."
+            "description": "Non-empty; one closed promotion shape per active shaped term."
           },
           "sources": {
             "type": "array",
@@ -8969,6 +8969,10 @@
           "definition": {
             "type": "string"
           },
+          "domainTermId": {
+            "type": "string",
+            "description": "The active class term a `property` or `action` term belongs to\n(required on those, optional on `predicate`, absent on shaped kinds;\nchecker rule)."
+          },
           "label": {
             "type": "string"
           },
@@ -8997,14 +9001,32 @@
         "additionalProperties": false
       },
       "NornIrOntologyTermKind": {
-        "type": "string",
-        "description": "What an ontology term denotes.",
-        "enum": [
-          "class",
-          "property",
-          "value_object",
-          "concept_scheme_root"
-        ]
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "class",
+              "property",
+              "value_object",
+              "concept_scheme_root"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "A business operation on its domain class (posting an invoice).",
+            "enum": [
+              "action"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "A condition over canon state, such as an admission refusal.",
+            "enum": [
+              "predicate"
+            ]
+          }
+        ],
+        "description": "What an ontology term denotes. `class`, `value_object` and\n`concept_scheme_root` terms take one closed promotion shape; `property`,\n`action` and `predicate` terms are vocabulary handles and take none."
       },
       "NornIrOntologyTermStatus": {
         "type": "string",
@@ -9886,14 +9908,16 @@
       },
       "NornIrResidualReason": {
         "type": "string",
-        "description": "Why a source term has no correspondence (norn-platform#2986).",
+        "description": "Why a source term has no correspondence (norn-platform#2986; lead\nruling 2026-10-31 for `non_conforming`).",
         "enum": [
           "system_specific",
-          "canon_gap"
+          "canon_gap",
+          "non_conforming"
         ],
         "x-enumDescriptions": [
           "Detail specific to the source system; the canon drops it.",
-          "The target lacks a term for it; the canon should grow one."
+          "The target lacks a term for it; the canon should grow one.",
+          "Source behaviour that breaks a target law (editing posted data in\nplace). The law holds; the link flags the behaviour and never maps it."
         ]
       },
       "NornIrResolutionPolicyName": {
