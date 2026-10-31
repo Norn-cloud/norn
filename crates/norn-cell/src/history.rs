@@ -104,11 +104,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(version) = version else {
             return Ok(crate::reactive::BudgetedRead::Missing);
         };
+        let version = to_u64(version, "historical version")?;
+        let Some(receipt) =
+            self.receipt_for_fact_version_with_budget(world, root, key, version, budget)?
+        else {
+            return Ok(crate::reactive::BudgetedRead::Exhausted);
+        };
+        if receipt.body.commit_seq > commit_seq {
+            return Err(unproven_snapshot());
+        }
         let Some(snapshot) = self.proven_snapshot_with_budget(
             world,
             root,
             key,
-            to_u64(version, "historical version")?,
+            version,
             budget,
         )?
         else {

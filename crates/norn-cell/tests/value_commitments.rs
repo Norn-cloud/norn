@@ -191,6 +191,27 @@ fn cursor_checks_authenticated_historical_lineage_without_resurrecting_a_subtype
 }
 
 #[test]
+fn cursor_refuses_a_backdated_lookup_even_when_the_snapshot_hash_is_unchanged() {
+    use norn_cell::reactive::BudgetedRead;
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+    let first = store.commit(&batch(vec![put("proof.Item", "item", "one")])).expect("first").receipt().body.commit_seq;
+    store.commit(&batch(vec![put("proof.Item", "item", "two")])).expect("later version");
+    let connection = rusqlite::Connection::open(path).expect("corruption fixture");
+    connection.execute(
+        "UPDATE \"_norn_fact_values\" SET \"commit_seq\" = ?1 WHERE \"world\" = ?2 AND \"root_type\" = 'proof.Item' AND \"id\" = 'item' AND \"version\" = 2",
+        rusqlite::params![i64::try_from(first).expect("cursor"), MAIN_WORLD],
+    ).expect("backdate lookup only");
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let mut budget = DecodeBudget::new(&limits);
+    assert!(matches!(store.read().object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", first, &mut budget), Err(CellError::HistoricalValueUnproven(_))));
+    let mut exhausted = limits;
+    exhausted.max_candidate_bytes_per_commit = 0;
+    assert!(matches!(store.read().object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", first, &mut DecodeBudget::new(&exhausted)).expect("budget checked before decoding"), BudgetedRead::Exhausted));
+}
+
+#[test]
 fn commitments_capture_each_materialized_version_and_survive_restart() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
