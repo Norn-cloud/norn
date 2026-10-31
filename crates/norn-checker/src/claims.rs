@@ -450,10 +450,20 @@ fn observe(
             mapped.object_type.as_str()
         ));
     }
-    mapped
-        .invocations
+    // A lifecycle property is observed as a snapshot of its target state,
+    // never written by the observe upsert.
+    let state = mapped
+        .lifecycle_snapshots
         .iter()
-        .find_map(|invocation| invocation.input.get(property).cloned())
+        .find(|snapshot| snapshot.property.as_str() == property)
+        .map(|snapshot| RuntimeValue::String(snapshot.state.clone()));
+    state
+        .or_else(|| {
+            mapped
+                .invocations
+                .iter()
+                .find_map(|invocation| invocation.input.get(property).cloned())
+        })
         .ok_or_else(|| {
             format!(
                 "map {:?} gives no value for {property:?} of the witness record",

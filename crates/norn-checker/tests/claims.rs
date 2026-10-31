@@ -500,3 +500,76 @@ fn a_witness_mapping_to_another_type_fails_closed() {
         ])
     );
 }
+
+#[test]
+fn a_lifecycle_witness_compares_the_observed_states() {
+    // Both systems observe the order's status; the ERP says open, the
+    // storefront closed. The values live in lifecycle snapshots, not in the
+    // observe upsert, and still contradict.
+    let mut artifacts = conflict_set("0.1.0", Vec::new());
+    for artifact in &mut artifacts {
+        if artifact["artifactId"] == "shop.Order.entity" {
+            let order = &mut artifact["payload"]["objectType"];
+            order["properties"].as_array_mut().expect("properties").push(json!({
+                "id": "status", "default": "open",
+                "type": { "kind": "enum", "values": [{ "value": "open" }, { "value": "closed" }] }
+            }));
+            order["lifecycles"] = json!([{ "property": "status", "initial": ["open"], "terminal": ["closed"],
+                "transitions": [{ "id": "close", "from": ["open"], "to": "closed" }] }]);
+        }
+        if artifact["kind"] == "mapping" {
+            artifact["payload"]["maps"][0]["lifecycles"] = json!([{ "property": "status", "state": "input.state == 'closed' ? 'closed' : 'open'" }]);
+        }
+        if artifact["kind"] == "source_schema" {
+            let dataset = artifact["payload"]["datasets"][0]["id"].clone();
+            artifact["payload"]["fields"]
+                .as_array_mut()
+                .expect("fields")
+                .push(json!({
+                    "dataset": dataset, "name": "state", "ordinal": 9, "nativeType": "string",
+                    "typeCandidate": { "type": "string", "origin": "declared" }, "required": true
+                }));
+        }
+    }
+    // The mappings pin their source schemas by hash: rebind them.
+    let hashes: Vec<(String, String)> = artifacts
+        .iter()
+        .filter(|artifact| artifact["kind"] == "source_schema")
+        .map(|artifact| {
+            let id = artifact["artifactId"].as_str().expect("id").to_owned();
+            (
+                id,
+                ArtifactRef::of(&decode(artifact.clone()))
+                    .expect("hash")
+                    .sha256,
+            )
+        })
+        .collect();
+    for artifact in &mut artifacts {
+        if artifact["kind"] == "mapping" {
+            let schema = artifact["payload"]["source"]["schemaId"]
+                .as_str()
+                .expect("schema")
+                .to_owned();
+            let sha = &hashes
+                .iter()
+                .find(|(id, _)| *id == schema)
+                .expect("bound schema")
+                .1;
+            artifact["payload"]["source"]["sha256"] = json!(sha);
+        }
+        if artifact["artifactId"] == TOTALS {
+            let witness = &mut artifact["payload"]["statement"]["witness"];
+            witness["target"]["member"]["property"] = json!("status");
+            witness["left"]["record"]["state"] = json!("open");
+            witness["right"]["record"]["state"] = json!("closed");
+        }
+    }
+    assert_eq!(
+        obligations(artifacts),
+        expect(&[
+            (codes::UNRULED_DIVERGENCE, TOTALS),
+            (codes::CONTRADICTION_PERSISTS, TOTALS)
+        ])
+    );
+}

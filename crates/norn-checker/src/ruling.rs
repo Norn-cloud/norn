@@ -79,17 +79,28 @@ fn is_date(text: &str) -> bool {
     };
     let number = |range: std::ops::Range<usize>| {
         text.get(range)
-            .and_then(|part| part.parse::<u8>().ok())
+            .and_then(|part| part.parse::<u16>().ok())
             .unwrap_or(0)
     };
-    bytes.len() == 10
+    if !(bytes.len() == 10
         && digits(0..4)
         && bytes.get(4) == Some(&b'-')
         && digits(5..7)
         && bytes.get(7) == Some(&b'-')
-        && digits(8..10)
-        && (1..=12).contains(&number(5..7))
-        && (1..=31).contains(&number(8..10))
+        && digits(8..10))
+    {
+        return false;
+    }
+    let year = number(0..4);
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let days = match number(5..7) {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&number(8..10))
 }
 
 /// Whether no object can be in both scopes: some dimension is set on both
@@ -130,10 +141,31 @@ impl Findings<'_> {
     }
 
     fn member(&mut self, pointer: &str, member: &MemberRef) {
-        if blank(&member.artifact_id) || blank(&member.version) {
+        let names: Vec<&str> = match &member.member {
+            Member::Artifact {} => Vec::new(),
+            Member::Type { type_name } => vec![type_name.as_str()],
+            Member::Property {
+                type_name,
+                property,
+            } => vec![type_name.as_str(), property.as_str()],
+            Member::Link { type_name, link } => vec![type_name.as_str(), link.as_str()],
+            Member::State {
+                type_name,
+                lifecycle,
+                state,
+            } => vec![type_name.as_str(), lifecycle.as_str(), state.as_str()],
+            Member::Transition {
+                type_name,
+                lifecycle,
+                transition,
+            } => vec![type_name.as_str(), lifecycle.as_str(), transition.as_str()],
+            Member::ObjectMap { map } => vec![map.as_str()],
+            Member::Law { law } => vec![law.as_str()],
+        };
+        if blank(&member.artifact_id) || blank(&member.version) || names.into_iter().any(blank) {
             self.push(
                 pointer,
-                "a member reference names an exact artifact id and version",
+                "a member reference names an exact artifact id, version and nonblank member",
             );
         }
     }
@@ -230,6 +262,24 @@ impl Findings<'_> {
         }
         if ruling.resolves.is_empty() {
             self.push("/payload/resolves", "a ruling resolves at least one claim");
+        }
+        for (index, key) in ruling.resolves.iter().enumerate() {
+            if blank(&key.artifact_id) || blank(&key.version) {
+                self.push(
+                    &format!("/payload/resolves/{index}"),
+                    "a resolved claim is an exact artifact id and version",
+                );
+            }
+        }
+        if ruling
+            .supersedes
+            .as_ref()
+            .is_some_and(|key| blank(&key.artifact_id) || blank(&key.version))
+        {
+            self.push(
+                "/payload/supersedes",
+                "a superseded ruling is an exact artifact id and version",
+            );
         }
         if ruling.affects.is_empty() {
             self.push(

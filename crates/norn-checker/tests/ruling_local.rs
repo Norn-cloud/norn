@@ -268,3 +268,49 @@ fn scoped_cases_are_disjoint_and_revisit_evidence_is_pinned() {
         refused(INVALID_RULING, "/payload/outcome/revisit/source")
     );
 }
+
+#[test]
+fn references_name_something_and_dates_exist() {
+    for date in ["2026-02-29", "2026-02-31", "2026-04-31", "2026-13-01"] {
+        let mut undated = ruling();
+        undated["payload"]["decidedAt"] = json!(date);
+        assert_eq!(
+            findings(&undated),
+            refused(INVALID_RULING, "/payload/decidedAt"),
+            "{date}"
+        );
+    }
+    let mut leap = ruling();
+    leap["payload"]["decidedAt"] = json!("2028-02-29");
+    assert_eq!(findings(&leap), []);
+
+    let mut blank_claim = ruling();
+    blank_claim["payload"]["resolves"] = json!([{ "artifactId": "", "version": "" }]);
+    assert_eq!(
+        findings(&blank_claim),
+        refused(INVALID_RULING, "/payload/resolves/0")
+    );
+
+    let mut blank_state = derived_claim();
+    blank_state["payload"]["statement"]["state"] = state("");
+    assert_eq!(
+        findings(&blank_state),
+        refused(INVALID_CLAIM, "/payload/statement/state")
+    );
+}
+
+#[test]
+fn a_composition_pack_may_ship_claims_and_rulings() {
+    let pack = envelope(
+        "business_pack",
+        "commerce.rulings.pack",
+        &json!({
+            "packId": "commerce.rulings", "packVersion": "0.1.0", "packKind": "composition",
+            "artifacts": [
+                { "artifactId": "commerce.sales_order_invoiced_is_derived.claim", "kind": "claim", "version": "0.1.0" },
+                { "artifactId": "commerce.order_total_basis.ruling", "kind": "ruling", "version": "0.1.0" }
+            ]
+        }),
+    );
+    assert_eq!(findings(&pack), []);
+}
