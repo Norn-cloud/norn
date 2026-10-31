@@ -107,31 +107,7 @@ pub fn check_norm_precedence(
     norms: &[GroundedNorm],
     contexts: usize,
 ) -> Result<Vec<NormContext>, NormUnknown> {
-    if contexts == 0 || contexts > crate::table_analysis::MAX_CONTEXTS || norms.len() > 128 {
-        return Err(NormUnknown::Limit);
-    }
-    let mut ids = BTreeSet::new();
-    for norm in norms {
-        if norm.authority_level.is_none() {
-            return Err(NormUnknown::MissingAuthority);
-        }
-        if norm.id.trim().is_empty()
-            || norm.id.len() > 256
-            || !ids.insert(&norm.id)
-            || norm.authority.0.trim().is_empty()
-            || norm.authority.1.trim().is_empty()
-            || norm
-                .applicable
-                .iter()
-                .chain(&norm.excepted)
-                .any(|index| *index >= contexts)
-            || norms.iter().any(|other| {
-                other.authority == norm.authority && other.authority_level != norm.authority_level
-            })
-        {
-            return Err(NormUnknown::Invalid);
-        }
-    }
+    validate(norms, contexts)?;
     let mut edges: BTreeMap<usize, Vec<(usize, PriorityReason)>> = BTreeMap::new();
     let mut incoming: BTreeMap<usize, usize> =
         norms.iter().enumerate().map(|(i, _)| (i, 0)).collect();
@@ -214,4 +190,33 @@ pub fn check_norm_precedence(
         results.push(result);
     }
     Ok(results)
+}
+
+fn validate(norms: &[GroundedNorm], contexts: usize) -> Result<(), NormUnknown> {
+    if contexts == 0 || contexts > crate::table_analysis::MAX_CONTEXTS || norms.len() > 128 {
+        return Err(NormUnknown::Limit);
+    }
+    let mut ids = BTreeSet::new();
+    for norm in norms {
+        if norm.authority_level.is_none() {
+            return Err(NormUnknown::MissingAuthority);
+        }
+        if norm.id.trim().is_empty()
+            || norm.id.len() > 256
+            || !ids.insert(&norm.id)
+            || norm.authority.0.trim().is_empty()
+            || norm.authority.1.trim().is_empty()
+            || norm
+                .applicable
+                .iter()
+                .chain(&norm.excepted)
+                .any(|index| *index >= contexts)
+            || norms.iter().any(|other| {
+                other.authority == norm.authority && other.authority_level != norm.authority_level
+            })
+        {
+            return Err(NormUnknown::Invalid);
+        }
+    }
+    Ok(())
 }
