@@ -1,0 +1,770 @@
+{
+  "artifactId": "norn.link.erpnext.canon",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "ERPNext v16 to the Norn canon",
+  "namespace": "norn.ontology",
+  "payload": {
+    "correspondences": [
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.sales.invoice",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice",
+        "justification": "Every Sales Invoice, credit notes included, is an invoice; the canon also covers purchase invoices.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.sales.invoice.item",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.item",
+        "justification": "Each item row is one charged line.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.line"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.customer",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.customer",
+        "justification": "A customer is an agent in the customer role.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.agent"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.supplier",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.supplier",
+        "justification": "A supplier is an agent in the supplier role.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.agent"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.item",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.item",
+        "justification": "An item is a kind of good or service; templates and variants are both resource types.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.resource.type"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.payment.entry",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry",
+        "justification": "Every Payment Entry moves money; internal transfers settle no claim, so it is not subsumed by payment.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event.transfer"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.payment.entry.reference",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.reference",
+        "justification": "A reference may also point at an order or journal entry; the canon allocation settles invoices only.",
+        "relation": "subsumes",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.allocation"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.journal.entry",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.journal.entry",
+        "justification": "A Journal Entry is a manually entered balanced transaction.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.accounting.transaction"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.stock.entry",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.stock.entry",
+        "justification": "Purposes include transfers (Material Transfer) and transformations (Manufacture, Repack), so only the event superclass holds.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.order",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.order",
+        "justification": "A Sales Order is a sales commitment.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.delivery.note",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.delivery.note",
+        "justification": "A Delivery Note records goods moving to the customer.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event.transfer"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.invoice.customer",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.customer",
+        "justification": "The billed customer is the invoice party.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.party"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.invoice.posting.date",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.posting.date",
+        "justification": "Same ledger date.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.date.posting"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.invoice.due.date",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.due.date",
+        "justification": "Same due date.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.date.due"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.invoice.currency",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.currency",
+        "justification": "Same document currency.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.currency"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.invoice.net.total",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.net.total",
+        "justification": "Total before taxes.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.net"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.invoice.total.taxes",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.total.taxes",
+        "justification": "Total taxes and charges.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.tax"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.sales.invoice.grand.total",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.grand.total",
+        "justification": "Amount owed before rounding adjustment; ERPNext keeps a separate rounded total.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.total"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.sales.invoice.outstanding.amount",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.outstanding.amount",
+        "justification": "ERPNext stores it; the canon derives it as the total less allocations.",
+        "relation": "derived",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.total",
+          "norn.finance.payment.allocation.amount"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.sales.invoice.status",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.status",
+        "justification": "ERPNext stores a status field that the canon derives from outstanding amount and due date.",
+        "relation": "derived",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.outstanding",
+          "norn.finance.invoice.date.due"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.sales.invoice.is.return",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.is.return",
+        "justification": "A return is an invoice with a negative total in the canon.",
+        "relation": "derived",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.total"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.invoice.item.item.code",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.item.item.code",
+        "justification": "The billed item.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.line.resource"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.sales.invoice.item.qty",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.item.qty",
+        "justification": "Billed quantity; ERPNext keeps the unit in a separate field.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.line.quantity"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.invoice.item.amount",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.item.amount",
+        "justification": "Line amount.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.line.amount"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.payment.entry.payment.type",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.payment.type",
+        "justification": "Receive and Pay are the canon directions; Internal Transfer has none.",
+        "relation": "subsumes",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.direction"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.payment.entry.party",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.party",
+        "justification": "The paying or paid party.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.party"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.payment.entry.posting.date",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.posting.date",
+        "justification": "Same ledger date.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.date.posting"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.payment.entry.currency",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.currency",
+        "justification": "Currency of the paid-from account.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.currency"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.payment.entry.paid.amount",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.paid.amount",
+        "justification": "Amount in the paid-from currency; multi-currency entries also carry a received amount.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.amount"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.payment.entry.unallocated.amount",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.unallocated.amount",
+        "justification": "Both are the amount not applied to any document.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.amount.unallocated"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.payment.entry.reference.reference.name",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.reference.reference.name",
+        "justification": "The referenced document may be an invoice, order or journal entry.",
+        "relation": "subsumes",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.allocation.invoice"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.payment.entry.reference.allocated.amount",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.reference.allocated.amount",
+        "justification": "Amount applied.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.allocation.amount"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.sales.invoice.submit",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.submit",
+        "justification": "Submit posts and locks the invoice.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.post"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.sales.invoice.cancel",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.invoice.cancel",
+        "justification": "Cancel reverses a submitted invoice and keeps it.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.reverse"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.payment.entry.submit",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.submit",
+        "justification": "Submit posts the payment.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.post"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.payment.entry.cancel",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.payment.entry.cancel",
+        "justification": "Cancel reverses a submitted payment.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.reverse"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.guard.accounting.period.closed",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.guard.accounting.period.closed",
+        "justification": "Posting into a closed period is refused.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.guard.period.closed"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.guard.journal.unbalanced",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.guard.journal.unbalanced",
+        "justification": "Unequal debits and credits are refused.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.guard.entry.unbalanced"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.guard.customer.disabled",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.guard.customer.disabled",
+        "justification": "A disabled customer is a disabled party.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.guard.party.disabled"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6500,
+        "correspondenceId": "corr.guard.supplier.on.hold",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.guard.supplier.on.hold",
+        "justification": "A supplier on hold is blocked like a disabled party.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.guard.party.disabled"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.order.customer",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.order.customer",
+        "justification": "The ordering customer.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order.party"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sales.order.grand.total",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.order.grand.total",
+        "justification": "The committed total.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order.amount.total"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.sales.order.status",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.order.status",
+        "justification": "ERPNext stores the status; the canon derives the order state.",
+        "relation": "derived",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order.state"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.sales.order.per.delivered",
+        "evidenceRefs": [
+          "source.erpnext"
+        ],
+        "fromTermId": "norn.erpnext.sales.order.per.delivered",
+        "justification": "Delivered share follows from the quantities of the transfers that fulfil the order.",
+        "relation": "derived",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event.fulfils",
+          "norn.core.resource.quantity"
+        ]
+      }
+    ],
+    "fromPack": {
+      "packId": "norn.ontology-pack.erpnext",
+      "version": "0.1.0"
+    },
+    "packId": "norn.link.erpnext.canon",
+    "packKind": "link",
+    "packVersion": "0.1",
+    "residuals": [
+      {
+        "note": "ERPNext lets an invoice also move stock; the canon records that as a separate transfer event.",
+        "reason": "system_specific",
+        "termId": "norn.erpnext.sales.invoice.update.stock"
+      },
+      {
+        "note": "Point-of-sale mode is a user-interface choice.",
+        "reason": "system_specific",
+        "termId": "norn.erpnext.sales.invoice.is.pos"
+      },
+      {
+        "note": "A voucher classification for ERPNext's forms.",
+        "reason": "system_specific",
+        "termId": "norn.erpnext.journal.entry.voucher.type"
+      },
+      {
+        "note": "The canon ledger entry has no debit/credit side yet.",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.journal.entry.total.debit"
+      },
+      {
+        "note": "The canon ledger entry has no debit/credit side yet.",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.journal.entry.total.credit"
+      },
+      {
+        "note": "A tenant-defined grouping.",
+        "reason": "system_specific",
+        "termId": "norn.erpnext.customer.customer.group"
+      },
+      {
+        "note": "The canon agent does not yet distinguish persons from organisations.",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.customer.customer.type"
+      },
+      {
+        "note": "A tenant-defined grouping.",
+        "reason": "system_specific",
+        "termId": "norn.erpnext.supplier.supplier.group"
+      },
+      {
+        "note": "The canon resource type has no default unit of measure.",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.item.stock.uom"
+      },
+      {
+        "note": "The canon has no stock valuation method (FIFO, moving average).",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.item.valuation.method"
+      },
+      {
+        "note": "Variant templates are an ERPNext catalogue feature.",
+        "reason": "system_specific",
+        "termId": "norn.erpnext.item.has.variants"
+      },
+      {
+        "note": "Projected as the event's class (transfer or transformation), not as a property.",
+        "reason": "system_specific",
+        "termId": "norn.erpnext.stock.entry.purpose"
+      },
+      {
+        "note": "The canon has no link from an invoice to the order it bills.",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.sales.order.per.billed"
+      },
+      {
+        "note": "The canon transfer event has no provider and receiver agents yet.",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.delivery.note.customer"
+      },
+      {
+        "note": "A return is a transfer in the opposite direction.",
+        "reason": "system_specific",
+        "termId": "norn.erpnext.delivery.note.is.return"
+      }
+    ],
+    "toPack": {
+      "packId": "norn.ontology-pack.canon",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

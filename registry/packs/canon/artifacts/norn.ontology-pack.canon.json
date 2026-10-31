@@ -1,0 +1,756 @@
+{
+  "artifactId": "norn.ontology-pack.canon",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Norn canon handles (core physics and accounting, proposed)",
+  "namespace": "norn.ontology",
+  "payload": {
+    "mappings": [
+      {
+        "confidenceBasisPoints": 6000,
+        "evidenceRefs": [
+          "https://schema.org/Organization"
+        ],
+        "externalIri": "https://schema.org/Organization",
+        "justification": "schema.org splits agents into Organization and Person.",
+        "mappingId": "map.norn.core.agent.schema-org",
+        "relation": "broad_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.schema-org",
+        "termId": "norn.core.agent"
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "evidenceRefs": [
+          "https://schema.org/Product"
+        ],
+        "externalIri": "https://schema.org/Product",
+        "justification": "schema.org Product covers goods; services are separate there.",
+        "mappingId": "map.norn.core.resource.type.schema-org",
+        "relation": "broad_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.schema-org",
+        "termId": "norn.core.resource.type"
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "evidenceRefs": [
+          "https://schema.org/Invoice"
+        ],
+        "externalIri": "https://schema.org/Invoice",
+        "justification": "Same business concept at the level schema.org models it.",
+        "mappingId": "map.norn.finance.invoice.schema-org",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.schema-org",
+        "termId": "norn.finance.invoice"
+      },
+      {
+        "confidenceBasisPoints": 5000,
+        "evidenceRefs": [
+          "https://schema.org/PayAction"
+        ],
+        "externalIri": "https://schema.org/PayAction",
+        "justification": "schema.org models paying as an action, not a ledger event.",
+        "mappingId": "map.norn.finance.payment.schema-org",
+        "relation": "related_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.schema-org",
+        "termId": "norn.finance.payment"
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "evidenceRefs": [
+          "https://schema.org/Order"
+        ],
+        "externalIri": "https://schema.org/Order",
+        "justification": "Same business concept at the level schema.org models it.",
+        "mappingId": "map.norn.commerce.order.schema-org",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.schema-org",
+        "termId": "norn.commerce.order"
+      }
+    ],
+    "packId": "norn.ontology-pack.canon",
+    "packKind": "ontology",
+    "packVersion": "0.1",
+    "shapes": [
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.core.agent",
+        "termId": "norn.core.agent"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "code",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.core.resource.type",
+        "termId": "norn.core.resource.type"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "occurredAt",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "date_time"
+          }
+        ],
+        "shapeId": "shape.norn.core.event",
+        "termId": "norn.core.event"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "occurredAt",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "date_time"
+          }
+        ],
+        "shapeId": "shape.norn.core.event.transfer",
+        "termId": "norn.core.event.transfer"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "occurredAt",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "date_time"
+          }
+        ],
+        "shapeId": "shape.norn.core.event.transformation",
+        "termId": "norn.core.event.transformation"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "party",
+            "maxCount": 1,
+            "minCount": 1,
+            "targetTermId": "norn.core.agent",
+            "valueType": "term_ref"
+          }
+        ],
+        "shapeId": "shape.norn.core.commitment",
+        "termId": "norn.core.commitment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "party",
+            "maxCount": 1,
+            "minCount": 1,
+            "targetTermId": "norn.core.agent",
+            "valueType": "term_ref"
+          }
+        ],
+        "shapeId": "shape.norn.core.claim",
+        "termId": "norn.core.claim"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "party",
+            "maxCount": 1,
+            "minCount": 1,
+            "targetTermId": "norn.core.agent",
+            "valueType": "term_ref"
+          },
+          {
+            "fieldId": "total",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.finance.invoice",
+        "termId": "norn.finance.invoice"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "amount",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.finance.invoice.line",
+        "termId": "norn.finance.invoice.line"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "party",
+            "maxCount": 1,
+            "minCount": 1,
+            "targetTermId": "norn.core.agent",
+            "valueType": "term_ref"
+          },
+          {
+            "fieldId": "amount",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.finance.payment",
+        "termId": "norn.finance.payment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "amount",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.finance.payment.allocation",
+        "termId": "norn.finance.payment.allocation"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "postedAt",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "date_time"
+          }
+        ],
+        "shapeId": "shape.norn.finance.accounting.transaction",
+        "termId": "norn.finance.accounting.transaction"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "amount",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.finance.ledger.entry",
+        "termId": "norn.finance.ledger.entry"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "party",
+            "maxCount": 1,
+            "minCount": 1,
+            "targetTermId": "norn.core.agent",
+            "valueType": "term_ref"
+          }
+        ],
+        "shapeId": "shape.norn.commerce.order",
+        "termId": "norn.commerce.order"
+      }
+    ],
+    "sources": [
+      {
+        "canonicalUrl": "https://schema.org/version/30.0/",
+        "files": [
+          {
+            "path": "https://schema.org/version/latest/schemaorg-current-https.jsonld",
+            "sha256": "0f0c97a4f666b2f8563573fe48453782fd51b87a504523cf0c9aff6a71c3eec4"
+          }
+        ],
+        "importMode": "map_only",
+        "license": "CC-BY-SA-3.0",
+        "redistribution": "reference_only",
+        "releaseId": "30.0",
+        "releasedAt": "2026-03-19",
+        "retrievedAt": "2026-08-25",
+        "sourceId": "source.schema-org"
+      }
+    ],
+    "terms": [
+      {
+        "definition": "A person or organisation that takes part in economic events.",
+        "label": "Agent",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.core.agent",
+        "termKind": "class"
+      },
+      {
+        "definition": "A kind of good or service that can be held, transferred or transformed.",
+        "label": "Resource type",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.core.resource.type",
+        "termKind": "class"
+      },
+      {
+        "definition": "An occurrence that changes who holds which resources.",
+        "label": "Economic event",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.core.event",
+        "termKind": "class"
+      },
+      {
+        "definition": "An economic event that moves resources from one agent to another.",
+        "label": "Transfer",
+        "parentTermId": "norn.core.event",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.core.event.transfer",
+        "termKind": "class"
+      },
+      {
+        "definition": "An economic event that consumes resources to produce others.",
+        "label": "Transformation",
+        "parentTermId": "norn.core.event",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.core.event.transformation",
+        "termKind": "class"
+      },
+      {
+        "definition": "How much of a resource type an event moves or produces, with its unit.",
+        "domainTermId": "norn.core.event",
+        "label": "Quantity",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.core.resource.quantity",
+        "termKind": "property"
+      },
+      {
+        "definition": "The commitment an event fulfils, wholly or in part.",
+        "domainTermId": "norn.core.event",
+        "label": "Fulfils",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.core.event.fulfils",
+        "termKind": "property"
+      },
+      {
+        "definition": "A promise by an agent to take part in future economic events.",
+        "label": "Commitment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.core.commitment",
+        "termKind": "class"
+      },
+      {
+        "definition": "A right to receive resources that arises when one side of an exchange has happened and its reciprocal has not.",
+        "label": "Claim",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.core.claim",
+        "termKind": "class"
+      },
+      {
+        "definition": "A claim document that states what a party owes for goods or services; a credit note is an invoice with the opposite sign.",
+        "label": "Invoice",
+        "parentTermId": "norn.core.claim",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice",
+        "termKind": "class"
+      },
+      {
+        "definition": "One charged resource on an invoice.",
+        "label": "Invoice line",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.line",
+        "termKind": "class"
+      },
+      {
+        "definition": "The agent the invoice is issued to or received from.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Party",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.party",
+        "termKind": "property"
+      },
+      {
+        "definition": "The date the invoice takes effect in the ledger.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Posting date",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.date.posting",
+        "termKind": "property"
+      },
+      {
+        "definition": "The date payment is due.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Due date",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.date.due",
+        "termKind": "property"
+      },
+      {
+        "definition": "The ISO 4217 currency of the invoice amounts.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Currency",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.currency",
+        "termKind": "property"
+      },
+      {
+        "definition": "The total before taxes.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Net amount",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.amount.net",
+        "termKind": "property"
+      },
+      {
+        "definition": "The total of taxes and charges.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Tax amount",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.amount.tax",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount the party owes: net plus taxes.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Total amount",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.amount.total",
+        "termKind": "property"
+      },
+      {
+        "definition": "The total less the payments allocated to it; derived.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Outstanding amount",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.amount.outstanding",
+        "termKind": "property"
+      },
+      {
+        "definition": "Whether the invoice is draft, posted, partly paid, paid, overdue or reversed; derived from posting, outstanding amount and due date.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "State",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.state",
+        "termKind": "property"
+      },
+      {
+        "definition": "The resource type charged.",
+        "domainTermId": "norn.finance.invoice.line",
+        "label": "Resource",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.line.resource",
+        "termKind": "property"
+      },
+      {
+        "definition": "How much of it.",
+        "domainTermId": "norn.finance.invoice.line",
+        "label": "Quantity",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.line.quantity",
+        "termKind": "property"
+      },
+      {
+        "definition": "The line's charged amount.",
+        "domainTermId": "norn.finance.invoice.line",
+        "label": "Amount",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.line.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Admit the invoice into the ledger; after posting it is immutable.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Post invoice",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.post",
+        "termKind": "action"
+      },
+      {
+        "definition": "Cancel a posted invoice by a reversing entry; the original stays.",
+        "domainTermId": "norn.finance.invoice",
+        "label": "Reverse invoice",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.invoice.reverse",
+        "termKind": "action"
+      },
+      {
+        "definition": "A transfer of money that settles claims between parties.",
+        "label": "Payment",
+        "parentTermId": "norn.core.event.transfer",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment",
+        "termKind": "class"
+      },
+      {
+        "definition": "The part of a payment applied to one invoice.",
+        "label": "Payment allocation",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.allocation",
+        "termKind": "class"
+      },
+      {
+        "definition": "The agent that pays or is paid.",
+        "domainTermId": "norn.finance.payment",
+        "label": "Party",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.party",
+        "termKind": "property"
+      },
+      {
+        "definition": "Whether money is received or paid.",
+        "domainTermId": "norn.finance.payment",
+        "label": "Direction",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.direction",
+        "termKind": "property"
+      },
+      {
+        "definition": "The date the payment takes effect in the ledger.",
+        "domainTermId": "norn.finance.payment",
+        "label": "Posting date",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.date.posting",
+        "termKind": "property"
+      },
+      {
+        "definition": "The ISO 4217 currency paid.",
+        "domainTermId": "norn.finance.payment",
+        "label": "Currency",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.currency",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount transferred.",
+        "domainTermId": "norn.finance.payment",
+        "label": "Amount",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount not yet applied to any invoice; derived.",
+        "domainTermId": "norn.finance.payment",
+        "label": "Unallocated amount",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.amount.unallocated",
+        "termKind": "property"
+      },
+      {
+        "definition": "The invoice the allocation settles.",
+        "domainTermId": "norn.finance.payment.allocation",
+        "label": "Invoice",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.allocation.invoice",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount applied to it.",
+        "domainTermId": "norn.finance.payment.allocation",
+        "label": "Amount",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.allocation.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Admit the payment into the ledger; after posting it is immutable.",
+        "domainTermId": "norn.finance.payment",
+        "label": "Post payment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.post",
+        "termKind": "action"
+      },
+      {
+        "definition": "Cancel a posted payment by a reversing entry.",
+        "domainTermId": "norn.finance.payment",
+        "label": "Reverse payment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.reverse",
+        "termKind": "action"
+      },
+      {
+        "definition": "Apply part of a payment to an outstanding invoice.",
+        "domainTermId": "norn.finance.payment",
+        "label": "Allocate payment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.payment.allocate",
+        "termKind": "action"
+      },
+      {
+        "definition": "A balanced set of ledger entries posted together.",
+        "label": "Accounting transaction",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.accounting.transaction",
+        "termKind": "class"
+      },
+      {
+        "definition": "One debit or credit to one account within an accounting transaction.",
+        "label": "Ledger entry",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.ledger.entry",
+        "termKind": "class"
+      },
+      {
+        "definition": "The posting date falls in a closed accounting period.",
+        "label": "Period closed",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.guard.period.closed",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "The debits and credits of a transaction differ.",
+        "label": "Entry unbalanced",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.guard.entry.unbalanced",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "The document is already posted, so only a reversal may change it.",
+        "label": "Document posted",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.guard.document.posted",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "The party is disabled or on hold.",
+        "label": "Party disabled",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.guard.party.disabled",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "An amount that must be positive is zero or negative.",
+        "label": "Amount not positive",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.guard.amount.nonpositive",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Amounts in different currencies are combined without a conversion.",
+        "label": "Currency mismatch",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.guard.currency.mismatch",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "An allocation is larger than the invoice's outstanding amount.",
+        "label": "Allocation exceeds outstanding",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.finance.guard.allocation.exceeds.outstanding",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "A commitment to deliver goods or services to a customer for payment.",
+        "label": "Sales order",
+        "parentTermId": "norn.core.commitment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.commerce.order",
+        "termKind": "class"
+      },
+      {
+        "definition": "The customer.",
+        "domainTermId": "norn.commerce.order",
+        "label": "Party",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.commerce.order.party",
+        "termKind": "property"
+      },
+      {
+        "definition": "The committed total.",
+        "domainTermId": "norn.commerce.order",
+        "label": "Total amount",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.commerce.order.amount.total",
+        "termKind": "property"
+      },
+      {
+        "definition": "How far the order is delivered and invoiced; derived.",
+        "domainTermId": "norn.commerce.order",
+        "label": "State",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.commerce.order.state",
+        "termKind": "property"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/canon/artifacts/norn.ontology-pack.canon.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
