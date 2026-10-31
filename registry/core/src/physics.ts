@@ -1,8 +1,9 @@
 /**
  * `norn.core` physics: the generative primitives every other pack maps onto
  * (REA; norn-platform#2986, norn#56). Domain and system types implement these
- * interfaces; the laws they carry are listed in
- * `verification/core-physics-v1/obligations.json` with their evidence.
+ * interfaces; the laws they carry are registered, with their evidence, in
+ * `verification/core-physics-v1/obligations.json` (the norn.core laws PRs,
+ * norn#77 and norn#90).
  *
  * Currencies are ISO 4217 codes held as `core.code` until the public registry
  * has an `iso4217.currency_code` value type. The per-record laws (positive

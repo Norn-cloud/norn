@@ -18529,7 +18529,7 @@
     },
     {
       "path": "registry/core/src/physics.ts",
-      "sha256": "46316ce2a55b2cb3de6526ce6d8e024c05fff8eb2b6c0b852f9c84cf5843dc9e",
+      "sha256": "da5bf89b080eaac21a7de3c78911aa44db2bda3662b435eabee1d22c0eb84c71",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
