@@ -13,7 +13,7 @@
 import { relative, resolve, sep } from "node:path"
 import ts from "typescript"
 import type { Diagnostic, ProfileChecker } from "../check.ts"
-import type { Json } from "../canonical.ts"
+import { type Json, toJson } from "../canonical.ts"
 import { BudgetExceeded, type ExpansionBudget } from "../builder/budget.ts"
 import * as C from "../builder/connector.ts"
 import * as A from "../builder/action.ts"
@@ -22,6 +22,7 @@ import * as E from "../builder/entity.ts"
 import * as SS from "../builder/source-schema.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
+import * as RU from "../builder/ruling.ts"
 import * as R from "../builder/rule.ts"
 import * as X from "../builder/expr.ts"
 import type * as S from "../builder/schema.ts"
@@ -33,7 +34,7 @@ import { SchemaProjection } from "./schema.ts"
 import { CompileError } from "./types.ts"
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | RU.ClaimDef | RU.RulingDef | C.ConnectorDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -63,8 +64,10 @@ const DECISION = "@norn/authoring#Norn.decision"
 const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
+const CLAIM = "@norn/authoring#Norn.claim"
+const RULING = "@norn/authoring#Norn.ruling"
 const FLOW = "@norn/authoring#Norn.flow"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CLAIM, RULING, CONNECTOR])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
@@ -73,6 +76,37 @@ const DECISIONS: ReadonlySet<string> = new Set([DECISION])
 /** Nesting bound for literal JSON data (access conditions, graphs). */
 const MAX_DATA_DEPTH = 64
 const VALUE_TYPE_CALLS = new Set(["@norn/authoring#Norn.decimal", "@norn/authoring#Norn.ref", "@norn/authoring#Norn.timestamp", "@norn/authoring#Norn.date"])
+/** Claim and ruling handle calls (norn#62): argument slots and the builder each lowers to. */
+type HandleSlot = "string" | "strings" | "data" | "cases" | { readonly one: ReadonlySet<string> } | { readonly each: ReadonlySet<string> }
+interface Handle { readonly slots: ReadonlyArray<HandleSlot>; readonly required: number; readonly build: (...args: never[]) => unknown }
+const N = "@norn/authoring#Norn."
+const PIN_HANDLES: ReadonlySet<string> = new Set([`${N}pin`])
+const MEMBER_HANDLES: ReadonlySet<string> = new Set(["artifact", "type", "property", "link", "state", "transition", "objectMap", "law"].map((m) => `${N}meta.${m}`))
+const EVIDENCE_HANDLES: ReadonlySet<string> = new Set([`${N}evidence.upstream`, `${N}evidence.artifact`])
+const OBSERVATION_HANDLES: ReadonlySet<string> = new Set([`${N}observe`])
+const STATEMENT_HANDLES: ReadonlySet<string> = new Set([`${N}statement.derivedState`, `${N}statement.divergence`])
+const OUTCOME_HANDLES: ReadonlySet<string> = new Set(["choose", "parameterise", "scoped", "deferUntil", "reject"].map((m) => `${N}outcome.${m}`))
+const HANDLES: ReadonlyMap<string, Handle> = new Map<string, Handle>([
+  [`${N}pin`, { slots: ["string", "string"], required: 2, build: RU.pin }],
+  [`${N}meta.artifact`, { slots: [{ one: PIN_HANDLES }], required: 1, build: RU.meta.artifact }],
+  [`${N}meta.type`, { slots: [{ one: PIN_HANDLES }, "string"], required: 2, build: RU.meta.type }],
+  [`${N}meta.property`, { slots: [{ one: PIN_HANDLES }, "string", "string"], required: 3, build: RU.meta.property }],
+  [`${N}meta.link`, { slots: [{ one: PIN_HANDLES }, "string", "string"], required: 3, build: RU.meta.link }],
+  [`${N}meta.state`, { slots: [{ one: PIN_HANDLES }, "string", "string", "string"], required: 4, build: RU.meta.state }],
+  [`${N}meta.transition`, { slots: [{ one: PIN_HANDLES }, "string", "string", "string"], required: 4, build: RU.meta.transition }],
+  [`${N}meta.objectMap`, { slots: [{ one: PIN_HANDLES }, "string"], required: 2, build: RU.meta.objectMap }],
+  [`${N}meta.law`, { slots: [{ one: PIN_HANDLES }, "string"], required: 2, build: RU.meta.law }],
+  [`${N}evidence.upstream`, { slots: ["string", "string", "string", "string", "string"], required: 4, build: RU.evidence.upstream }],
+  [`${N}evidence.artifact`, { slots: [{ one: PIN_HANDLES }, "string", "string", "string"], required: 3, build: RU.evidence.artifact }],
+  [`${N}statement.derivedState`, { slots: [{ one: MEMBER_HANDLES }, { each: MEMBER_HANDLES }], required: 2, build: RU.statement.derivedState }],
+  [`${N}statement.divergence`, { slots: [{ one: MEMBER_HANDLES }, { one: OBSERVATION_HANDLES }, { one: OBSERVATION_HANDLES }], required: 3, build: RU.statement.divergence }],
+  [`${N}observe`, { slots: [{ one: PIN_HANDLES }, "string", "data"], required: 3, build: RU.observe }],
+  [`${N}outcome.choose`, { slots: [{ one: MEMBER_HANDLES }], required: 1, build: RU.outcome.choose }],
+  [`${N}outcome.parameterise`, { slots: [{ one: MEMBER_HANDLES }, "data", "strings"], required: 3, build: RU.outcome.parameterise }],
+  [`${N}outcome.scoped`, { slots: ["cases"], required: 1, build: RU.outcome.scoped }],
+  [`${N}outcome.deferUntil`, { slots: ["string"], required: 1, build: RU.outcome.deferUntil }],
+  [`${N}outcome.reject`, { slots: [], required: 0, build: RU.outcome.reject }],
+])
 /** `DECIMAL_LITERAL_PATTERN` without the sign (the sign is a prefix `-`). */
 const DECIMAL_TEXT = /^(0|[1-9][0-9]*)(\.[0-9]+)?$/
 
@@ -127,6 +161,8 @@ export function compileDefinitionFiles(
         : def._tag === "Connector" ? C.lowerConnector(def, envelopeOptions)
         : def._tag === "Mapping" ? M.lowerMapping(def, envelopeOptions)
         : def._tag === "Law" ? L.lowerLaw(def, envelopeOptions)
+        : def._tag === "Claim" ? RU.lowerClaim(def, envelopeOptions)
+        : def._tag === "Ruling" ? RU.lowerRuling(def, envelopeOptions)
         : def._tag === "SourceSchema" ? SS.lowerSourceSchema(def, envelopeOptions)
         : def._tag === "Markings" ? E.lowerMarkings(def, envelopeOptions)
         : E.lowerEntity(def, envelopeOptions)
@@ -243,6 +279,8 @@ class DefinitionCompiler {
           : id === CONNECTOR ? this.connector(init)
           : id === MAPPING ? this.mapping(init)
           : id === LAW ? this.law(init)
+          : id === CLAIM ? this.claim(init)
+          : id === RULING ? this.ruling(init)
           : this.decision(init)
         this.expansion.assert(def)
         out.push(def)
@@ -757,6 +795,71 @@ class DefinitionCompiler {
     const members = this.meta(call, ["id", "title", "version", "law", "dependencies"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     return L.law({ id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")), law: this.json(need("law")) as unknown as L.LawIR, dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
+  }
+
+  private claim(call: ts.CallExpression): RU.ClaimDef {
+    const members = this.meta(call, ["id", "title", "version", "statement", "evidence", "note"])
+    const need = (key: string): ts.Expression => this.member(members, key, call)
+    const note = members.get("note")
+    return RU.claim({
+      id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")),
+      statement: this.handleOf(need("statement"), STATEMENT_HANDLES) as unknown as RU.ClaimStatement,
+      evidence: this.list(need("evidence")).map((x) => this.handleOf(x, EVIDENCE_HANDLES)) as unknown as RU.Evidence[],
+      ...(note === undefined ? {} : { note: this.string(note) }),
+    })
+  }
+
+  private ruling(call: ts.CallExpression): RU.RulingDef {
+    const members = this.meta(call, ["id", "title", "version", "resolves", "outcome", "affects", "decidedBy", "decidedAt", "evidence", "alternatives", "supersedes", "note"])
+    const need = (key: string): ts.Expression => this.member(members, key, call)
+    const optional = <T>(key: string, read: (e: ts.Expression) => T): { readonly [k: string]: T } => {
+      const value = members.get(key)
+      return value === undefined ? {} : { [key]: read(value) }
+    }
+    const decidedBy = this.closedRecord(need("decidedBy"), ["principal", "authority"], ["principal", "authority"])
+    const authority = this.string(decidedBy.get("authority")!)
+    if (authority !== "owner" && authority !== "lead" && authority !== "agent") throw new CompileError("NORN-FLOW-LITERAL", "a decider's authority is owner, lead, or agent", decidedBy.get("authority")!)
+    return RU.ruling({
+      id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")),
+      resolves: this.list(need("resolves")).map((x) => this.handleOf(x, PIN_HANDLES)) as unknown as RU.Pin[],
+      outcome: this.handleOf(need("outcome"), OUTCOME_HANDLES) as unknown as RU.Outcome,
+      affects: this.list(need("affects")).map((x) => this.handleOf(x, MEMBER_HANDLES)) as unknown as RU.MemberRef[],
+      decidedBy: { principal: this.string(decidedBy.get("principal")!), authority },
+      decidedAt: this.string(need("decidedAt")),
+      ...optional("evidence", (e) => this.list(e).map((x) => this.handleOf(x, EVIDENCE_HANDLES)) as unknown as RU.Evidence[]),
+      ...optional("alternatives", (e) => this.list(e).map((x) => {
+        const alternative = this.closedRecord(x, ["outcome", "note"], ["outcome"])
+        const altNote = alternative.get("note")
+        return { outcome: this.handleOf(alternative.get("outcome")!, OUTCOME_HANDLES) as unknown as RU.Outcome, ...(altNote === undefined ? {} : { note: this.string(altNote) }) }
+      })),
+      ...optional("supersedes", (e) => this.handleOf(e, PIN_HANDLES) as unknown as RU.Pin),
+      ...optional("note", (e) => this.string(e)),
+    } as RU.RulingMeta)
+  }
+
+  /** A claim or ruling handle call whose id is in `allowed`, lowered through the builder. Raw IR literals are refused. */
+  private handleOf(input: ts.Expression, allowed: ReadonlySet<string>, depth = 0): Json {
+    this.guard(input)
+    if (depth > MAX_DATA_DEPTH) throw new CompileError("NORN-FLOW-UNBOUNDED", "handle nesting exceeds the compiler bound", input)
+    const e = this.deref(input)
+    const id = ts.isCallExpression(e) ? this.id(e) : undefined
+    const build = id === undefined || !allowed.has(id) ? undefined : HANDLES.get(id)
+    if (!ts.isCallExpression(e) || build === undefined) throw new CompileError("NORN-FLOW-LITERAL", `expected one of ${[...allowed].map((x) => x.slice(x.indexOf("#") + 1)).join(", ")}`, e)
+    const args = e.arguments.map((a, index) => {
+      const slot = build.slots[index]
+      if (slot === undefined) throw new CompileError("NORN-FLOW-LITERAL", "too many handle arguments", a)
+      return slot === "data" ? this.json(a, depth + 1)
+        : slot === "string" ? this.string(a)
+        : slot === "strings" ? this.strings(a)
+        : slot === "cases" ? this.list(a).map((x) => {
+          const scoped = this.closedRecord(x, ["scope", "definition"], ["scope", "definition"])
+          return { scope: this.json(scoped.get("scope")!, depth + 1), definition: this.handleOf(scoped.get("definition")!, MEMBER_HANDLES, depth + 1) }
+        })
+        : "each" in slot ? this.list(a).map((x) => this.handleOf(x, slot.each, depth + 1))
+        : this.handleOf(a, slot.one, depth + 1)
+    })
+    if (args.length < build.required) throw new CompileError("NORN-FLOW-LITERAL", "missing handle arguments", e)
+    return toJson((build.build as (...xs: unknown[]) => unknown)(...args))
   }
 
   private connector(call: ts.CallExpression): C.ConnectorDef {
