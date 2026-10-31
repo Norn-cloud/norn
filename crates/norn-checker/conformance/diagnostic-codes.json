@@ -2648,6 +2648,13 @@
       "tier": "T6"
     },
     {
+      "code": "ontology_link.validation.invalid_payload",
+      "message": "ontology link is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
       "code": "ontology_pack.validation.invalid_payload",
       "message": "ontology pack is invalid at {path}: {detail}",
       "severity": "error",
