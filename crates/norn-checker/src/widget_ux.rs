@@ -7433,3 +7433,24 @@ impl EffectRenderSite {
         }
     }
 }
+
+#[cfg(test)]
+mod decimal_wire_tests {
+    use super::*;
+
+    #[test]
+    fn action_mapping_accepts_decimal_text_but_not_numeric_wire_values() {
+        let accepts = |inferred| {
+            inferred_matches_schema(
+                &inferred,
+                &Schema::Decimal(2),
+                None,
+                &mut |_, _| false,
+                "amount",
+            )
+        };
+        assert!(accepts(InferredType::String).is_ok());
+        assert!(accepts(InferredType::Const("125.50".to_owned())).is_ok());
+        assert!(accepts(InferredType::Number).is_err());
+    }
+}
