@@ -126,15 +126,20 @@ fn journal(rng: &mut Rng, step: usize) -> Vec<Leg> {
     legs
 }
 
-fn trial_balance(cell: &Cell, posted: &BTreeMap<String, Leg>) -> BTreeMap<&'static str, i64> {
+fn trial_balance(cell: &Cell, posted: &BTreeMap<String, Leg>) -> BTreeMap<String, i64> {
     let mut totals = BTreeMap::new();
     for leg in posted.values() {
         let state = cell.load(&FactKey::new(LEG_TYPE, &leg.key)).unwrap();
         let values = state.values.expect("posted leg is live");
         let stored: AccountingLegIr =
             norn_ir::runtime::decode(values.get("leg").expect("leg value")).expect("leg decodes");
+        assert_eq!(
+            stored.unit_id, leg.unit,
+            "stored leg {} changed unit",
+            leg.key
+        );
         let amount: i64 = stored.amount_unscaled.parse().unwrap();
-        let total = totals.entry(leg.unit).or_insert(0_i64);
+        let total = totals.entry(stored.unit_id).or_insert(0_i64);
         *total = total.checked_add(amount).unwrap();
     }
     totals
@@ -178,6 +183,16 @@ fn every_generated_workflow_of_primitive_steps_inherits_conservation_and_immutab
                     admitted = admitted.checked_add(1).unwrap();
                     posted.extend(legs.into_iter().map(|leg| (leg.key.clone(), leg)));
                 } else {
+                    for leg in &legs {
+                        assert!(
+                            !cell
+                                .load(&FactKey::new(LEG_TYPE, &leg.key))
+                                .unwrap()
+                                .exists(),
+                            "seed {seed} step {step}: a refused journal left leg {}",
+                            leg.key
+                        );
+                    }
                     refused = refused.checked_add(1).unwrap();
                 }
             } else {
