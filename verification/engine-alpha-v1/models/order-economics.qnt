@@ -18,7 +18,11 @@ module order_economics {
     allocated_total: t.allocated_total + (if (e.kind == "payment") e.amount else 0),
   }
   pure def foldOrder(events: List[Event], cell: int, order: int): Totals =
-    events.foldl(zero, (t, e) => if (e.cell == cell and e.order == order) add(t, e) else t)
+    {
+      invoice_count: events.foldl(0, (n, e) => n + (if (e.cell == cell and e.order == order and e.kind == "invoice") 1 else 0)),
+      invoiced_total: events.foldl(0, (n, e) => n + (if (e.cell == cell and e.order == order and e.kind == "invoice") e.amount else 0)),
+      allocated_total: events.foldl(0, (n, e) => n + (if (e.cell == cell and e.order == order and e.kind == "payment") e.amount else 0)),
+    }
   pure def invoiced(t: Totals): bool = t.invoice_count > 0
   pure def completed(t: Totals): bool = invoiced(t) and t.allocated_total >= t.invoiced_total
   pure def outstanding(t: Totals): int = t.invoiced_total - t.allocated_total
@@ -52,7 +56,7 @@ module order_economics {
     nondet cell = 0.to(1).oneOf()
     nondet order = 0.to(1).oneOf()
     nondet id = 0.to(1).oneOf()
-    nondet amount = 0.to(2).oneOf()
+    nondet amount = (-1).to(2).oneOf()
     // Updates, deletes and setters are deliberately inadmissible event kinds.
     nondet kind = Set("invoice", "payment", "update", "delete", "set_computed").oneOf()
     any { record({ cell: cell, order: order, kind: kind, id: id, amount: amount }), approve(cell, order) }
@@ -64,7 +68,9 @@ module order_economics {
   def derived = totals.indices().forall(i =>
     (completed(totals[i]) implies invoiced(totals[i]))
     and outstanding(totals[i]) + totals[i].allocated_total == totals[i].invoiced_total)
-  def invariant = replayEqualsProjection and refusalIsNoop and appendOnly and derived
+  def admittedEvents = ledger.indices().forall(i =>
+    Set("invoice", "payment").contains(ledger[i].kind) and ledger[i].amount >= 0)
+  def invariant = replayEqualsProjection and refusalIsNoop and appendOnly and derived and admittedEvents
   temporal safety = always(invariant)
 
   // A feasibility witness: real economic events can reach completion, while
@@ -75,9 +81,10 @@ module order_economics {
     .then(record({ cell: 0, order: 0, kind: "payment", id: 0, amount: 1 }))
     .then(all { assert(invariant and invoiced(totals[0]) and not(completed(totals[0]))),
       record({ cell: 0, order: 0, kind: "payment", id: 1, amount: 1 }) })
-    .then(all { assert(invariant and completed(totals[0]) and outstanding(totals[0]) == 0
+    .then(all { assert(invariant and totals[0] == { invoice_count: 1, invoiced_total: 2, allocated_total: 2 }
+      and completed(totals[0]) and outstanding(totals[0]) == 0
       and totals[1] == zero and totals[2] == zero and totals[3] == zero),
-      record({ cell: 0, order: 1, kind: "invoice", id: 0, amount: 1 }) })
+      record({ cell: 0, order: 1, kind: "invoice", id: 1, amount: 1 }) })
     .then(all { assert(invariant and not(accepted)), approve(0, 1) })
     .then(record({ cell: 0, order: 1, kind: "invoice", id: 0, amount: 1 }))
     .then(all { assert(invariant and not(accepted)), approve(1, 0) })
