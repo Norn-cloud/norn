@@ -603,6 +603,41 @@ impl Rows {
         }
     }
 
+    /// The transition row declaring `transition` of `lifecycle` on
+    /// `type_name` or its nearest supertype that declares it.
+    fn declared_transition(
+        &self,
+        type_name: &str,
+        lifecycle: &str,
+        transition: &str,
+    ) -> Option<MemberRef> {
+        let mut current = type_name.to_owned();
+        // Each step moves to a supertype; a cycle (refused by the entity
+        // check) ends after at most one pass over the types.
+        for _ in 0..=self.types.len() {
+            let wanted = Member::Transition {
+                type_name: current.clone(),
+                lifecycle: lifecycle.to_owned(),
+                transition: transition.to_owned(),
+            };
+            if let Some(row) = self.transitions.iter().find(|row| row.at.member == wanted) {
+                return Some(row.at.clone());
+            }
+            let wanted_type = Member::Type {
+                type_name: current.clone(),
+            };
+            let parent = self
+                .types
+                .iter()
+                .find(|row| row.at.member == wanted_type && row.kind == TypeKind::ObjectType)?
+                .extends
+                .first()?
+                .clone();
+            current = parent;
+        }
+        None
+    }
+
     /// Whether a type, property, link, or transition row declares `member`.
     fn declares(&self, member: &MemberRef) -> bool {
         match &member.member {
@@ -711,19 +746,14 @@ impl Rows {
                 property,
                 transition_id,
             } => {
-                let Some(owner) = types.get(&object_type) else {
+                // An inherited transition binds the row of the supertype
+                // that declares it.
+                let Some(target) =
+                    self.declared_transition(&object_type, &property, &transition_id)
+                else {
                     return;
                 };
-                Some(LawBinding::Transition {
-                    target: member_of(
-                        owner,
-                        Member::Transition {
-                            type_name: object_type,
-                            lifecycle: property,
-                            transition: transition_id,
-                        },
-                    ),
-                })
+                Some(LawBinding::Transition { target })
             }
             LawResponse::Invariant {
                 object_type,
