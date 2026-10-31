@@ -4212,7 +4212,7 @@
     },
     {
       "path": "crates/norn-checker/tests/registry_packs.rs",
-      "sha256": "d7cc26f17d26a6076812d9e9a24f5f8a3a1bbc545ccb0c11f20955b67eb2072e",
+      "sha256": "b876871be28c9a353741e7af4e7f55abb344733db7afd83c9f178c58f0f6bed1",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18637,7 +18637,7 @@
     },
     {
       "path": "registry/packs/shopify/shopify.link.ts",
-      "sha256": "32a650e308abb7709136e2483d18d8e9978d21f60dfe7f809f60d0b01ef5cecf",
+      "sha256": "749cfa1f604332bb3e05a229c92ec05855b08ca383787af3f408c13bb571ad2a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18655,7 +18655,7 @@
     },
     {
       "path": "registry/packs/shopify/shopify.pack.ts",
-      "sha256": "331447919557dd56c2c8192ce73b61f538e507ab3db1a696cb209114bf9accaa",
+      "sha256": "e835ff0f1d0487112f1255e121bf14941f5a2f0535646f4a0f3abe2c37d9d8ec",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
