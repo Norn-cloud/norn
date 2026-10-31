@@ -122,7 +122,7 @@
     },
     {
       "path": ".github/workflows/cla.yml",
-      "sha256": "658d1309a2fdfb4d008cb9d15095a7e23085e630711847fe5d9d41535d22306f",
+      "sha256": "40857fe32012e40154df20675a14c3a5a5c2237326b6f073f0fdda744ecb90bf",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

@@ -14,10 +14,6 @@ jobs:
       (github.event.issue.pull_request != null &&
       (github.event.comment.body == 'recheck' ||
       github.event.comment.body == 'I have read the Norn CLA v1 and agree to its applicable individual and corporate terms.'))
-    # A newer event on a pull request supersedes the older check of it.
-    concurrency:
-      group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
-      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
