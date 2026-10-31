@@ -18457,7 +18457,7 @@
     },
     {
       "path": "registry/packs/PROJECTION.md",
-      "sha256": "aa28a0ab7ba3492e51da4be90e093aa82b6f73423d5e4478354fdd38d3ae005a",
+      "sha256": "c83ea66007ed621497248c69f5bd1dbeb3aa9c63e49d769242aa3ecf7fd8f388",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18566,6 +18566,42 @@
     {
       "path": "registry/packs/erpnext/erpnext.pack.ts",
       "sha256": "8e782d49f947ce219067e8209c3d40be0a201ae83135e54384e249d9619315e3",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/packs/odoo/artifacts/norn.link.odoo.canon.json",
+      "sha256": "e12b5c64928193fffa040dee0c47184225e76edc668bb5f6b1baff797135a1d6",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/packs/odoo/artifacts/norn.ontology-pack.odoo.json",
+      "sha256": "f7c33393fe0aedea1288bcc810fde048bc66ab4f222bc59929319552da059cd8",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

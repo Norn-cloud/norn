@@ -8,6 +8,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 | Link | Terms | Mapped | Residual | Canon gaps |
 | --- | ---: | ---: | ---: | ---: |
 | `norn.link.erpnext.canon` | 59 | 44 | 8 | 7 |
+| `norn.link.odoo.canon` | 39 | 29 | 3 | 7 |
 | `norn.link.shopify.canon` | 33 | 19 | 5 | 9 |
 
 ## `norn.link.erpnext.canon`
@@ -81,6 +82,59 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 - `norn.erpnext.journal.entry.total.credit`
 - `norn.erpnext.journal.entry.total.debit`
 - `norn.erpnext.sales.order.per.billed`
+
+## `norn.link.odoo.canon`
+
+`norn.ontology-pack.odoo` → `norn.ontology-pack.canon`
+
+### Maps
+
+- `norn.odoo.account.move` subsumed_by `norn.finance.accounting.transaction`
+- `norn.odoo.account.move` subsumes `norn.finance.invoice`
+- `norn.odoo.account.move.action.post` subsumes `norn.finance.invoice.post`
+- `norn.odoo.account.move.amount.residual` equivalent `norn.finance.invoice.amount.outstanding`
+- `norn.odoo.account.move.amount.tax` equivalent `norn.finance.invoice.amount.tax`
+- `norn.odoo.account.move.amount.total` equivalent `norn.finance.invoice.amount.total`
+- `norn.odoo.account.move.amount.untaxed` equivalent `norn.finance.invoice.amount.net`
+- `norn.odoo.account.move.currency.id` equivalent `norn.finance.invoice.currency`
+- `norn.odoo.account.move.invoice.date` equivalent `norn.finance.invoice.date.posting`
+- `norn.odoo.account.move.invoice.date.due` equivalent `norn.finance.invoice.date.due`
+- `norn.odoo.account.move.line` equivalent `norn.finance.ledger.entry`
+- `norn.odoo.account.move.partner.id` equivalent `norn.finance.invoice.party`
+- `norn.odoo.account.move.payment.state` derived `norn.finance.invoice.amount.outstanding`
+- `norn.odoo.account.move.reverse` subsumes `norn.finance.invoice.reverse`
+- `norn.odoo.account.move.state` derived `norn.finance.invoice.state`
+- `norn.odoo.account.payment` subsumed_by `norn.core.event.transfer`
+- `norn.odoo.account.payment.action.post` equivalent `norn.finance.payment.post`
+- `norn.odoo.account.payment.amount` equivalent `norn.finance.payment.amount`
+- `norn.odoo.account.payment.date` equivalent `norn.finance.payment.date.posting`
+- `norn.odoo.account.payment.partner.id` equivalent `norn.finance.payment.party`
+- `norn.odoo.account.payment.payment.type` equivalent `norn.finance.payment.direction`
+- `norn.odoo.product.product` subsumed_by `norn.core.resource.type`
+- `norn.odoo.res.partner` subsumes `norn.core.agent`
+- `norn.odoo.sale.order` subsumes `norn.commerce.order`
+- `norn.odoo.sale.order.amount.total` equivalent `norn.commerce.order.amount.total`
+- `norn.odoo.sale.order.partner.id` equivalent `norn.commerce.order.party`
+- `norn.odoo.sale.order.state` derived `norn.commerce.order.state`
+- `norn.odoo.stock.move` subsumed_by `norn.core.event`
+- `norn.odoo.stock.move.product.uom.qty` equivalent `norn.core.resource.quantity`
+- `norn.odoo.stock.picking` subsumed_by `norn.core.event.transfer`
+
+### Residual (system-specific)
+
+- `norn.odoo.account.move.move.type`
+- `norn.odoo.res.partner.type`
+- `norn.odoo.stock.picking.picking.type.id`
+
+### Missing from the canon
+
+- `norn.odoo.account.move.button.draft`
+- `norn.odoo.account.move.line.credit`
+- `norn.odoo.account.move.line.debit`
+- `norn.odoo.product.product.default.code`
+- `norn.odoo.res.partner.is.company`
+- `norn.odoo.sale.order.invoice.status`
+- `norn.odoo.stock.picking.partner.id`
 
 ## `norn.link.shopify.canon`
 

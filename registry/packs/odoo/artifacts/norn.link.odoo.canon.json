@@ -1,0 +1,532 @@
+{
+  "artifactId": "norn.link.odoo.canon",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Odoo Community 19.0 to the Norn canon",
+  "namespace": "norn.ontology",
+  "payload": {
+    "correspondences": [
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.account.move",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move",
+        "justification": "Every move is a balanced accounting transaction.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.accounting.transaction"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.account.move.invoice",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move",
+        "justification": "Invoices, credit notes and receipts are moves whose move_type says so.",
+        "relation": "subsumes",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.account.move.line",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.line",
+        "justification": "A journal item is one debit or credit to one account.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.ledger.entry"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.account.payment",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.payment",
+        "justification": "A payment moves money; Odoo also records internal transfers as payments.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event.transfer"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.res.partner",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.res.partner",
+        "justification": "Every agent is a partner, but partners also hold contact and delivery addresses.",
+        "relation": "subsumes",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.agent"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.product.product",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.product.product",
+        "justification": "A variant is a purchasable resource type.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.resource.type"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.stock.picking",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.stock.picking",
+        "justification": "Receipts, deliveries and internal transfers all move stock.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event.transfer"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.stock.move",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.stock.move",
+        "justification": "Moves include production consumption, so only the event superclass holds.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.sale.order",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.sale.order",
+        "justification": "A quotation is not yet a commitment; a confirmed order is.",
+        "relation": "subsumes",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.account.move.payment.state",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.payment.state",
+        "justification": "Paid, partial or not paid follow from the residual amount.",
+        "relation": "derived",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.outstanding"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.account.move.state",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.state",
+        "justification": "Draft, posted or cancelled; the canon state also derives payment progress.",
+        "relation": "derived",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.state"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.account.move.partner.id",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.partner.id",
+        "justification": "The invoiced partner.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.party"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.account.move.invoice.date",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.invoice.date",
+        "justification": "Invoice date; Odoo also keeps an accounting date.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.date.posting"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.account.move.invoice.date.due",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.invoice.date.due",
+        "justification": "Due date.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.date.due"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.account.move.currency.id",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.currency.id",
+        "justification": "Document currency.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.currency"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.account.move.amount.untaxed",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.amount.untaxed",
+        "justification": "Total before tax.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.net"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.account.move.amount.tax",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.amount.tax",
+        "justification": "Total tax.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.tax"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.account.move.amount.total",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.amount.total",
+        "justification": "Total owed.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.total"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.account.move.amount.residual",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.amount.residual",
+        "justification": "Both are the derived amount still owed.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.amount.outstanding"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.account.payment.payment.type",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.payment.payment.type",
+        "justification": "Inbound or outbound.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.direction"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.account.payment.partner.id",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.payment.partner.id",
+        "justification": "The paying or paid partner.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.party"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.account.payment.amount",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.payment.amount",
+        "justification": "Amount transferred.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.amount"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.account.payment.date",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.payment.date",
+        "justification": "Payment date.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.date.posting"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.stock.move.product.uom.qty",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.stock.move.product.uom.qty",
+        "justification": "Quantity moved, in the move's unit.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.core.resource.quantity"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sale.order.partner.id",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.sale.order.partner.id",
+        "justification": "The customer.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order.party"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.sale.order.amount.total",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.sale.order.amount.total",
+        "justification": "Order total.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order.amount.total"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 6000,
+        "correspondenceId": "corr.sale.order.state",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.sale.order.state",
+        "justification": "Quotation, sent, sale or cancelled; partly authored in Odoo.",
+        "relation": "derived",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.commerce.order.state"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.account.move.action.post",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.action.post",
+        "justification": "Posting any move; posting an invoice is the canon action.",
+        "relation": "subsumes",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.post"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "correspondenceId": "corr.account.move.reverse",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.reverse",
+        "justification": "Reversal creates the opposite move and keeps the original.",
+        "relation": "subsumes",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.reverse"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.account.payment.action.post",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.payment.action.post",
+        "justification": "Posts the payment.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.payment.post"
+        ]
+      }
+    ],
+    "fromPack": {
+      "packId": "norn.ontology-pack.odoo",
+      "version": "0.1.0"
+    },
+    "packId": "norn.link.odoo.canon",
+    "packKind": "link",
+    "packVersion": "0.1",
+    "residuals": [
+      {
+        "note": "Projected as class membership: entry, invoice, credit note or receipt.",
+        "reason": "system_specific",
+        "termId": "norn.odoo.account.move.move.type"
+      },
+      {
+        "note": "The canon ledger entry has no debit/credit side yet.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.account.move.line.debit"
+      },
+      {
+        "note": "The canon ledger entry has no debit/credit side yet.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.account.move.line.credit"
+      },
+      {
+        "note": "Resetting a posted move to draft contradicts the canon rule that posted entries change only by reversal; needs a ruling.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.account.move.button.draft"
+      },
+      {
+        "note": "The canon agent does not yet distinguish persons from organisations.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.res.partner.is.company"
+      },
+      {
+        "note": "Contact, invoice and delivery address kinds.",
+        "reason": "system_specific",
+        "termId": "norn.odoo.res.partner.type"
+      },
+      {
+        "note": "The canon resource type has no code property.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.product.product.default.code"
+      },
+      {
+        "note": "The canon transfer event has no provider and receiver agents yet.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.stock.picking.partner.id"
+      },
+      {
+        "note": "Warehouse operation types.",
+        "reason": "system_specific",
+        "termId": "norn.odoo.stock.picking.picking.type.id"
+      },
+      {
+        "note": "The canon has no link from an invoice to the order it bills.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.sale.order.invoice.status"
+      }
+    ],
+    "toPack": {
+      "packId": "norn.ontology-pack.canon",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/odoo/artifacts/norn.link.odoo.canon.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
