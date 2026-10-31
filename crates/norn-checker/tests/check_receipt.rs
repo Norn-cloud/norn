@@ -784,7 +784,7 @@ fn inherited_law_enrollment_binds_pack_digest_and_stable_member() {
         let origin = &enrollment.inherited_from;
         let law = base.iter().find(|law| law["artifactId"] == origin.artifact_id).expect("law");
         assert_eq!(origin.law_id, law["payload"]["id"].as_str().expect("member id"));
-        assert_eq!(origin.artifact_digest, ArtifactRef::of(&envelopes(&[law.clone()])[0]).expect("identity").sha256);
+        assert_eq!(origin.artifact_digest, ArtifactRef::of(&envelopes(std::slice::from_ref(law))[0]).expect("identity").sha256);
         assert_eq!(enrollment.description(), format!("inherited from law {} of pack erpnext.pack.core version 0.1.0", origin.law_id));
     }
     let stored = String::from_utf8(receipt.canonical_json().expect("receipt")).expect("UTF8");
