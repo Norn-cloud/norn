@@ -179,9 +179,14 @@ impl Schema {
                                 && scale.fract() == 0.0
                                 && (0.0..=28.0).contains(scale) =>
                         {
-                            Some(*scale as u32)
+                            scale.to_string().parse::<u32>().ok()
                         }
-                        _ => None,
+                        JsonValue::Null
+                        | JsonValue::Bool(_)
+                        | JsonValue::Number(_)
+                        | JsonValue::String(_)
+                        | JsonValue::Array(_)
+                        | JsonValue::Object(_) => None,
                     })
                     .ok_or_else(|| {
                         Violation::new(path, "decimal scale must be an integer in 0..=28")
@@ -325,7 +330,7 @@ impl Schema {
         match (self, value) {
             (Self::Decimal(scale), RuntimeValue::String(text)) => {
                 let decimal = Decimal::parse(&text)
-                    .map_err(|_| Violation::new(path, "invalid decimal text"))?;
+                    .map_err(|_error| Violation::new(path, "invalid decimal text"))?;
                 if decimal.scale() > *scale {
                     return Err(Violation::new(path, "decimal exceeds declared scale"));
                 }
