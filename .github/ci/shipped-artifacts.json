@@ -4212,7 +4212,7 @@
     },
     {
       "path": "crates/norn-checker/tests/registry_packs.rs",
-      "sha256": "ceb0d89bec23c89d5df91002dd11143a0b6fdd525ac449d2e2660e69c09a1fce",
+      "sha256": "e5ab0fbfbf0584d0e28404d6874eb7cb967298320a513dc8f541ff72575cbeda",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18477,7 +18477,7 @@
     },
     {
       "path": "registry/packs/canon/canon.pack.ts",
-      "sha256": "d096000ea6ef3f6de108dec8f70543010e890c60a383c557a794c21f248b2973",
+      "sha256": "1f53082930fce3bf387ae889a0fcbb959e84034bfc5c01b874295874eeddf7d5",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

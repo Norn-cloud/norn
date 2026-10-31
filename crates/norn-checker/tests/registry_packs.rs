@@ -71,7 +71,10 @@ fn registry_packs_form_one_ontology_registry() {
 #[test]
 fn erpnext_link_accounts_for_every_term() {
     let coverage = coverage("norn.link.erpnext.canon");
-    let accounted = coverage.mapped.len() + coverage.residual.len() + coverage.canon_gaps.len();
+    let accounted = coverage.mapped.len()
+        + coverage.residual.len()
+        + coverage.canon_gaps.len()
+        + coverage.non_conforming.len();
     assert_eq!(accounted, coverage.active_terms);
     assert!(
         coverage
