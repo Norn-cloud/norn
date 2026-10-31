@@ -786,7 +786,11 @@ fn inherited_pack_base() -> Vec<Value> {
 #[test]
 fn inherited_law_enrollment_binds_pack_digest_and_stable_member() {
     let mut base = inherited_pack_base();
-    assert!(check(&base).receipt.admitted, "fixture must be admitted: {:?}", check(&base).diagnostics);
+    assert!(
+        check(&base).receipt.admitted,
+        "fixture must be admitted: {:?}",
+        check(&base).diagnostics
+    );
     let checked = check_with(
         &[],
         &base,
@@ -868,7 +872,9 @@ fn inherited_law_enrollment_binds_pack_digest_and_stable_member() {
 
 #[test]
 fn candidate_pack_laws_are_not_labeled_as_inherited() {
-    let checked = check(&inherited_pack_base()); assert!(checked.receipt.admitted, "{:?}", checked.diagnostics); let receipt = checked.receipt;
+    let checked = check(&inherited_pack_base());
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+    let receipt = checked.receipt;
     assert!(receipt.admitted);
     assert!(receipt.law_enrollment.is_empty());
     let value: Value =

@@ -497,7 +497,7 @@ fn check_artifact_set_with_profile(
 
 /// Recompute the Norn1 content hash of a canonical admission receipt body.
 ///
-/// Receipt formats `norn-checker/receipt@1`, `@2`, and `@3` fix Norn1 as their
+/// Receipt formats `norn-checker/receipt@1` through `@4` fix Norn1 as their
 /// hash profile.
 /// The input must already be canonical JSON; accepting alternate encodings
 /// would make duplicate keys and non-canonical number spellings ambiguous.
@@ -580,19 +580,7 @@ pub fn verify_admission_receipt(
             "receipt artifact-set identity does not match the persisted definitions",
         ));
     }
-    if parsed.format == LAW_ENROLLMENT_RECEIPT_FORMAT {
-        let expected: Vec<_> = crate::law_enrollment::inherited_laws(base)?
-            .iter()
-            .map(crate::law_enrollment::LawEnrollment::to_json_value)
-            .collect();
-        if norn_canonical::canonical_json_of(&parsed.law_enrollment)?
-            != norn_canonical::canonical_json_of(&expected)?
-        {
-            return Err(invalid_receipt(
-                "receipt law enrollment does not match the retained pack members",
-            ));
-        }
-    }
+    verify_law_enrollment(&parsed, base)?;
     if let Some(flow_source_map) = &parsed.flow_source_map {
         let findings = crate::validate_flow_source_map(flow_source_map, artifacts, base);
         if let Some(finding) = findings.first() {
@@ -648,6 +636,23 @@ pub fn verify_admission_receipt(
         semantic_artifact_set,
         flow_source_map: parsed.flow_source_map,
     })
+}
+
+fn verify_law_enrollment(parsed: &StoredReceipt, base: &[ArtifactEnvelope]) -> Result<(), ReceiptError> {
+    if parsed.format == LAW_ENROLLMENT_RECEIPT_FORMAT {
+        let expected: Vec<_> = crate::law_enrollment::inherited_laws(base)?
+            .iter()
+            .map(crate::law_enrollment::LawEnrollment::to_json_value)
+            .collect();
+        if norn_canonical::canonical_json_of(&parsed.law_enrollment)?
+            != norn_canonical::canonical_json_of(&expected)?
+        {
+            return Err(invalid_receipt(
+                "receipt law enrollment does not match the retained pack members",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn retained_identifier_profile(parsed: &StoredReceipt) -> Result<String, ReceiptError> {
@@ -1226,23 +1231,11 @@ fn parse_stored_receipt(value: &serde_json::Value) -> Result<StoredReceipt, Rece
         })
         .transpose()?;
     let law_enrollment = object.get("lawEnrollment").cloned();
-    if format == LAW_ENROLLMENT_RECEIPT_FORMAT {
-        if identifier_profile.is_none()
-            || !law_enrollment
-                .as_ref()
-                .is_some_and(|value| value.as_array().is_some_and(|entries| !entries.is_empty()))
-        {
-            return Err(invalid_receipt(
-                "receipt@4 requires identifierProfile and nonempty lawEnrollment",
-            ));
-        }
-    } else if law_enrollment.is_some() {
-        return Err(invalid_receipt("lawEnrollment requires receipt@4"));
-    }
     validate_stored_receipt_format(
         &format,
         identifier_profile.as_deref(),
         flow_source_map.as_ref(),
+        law_enrollment.as_ref(),
     )?;
     let checker = exact_object(
         required_value(object, "checker", "receipt")?,
@@ -1306,7 +1299,19 @@ fn validate_stored_receipt_format(
     format: &str,
     identifier_profile: Option<&str>,
     flow_source_map: Option<&FlowSourceMap>,
+    law_enrollment: Option<&serde_json::Value>,
 ) -> Result<(), ReceiptError> {
+    if format == LAW_ENROLLMENT_RECEIPT_FORMAT {
+        if identifier_profile.is_none()
+            || law_enrollment.is_none_or(|value| value.as_array().is_none_or(Vec::is_empty))
+        {
+            return Err(invalid_receipt(
+                "receipt@4 requires identifierProfile and nonempty lawEnrollment",
+            ));
+        }
+    } else if law_enrollment.is_some() {
+        return Err(invalid_receipt("lawEnrollment requires receipt@4"));
+    }
     match format {
         LEGACY_RECEIPT_FORMAT if identifier_profile.is_some() || flow_source_map.is_some() => {
             return Err(invalid_receipt(
