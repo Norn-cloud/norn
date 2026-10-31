@@ -20,7 +20,7 @@ def main():
     parser.add_argument('--port-tool', type=Path, required=True)
     parser.add_argument('--codegraph', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--mapping', type=Path, help='private provisional canon mapping')
+    parser.add_argument('--mapping', type=Path, help='private canon mapping (lane G proposed v0 handles)')
     args = parser.parse_args()
     revision = subprocess.check_output(['git', '-C', str(args.root), 'rev-parse', 'HEAD'], text=True).strip()
     if revision != args.revision:
@@ -38,7 +38,6 @@ def main():
     if args.mapping:
         from contracts import project
         contracts = project(facts, json.loads(args.mapping.read_text()))
-        contracts['mapping_status'] = 'provisional_pending_lane_g'
         contracts['source_revision'] = revision
         (args.output / 'contracts.json').write_text(json.dumps(contracts, sort_keys=True))
     (args.output / 'graph.json').write_text(json.dumps(graph, sort_keys=True))

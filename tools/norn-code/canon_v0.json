@@ -1,0 +1,182 @@
+{
+  "schema_version": "norn-code-canon/1",
+  "status": "proposed_v0",
+  "evidence_level": "declared",
+  "terms": [
+    {
+      "id": "norn.finance.invoice",
+      "kind": "object"
+    },
+    {
+      "id": "norn.finance.invoice.post",
+      "kind": "action"
+    },
+    {
+      "id": "norn.finance.invoice.reverse",
+      "kind": "action"
+    },
+    {
+      "id": "norn.finance.invoice.party",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.invoice.date.posting",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.invoice.date.due",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.invoice.currency",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.invoice.amount.net",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.invoice.amount.tax",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.invoice.amount.total",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.invoice.amount.outstanding",
+      "kind": "property",
+      "derived": true
+    },
+    {
+      "id": "norn.finance.invoice.state",
+      "kind": "property",
+      "derived": true
+    },
+    {
+      "id": "norn.finance.invoice.line",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.invoice.line.resource",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.invoice.line.quantity",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.invoice.line.amount",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.payment",
+      "kind": "object"
+    },
+    {
+      "id": "norn.finance.payment.post",
+      "kind": "action"
+    },
+    {
+      "id": "norn.finance.payment.reverse",
+      "kind": "action"
+    },
+    {
+      "id": "norn.finance.payment.allocate",
+      "kind": "action"
+    },
+    {
+      "id": "norn.finance.payment.party",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.payment.direction",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.payment.date.posting",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.payment.currency",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.payment.amount",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.payment.amount.unallocated",
+      "kind": "property",
+      "derived": true
+    },
+    {
+      "id": "norn.finance.payment.allocation",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.payment.allocation.invoice",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.payment.allocation.amount",
+      "kind": "property",
+      "derived": false
+    },
+    {
+      "id": "norn.finance.ledger.entry",
+      "kind": "effect"
+    },
+    {
+      "id": "norn.core.resource.quantity",
+      "kind": "effect",
+      "condition": "only_when_stock_moves"
+    },
+    {
+      "id": "norn.finance.guard.period.closed",
+      "kind": "guard"
+    },
+    {
+      "id": "norn.finance.guard.entry.unbalanced",
+      "kind": "guard"
+    },
+    {
+      "id": "norn.finance.guard.document.posted",
+      "kind": "guard"
+    },
+    {
+      "id": "norn.finance.guard.party.disabled",
+      "kind": "guard"
+    },
+    {
+      "id": "norn.finance.guard.amount.nonpositive",
+      "kind": "guard"
+    },
+    {
+      "id": "norn.finance.guard.currency.mismatch",
+      "kind": "guard"
+    },
+    {
+      "id": "norn.finance.guard.allocation.exceeds.outstanding",
+      "kind": "guard"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 """Clean-room boundary over norn.code-ontology/1 facts (#3470).
 
 Analyst-side mapping is private input, not a shipped translation of source.
-Only explicitly admitted canon terms leave this boundary. Effects are sets;
+Only explicitly supplied canon terms leave this boundary. Effects are sets;
 no source AST, handler identity, condition text or call graph is exported.
 Facts do NOT establish dependency, ordering, atomicity or permission coverage.
 Those dimensions remain unknown until stronger analysis is supplied.
@@ -34,7 +34,7 @@ def project(report, mapping):
     if report.get('format') != 'norn.code-ontology/1':
         raise ValueError('expected norn.code-ontology/1')
     vocabulary = set(mapping['vocabulary'])
-    if not vocabulary or any(not isinstance(t, str) or not re.fullmatch(r'[a-z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+', t) for t in vocabulary):
+    if not vocabulary or any(not isinstance(t, str) or not re.fullmatch(r'[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+', t) for t in vocabulary):
         raise ValueError('canon vocabulary must contain qualified terms')
     def canon(value):
         if value not in vocabulary:
@@ -88,6 +88,7 @@ def project(report, mapping):
                                       'analyzed', 'hypothesis_not_parity', {'source_facts': len(facts), 'mapped': mapped,
                                       'unknown': len(facts) - mapped}, unknown, sorted(hashes))))
     return {'schema_version': 'norn-code-contract/1', 'contracts': result,
+            'mapping_status': mapping.get('status', 'analyst_supplied'),
             'coverage': {'entry_points': len(result), 'with_mapped_facts': sum(c['coverage']['mapped'] > 0 for c in result)},
             'gap': 'typed JSON only; code-fact ontology ingestion/NornQL not implemented'}
 
