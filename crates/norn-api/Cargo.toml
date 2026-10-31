@@ -4,9 +4,14 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Generated core IR and checker API contracts"
+description = "Core API contracts and host capabilities"
+
+[features]
+default = []
+native = []
 
 [dependencies]
+norn-kernel = { path = "../norn-kernel" }
 norn-ir = { path = "../norn-ir" }
 serde = "1.0.228"
 serde_json = "1.0.150"

@@ -292,14 +292,17 @@
         "The Verus function is not linked to the retained store implementation by extraction or a proved refinement.",
         "The closed custom ActionIR subset currently contains only upsert_input_object; it is evidence for the authority pattern, not a general verified action language.",
         "Only the final representation-free hard-invariant ownership Boolean predicate has extracted production correspondence. Descriptor parsing, enum mapping, artifact activation/lookup, store-path completeness, and atomic persistence remain outside that proof.",
-        "No normalized durable production profile is retained in this workspace."
+        "No normalized durable production profile is retained in this workspace.",
+        "Host clocks are injected capabilities for deterministic replay; no theorem about wall-clock accuracy or monotonicity is claimed."
       ],
       "sourceFiles": [
         "Cargo.toml",
         "crates/norn-api/Cargo.toml",
+        "crates/norn-api/src/clock.rs",
         "crates/norn-api/src/contracts.rs",
         "crates/norn-api/src/lib.rs",
         "crates/norn-api/src/openapi.rs",
+        "crates/norn-api/tests/clock.rs",
         "crates/norn-canonical/Cargo.toml",
         "crates/norn-canonical/src/lib.rs",
         "crates/norn-canonical/src/number.rs",

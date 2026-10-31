@@ -1,13 +1,10 @@
 {
   "name": "norn-api",
-  "ring": "Zero",
+  "ring": "One",
   "allowed_norn": [
-    "norn-ir"
+    "norn-ir",
+    "norn-kernel"
   ],
   "dev_only_norn": [],
-  "third_party": [
-    "serde",
-    "serde_json",
-    "utoipa"
-  ]
+  "third_party": []
 }
