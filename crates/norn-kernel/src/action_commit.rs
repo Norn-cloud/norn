@@ -4750,7 +4750,12 @@ fn check_action_record_size<X>(
     // Existing actions without the new preparation phases retain their
     // admitted input/receipt behavior, including command-only actions.
     if !has_action_preparation_features(action)
-        && record.effective_input.is_none()
+        && !record.effective_input.as_ref().is_some_and(|effective| {
+            record
+                .input
+                .iter()
+                .any(|(key, value)| effective.get(key).is_some_and(|current| current != value))
+        })
         && !matches!(
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
