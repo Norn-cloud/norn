@@ -18619,7 +18619,7 @@
     },
     {
       "path": "scripts/bootstrap-rust-extraction-tools.sh",
-      "sha256": "1724c4bd10dfd9e61a48c448468754f17d1a41ac9d53357dd72ff43ae6e8390c",
+      "sha256": "3c32e533c381b5f39feeb06a278532662b1af6163ebf766d892fcbabb94aedc2",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18637,7 +18637,7 @@
     },
     {
       "path": "scripts/bootstrap-verification-tools.sh",
-      "sha256": "911f12636b82f96d56a944dcf5f3a0ef870a714ee1c65819e049f5dc04dc0d9d",
+      "sha256": "9aedcb497061029d7ce62a83d0291d2313e3694e212c670c668231b08860bfd4",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18691,7 +18691,7 @@
     },
     {
       "path": "scripts/check-rust-extraction-tools.sh",
-      "sha256": "8620931e04a9f71f063bc4eb88ede626770fb5a50e50132046d5f8b709c796df",
+      "sha256": "f9cadbc4b15c24c467247abf5d839e9155f087d8fe9908034f4ae1ca9aed13a4",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18727,7 +18727,7 @@
     },
     {
       "path": "scripts/ci/core.sh",
-      "sha256": "d99ec6a9ab33ac5fa20dfc95ef7422f8a1116810584590c6ee782d5b173fdc81",
+      "sha256": "fc835a0d319febfba811e7495bc53e6f9898f2f84afa8adcb1f3df3dbbfc0b3c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18943,7 +18943,7 @@
     },
     {
       "path": "scripts/verify-kernel-l1-lean.sh",
-      "sha256": "042611a98efba0ee08469a6c54eca081a0f89a5441f0918e7eb775b787061a06",
+      "sha256": "2ceb15b60263ac266cd4b6f6c30546bbd2aaeb6e4860583c4f80369d31875745",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18979,7 +18979,7 @@
     },
     {
       "path": "scripts/verify-promoted-subsystems.sh",
-      "sha256": "af640ee1b4375c7d1f797bcd899e05185a2e0b23d385a1b4c9c6dd05084d0764",
+      "sha256": "4c2412804317a2274a5308d88afe1c95373477700b5a59bcf2b74460424018e4",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30151,7 +30151,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "8506aead9a011d7ef93cd1fcb11b057c9992b6ed3c2b07e2d9f479a1be67a85e",
+      "sha256": "e9d2c0f4c6bda7e580e033812ea73ccc0ca114a2205bae899f340841ecf92501",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30169,7 +30169,7 @@
     },
     {
       "path": "verification/coverage-v1/negative_canaries.py",
-      "sha256": "36cea4cec94682ff8206d78d4daf6f3af2829cf2c7b4ece1f177c13d36971678",
+      "sha256": "bd97ec5a0a30b32d4ab911ce22e37471409e20c2f7826d7a0b4ffd6ca13a0a9c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30187,7 +30187,7 @@
     },
     {
       "path": "verification/coverage-v1/promoted-gates.json",
-      "sha256": "511ef4ff64c10febee94065c33b3b08920844271eb03a79bffbc357ac92fdf95",
+      "sha256": "633491cc8263f93a903336f30d9ba3502a500d06e9eb6d529ca2ce49b9e451fd",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30241,7 +30241,7 @@
     },
     {
       "path": "verification/coverage-v1/validate.py",
-      "sha256": "63b7f23b31f4dc5b0e623266daf220fed56bede46619b49b905e3bc06f572bb8",
+      "sha256": "9720683888137eb4c9dade4fa3729ae1c91c4f90cbffbbbdea489b8b831c5ef9",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
