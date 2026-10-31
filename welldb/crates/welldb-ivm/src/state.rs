@@ -271,3 +271,81 @@ pub trait InspectBackend: IvmBackend {
     fn raw_members(&self, class: ClassId, group: &GroupKey) -> Lineage;
 }
 
+/// The stored-row reads `capture` performs. `Record` is the canonical view; a
+/// backend may answer from its own storage instead of materializing a `Record`,
+/// but must answer exactly as the `Record` it stands for would.
+pub trait RecordView {
+    /// `values.get(property)`.
+    fn value(&self, property: &str) -> Option<&Value>;
+    /// `access.get(class)` exists and is visible.
+    fn visible(&self, class: &ClassId) -> bool;
+    /// `access.get(class)` exists and masks `property`.
+    fn masked(&self, class: &ClassId, property: &str) -> bool;
+    /// Last write's export sequence.
+    fn seq(&self) -> Seq;
+    /// Last write's export content address.
+    fn hash(&self) -> &str;
+}
+impl RecordView for Record {
+    fn value(&self, property: &str) -> Option<&Value> {
+        self.values.get(property)
+    }
+    fn visible(&self, class: &ClassId) -> bool {
+        self.access.get(class).is_some_and(|a| a.visible)
+    }
+    fn masked(&self, class: &ClassId, property: &str) -> bool {
+        self.access
+            .get(class)
+            .is_some_and(|a| a.masked.contains(property))
+    }
+    fn seq(&self) -> Seq {
+        self.seq
+    }
+    fn hash(&self) -> &str {
+        &self.hash
+    }
+}
+/// Immutable source row at the input of a backend map/join.
+#[derive(Debug)]
+pub struct RowRef<'a, R = Record> {
+    /// Qualified identity (measure capture order).
+    pub key: &'a ObjectKey,
+    /// Complete stored row.
+    pub record: &'a R,
+    /// Observed tombstone state.
+    pub tombstoned: bool,
+}
+// Manual impls: a borrowed row is `Copy` whether or not the view type is.
+impl<R> Clone for RowRef<'_, R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<R> Copy for RowRef<'_, R> {}
+/// Join outcome before class visibility is applied.
+#[derive(Debug)]
+pub enum JoinedTarget<'a, R = Record> {
+    /// The admitted plan has no linked fields.
+    NotRequired,
+    /// Missing/multiple edge or physically absent target.
+    Missing,
+    /// A physically present target, possibly hidden/tombstoned.
+    Row(RowRef<'a, R>),
+}
+impl<R> Clone for JoinedTarget<'_, R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<R> Copy for JoinedTarget<'_, R> {}
+/// Row visibility outcome, separate from validity/refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum VisibilityOutcome {
+    /// Hidden/tombstoned measure.
+    HiddenMeasure,
+    /// Dropped at first target field, skipping remaining operand masks.
+    HiddenTarget,
+    /// Captured (possibly invalid) row, or a capture refusal.
+    Visible,
+}
