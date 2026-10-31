@@ -124,7 +124,7 @@ pub fn check_claim_set(
         artifacts: artifacts.iter().collect(),
         base_dependencies: base.iter().collect(),
     };
-    let catalog = match crate::definition_catalog::project(&set) {
+    let catalog = match crate::definition_catalog::project(&set, base) {
         Ok(catalog) => catalog,
         Err(error) => {
             let owner = claims

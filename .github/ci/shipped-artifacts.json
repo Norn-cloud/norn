@@ -2181,7 +2181,7 @@
     },
     {
       "path": "crates/norn-checker/src/claims.rs",
-      "sha256": "3fbbc1be2006993c58c7f42f18b1a7755a08ce5e4c7160e4a92bd48af8e09dd1",
+      "sha256": "738cec280669d332f761c9a328e32d748cf06b39510ea2c51e6ce12fe8f17cf1",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
