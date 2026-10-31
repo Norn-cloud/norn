@@ -28,7 +28,7 @@ class ContractTests(unittest.TestCase):
         facts, mapping = self.inputs()
         report = project(facts, mapping)
         self.assertEqual(report['mapping_status'], 'proposed_v0')
-        self.assertEqual(report['coverage'], {'entry_points': 2, 'with_mapped_facts': 2})
+        self.assertEqual(report['coverage'], {'entry_points': 2, 'with_mapped_facts': 2, 'validation_entry_points': 0})
         invoice, payment = report['contracts']
         self.assertEqual(invoice['effects']['writes'], ['norn.finance.invoice.amount.total'])
         self.assertEqual(invoice['guards'], ['norn.finance.guard.period.closed'])
@@ -97,3 +97,26 @@ class ContractTests(unittest.TestCase):
             mapping['vocabulary'].append(term)
             with self.assertRaises(ValueError):
                 project(facts, mapping)
+
+    def test_validation_refusals_and_reachable_candidates_are_separate(self):
+        facts, mapping = self.inputs()
+        mapping['vocabulary'] += ['norn.finance.payment', 'norn.finance.guard.allocation.exceeds.outstanding']
+        mapping['validation_entry_points'] = {'validator': 'norn.finance.payment'}
+        mapping['guards']['synthetic_excess()'] = 'norn.finance.guard.allocation.exceeds.outstanding'
+        facts['handlers'] = [{'id':'validator'}, {'id':'helper'}]
+        common = dict(confidence='resolved', diagnostic=None, source={'sha256':'b'*64})
+        facts['facts'] += [dict(common, handler='validator', relation='throws_if', condition='private_predicate()'),
+                           dict(common, handler='validator', relation='calls', target='helper'),
+                           dict(common, handler='helper', relation='throws_if', condition='synthetic_excess()'),
+                           dict(common, handler='helper', relation='throws_if', condition='unknown_scenario()'),
+                           dict(common, handler='helper', relation='calls', target='validator')]
+        output = project(facts,mapping)
+        validator = output['validations'][0]
+        self.assertEqual(validator['subject'], 'norn.finance.payment')
+        self.assertEqual(validator['guards'], ['norn.finance.guard.period.closed'])
+        self.assertEqual(validator['guard_candidates'], [{'predicate':'norn.finance.guard.allocation.exceeds.outstanding','evidence_level':'analyzed','applicability':'unknown'}])
+        self.assertEqual(validator['guard_candidate_coverage'], {'source_refusals':2,'mapped':1,'unknown':1})
+        self.assertNotIn('helper', json.dumps(validator['guard_candidates']))
+        self.assertNotIn('synthetic_excess',json.dumps(validator))
+        facts['facts'][-4]['confidence']='unresolved'
+        self.assertEqual(project(facts,mapping)['validations'][0]['guard_candidates'], [])
