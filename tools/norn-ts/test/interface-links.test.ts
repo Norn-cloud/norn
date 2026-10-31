@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { interfaceType, lowerEntity } from "../src/builder/entity.ts"
 import { compileDefinitions } from "../src/compiler/definitions.ts"
 import { checker } from "./checker.ts"
 
@@ -79,4 +80,13 @@ test.skipIf(!checker)("Rust refuses an implementation that omits a required inte
   const result = compile(source.replace('    { id: "owner", target: Person, cardinality: { to: "one", from: "many", required: true } },\n', ""))
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(checker!.checkArtifactSet(JSON.parse(JSON.stringify(result.artifacts))).admitted).toBe(false)
+})
+
+test("the builder emits only InterfaceLink members, even from an object-type link", () => {
+  const link = { id: "owner", target: "links.Holder", cardinality: { to: "one" as const, from: "many" as const }, inverse: "held", acyclic: true }
+  const lowered = lowerEntity(interfaceType({ name: "links.Held", title: "Held", version: "0.1.0", properties: [], links: [link] }), { scope: {}, sourcePath: "links.ts" })
+  if (!lowered.ok) throw new Error(JSON.stringify(lowered.diagnostics))
+  expect((lowered.artifact as { payload: { interface: { links: unknown } } }).payload.interface.links).toEqual([
+    { id: "owner", target: "links.Holder", cardinality: { to: "one", from: "many" } },
+  ])
 })

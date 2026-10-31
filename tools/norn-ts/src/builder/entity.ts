@@ -290,7 +290,9 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
             markings: omitEmpty(def.markings ?? []),
             description: def.description,
             properties: omitEmpty(def.properties.map((p) => propertyJson(p, false))),
-            links: omitEmpty(def.links.map((l) => ({ ...l, cardinality: cardinalityJson(l.cardinality) }))),
+            // Project the closed InterfaceLink members: an object-type LinkDecl
+            // passed here must not leak `inverse` or `acyclic`.
+            links: omitEmpty(def.links.map(({ id, description, target, cardinality }) => ({ id, description, target, cardinality: cardinalityJson(cardinality) }))),
             invariants: omitEmpty(def.invariants.map(({ classification, ...invariant }) => ({
               ...invariant,
               ...(classification === undefined || classification === "integrity" ? {} : { classification }),

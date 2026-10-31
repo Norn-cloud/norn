@@ -22897,7 +22897,7 @@
     },
     {
       "path": "tools/norn-ts/src/builder/entity.ts",
-      "sha256": "5ab811ca6378f74ab269a3c2e1a4d9536955e13be52fe841de426f8b3c7eff5c",
+      "sha256": "5843632ee94814d092136a76e8a104ab0eea21079d21f4ad8fc3f05acf7b3d10",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -23545,7 +23545,7 @@
     },
     {
       "path": "tools/norn-ts/test/interface-links.test.ts",
-      "sha256": "fc32362887482668d3c0940fddce4015e4ed53e44f8c756c834a99fcd737a213",
+      "sha256": "bddff7258f4c919861b0b4c96589f21707e8b9a6a5976d312a334cf167667e47",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
