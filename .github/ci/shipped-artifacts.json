@@ -18638,7 +18638,7 @@
     },
     {
       "path": "registry/packs/odoo/odoo.link.ts",
-      "sha256": "b3ec23219b5f17ce4877d7ae865ead9c9a64615cc1daaa3d2ef7d5f71af6b528",
+      "sha256": "25d8f91c3576b3f7d8d38d60d05d390212f026c4cf09e29a1053df1a90f6f21b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
