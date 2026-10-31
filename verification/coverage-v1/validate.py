@@ -398,14 +398,18 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
                    for key in ("shell", "working-directory"))
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
-        "plan": 'echo "plan=$(bash scripts/ci/core.sh plan)" >> "$GITHUB_OUTPUT"',
+        "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE"); else plan=$(bash scripts/ci/core.sh plan); fi
+echo "plan=$plan" >> "$GITHUB_OUTPUT"
+echo "$plan"''',
         "test": "bash scripts/ci/core.sh test ${{ matrix.shard }}",
         "phase": "bash scripts/ci/core.sh ${{ matrix.phase }}",
     }
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
     for name, command in required_runs.items():
         job = jobs.get(name, {})
-        require(job.get("if") == (candidate_condition if name in {"core", "plan"} else None),
+        condition = (candidate_condition if name in {"core", "plan"}
+                     else f"fromJSON(needs.plan.outputs.plan).{('shard' if name == 'test' else 'phase')}[0] != null")
+        require(job.get("if") == condition,
                 f"{name}: candidate gate condition changed")
         require(not job.get("continue-on-error"), f"{name}: gate must fail closed")
         steps = [step for step in job.get("steps", []) if step.get("run", "").strip() == command]
@@ -415,23 +419,42 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         if name == "plan":
             require(steps[0].get("id") == "plan" and job.get("outputs", {}).get("plan") == "${{ steps.plan.outputs.plan }}",
                     "plan: gate plan output must bind the producer step")
+            require(steps[0].get("env", {}).get("BASE") ==
+                    "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}",
+                    "plan: affected selection must bind the pull request base")
     for name, axis in (("test", "shard"), ("phase", "phase")):
         job = jobs[name]
         require(job.get("needs") == "plan" and job.get("strategy", {}).get("matrix") == {
             axis: "${{ fromJSON(needs.plan.outputs.plan)." + axis + " }}"
         }, f"{name}: matrix must execute the complete gate plan")
+    for key, field in (("NORN_CI_PACKAGES", "packages"), ("NORN_CI_REST_SHARDS", "rest_shards")):
+        require(jobs["test"].get("env", {}).get(key) ==
+                "${{ fromJSON(needs.plan.outputs.plan)." + field + " }}",
+                f"test: {key} must bind the gate plan")
     full = jobs.get("full", {})
     require(full.get("needs") == ["core", "plan", "test", "phase"], "full: verdict must depend on every gate")
-    require(full.get("if") == "always() && " + candidate_condition and not full.get("continue-on-error"),
+    require(" ".join(full.get("if", "").split()) == "always() && " + candidate_condition
+            + " && !(cancelled() && github.event_name == 'pull_request')"
+            and not full.get("continue-on-error"),
             "full: verdict must run and fail closed")
-    verdict = '''for result in $RESULTS; do
-  [ "$result" = success ] || { echo "a full-gate job ended $result: $RESULTS"; exit 1; }
-done
-[ "$(echo $RESULTS | wc -w)" -eq 4 ]'''
+    verdict = '''set -euo pipefail
+# A job may be skipped only when the plan gave it nothing to run.
+ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
+[ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
+mode=$(jq -er .mode <<<"$PLAN")
+[ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+ran "$TEST" "$(jq -er '.shard | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
+ran "$PHASE" "$(jq -er '.phase | length' <<<"$PLAN")" || { echo "phase ended $PHASE"; exit 1; }
+echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"'''
+    verdict_env = {
+        "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.plan.outputs.plan }}",
+        "CORE": "${{ needs.core.result }}", "PLANNED": "${{ needs.plan.result }}",
+        "TEST": "${{ needs.test.result }}", "PHASE": "${{ needs.phase.result }}",
+    }
     require(any(step.get("run", "").strip() == verdict and "if" not in step
                 and not step.get("continue-on-error")
                 and not has_execution_override(full, step)
-                and step.get("env", {}).get("RESULTS") == "${{ join(needs.*.result, ' ') }}"
+                and step.get("env") == verdict_env
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = (ROOT / "scripts/ci/core.sh").read_text()
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")

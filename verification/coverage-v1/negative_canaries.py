@@ -14,6 +14,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 GATES = Path(__file__).with_name("promoted-gates.json")
@@ -458,8 +460,30 @@ def central_obligation_closure_canaries() -> None:
     )
 
 
+def workflow_verdict_canaries(source: str) -> None:
+    workflow = yaml.safe_load(source)
+    verdict = next(step["run"] for step in workflow["jobs"]["full"]["steps"] if "run" in step)
+    full_plan = {"mode": "full", "shard": ["rest-1"], "phase": ["clippy"]}
+    affected = {"mode": "affected", "shard": ["rest-1"], "phase": []}
+    passed = dict.fromkeys(("CORE", "PLANNED", "TEST", "PHASE"), "success")
+    cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
+    cases.append(("pull_request", affected, {**passed, "PHASE": "skipped"}, True))
+    cases.extend((event, affected, {**passed, "PHASE": "skipped"}, False)
+                 for event in ("push", "merge_group", "workflow_dispatch"))
+    cases.extend(("merge_group", full_plan, {**passed, key: result}, False)
+                 for key in passed for result in ("failure", "cancelled", "skipped"))
+    cases.append(("pull_request", affected, {**passed, "TEST": "skipped", "PHASE": "skipped"}, False))
+    for index, (event, plan, results, accepted) in enumerate(cases):
+        environment = {**os.environ, **results, "EVENT": event, "PLAN": json.dumps(plan)}
+        result = subprocess.run(["bash", "-c", verdict], cwd=ROOT, env=environment,
+                                capture_output=True, text=True, timeout=10, check=False)
+        if (result.returncode == 0) != accepted:
+            raise AssertionError(f"workflow verdict case {index} had unexpected status {result.returncode}")
+
+
 def workflow_canaries() -> None:
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
+    workflow_verdict_canaries(source)
     mutations = [
         ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
         ("missing test shards", "run: bash scripts/ci/core.sh test ${{ matrix.shard }}", "run: echo skipped"),
@@ -467,6 +491,16 @@ def workflow_canaries() -> None:
         ("missing shard matrix", "shard: ${{ fromJSON(needs.plan.outputs.plan).shard }}", "shard: [rest-1]"),
         ("missing phase matrix", "phase: ${{ fromJSON(needs.plan.outputs.plan).phase }}", "phase: [cheap]"),
         ("missing full verdict dependency", "needs: [core, plan, test, phase]", "needs: [core, plan, test]"),
+        ("disabled planned tests", "if: fromJSON(needs.plan.outputs.plan).shard[0] != null", "if: false"),
+        ("disabled planned phases", "if: fromJSON(needs.plan.outputs.plan).phase[0] != null", "if: false"),
+        ("wrong affected base", "github.event.pull_request.base.sha || ''", "github.sha || ''"),
+        ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
+        ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
+        ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
+        ("forged core verdict", "CORE: ${{ needs.core.result }}", "CORE: success"),
+        ("missing full-plan assertion", '[ "$mode" = full ]', 'true'),
+        ("planned skipped job accepted", '[ "$2" -eq 0 ]', 'true'),
+        ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request')", "!cancelled()"),
         ("floating action", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4"),
         ("floating Rust toolchain", "toolchain: 1.98.0", "toolchain: stable"),
         ("insufficient proof timeout", "timeout-minutes: 110", "timeout-minutes: 20"),
@@ -500,8 +534,8 @@ def workflow_canaries() -> None:
                        "      - shell: /usr/bin/true {0}\n        run: " + command, 1),
         source.replace("  test:\n", "  test:\n    defaults:\n      run:\n        shell: /usr/bin/true {0}\n", 1),
         source.replace("jobs:\n", "defaults:\n  run:\n    shell: /usr/bin/true {0}\njobs:\n", 1),
-        source.replace("      - env:\n          RESULTS:",
-                       "      - shell: /usr/bin/true {0}\n        env:\n          RESULTS:", 1),
+        source.replace("      - env:\n          EVENT:",
+                       "      - shell: /usr/bin/true {0}\n        env:\n          EVENT:", 1),
     )
     shell_mutations += tuple(mutation.replace("shell: /usr/bin/true {0}",
                                                "working-directory: /tmp/other-checkout")
