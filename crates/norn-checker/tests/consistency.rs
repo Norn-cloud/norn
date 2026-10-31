@@ -484,3 +484,57 @@ fn the_null_budget_counts_created_nulls_not_labels() {
         })
     ));
 }
+
+#[test]
+fn a_generated_null_never_reuses_an_input_label() {
+    // Sol R2 S3: with `Null(usize::MAX)` in the input, a fresh label would
+    // alias it and fake a conflict; the chase must refuse instead.
+    let theory = theory(vec![
+        tgd(
+            "t_has_q",
+            &[atom("T", &[var("x")])],
+            &[atom("Q", &[var("x"), var("y")])],
+        ),
+        egd(
+            "q_matches_a",
+            &[
+                atom("Q", &[var("x"), var("y")]),
+                atom("A", &[var("y"), var("z")]),
+            ],
+            var("x"),
+            var("z"),
+        ),
+    ]);
+    let facts = [
+        Fact {
+            relation: "A".to_owned(),
+            values: vec![Value::Null(usize::MAX), Value::Const("a".to_owned())],
+        },
+        fact("T", &["b"]),
+    ];
+    assert!(matches!(
+        chase(&theory, &facts, ChaseBudget::default()),
+        Err(ChaseError::BudgetExceeded {
+            resource: "null labels",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_refused_relation_is_named() {
+    let budget = ChaseBudget {
+        max_steps: 3,
+        ..ChaseBudget::default()
+    };
+    let findings = check_non_vacuity(&invoice_mapping(), budget);
+    assert_eq!(codes_of(&findings), [codes::CHASE_REFUSED]);
+    assert!(
+        findings[0].message.starts_with("AInvoice: ")
+            && findings[0]
+                .message
+                .ends_with("relations after it were not checked"),
+        "{}",
+        findings[0].message
+    );
+}

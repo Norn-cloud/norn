@@ -70,7 +70,12 @@ pub fn check_non_vacuity(theory: &Theory, budget: ChaseBudget) -> Vec<Diagnostic
             }
             // A refusal stops the run but keeps the contradictions already found.
             Err(error) => {
-                findings.push(refusal(theory, &error));
+                let mut refused = refusal(theory, &error);
+                refused.message = format!(
+                    "{relation}: {}; relations after it were not checked",
+                    refused.message
+                );
+                findings.push(refused);
                 return findings;
             }
         }
