@@ -1516,6 +1516,7 @@
       "sourceFiles": [
         "crates/norn-checker/src/consistency.rs",
         "crates/norn-checker/src/consistency/chase.rs",
+        "crates/norn-checker/src/consistency/divergence.rs",
         "crates/norn-checker/src/consistency/theory.rs",
         "crates/norn-checker/src/lint/mapping.rs",
         "crates/norn-checker/src/mapping.rs",
@@ -1528,6 +1529,7 @@
         "crates/norn-checker/src/ontology/link.rs",
         "crates/norn-checker/src/ontology/link_registry.rs",
         "crates/norn-checker/tests/consistency.rs",
+        "crates/norn-checker/tests/consistency_divergence.rs",
         "crates/norn-checker/tests/ontology_link.rs",
         "crates/norn-checker/tests/registry_packs.rs",
         "crates/norn-ir/src/mapping.rs",
