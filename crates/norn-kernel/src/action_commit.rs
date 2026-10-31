@@ -1262,6 +1262,14 @@ where
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
 
     let mut business_input = preparation.effective_input.clone();
+    for binding in &action.create_links {
+        if catalog
+            .effective_type(object_type)
+            .is_some_and(|definition| definition.property(&binding.target_id_field).is_none())
+        {
+            business_input.remove(&binding.target_id_field);
+        }
+    }
     if let Some(quantity) = &action.quantity_effect {
         business_input.remove(&quantity.balance_versions_field);
     }
