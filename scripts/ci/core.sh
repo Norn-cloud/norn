@@ -164,7 +164,8 @@ PY
       git diff --exit-code -- sdks/openapi/norn-api.openapi.json packages/norn-sdk/src/generated/norn-api.ts
       ;;
     welldb)
-      (cd welldb && cargo fmt --all -- --check
+      (cd welldb
+        cargo fmt --all -- --check
         cargo test --workspace --locked
         cargo test --locked -p welldb-ivm --no-default-features
         cargo clippy --workspace --all-targets --locked -- -D warnings
