@@ -10,17 +10,32 @@
     "correspondences": [
       {
         "confidenceBasisPoints": 8000,
-        "correspondenceId": "corr.account.move",
+        "correspondenceId": "corr.account.move.posting",
         "evidenceRefs": [
           "source.odoo"
         ],
-        "fromTermId": "norn.odoo.account.move",
-        "justification": "Every move is a balanced accounting transaction.",
+        "fromTermId": "norn.odoo.account.move.posting",
+        "justification": "The posting view is a balanced accounting transaction; an invoice gives rise to one and is not one (lead ruling 2026-10-31).",
         "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
           "norn.finance.accounting.transaction"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 7000,
+        "correspondenceId": "corr.account.move.gives.rise.to",
+        "evidenceRefs": [
+          "source.odoo"
+        ],
+        "fromTermId": "norn.odoo.account.move.gives.rise.to",
+        "justification": "For invoice moves it is the invoice's gives-rise-to; journal entries post themselves.",
+        "relation": "subsumes",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.invoice.gives.rise.to"
         ]
       },
       {
@@ -51,21 +66,6 @@
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
           "norn.finance.ledger.entry"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 7500,
-        "correspondenceId": "corr.account.payment",
-        "evidenceRefs": [
-          "source.odoo"
-        ],
-        "fromTermId": "norn.odoo.account.payment",
-        "justification": "A payment moves money; Odoo also records internal transfers as payments.",
-        "relation": "subsumed_by",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.core.event.transfer"
         ]
       },
       {
@@ -144,44 +144,14 @@
         ]
       },
       {
-        "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.account.move.payment.state",
-        "evidenceRefs": [
-          "source.odoo"
-        ],
-        "fromTermId": "norn.odoo.account.move.payment.state",
-        "justification": "Paid, partial or not paid follow from the residual amount.",
-        "relation": "derived",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.finance.invoice.amount.outstanding"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.account.move.state",
-        "evidenceRefs": [
-          "source.odoo"
-        ],
-        "fromTermId": "norn.odoo.account.move.state",
-        "justification": "Draft, posted or cancelled; the canon state also derives payment progress.",
-        "relation": "derived",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.finance.invoice.state"
-        ]
-      },
-      {
         "confidenceBasisPoints": 8000,
         "correspondenceId": "corr.account.move.partner.id",
         "evidenceRefs": [
           "source.odoo"
         ],
         "fromTermId": "norn.odoo.account.move.partner.id",
-        "justification": "The invoiced partner.",
-        "relation": "equivalent",
+        "justification": "The invoiced partner; journal entries carry the field too.",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -189,14 +159,14 @@
         ]
       },
       {
-        "confidenceBasisPoints": 7000,
-        "correspondenceId": "corr.account.move.invoice.date",
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.account.move.date",
         "evidenceRefs": [
           "source.odoo"
         ],
-        "fromTermId": "norn.odoo.account.move.invoice.date",
-        "justification": "Invoice date; Odoo also keeps an accounting date.",
-        "relation": "equivalent",
+        "fromTermId": "norn.odoo.account.move.date",
+        "justification": "The accounting date the move takes effect in the ledger; journal entries carry the field too.",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -210,8 +180,8 @@
           "source.odoo"
         ],
         "fromTermId": "norn.odoo.account.move.invoice.date.due",
-        "justification": "Due date.",
-        "relation": "equivalent",
+        "justification": "Due date; journal entries carry the field too.",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -225,8 +195,8 @@
           "source.odoo"
         ],
         "fromTermId": "norn.odoo.account.move.currency.id",
-        "justification": "Document currency.",
-        "relation": "equivalent",
+        "justification": "Document currency; journal entries carry the field too.",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -240,8 +210,8 @@
           "source.odoo"
         ],
         "fromTermId": "norn.odoo.account.move.amount.untaxed",
-        "justification": "Total before tax.",
-        "relation": "equivalent",
+        "justification": "Total before tax; journal entries carry the field too.",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -255,8 +225,8 @@
           "source.odoo"
         ],
         "fromTermId": "norn.odoo.account.move.amount.tax",
-        "justification": "Total tax.",
-        "relation": "equivalent",
+        "justification": "Total tax; journal entries carry the field too.",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -270,8 +240,8 @@
           "source.odoo"
         ],
         "fromTermId": "norn.odoo.account.move.amount.total",
-        "justification": "Total owed.",
-        "relation": "equivalent",
+        "justification": "Total owed; journal entries carry the field too.",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -285,8 +255,8 @@
           "source.odoo"
         ],
         "fromTermId": "norn.odoo.account.move.amount.residual",
-        "justification": "Both are the derived amount still owed.",
-        "relation": "equivalent",
+        "justification": "Both are the derived amount still owed; journal entries carry the field too.",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -301,7 +271,7 @@
         ],
         "fromTermId": "norn.odoo.account.payment.payment.type",
         "justification": "Inbound or outbound.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -316,7 +286,7 @@
         ],
         "fromTermId": "norn.odoo.account.payment.partner.id",
         "justification": "The paying or paid partner.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -331,7 +301,7 @@
         ],
         "fromTermId": "norn.odoo.account.payment.amount",
         "justification": "Amount transferred.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -346,7 +316,7 @@
         ],
         "fromTermId": "norn.odoo.account.payment.date",
         "justification": "Payment date.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -361,7 +331,7 @@
         ],
         "fromTermId": "norn.odoo.stock.move.product.uom.qty",
         "justification": "Quantity moved, in the move's unit.",
-        "relation": "equivalent",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -376,7 +346,7 @@
         ],
         "fromTermId": "norn.odoo.sale.order.partner.id",
         "justification": "The customer.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -391,26 +361,11 @@
         ],
         "fromTermId": "norn.odoo.sale.order.amount.total",
         "justification": "Order total.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
           "norn.commerce.order.amount.total"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.sale.order.state",
-        "evidenceRefs": [
-          "source.odoo"
-        ],
-        "fromTermId": "norn.odoo.sale.order.state",
-        "justification": "Quotation, sent, sale or cancelled; partly authored in Odoo.",
-        "relation": "derived",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.commerce.order.state"
         ]
       },
       {
@@ -451,7 +406,7 @@
         ],
         "fromTermId": "norn.odoo.account.payment.action.post",
         "justification": "Posts the payment.",
-        "relation": "equivalent",
+        "relation": "subsumes",
         "reviewedAt": "2026-10-31T00:00:00Z",
         "reviewedBy": "lane-g (agent, proposed)",
         "toTermIds": [
@@ -468,6 +423,31 @@
     "packVersion": "0.1",
     "residuals": [
       {
+        "note": "Internal transfers move money between one company's own accounts; the canon has no account-to-account movement. Inbound and outbound payments are payments: see the member correspondences.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.account.payment"
+      },
+      {
+        "note": "In payment and reversed states come from reconciliation and reversal, not from the residual amount alone.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.account.move.payment.state"
+      },
+      {
+        "note": "The document date can differ from the accounting date; the canon invoice has no separate document date.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.account.move.invoice.date"
+      },
+      {
+        "note": "Cancelled drafts have no canon state; draft and posted do, and posted moves change only by reversal.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.account.move.state"
+      },
+      {
+        "note": "Quotation and sent states are authored workflow before any commitment; the canon order state is derived.",
+        "reason": "canon_gap",
+        "termId": "norn.odoo.sale.order.state"
+      },
+      {
         "note": "Projected as class membership: entry, invoice, credit note or receipt.",
         "reason": "system_specific",
         "termId": "norn.odoo.account.move.move.type"
@@ -483,8 +463,8 @@
         "termId": "norn.odoo.account.move.line.credit"
       },
       {
-        "note": "Resetting a posted move to draft contradicts the canon rule that posted entries change only by reversal; needs a ruling.",
-        "reason": "canon_gap",
+        "note": "Editing a posted move in place breaks the canon law that posted entries change only by reversal. Where Odoo keeps a trace of the posted version, the projection is a reversal followed by a new posting; in-place edits are flagged, and the law holds (lead ruling 2026-10-31).",
+        "reason": "non_conforming",
         "termId": "norn.odoo.account.move.button.draft"
       },
       {

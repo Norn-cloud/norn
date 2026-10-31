@@ -18457,7 +18457,7 @@
     },
     {
       "path": "registry/packs/PROJECTION.md",
-      "sha256": "c83ea66007ed621497248c69f5bd1dbeb3aa9c63e49d769242aa3ecf7fd8f388",
+      "sha256": "b18d09b5d7ee31686bf7d6e708a901a1c0a39619dbea5564785a07a87d7dff36",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -18596,7 +18596,7 @@
     },
     {
       "path": "registry/packs/odoo/artifacts/norn.link.odoo.canon.json",
-      "sha256": "e12b5c64928193fffa040dee0c47184225e76edc668bb5f6b1baff797135a1d6",
+      "sha256": "fbcf6e9c2a6fe179b41875e32b597f82c89eb372a36c0d1810a5d79bd4782c2c",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -18617,7 +18617,7 @@
     },
     {
       "path": "registry/packs/odoo/artifacts/norn.ontology-pack.odoo.json",
-      "sha256": "f7c33393fe0aedea1288bcc810fde048bc66ab4f222bc59929319552da059cd8",
+      "sha256": "e0acf60d7b33c39212b2f8663bacf56d7e3f2e3527737057f6555c26bafda75f",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",

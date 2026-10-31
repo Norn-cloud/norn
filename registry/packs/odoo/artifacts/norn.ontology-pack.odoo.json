@@ -25,6 +25,20 @@
       {
         "confidenceBasisPoints": 9000,
         "evidenceRefs": [
+          "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move.py"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move.py",
+        "justification": "The term names the model this file of the pinned release defines.",
+        "mappingId": "map.norn.odoo.account.move.posting",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.odoo",
+        "termId": "norn.odoo.account.move.posting"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
           "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move_line.py"
         ],
         "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move_line.py",
@@ -137,6 +151,19 @@
         ],
         "shapeId": "shape.norn.odoo.account.move",
         "termId": "norn.odoo.account.move"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "integer"
+          }
+        ],
+        "shapeId": "shape.norn.odoo.account.move.posting",
+        "termId": "norn.odoo.account.move.posting"
       },
       {
         "closed": true,
@@ -294,6 +321,14 @@
         "termKind": "class"
       },
       {
+        "definition": "The accounting transaction a move posts: the move itself for a journal entry, the invoice's accounting for an invoice (lead ruling 2026-10-31).",
+        "label": "account.move (posting view)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.posting",
+        "termKind": "class"
+      },
+      {
         "definition": "One journal item (debit or credit) of a move.",
         "label": "account.move.line",
         "semanticAuthority": "semantic_only",
@@ -386,6 +421,15 @@
         "termKind": "property"
       },
       {
+        "definition": "The date field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "date (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.date",
+        "termKind": "property"
+      },
+      {
         "definition": "The invoice_date field of account.move.",
         "domainTermId": "norn.odoo.account.move",
         "label": "invoice_date (account.move)",
@@ -446,6 +490,15 @@
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.odoo.account.move.amount.residual",
+        "termKind": "property"
+      },
+      {
+        "definition": "The posting view field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "posting view (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.gives.rise.to",
         "termKind": "property"
       },
       {
