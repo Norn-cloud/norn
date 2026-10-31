@@ -494,3 +494,51 @@ fn join_columns_count_as_mapped() {
         .collect();
     assert_eq!(messages, ["R.note never reaches the target"]);
 }
+
+#[test]
+fn a_redundant_self_join_does_not_hide_an_unmapped_column() {
+    // Sol R3 on #70: `S(id, note), S(other, note) -> T(id)` is equivalent to
+    // `S(id, note) -> T(id)`, and so is an identical duplicate atom; `note`
+    // never reaches the target. A real self-join still counts.
+    let schema = BTreeMap::from([("S".to_owned(), vec!["id".to_owned(), "note".to_owned()])]);
+    let (source, target) = (Theory::default(), Theory::default());
+    let report = |body: &[Atom], head: &[Atom]| {
+        let mapping = Theory {
+            dependencies: vec![tgd("map.s", body, head)],
+        };
+        let exchange = Exchange {
+            source_schema: &schema,
+            source: &source,
+            mapping: &mapping,
+            target: &target,
+        };
+        check_mapping_totality(&exchange, &BTreeSet::new())
+            .into_iter()
+            .map(|f| f.message)
+            .collect::<Vec<_>>()
+    };
+    let t_id = [atom("T", &[var("id")])];
+    for body in [
+        vec![
+            atom("S", &[var("id"), var("note")]),
+            atom("S", &[var("other"), var("note")]),
+        ],
+        vec![
+            atom("S", &[var("id"), var("note")]),
+            atom("S", &[var("id"), var("note")]),
+        ],
+    ] {
+        assert_eq!(report(&body, &t_id), ["S.note never reaches the target"]);
+    }
+    // Parent-child: `S(id, parent), S(parent, x) -> T(id)` selects ids whose
+    // parent exists, so `note` (the parent column) is used.
+    let parent = [
+        atom("S", &[var("id"), var("parent")]),
+        atom("S", &[var("parent"), var("x")]),
+    ];
+    assert!(
+        report(&parent, &t_id).is_empty(),
+        "{:?}",
+        report(&parent, &t_id)
+    );
+}

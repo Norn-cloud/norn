@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::chase::{ChaseBudget, ChaseError, ChaseOutcome, Fact, Value, chase, first_violation};
-use super::theory::{Atom, Dependency, Term, Theory, TheoryError};
+use super::theory::{Atom, Dependency, RuleOrigin, Term, Tgd, Theory, TheoryError};
 use super::{codes, conflict_message, finding, origin_of, refusal};
 use crate::{Diagnostic, DiagnosticSeverity};
 
@@ -363,8 +363,9 @@ fn closed_world(
 /// Mapping totality: a warning for every source relation no mapping reads
 /// and every source column whose value never reaches the target, unless it
 /// is a declared gap (`Relation` or `Relation.column`). A constant, or a
-/// variable that occurs twice in a mapping body (a join or filter), counts as
-/// a use of its column. A mapping containing an EGD is refused.
+/// variable that occurs twice in the core of a mapping body (a join or
+/// filter, not a redundant copy), counts as a use of its column. A mapping
+/// containing an EGD is refused.
 #[must_use]
 pub fn check_mapping_totality(exchange: &Exchange<'_>, gaps: &BTreeSet<String>) -> Vec<Diagnostic> {
     if let Err(error) = exchange.validate() {
@@ -380,25 +381,32 @@ pub fn check_mapping_totality(exchange: &Exchange<'_>, gaps: &BTreeSet<String>) 
             Dependency::Egd(_) => None,
         })
         .collect();
+    let mut cores = Vec::new();
+    for tgd in tgds {
+        match core_body(tgd) {
+            Ok(core) => cores.push((tgd, core)),
+            Err(error) => return vec![refusal(exchange.mapping, &error)],
+        }
+    }
     for (relation, columns) in exchange.source_schema {
         if gaps.contains(relation) {
             continue;
         }
-        let reads: Vec<(&Atom, BTreeSet<&str>)> = tgds
+        let reads: Vec<(&Atom, BTreeSet<&str>)> = cores
             .iter()
-            .flat_map(|tgd| {
-                // A variable used as a join or filter (twice in the body)
+            .flat_map(|(tgd, core)| {
+                // A variable repeated in the body's core (a join or filter)
                 // selects what reaches the target, like a constant does.
                 let mut used = super::theory::variables(&tgd.head);
                 let mut seen = BTreeSet::new();
-                for term in tgd.body.iter().flat_map(|atom| &atom.terms) {
+                for term in core.iter().flat_map(|atom| &atom.terms) {
                     if let Term::Var(name) = term
                         && !seen.insert(name.as_str())
                     {
                         used.insert(name.as_str());
                     }
                 }
-                tgd.body.iter().map(move |atom| (atom, used.clone()))
+                core.iter().map(move |atom| (*atom, used.clone()))
             })
             .filter(|(atom, _)| &atom.relation == relation)
             .collect();
@@ -424,6 +432,87 @@ pub fn check_mapping_totality(exchange: &Exchange<'_>, gaps: &BTreeSet<String>) 
         }
     }
     findings
+}
+
+/// The atoms of `tgd`'s body that no homomorphism fixing the head's
+/// variables makes redundant (its core), so a variable repeated only across
+/// a redundant copy, as in `S(id, n), S(other, n) -> T(id)`, is not taken for
+/// a join.
+fn core_body(tgd: &Tgd) -> Result<Vec<&Atom>, ChaseError> {
+    let head = super::theory::variables(&tgd.head);
+    let fixed: Vec<&str> = super::theory::variables(&tgd.body)
+        .into_iter()
+        .filter(|name| head.contains(name))
+        .collect();
+    let mut core: Vec<&Atom> = tgd.body.iter().collect();
+    let mut index = 0;
+    while index < core.len() {
+        let rest: Vec<&Atom> = core
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(_, atom)| *atom)
+            .collect();
+        if !rest.is_empty() && maps_into(&core, &rest, &fixed)? {
+            core.remove(index);
+        } else {
+            index = index.saturating_add(1);
+        }
+    }
+    Ok(core)
+}
+
+/// Whether `atoms` map into the frozen `target` with every `fixed` variable
+/// sent to itself, checked by chasing a probe rule over the frozen atoms.
+fn maps_into(atoms: &[&Atom], target: &[&Atom], fixed: &[&str]) -> Result<bool, ChaseError> {
+    const PROBE: &str = "\u{0}probe";
+    let freeze = |term: &Term| match term {
+        Term::Const(text) => format!("c:{text}"),
+        Term::Var(name) => format!("v:{name}"),
+    };
+    let frozen = |atom: &Atom| Fact {
+        relation: atom.relation.clone(),
+        values: atom.terms.iter().map(|t| Value::Const(freeze(t))).collect(),
+    };
+    let probe = Theory {
+        dependencies: vec![Dependency::Tgd(Tgd {
+            id: PROBE.to_owned(),
+            origin: RuleOrigin::default(),
+            body: atoms
+                .iter()
+                .map(|atom| Atom {
+                    relation: atom.relation.clone(),
+                    terms: atom
+                        .terms
+                        .iter()
+                        .map(|term| match term {
+                            Term::Const(_) => Term::Const(freeze(term)),
+                            Term::Var(_) => term.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            head: vec![Atom {
+                relation: PROBE.to_owned(),
+                terms: fixed
+                    .iter()
+                    .map(|name| Term::Var((*name).to_owned()))
+                    .collect(),
+            }],
+        })],
+    };
+    let facts: Vec<Fact> = target.iter().copied().map(frozen).collect();
+    let identity = Fact {
+        relation: PROBE.to_owned(),
+        values: fixed
+            .iter()
+            .map(|name| Value::Const(format!("v:{name}")))
+            .collect(),
+    };
+    Ok(match chase(&probe, &facts, ChaseBudget::default())? {
+        ChaseOutcome::Model(model) => model.contains(&identity),
+        ChaseOutcome::Conflict(_) => false,
+    })
 }
 
 fn non_total(message: String) -> Diagnostic {
