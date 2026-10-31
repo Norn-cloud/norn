@@ -450,7 +450,7 @@
     },
     {
       "path": "crates/norn-api/Cargo.toml",
-      "sha256": "2f2a11bbd0aeec0c9289f54123426aac71f8f58f4a18aa58288642cd5062aaa7",
+      "sha256": "89a4b6ae6516eaf7529ec14957d81b33820a6d0781b9f7980842b5fd0beec227",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
