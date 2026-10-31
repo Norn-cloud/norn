@@ -1170,7 +1170,7 @@
     },
     {
       "path": "crates/norn-cell/src/history.rs",
-      "sha256": "7c0971f5b972b6adc83c7690736046689c7366349c9c8e4abf1a0d6636b89917",
+      "sha256": "1a0b297424d006c1cf4cd3ed44774a8d2edd8a22b3892bcf314c696daee88677",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1854,7 +1854,7 @@
     },
     {
       "path": "crates/norn-cell/tests/value_commitments.rs",
-      "sha256": "a848d1fa8fb9af030ab2414658c749fe3b84f0ded37d08ac3138416aa24de7dd",
+      "sha256": "003e37dda24ac327e23a05b4f899133043c40492142cc4484fab4db3d52fa598",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
