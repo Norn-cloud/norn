@@ -44,6 +44,7 @@ require_clean_source_tree "Aeneas" "$tool_root/sources/aeneas"
 printf '\nCharon\n'
 test "$(charon version)" = '0.1.240'
 test "$(git -C "$tool_root/sources/aeneas/charon" rev-parse HEAD)" = a1d989057b50b0429ccd96c5b4c4428b9b218b21
+require_clean_source_tree "Charon" "$tool_root/sources/aeneas/charon"
 printf '\nopam repository\n'
 rg -F "github.com/ocaml/opam-repository.git#$expected_opam_repository_commit" \
   "$OPAMROOT/repo/repos-config"

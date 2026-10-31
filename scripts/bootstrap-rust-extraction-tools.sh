@@ -145,12 +145,16 @@ if [[ ! -x "$source_root/aeneas/charon/bin/charon" ]]; then
   env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas" setup-charon
 fi
 test "$(git -C "$source_root/aeneas/charon" rev-parse HEAD)" = a1d989057b50b0429ccd96c5b4c4428b9b218b21
+if [[ -n "$(git -C "$source_root/aeneas/charon" status --porcelain=v1 --untracked-files=all)" ]]; then
+  echo "pinned source tree is dirty: $source_root/aeneas/charon" >&2
+  exit 1
+fi
 env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas/charon" build-dev
 env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas" build-dev
 ln -sfn "$source_root/aeneas/bin/aeneas" "$bin_root/aeneas"
 ln -sfn "$source_root/aeneas/charon/bin/charon" "$bin_root/charon"
 
-for source in "$source_root/hax" "$source_root/aeneas"; do
+for source in "$source_root/hax" "$source_root/aeneas" "$source_root/aeneas/charon"; do
   if [[ -n "$(git -C "$source" status --porcelain=v1 --untracked-files=all)" ]]; then
     echo "pinned source tree became dirty while building: $source" >&2
     exit 1
