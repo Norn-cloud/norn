@@ -1224,7 +1224,8 @@ pub fn check_commit_json(commit: &str, view: &str, model: &str) -> Result<String
         Ok(admission) => admission,
         Err(AbiError::UnrepresentableProperty { property }) => {
             return to_text(&json!({ "format": VERDICT_FORMAT, "accepted": false,
-                "refusal": { "code": "commit.unrepresentable_property", "property": property } }));
+                "refusal": { "code": "commit.unrepresentable_property",
+                    "message": format!("commit.unrepresentable_property: {property}"), "property": property } }));
         }
         Err(error) => return Err(error),
     };
