@@ -3,6 +3,4 @@ pub mod clock;
 pub mod contracts;
 pub mod openapi;
 
-#[cfg(feature = "native")]
-pub use clock::SystemClock;
 pub use clock::{Clock, ManualClock};
