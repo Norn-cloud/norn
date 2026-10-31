@@ -709,6 +709,7 @@
         "scripts/verify-artifact-governance-extraction.sh",
         "tools/norn-ts/corpus/accept/schema-tool-toolkit.ts",
         "tools/norn-ts/corpus/reject/schema-projection.ts",
+        "tools/norn-ts/fixtures/definitions/board-inherited.source.ts",
         "tools/norn-ts/fixtures/definitions/board.source.ts",
         "tools/norn-ts/fixtures/definitions/invalid/board-unknown-group.ts",
         "tools/norn-ts/fixtures/definitions/invalid/board-unknown-property.ts",
