@@ -2095,6 +2095,7 @@
         "crates/norn-checker/src/action_set.rs",
         "crates/norn-checker/src/codes.rs",
         "crates/norn-checker/src/connector_path.rs",
+        "crates/norn-checker/src/definition_analysis.rs",
         "crates/norn-checker/src/definitions_diff.rs",
         "crates/norn-checker/src/deontic.rs",
         "crates/norn-checker/src/diagnostic.rs",
