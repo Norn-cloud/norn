@@ -1989,10 +1989,13 @@
             "$ref": "#/components/schemas/NornIrOntologyPackRoot"
           },
           {
+            "$ref": "#/components/schemas/NornIrOntologyLinkRoot"
+          },
+          {
             "$ref": "#/components/schemas/NornIrCompositionPackRoot"
           }
         ],
-        "description": "The payload of a `business_pack` artifact: a composition pack\n(`packKind: \"composition\"`, or omitted by IR `0.1` packs; `provides`,\n`artifacts`) or an ontology pack (`packKind: \"ontology\"`; `sources`,\n`terms`, `mappings`, `shapes`)."
+        "description": "The payload of a `business_pack` artifact: a composition pack\n(`packKind: \"composition\"`, or omitted by IR `0.1` packs; `provides`,\n`artifacts`), an ontology pack (`packKind: \"ontology\"`; `sources`,\n`terms`, `mappings`, `shapes`) or a link pack (`packKind: \"link\"`;\n`fromPack`, `toPack`, `correspondences`, `residuals`)."
       },
       "NornIrCalcExpr": {
         "oneOf": [
@@ -3562,6 +3565,22 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrCorrespondenceRelation": {
+        "type": "string",
+        "description": "How a source term relates to its target terms.",
+        "enum": [
+          "equivalent",
+          "subsumed_by",
+          "subsumes",
+          "derived"
+        ],
+        "x-enumDescriptions": [
+          "Same meaning and extension.",
+          "Every instance of the source term is an instance of the target term.",
+          "Every instance of the target term is an instance of the source term.",
+          "The source term's value is a function of the target terms."
+        ]
       },
       "NornIrCountPrecision": {
         "type": "string",
@@ -7728,6 +7747,45 @@
         },
         "additionalProperties": false
       },
+      "NornIrLinkResidual": {
+        "type": "object",
+        "description": "A source term the link does not map.",
+        "required": [
+          "termId",
+          "reason",
+          "note"
+        ],
+        "properties": {
+          "note": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/NornIrResidualReason"
+          },
+          "termId": {
+            "type": "string",
+            "description": "An active term of `fromPack`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLinkedPack": {
+        "type": "object",
+        "description": "One linked pack, pinned by its artifact id and exact artifact version.",
+        "required": [
+          "packId",
+          "version"
+        ],
+        "properties": {
+          "packId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLocaleText": {
         "type": "object",
         "description": "Locale-keyed user-facing text.",
@@ -8543,6 +8601,70 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrOntologyLinkKind": {
+        "type": "string",
+        "description": "The only `packKind` literal of a link pack.",
+        "enum": [
+          "link"
+        ]
+      },
+      "NornIrOntologyLinkRoot": {
+        "type": "object",
+        "description": "A link pack: checked correspondences from the terms of one ontology pack\n(`fromPack`) to the terms of another (`toPack`). Every active term of the\nsource pack is accounted for, by a correspondence or a residual\n(registry rule).",
+        "required": [
+          "packId",
+          "packVersion",
+          "packKind",
+          "fromPack",
+          "toPack",
+          "correspondences"
+        ],
+        "properties": {
+          "correspondences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrTermCorrespondence"
+            },
+            "description": "Non-empty."
+          },
+          "extensions": {
+            "$ref": "#/components/schemas/NornIrOntologyLinkRootPropertyExtensions"
+          },
+          "fromPack": {
+            "$ref": "#/components/schemas/NornIrLinkedPack",
+            "description": "The pack whose terms are mapped."
+          },
+          "packId": {
+            "type": "string",
+            "description": "In the opaque `norn.link.*` namespace (checker rule)."
+          },
+          "packKind": {
+            "$ref": "#/components/schemas/NornIrOntologyLinkKind"
+          },
+          "packVersion": {
+            "$ref": "#/components/schemas/NornIrIrVersion01"
+          },
+          "residuals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLinkResidual"
+            },
+            "description": "Source terms with no correspondence, and why."
+          },
+          "toPack": {
+            "$ref": "#/components/schemas/NornIrLinkedPack",
+            "description": "The pack the terms map into."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrOntologyLinkRootPropertyExtensions": {
+        "type": "object",
+        "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
       "NornIrOntologyMapping": {
         "type": "object",
         "description": "A reviewed mapping from a Norn term to an external IRI of a pinned source.",
@@ -8660,7 +8782,7 @@
             "items": {
               "$ref": "#/components/schemas/NornIrOntologyShape"
             },
-            "description": "Non-empty; one closed promotion shape per active term."
+            "description": "Non-empty; one closed promotion shape per active shaped term."
           },
           "sources": {
             "type": "array",
@@ -8847,6 +8969,10 @@
           "definition": {
             "type": "string"
           },
+          "domainTermId": {
+            "type": "string",
+            "description": "The active class term a `property` or `action` term belongs to\n(required on those, optional on `predicate`, absent on shaped kinds;\nchecker rule)."
+          },
           "label": {
             "type": "string"
           },
@@ -8875,14 +9001,32 @@
         "additionalProperties": false
       },
       "NornIrOntologyTermKind": {
-        "type": "string",
-        "description": "What an ontology term denotes.",
-        "enum": [
-          "class",
-          "property",
-          "value_object",
-          "concept_scheme_root"
-        ]
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "class",
+              "property",
+              "value_object",
+              "concept_scheme_root"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "A business operation on its domain class (posting an invoice).",
+            "enum": [
+              "action"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "A condition over canon state, such as an admission refusal.",
+            "enum": [
+              "predicate"
+            ]
+          }
+        ],
+        "description": "What an ontology term denotes. `class`, `value_object` and\n`concept_scheme_root` terms take one closed promotion shape; `property`,\n`action` and `predicate` terms are vocabulary handles and take none."
       },
       "NornIrOntologyTermStatus": {
         "type": "string",
@@ -9761,6 +9905,20 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrResidualReason": {
+        "type": "string",
+        "description": "Why a source term has no correspondence (norn-platform#2986; lead\nruling 2026-10-31 for `non_conforming`).",
+        "enum": [
+          "system_specific",
+          "canon_gap",
+          "non_conforming"
+        ],
+        "x-enumDescriptions": [
+          "Detail specific to the source system; the canon drops it.",
+          "The target lacks a term for it; the canon should grow one.",
+          "Source behaviour that breaks a target law (editing posted data in\nplace). The law holds; the link flags the behaviour and never maps it."
+        ]
       },
       "NornIrResolutionPolicyName": {
         "type": "string",
@@ -11743,6 +11901,74 @@
           "current",
           "as_of_param"
         ]
+      },
+      "NornIrTermCorrespondence": {
+        "type": "object",
+        "description": "One checked correspondence from a source-pack term to target-pack terms.",
+        "required": [
+          "correspondenceId",
+          "fromTermId",
+          "relation",
+          "toTermIds",
+          "justification",
+          "evidenceRefs",
+          "confidenceBasisPoints",
+          "reviewedBy",
+          "reviewedAt"
+        ],
+        "properties": {
+          "confidenceBasisPoints": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "0 through 10000 (checker rule).",
+            "maximum": 9007199254740992,
+            "minimum": 0
+          },
+          "correspondenceId": {
+            "type": "string",
+            "description": "Unique within the link."
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Non-empty; at least one names a mapped source of `fromPack`'s\nmanifest (`source.*`), the others are absolute HTTPS IRIs."
+          },
+          "fromTermId": {
+            "type": "string",
+            "description": "An active term of `fromPack`."
+          },
+          "justification": {
+            "type": "string"
+          },
+          "relation": {
+            "$ref": "#/components/schemas/NornIrCorrespondenceRelation"
+          },
+          "reviewedAt": {
+            "type": "string",
+            "description": "UTC RFC 3339."
+          },
+          "reviewedBy": {
+            "type": "string"
+          },
+          "rulingRef": {
+            "type": "string",
+            "description": "The ruling that settled a divergence this correspondence resolves."
+          },
+          "toTermIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Active terms of `toPack`: exactly one, or one or more for `derived`."
+          },
+          "transformRef": {
+            "type": "string",
+            "description": "The `mapping` artifact that executes a `derived` correspondence, when\none exists. The correspondence is semantic either way."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrTextFormat": {
         "type": "string",

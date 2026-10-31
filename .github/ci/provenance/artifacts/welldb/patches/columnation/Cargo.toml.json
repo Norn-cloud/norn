@@ -1,0 +1,35 @@
+{
+  "sha256": "b0daedecfde86f6184ed214e914a8aba5b064996664b154b955156c2f2c1a47c",
+  "origin": "derived",
+  "category": "software",
+  "license": "MIT",
+  "sources": [
+    {
+      "id": "software.columnation",
+      "revision": "0e4fe371ac319826dc7a460c704fda54c52a471a",
+      "evidence": {
+        "path": "welldb/patches/PATCHES.md",
+        "sha256": "df56df63a6208e1cbdd449d3c7933ce303bea85018554cfad92bd8831148c222"
+      }
+    }
+  ],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "welldb/patches/PATCHES.md",
+      "sha256": "df56df63a6208e1cbdd449d3c7933ce303bea85018554cfad92bd8831148c222"
+    },
+    {
+      "path": "welldb/patches/columnation/LICENSE",
+      "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae"
+    }
+  ],
+  "notices": [
+    {
+      "path": "welldb/patches/columnation/LICENSE",
+      "sha256": "efd82e84abf17434ef371b22388fb994cd782a0f7f058c9e040bbf3d04c226ae"
+    }
+  ],
+  "connector": null
+}

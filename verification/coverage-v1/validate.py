@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import shlex
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -140,6 +142,13 @@ def load(path: Path) -> dict[str, Any]:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise InvalidCoverage(message)
+
+
+class WorkflowLoader(yaml.SafeLoader):
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
+        mapping = super().construct_mapping(node, deep=deep)
+        require(len(mapping) == len(node.value), "workflow mapping keys must be unique")
+        return mapping
 
 
 def obligation_ids(document: dict[str, Any]) -> set[str]:
@@ -387,7 +396,126 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}", action) is not None, f"workflow action must be content-pinned: {action}")
     for trigger in ("pull_request", "pull_request_target", "push", "merge_group"):
         require(re.search(rf"^  {trigger}:", source, re.MULTILINE) is not None, f"missing required trigger {trigger}")
-    require("run: bash scripts/ci/core.sh" in source, "full public-core gate must run on every candidate")
+    # Bind commands to executable steps and the matrices that cover the plan;
+    # comments, environment values and a cheap-only invocation earn no credit.
+    workflow = yaml.load(source, Loader=WorkflowLoader)
+    jobs = workflow["jobs"]
+    require(not workflow.get("env"), "workflow must not inherit an execution environment")
+    cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache"}
+    job_env = {
+        "core": cache_env,
+        "plan": {},
+        "test": {**cache_env,
+                 "NORN_CI_PACKAGES": "${{ fromJSON(needs.plan.outputs.plan).packages }}",
+                 "NORN_CI_REST_SHARDS": "${{ fromJSON(needs.plan.outputs.plan).rest_shards }}"},
+        "phase": {**cache_env,
+                  "NORN_CI_BASE": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}"},
+    }
+
+    def has_execution_override(job: dict, step: dict) -> bool:
+        return any(key in step or key in job.get("defaults", {}).get("run", {})
+                   or key in workflow.get("defaults", {}).get("run", {})
+                   for key in ("shell", "working-directory"))
+    required_runs = {
+        "core": "bash scripts/ci/core.sh cheap",
+        "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE"); else plan=$(bash scripts/ci/core.sh plan); fi
+echo "plan=$plan" >> "$GITHUB_OUTPUT"
+echo "$plan"''',
+        "test": "bash scripts/ci/core.sh test ${{ matrix.shard }}",
+        "phase": "bash scripts/ci/core.sh ${{ matrix.phase }}",
+    }
+    checkout = {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "with": {"persist-credentials": False, "fetch-depth": 0}}
+    setup = [
+        {"uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
+         "with": {"toolchain": "1.98.0", "components": "rustfmt, clippy", "targets": "wasm32-unknown-unknown"}},
+        {"uses": "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "with": {"bun-version": "1.3.14"}},
+        {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",
+         "with": {"version": "v0.19.0"}},
+        {"uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
+         "with": {"cache-targets": False, "shared-key": "cargo-registry",
+                  "save-if": "${{ github.ref == 'refs/heads/main' }}"}},
+        {"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+         "with": {"path": "~/.bun/install/cache",
+                  "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}"}},
+    ]
+    nextest = {"uses": "taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32",
+               "with": {"tool": "nextest@0.9.150"}}
+    candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
+    for name, command in required_runs.items():
+        job = jobs.get(name, {})
+        condition = (candidate_condition if name in {"core", "plan"}
+                     else f"fromJSON(needs.plan.outputs.plan).{('shard' if name == 'test' else 'phase')}[0] != null")
+        require(job.get("if") == condition,
+                f"{name}: candidate gate condition changed")
+        require(not job.get("continue-on-error"), f"{name}: gate must fail closed")
+        require(job.get("env", {}) == job_env[name],
+                f"{name}: environment must bind the gate plan")
+        job_steps = job.get("steps", [])
+        preparation = [checkout] + ([] if name == "plan" else copy.deepcopy(setup))
+        if name in {"test", "phase"}:
+            preparation.append(nextest)
+        if name == "phase":
+            preparation[4]["with"]["shared-key"] = "cargo-${{ (matrix.phase == 'guards' || matrix.phase == 'integration') && matrix.phase || 'registry' }}"
+        require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
+                f"{name}: preparation actions and inputs must match the approved contract")
+        checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
+        require(len(checkouts) == 1 and "if" not in checkouts[0]
+                and not checkouts[0].get("continue-on-error")
+                and checkouts[0].get("with") == {"persist-credentials": False, "fetch-depth": 0}
+                and checkouts[0]["with"]["persist-credentials"] is False
+                and type(checkouts[0]["with"]["fetch-depth"]) is int,
+                f"{name}: checkout must bind the default candidate repository, ref and workspace")
+        require(len([step for step in job_steps if "run" in step]) == 1,
+                f"{name}: unexpected executable preparation step")
+        require(all(not step.get("env") for step in job_steps if "run" not in step),
+                f"{name}: setup steps must not override the execution environment")
+        steps = [step for step in job_steps if step.get("run", "").strip() == command]
+        require(len(steps) == 1 and "if" not in steps[0] and not steps[0].get("continue-on-error")
+                and not has_execution_override(job, steps[0]),
+                f"{name}: required gate command missing or conditional")
+        require(name == "plan" or not steps[0].get("env"),
+                f"{name}: step environment must not override gate inputs")
+        require(job_steps.index(checkouts[0]) < job_steps.index(steps[0]),
+                f"{name}: candidate checkout must precede the gate")
+        if name == "plan":
+            require(steps[0].get("id") == "plan" and job.get("outputs", {}).get("plan") == "${{ steps.plan.outputs.plan }}",
+                    "plan: gate plan output must bind the producer step")
+            require(steps[0].get("env") == {"BASE":
+                    "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}"},
+                    "plan: affected selection must bind the pull request base")
+    for name, axis in (("test", "shard"), ("phase", "phase")):
+        job = jobs[name]
+        require(job.get("needs") == "plan" and job.get("strategy", {}).get("matrix") == {
+            axis: "${{ fromJSON(needs.plan.outputs.plan)." + axis + " }}"
+        }, f"{name}: matrix must execute the complete gate plan")
+    full = jobs.get("full", {})
+    require(full.get("needs") == ["core", "plan", "test", "phase"], "full: verdict must depend on every gate")
+    require(len(full.get("steps", [])) == 1 and not full.get("env"),
+            "full: verdict must be the only step and cannot inherit shell or gate-input overrides")
+    require(" ".join(full.get("if", "").split()) == "always() && " + candidate_condition
+            + " && !(cancelled() && github.event_name == 'pull_request')"
+            and not full.get("continue-on-error"),
+            "full: verdict must run and fail closed")
+    verdict = '''set -euo pipefail
+# A job may be skipped only when the plan gave it nothing to run.
+ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
+[ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
+mode=$(jq -er .mode <<<"$PLAN")
+[ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+ran "$TEST" "$(jq -er '.shard | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
+ran "$PHASE" "$(jq -er '.phase | length' <<<"$PLAN")" || { echo "phase ended $PHASE"; exit 1; }
+echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"'''
+    verdict_env = {
+        "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.plan.outputs.plan }}",
+        "CORE": "${{ needs.core.result }}", "PLANNED": "${{ needs.plan.result }}",
+        "TEST": "${{ needs.test.result }}", "PHASE": "${{ needs.phase.result }}",
+    }
+    require(any(step.get("run", "").strip() == verdict and "if" not in step
+                and not step.get("continue-on-error")
+                and not has_execution_override(full, step)
+                and step.get("env") == verdict_env
+                for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = (ROOT / "scripts/ci/core.sh").read_text()
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
     require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,

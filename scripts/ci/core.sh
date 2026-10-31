@@ -3,7 +3,7 @@ set -euo pipefail
 # `all` runs every phase, in this order, in one checkout. CI runs each phase as
 # its own job and the `test` phase as the shards below; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
-phases=(cheap test doctest features wasm clippy doc guards integration formal provenance)
+phases=(cheap test doctest features wasm clippy doc guards integration welldb formal provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
@@ -65,12 +65,13 @@ prepare_inputs() {
 use_jsonschema() {
   [[ -x $upstream/venv/bin/python3 ]] || python3 -m venv "$upstream/venv"
   export PATH="$upstream/venv/bin:$PATH"
-  python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1
+  python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1 PyYAML==6.0.3
 }
 run_phase() {
-  if [[ $1 != cheap && $1 != test-shards && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
+  if [[ $1 != cheap && $1 != test-shards && $1 != welldb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
     cheap)
+      use_jsonschema
       cargo metadata --locked --format-version 1 > /dev/null
       cargo fmt --all -- --check
       (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck)
@@ -185,6 +186,14 @@ PY
       "$upstream/openapi-venv/bin/python" -m openapi_spec_validator sdks/openapi/norn-api.openapi.json
       git diff --exit-code -- sdks/openapi/norn-api.openapi.json packages/norn-sdk/src/generated/norn-api.ts
       ;;
+    welldb)
+      (cd welldb
+        cargo fmt --all -- --check
+        cargo test --workspace --locked
+        cargo test --locked -p welldb-ivm --no-default-features
+        cargo clippy --workspace --all-targets --locked -- -D warnings
+        cargo clippy --locked -p welldb-ivm --all-targets --no-default-features -- -D warnings)
+      ;;
     formal)
       export CI=true
       use_jsonschema
@@ -212,7 +221,7 @@ case "${1:-all}" in
   # queue. Only the non-heavy tests of the packages a change can reach (by
   # workspace reverse dependencies, dev-dependencies included; every package
   # when a change is outside the workspace crates, other than Markdown outside
-  # crates and the provenance manifest), with the skeleton guard always, and
+  # crates and provenance records), with the skeleton guard always, and
   # no other phase.
   plan)
     others=()
@@ -222,7 +231,8 @@ case "${1:-all}" in
       --affected) [[ $# -eq 3 && $3 =~ ^[0-9a-f]{40}$ ]] || run_phase usage; changed=$(git diff --name-only --no-renames "$3" HEAD --) || exit 2 ;;
       *) run_phase usage ;;
     esac
-    NORN_CI_CHANGED=$changed python3 - "${2:-full}" "$(list_shards | tr '\n' ' ')" "${others[*]}" "$rest_shards" <<'PY'
+    # Changed paths go on fd 3: a large diff exceeds the per-variable size limit.
+    python3 - "${2:-full}" "$(list_shards | tr '\n' ' ')" "${others[*]}" "$rest_shards" 3<<<"$changed" <<'PY'
 import json, os, sys, tomllib
 from pathlib import Path
 mode, shards, phases, rest = sys.argv[1:]
@@ -232,7 +242,7 @@ def done(plan):
     sys.exit(0)
 if mode == "full":
     done({"mode": "full", "shard": shards.split(), "phase": phases.split() + ["test-shards"], "packages": "", "rest_shards": rest})
-changed = [line for line in os.environ["NORN_CI_CHANGED"].splitlines() if line]
+changed = [line for line in open(3).read().splitlines() if line]
 root = Path(".")
 workspace = tomllib.loads((root / "Cargo.toml").read_text())
 shared = workspace["workspace"].get("dependencies", {})
@@ -256,8 +266,8 @@ for path in changed:
     owner = max((m for m in names if path.startswith(m + "/")), key=len, default=None)
     if owner:
         touched.add(names[owner])
-    # The provenance manifest changes with every file; core checks it.
-    elif path != ".github/ci/shipped-artifacts.json" and not (
+    # Provenance records change with every file; core checks them.
+    elif not path.startswith(".github/ci/provenance/") and not (
             path.endswith(".md") and (path.startswith("docs/") or "/" not in path)):
         outside.append(path)
 reached, stack = set(touched) | {"norn-skeleton-guard"}, list(touched)
