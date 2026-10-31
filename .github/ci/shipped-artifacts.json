@@ -4212,7 +4212,7 @@
     },
     {
       "path": "crates/norn-checker/tests/registry_packs.rs",
-      "sha256": "5aac58f945a4e806c5ec974e448750047595295fe6649a15c237f4aaab59830c",
+      "sha256": "ceb0d89bec23c89d5df91002dd11143a0b6fdd525ac449d2e2660e69c09a1fce",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

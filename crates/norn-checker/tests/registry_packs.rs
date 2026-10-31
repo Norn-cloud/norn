@@ -36,9 +36,8 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
             let text = fs::read_to_string(path).expect("artifact is readable");
             let artifact: ArtifactEnvelope =
                 serde_json::from_str(&text).expect("artifact envelope");
-            artifact
-                .validate()
-                .unwrap_or_else(|diagnostics| panic!("{}: {diagnostics:#?}", path.display()));
+            let validated = artifact.validate();
+            assert!(validated.is_ok(), "{}: {validated:#?}", path.display());
             artifact
         })
         .collect()
