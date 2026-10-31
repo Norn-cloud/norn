@@ -619,6 +619,7 @@ fn split_coverage(candidate: &mut Fixture, subsystems: &[(&str, &[u8])]) {
         .records
         .retain(|record| record["path"] != monolith);
     fs::remove_file(candidate.root().join(monolith)).unwrap();
+    candidate.add("verification/coverage-v1/manifest/index.json", b"{}", "code");
     for (id, body) in subsystems {
         candidate.add(
             &format!("verification/coverage-v1/manifest/subsystems/{id}.json"),
@@ -689,6 +690,20 @@ fn trusted_policy_refuses_both_coverage_layouts_and_stray_entries() {
         errors
             .iter()
             .any(|error| error.contains("both verification/coverage-v1/coverage.json")),
+        "{errors:?}"
+    );
+    let index = "verification/coverage-v1/manifest/index.json";
+    let mut headless = policy_fixture();
+    split_coverage(&mut headless, &[]);
+    headless.records.retain(|record| record["path"] != index);
+    fs::remove_file(headless.root().join(index)).unwrap();
+    headless.save();
+    index_fixture(&headless);
+    let errors = retained_errors(&headless, &base);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("manifest/index.json is missing")),
         "{errors:?}"
     );
     let mut stray = policy_fixture();

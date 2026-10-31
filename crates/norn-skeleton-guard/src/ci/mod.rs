@@ -315,7 +315,8 @@ pub fn maintainer_approval(
 
 /// The monolithic coverage manifest; read only until the per-subsystem layout lands.
 const COVERAGE: &str = "verification/coverage-v1/coverage.json";
-/// One file per subsystem, named by its id.
+/// The split coverage: `index.json` plus one `subsystems/<id>.json` per subsystem.
+const COVERAGE_MANIFEST: &str = "verification/coverage-v1/manifest";
 const COVERAGE_SUBSYSTEMS: &str = "verification/coverage-v1/manifest/subsystems";
 
 fn retained_obligations(root: &Path, base: &Path) -> Result<(), String> {
@@ -337,9 +338,9 @@ fn enrolled_obligations(root: &Path) -> Result<Obligations, String> {
         serde_json::from_slice(&bytes).map_err(|error| error.to_string())
     };
     let monolith = root.join(COVERAGE);
-    let split = root.join(COVERAGE_SUBSYSTEMS);
+    let split = root.join(COVERAGE_MANIFEST);
     match (monolith.exists(), split.exists()) {
-        (true, true) => Err(format!("both {COVERAGE} and {COVERAGE_SUBSYSTEMS} exist")),
+        (true, true) => Err(format!("both {COVERAGE} and {COVERAGE_MANIFEST} exist")),
         (false, false) => Err("missing source enrollment".to_owned()),
         (true, false) => load(&monolith)?
             .get("subsystems")
@@ -355,8 +356,12 @@ fn enrolled_obligations(root: &Path) -> Result<Obligations, String> {
             })
             .collect(),
         (false, true) => {
+            if !split.join("index.json").is_file() {
+                return Err(format!("{COVERAGE_MANIFEST}/index.json is missing"));
+            }
             let mut enrolled = Obligations::new();
-            for entry in std::fs::read_dir(&split).map_err(|error| error.to_string())? {
+            let subsystems = root.join(COVERAGE_SUBSYSTEMS);
+            for entry in std::fs::read_dir(&subsystems).map_err(|error| error.to_string())? {
                 let entry = entry.map_err(|error| error.to_string())?;
                 let name = entry.file_name();
                 let id = name
