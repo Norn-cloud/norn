@@ -2147,6 +2147,7 @@
         "crates/norn-checker/tests/artifact_set.rs",
         "crates/norn-checker/tests/check_receipt.rs",
         "crates/norn-checker/tests/code_registry.rs",
+        "crates/norn-checker/tests/definition_analysis.rs",
         "crates/norn-checker/tests/definitions_diff.rs",
         "crates/norn-checker/tests/deontic.rs",
         "crates/norn-checker/tests/diagnostic_snapshots.rs",

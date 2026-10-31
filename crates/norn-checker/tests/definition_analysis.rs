@@ -142,7 +142,10 @@ fn each_table_binds_the_artifact_version_digest_and_stable_node() {
     let checked = check(std::slice::from_ref(&rule));
     let report = &checked.analysis.expect("analysis").tables[0];
     let artifact = serde_json::from_value(rule.clone()).expect("artifact");
-    assert_eq!(report.artifact, norn_checker::ArtifactRef::of(&artifact).expect("identity"));
+    assert_eq!(
+        report.artifact,
+        norn_checker::ArtifactRef::of(&artifact).expect("identity")
+    );
     assert_eq!(report.node_id, "table");
     let prior = report.artifact.clone();
     rule["version"] = json!("2.0.0");

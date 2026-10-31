@@ -3135,7 +3135,7 @@
     },
     {
       "path": "crates/norn-checker/src/receipt.rs",
-      "sha256": "191506e4d55311f7afc0f6ff598e8d7bc38c180c79cfb23ff5b95b3466e906d6",
+      "sha256": "b136f953500156a780b5552284fc8d8b10cb23760ce00bc4bd304ddbc3e4eaab",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -3441,7 +3441,7 @@
     },
     {
       "path": "crates/norn-checker/tests/definition_analysis.rs",
-      "sha256": "741d72b65afc02908a7e43057f88d8106c3d4dc25b037d1be44aad7c26be46bd",
+      "sha256": "002e98b6a4cc04cbf9429040dae7642f9015097ea13811b560dacb5df6e3b312",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30169,7 +30169,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "e1fe50b1267992007081fe18aef5d6b3202b8154bb6dd0f7ea3353e6b93b8452",
+      "sha256": "3fb95c7556aade0a62f87b872bc2724f857014ae34d2fbf03f5a79984e102ae5",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
