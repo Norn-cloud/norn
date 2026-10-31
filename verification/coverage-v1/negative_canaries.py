@@ -484,6 +484,24 @@ def core_physics_closure_canaries() -> None:
     if "norn.core law closure" not in message:
         raise AssertionError(f"core-physics law deletion was rejected for the wrong reason: {message}")
 
+    # Demoting a law below P0 must not let its coverage claim disappear.
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    for item in registry["obligations"]:
+        if item["id"] == removed:
+            item["priority"] = "P1"
+    with tempfile.TemporaryDirectory() as directory:
+        candidate_registry = Path(directory) / "obligations.json"
+        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
+        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        message = expect_coverage_validator_rejection(
+            "core-physics law demotion and coverage removal",
+            coverage_path=candidate_coverage,
+            core_physics_obligations_path=candidate_registry,
+        )
+    if "core-physics coverage must claim exactly" not in message:
+        raise AssertionError(f"core-physics law demotion was rejected for the wrong reason: {message}")
+
 
 def workflow_canaries() -> None:
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
