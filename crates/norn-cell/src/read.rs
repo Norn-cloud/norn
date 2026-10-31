@@ -30,8 +30,8 @@ use crate::store::{Consumption, OutboxCommand, Receipt, ReceiptBody, TimerEntry}
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
     DEFINITION_VERSION, GENESIS_HASH, INBOX, LEDGER, LINK_CREATION, LINK_VERSIONS, MARKING_CURRENT,
-    MARKING_OCCURRENCE, MARKING_SNAPSHOT, MARKING_VERSION, OUTBOX, PENDING_LINK_INDEX,
-    PERFORM_CLAIM, RECEIPT, RUN, TIMER, VERSIONS,
+    MARKING_OCCURRENCE, MARKING_SNAPSHOT, MARKING_SUBJECT, MARKING_VERSION, OUTBOX,
+    PENDING_LINK_INDEX, PERFORM_CLAIM, RECEIPT, RUN, TIMER, VERSIONS, marking_subject,
 };
 
 const MAX_LINK_PAGE_CANDIDATES: usize = 1_000;
@@ -238,6 +238,24 @@ pub enum LinkDirection {
     In,
     /// Links with the requested object at either endpoint.
     Both,
+}
+
+/// Count the objects of one concrete type in `root_table` whose current version
+/// has a current marking row for property `?3`. Each object resolves its marking
+/// subject through the unique `(world, object_type, id)` index, then seeks that
+/// subject's current row by the full primary key: no per-row correlated scan.
+fn marking_property_rows_sql(root_table: &str) -> String {
+    format!(
+        "SELECT COUNT(*) FROM {root} AS o \
+         JOIN \"{MARKING_SUBJECT}\" AS ms ON ms.\"world\" = o.{world} AND ms.\"object_type\" = o.{ty} AND ms.\"id\" = o.{id} \
+         JOIN \"{MARKING_CURRENT}\" AS m ON m.\"world\" = o.{world} AND m.\"object_type\" = o.{ty} AND m.\"subject\" = ms.\"subject\" AND m.\"property\" = ?3 AND m.\"version\" = o.{version} \
+         WHERE o.{world} = ?1 AND o.{ty} = ?2",
+        root = quote_identifier(root_table),
+        world = quote_identifier(WORLD_COLUMN),
+        ty = quote_identifier(TYPE_COLUMN),
+        id = quote_identifier(ID_COLUMN),
+        version = quote_identifier(VERSION_COLUMN),
+    )
 }
 
 #[allow(
@@ -1469,15 +1487,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         } else {
             MARKING_VERSION
         };
+        let subject = marking_subject(self.conn, world, object_type, id)?;
         let sql = format!(
-            "SELECT \"property\", \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"version\" = ?4 ORDER BY \"property\""
+            "SELECT \"property\", \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"version\" = ?4 ORDER BY \"property\""
         );
         let rows = self.conn.query(
             &sql,
             params![
                 world,
                 object_type,
-                id,
+                subject,
                 to_i64(version, "marking snapshot version")?
             ],
         )?;
@@ -1530,11 +1549,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             Some(version) => version,
             None => self.version(world, object_type, id)?,
         };
+        let subject = marking_subject(self.conn, world, object_type, id)?;
         let encoded: Option<String> = self.conn.query_optional(
             &format!(
-                "SELECT \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
+                "SELECT \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
             ),
-            params![world, object_type, id, MARKING_OCCURRENCE, to_i64(version, "marking snapshot version")?],
+            params![world, object_type, subject, MARKING_OCCURRENCE, to_i64(version, "marking snapshot version")?],
             |row| row.get(0),
         )?;
         encoded
@@ -1596,20 +1616,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 params![world, concrete_type],
                 |row| row.get(0),
             )?.ok_or_else(|| CellError::Engine("marking snapshot count query returned no row".to_owned()))?;
-            let property_rows: i64 = self.conn.query_optional(
-                &format!(
-                    "SELECT COUNT(*) FROM {} AS o JOIN \"{MARKING_CURRENT}\" AS m ON m.\"world\" = o.{} AND m.\"object_type\" = o.{} AND m.\"id\" = o.{} AND m.\"version\" = o.{} AND m.\"property\" = ?3 WHERE o.{} = ?1 AND o.{} = ?2",
-                    quote_identifier(&root.table),
-                    quote_identifier(WORLD_COLUMN),
-                    quote_identifier(TYPE_COLUMN),
-                    quote_identifier(ID_COLUMN),
-                    quote_identifier(VERSION_COLUMN),
-                    quote_identifier(WORLD_COLUMN),
-                    quote_identifier(TYPE_COLUMN),
-                ),
-                params![world, concrete_type, property],
-                |row| row.get(0),
-            )?.ok_or_else(|| CellError::Engine("current marking count query returned no row".to_owned()))?;
+            let property_rows: i64 = self
+                .conn
+                .query_optional(
+                    &marking_property_rows_sql(&root.table),
+                    params![world, concrete_type, property],
+                    |row| row.get(0),
+                )?
+                .ok_or_else(|| {
+                    CellError::Engine("current marking count query returned no row".to_owned())
+                })?;
             if actual != snapshots || actual != property_rows {
                 return Ok(None);
             }
@@ -2199,15 +2215,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             }));
         };
         let mut names: Vec<String> = self.model.chain(&concrete)?.to_vec();
-        for name in self.model.chain(&concrete)? {
-            names.extend(
-                self.model
-                    .def(name)?
-                    .implements
-                    .iter()
-                    .map(|interface| interface.as_str().to_owned()),
-            );
-        }
+        names.extend(
+            self.model
+                .interface_aliases(&concrete)
+                .into_iter()
+                .map(str::to_owned),
+        );
 
         // The read admits stored interface targets as well as concrete types.
         // Capture those same aliases even for an empty edge range.
@@ -2681,15 +2694,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             return Ok(Vec::new());
         };
         let mut names: Vec<String> = self.model.chain(&concrete)?.to_vec();
-        for name in self.model.chain(&concrete)? {
-            names.extend(
-                self.model
-                    .def(name)?
-                    .implements
-                    .iter()
-                    .map(|interface| interface.as_str().to_owned()),
-            );
-        }
+        names.extend(
+            self.model
+                .interface_aliases(&concrete)
+                .into_iter()
+                .map(str::to_owned),
+        );
         let rows = self.conn.query(
             &format!(
                 "SELECT \"link_table\", \"source\", \"target\", \"link\", \"source_type\", \"target_type\" FROM \"{LINK_VERSIONS}\" WHERE \"world\" = ?1 AND (\"source\" = ?2 OR \"target\" = ?2) ORDER BY \"link_table\", \"source\", \"target\""
@@ -4246,6 +4256,58 @@ mod link_candidate_index_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn marking_property_rows_seek_subjects_and_current_rows_by_key() {
+        let engine = NativeEngine::open_in_memory().expect("opens SQLite");
+        for statement in SYSTEM_DDL {
+            engine
+                .execute(statement, &[])
+                .expect("creates system schema");
+        }
+        engine
+            .execute(
+                r#"CREATE TABLE "o:test.Item" ("_world" TEXT NOT NULL, "_id" TEXT NOT NULL, "_type" TEXT NOT NULL, "_version" INTEGER NOT NULL, PRIMARY KEY ("_world", "_id"))"#,
+                &[],
+            )
+            .expect("creates root table");
+        let sql = super::marking_property_rows_sql("o:test.Item");
+        let bindings = [
+            SqlValue::Text("main".to_owned()),
+            SqlValue::Text("test.Item".to_owned()),
+            SqlValue::Text("name".to_owned()),
+        ];
+        let plan = engine
+            .query(&format!("EXPLAIN QUERY PLAN {sql}"), &bindings)
+            .expect("explains marking count");
+        let details = plan
+            .iter()
+            .filter_map(|row| match row.get(3) {
+                Some(SqlValue::Text(detail)) => Some(detail.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        // A per-object correlated lookup re-scans every matching marking row
+        // (about 800x more SQLite work at 1,000 objects).
+        assert!(
+            details.iter().all(|detail| !detail.contains("CORRELATED")),
+            "no correlated subquery: {details:?}"
+        );
+        // Every table is reached by a keyed search, whichever join order SQLite picks,
+        // so the work is linear in the driving rows.
+        for table in ["o ", "ms ", "m "] {
+            assert!(
+                details
+                    .iter()
+                    .any(|detail| detail.starts_with(&format!("SEARCH {table}"))),
+                "{table}is searched by key: {details:?}"
+            );
+        }
+        assert!(
+            details.iter().all(|detail| !detail.starts_with("SCAN")),
+            "no full scan: {details:?}"
+        );
     }
 
     #[test]

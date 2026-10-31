@@ -350,7 +350,16 @@ impl<'a, 'r> Checker<'a, 'r> {
         });
         let interfaces = lineage_defs
             .iter()
-            .flat_map(|owner| owner.implements.iter().cloned())
+            .flat_map(|owner| &owner.implements)
+            .flat_map(|name| {
+                std::iter::once(name.clone()).chain(
+                    self.interfaces
+                        .get(name)
+                        .into_iter()
+                        .flat_map(|entry| self.interface_lineage(entry.def))
+                        .map(|definition| definition.name.clone()),
+                )
+            })
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -386,6 +395,7 @@ impl<'a, 'r> Checker<'a, 'r> {
             .iter()
             .flat_map(|owner| &owner.implements)
             .filter_map(|name| self.interfaces.get(name).map(|entry| entry.def))
+            .flat_map(|def| self.interface_lineage(def))
             .collect();
         let mut object_markings: BTreeSet<MarkingId> = lineage_defs
             .iter()
@@ -874,19 +884,32 @@ impl<'a> Checker<'a, '_> {
 
     fn requirements(&self, def: &'a InterfaceDef) -> Vec<Requirement<'a>> {
         let mut seen = BTreeSet::new();
-        def.properties
-            .iter()
-            .filter(|property| seen.insert(&property.id))
-            .map(|property| Requirement {
-                interface: &def.name,
-                property,
-                resolved: resolve_type(
-                    &property.property_type,
-                    self.context.catalog,
-                    self.context.registry,
-                ),
+        self.interface_lineage(def)
+            .into_iter()
+            .flat_map(|owner| {
+                owner
+                    .properties
+                    .iter()
+                    .filter(|property| seen.insert((&owner.name, &property.id)))
+                    .map(|property| Requirement {
+                        interface: &owner.name,
+                        property,
+                        resolved: resolve_type(
+                            &property.property_type,
+                            self.context.catalog,
+                            self.context.registry,
+                        ),
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect()
+    }
+
+    fn interface_lineage(&self, def: &'a InterfaceDef) -> Vec<&'a InterfaceDef> {
+        norn_expr::env::interface_lineage(def, |name| {
+            self.interfaces.get(name).map(|entry| entry.def)
+        })
+        .unwrap_or_else(|_| vec![def])
     }
 
     // ----- effective property tables -----------------------------------
@@ -947,38 +970,7 @@ impl<'a> Checker<'a, '_> {
             table.insert(&property.id, member);
         }
 
-        let mut implemented = BTreeSet::new();
-        for interface in &def.implements {
-            if !implemented.insert(interface) {
-                continue;
-            }
-            let Some(entry) = self.interfaces.get(interface) else {
-                continue;
-            };
-            for requirement in self.requirements(entry.def) {
-                if let Some(member) = table.get_mut(&requirement.property.id)
-                    && type_narrows(&member.shape(), &requirement.shape()) == Some(true)
-                {
-                    member.inherited.push(&requirement.property.constraints);
-                    member
-                        .inherited
-                        .extend(requirement.resolved.chain.iter().copied());
-                    member.markings.extend(entry.def.markings.iter().cloned());
-                    member
-                        .markings
-                        .extend(requirement.property.markings.iter().cloned());
-                    member.markings.extend(
-                        requirement
-                            .resolved
-                            .markings
-                            .iter()
-                            .map(|marking| (*marking).clone()),
-                    );
-                    member.markings.sort();
-                    member.markings.dedup();
-                }
-            }
-        }
+        self.apply_interface_requirements(def, &mut table);
 
         if with_extensions {
             let extensions = self.extensions.get(&def.name).cloned().unwrap_or_default();
@@ -1026,11 +1018,51 @@ impl<'a> Checker<'a, '_> {
         table
     }
 
+    fn apply_interface_requirements(&self, def: &'a ObjectTypeDef, table: &mut Table<'a>) {
+        let mut implemented = BTreeSet::new();
+        for interface in &def.implements {
+            if !implemented.insert(interface) {
+                continue;
+            }
+            let Some(entry) = self.interfaces.get(interface) else {
+                continue;
+            };
+            for requirement in self.requirements(entry.def) {
+                if let Some(member) = table.get_mut(&requirement.property.id)
+                    && type_narrows(&member.shape(), &requirement.shape()) == Some(true)
+                {
+                    member.inherited.push(&requirement.property.constraints);
+                    member
+                        .inherited
+                        .extend(requirement.resolved.chain.iter().copied());
+                    member.markings.extend(
+                        self.interface_lineage(entry.def)
+                            .iter()
+                            .flat_map(|owner| owner.markings.iter().cloned()),
+                    );
+                    member
+                        .markings
+                        .extend(requirement.property.markings.iter().cloned());
+                    member.markings.extend(
+                        requirement
+                            .resolved
+                            .markings
+                            .iter()
+                            .map(|marking| (*marking).clone()),
+                    );
+                    member.markings.sort();
+                    member.markings.dedup();
+                }
+            }
+        }
+    }
+
     // ----- interfaces ----------------------------------------------------
 
     fn check_interface(&mut self, index: usize, def: &'a InterfaceDef) {
         let position = index.to_string();
         let base = pointer(self.roots.interfaces, &position);
+        self.check_interface_parents(&base, def);
         let known = |name: &InterfaceName| self.interfaces.contains_key(name);
         let findings = check_status(
             &base,
@@ -1055,6 +1087,70 @@ impl<'a> Checker<'a, '_> {
         let findings = interfaces::check_link_requirements(&base, def, known);
         self.out.extend(findings);
         self.check_interface_invariants(&base, def);
+    }
+
+    fn check_interface_parents(&mut self, base: &[&str], def: &'a InterfaceDef) {
+        if def.extends.is_empty() {
+            return;
+        }
+        let mut seen = BTreeSet::new();
+        for (index, parent) in def.extends.iter().enumerate() {
+            if !seen.insert(parent) {
+                self.out.push(error(
+                    interfaces::codes::INVALID_INHERITANCE,
+                    format!("interface parent {:?} is listed twice", parent.as_str()),
+                    span_at(base, &["extends", &index.to_string()]),
+                ));
+            }
+        }
+        if let Err(name) = norn_expr::env::interface_lineage(def, |name| {
+            self.interfaces.get(name).map(|entry| entry.def)
+        }) {
+            self.out.push(error(
+                interfaces::codes::INVALID_INHERITANCE,
+                format!(
+                    "interface ancestry contains missing or cyclic parent {:?}",
+                    name.as_str()
+                ),
+                span_at(base, &["extends"]),
+            ));
+            return;
+        }
+        let requirements = self.requirements(def);
+        let group: Vec<_> = requirements
+            .iter()
+            .map(|requirement| (Some(0), requirement))
+            .collect();
+        let mut groups: BTreeMap<&PropertyId, Vec<_>> = BTreeMap::new();
+        for requirement in group {
+            groups
+                .entry(&requirement.1.property.id)
+                .or_default()
+                .push(requirement);
+        }
+        for group in groups.values() {
+            let conflict = requirement_conflict(group);
+            let widens = group.iter().any(|(_, child)| {
+                child.interface == &def.name
+                    && group.iter().any(|(_, parent)| {
+                        parent.interface != &def.name
+                            && matches!(
+                                narrowing(&child.shape(), &parent.shape()),
+                                Narrowing::TypeMismatch | Narrowing::WidensNullability
+                            )
+                    })
+            });
+            if conflict.is_some() || widens {
+                self.out.push(error(
+                    interfaces::codes::INVALID_INHERITANCE,
+                    conflict.unwrap_or_else(|| {
+                        "interface redeclaration widens a parent member".to_owned()
+                    }),
+                    span_at(base, &["extends"]),
+                ));
+            }
+        }
+        self.check_interface_parent_links(base, def);
     }
 
     // ----- object types ----------------------------------------------------
@@ -1652,6 +1748,7 @@ impl<'a> Checker<'a, '_> {
                     .iter()
                     .filter_map(|name| self.interfaces.get(*name).map(|entry| entry.def)),
             )
+            .flat_map(|interface| self.interface_lineage(interface))
             .flat_map(|interface| interface.links.iter().map(|link| link.id.as_str()))
             .collect();
 

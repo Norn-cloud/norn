@@ -157,6 +157,7 @@ export interface ObjectTypeDef extends TypeMetaBase {
 
 export interface InterfaceDef extends TypeMetaBase {
   readonly _tag: "Interface"
+  readonly extends: ReadonlyArray<string>
   readonly invariants: ReadonlyArray<InvariantDecl>
   readonly at?: SourceLocation
 }
@@ -221,10 +222,10 @@ export function objectType(
 }
 
 export function interfaceType(
-  meta: TypeMetaBase & { readonly invariants?: ReadonlyArray<InvariantDecl> } & At,
+  meta: TypeMetaBase & { readonly extends?: ReadonlyArray<string | InterfaceDef>; readonly invariants?: ReadonlyArray<InvariantDecl> } & At,
 ): InterfaceDef {
-  const { at, invariants = [], ...rest } = meta
-  return located({ _tag: "Interface" as const, ...rest, invariants: [...invariants] }, at)
+  const { at, extends: parents = [], invariants = [], ...rest } = meta
+  return located({ _tag: "Interface" as const, ...rest, extends: parents.map((parent) => typeof parent === "string" ? parent : parent.name), invariants: [...invariants] }, at)
 }
 
 // ------------------------------------------------------------- lowering
@@ -272,6 +273,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
           entityVersion: "2.0",
           interface: {
             name: def.name,
+            extends: omitEmpty(def.extends),
             markings: omitEmpty(def.markings ?? []),
             description: def.description,
             properties: omitEmpty(def.properties.map((p) => propertyJson(p, false))),

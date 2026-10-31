@@ -18,8 +18,8 @@ use norn_kernel::{
     invariant_evaluation_budget,
 };
 use norn_projections::sqlite_ddl::{
-    ID_COLUMN, OVERFLOW_COLUMN, SCOPE_COLUMN, SOURCE_COLUMN, TARGET_COLUMN, TYPE_COLUMN,
-    WORLD_COLUMN, quote_identifier,
+    ID_COLUMN, OVERFLOW_COLUMN, PROPERTY_COLUMN_PREFIX, SCOPE_COLUMN, SOURCE_COLUMN, TARGET_COLUMN,
+    TYPE_COLUMN, WORLD_COLUMN, quote_identifier,
 };
 use norn_projections::{PropertyColumn, ValueEncoding, sqlite_ddl::LinkTable};
 
@@ -30,13 +30,122 @@ use crate::error::{
 };
 use crate::model::Model;
 use crate::read::StoreReader;
-use crate::system::LINK_VERSIONS;
+use crate::system::{LINK_VERSIONS, META};
 
 const CONTRACT_SCAN_PAGE_ROWS: usize = 32;
 const CONTRACT_SCAN_ROW_LIMIT: usize = 4_096;
 const MIGRATION_SCAN_BYTE_LIMIT: u64 = 8 * 1_024 * 1_024;
 const MIGRATION_SCAN_ROW_OVERHEAD_BYTES: u64 = 64;
 const SQLITE_ROWID_ALIASES: [&str; 3] = ["rowid", "_rowid_", "oid"];
+/// `_norn_meta` key recording that property columns carry
+/// [`PROPERTY_COLUMN_PREFIX`] names.
+const PROPERTY_COLUMNS_KEY: &str = "property_columns";
+
+/// Rename the raw-id property columns of an older file to their physical
+/// `p:` names, once, inside the open transaction; then record the layout.
+///
+/// A table is renamed only when every property column of `model` is present
+/// under its raw id and no physical name is taken; any other layout is left
+/// for the projection statements and the DDL-hash check to refuse.
+/// `RENAME COLUMN` rewrites every index over the column in place, and index
+/// names embed property ids rather than column names, so data, keys and
+/// binding indexes survive unchanged. Longer ids go first, so a raw id that
+/// is itself `p:<id>` vacates that name before property `<id>` takes it.
+/// Logical DDL, hashes and exports name properties by id and do not change.
+pub(crate) fn upgrade_raw_property_columns<E: SqlEngine>(
+    engine: &E,
+    model: &Model,
+) -> Result<(), CellError> {
+    let meta = |key: &str| {
+        engine.query_optional(
+            &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+            params![key],
+            |row| row.get::<String>(0),
+        )
+    };
+    match meta(PROPERTY_COLUMNS_KEY)? {
+        Some(layout) if layout == PROPERTY_COLUMN_PREFIX => return Ok(()),
+        Some(layout) => {
+            return Err(CellError::SchemaMismatch {
+                expected: format!("{PROPERTY_COLUMNS_KEY} {PROPERTY_COLUMN_PREFIX}"),
+                found: format!("{PROPERTY_COLUMNS_KEY} {layout}"),
+            });
+        }
+        None => {}
+    }
+    // A fresh file has no format yet and creates its tables with `p:` names.
+    if meta("format")?.is_some() {
+        let schema = model.schema();
+        let tables = schema
+            .object_tables
+            .iter()
+            .map(|table| (&table.table, &table.columns))
+            .chain(
+                schema
+                    .link_tables
+                    .iter()
+                    .map(|table| (&table.table, &table.columns)),
+            );
+        for (table, columns) in tables {
+            let mut renames: Vec<(&str, &str)> = columns
+                .iter()
+                .filter_map(|column| {
+                    let physical = column.column.as_deref()?;
+                    Some((column.property.as_str(), physical))
+                })
+                .collect();
+            if renames.is_empty() {
+                continue;
+            }
+            let present: BTreeSet<String> = engine
+                .query(
+                    "SELECT \"name\" FROM pragma_table_info(?1)",
+                    params![table.as_str()],
+                )?
+                .into_iter()
+                .map(|row| SqlRow(row).get::<String>(0))
+                .collect::<Result<_, _>>()?;
+            let raw = renames
+                .iter()
+                .filter(|(raw, _)| present.contains(*raw))
+                .count();
+            let generated = renames
+                .iter()
+                .filter(|(_, physical)| present.contains(*physical))
+                .count();
+            // Every property column of a table is raw, or every one is generated, or the
+            // table does not exist yet. Anything else is refused before the marker is
+            // written, and the open transaction rolls back any rename already made.
+            match (raw, generated) {
+                (0, 0) if present.is_empty() => continue,
+                (0, all) if all == renames.len() => continue,
+                (all, 0) if all == renames.len() => {}
+                _ => {
+                    return Err(CellError::SchemaMismatch {
+                        expected: format!(
+                            "{table}: all {} property columns raw or all `{PROPERTY_COLUMN_PREFIX}`",
+                            renames.len()
+                        ),
+                        found: format!("{raw} raw and {generated} `{PROPERTY_COLUMN_PREFIX}`"),
+                    });
+                }
+            }
+            renames.sort_by_key(|(raw, _)| std::cmp::Reverse(raw.len()));
+            for (raw, physical) in renames {
+                engine.execute_batch(&format!(
+                    "ALTER TABLE {} RENAME COLUMN {} TO {}",
+                    quote_identifier(table),
+                    quote_identifier(raw),
+                    quote_identifier(physical)
+                ))?;
+            }
+        }
+    }
+    engine.execute(
+        &format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"),
+        params![PROPERTY_COLUMNS_KEY, PROPERTY_COLUMN_PREFIX],
+    )
+}
 
 pub(crate) struct MigrationPlan {
     candidate_catalog: EffectiveCatalog,
@@ -576,17 +685,20 @@ fn effective_invariant_signature(
                     "object type `{object_type}` references missing interface `{interface_name}`"
                 ))
             })?;
-            for invariant in &interface.invariants {
-                signature.insert(
-                    (
-                        "interface".to_owned(),
-                        interface_name.to_owned(),
-                        invariant.id.as_str().to_owned(),
-                    ),
-                    invariant.clone(),
-                );
+            for owner in interface.contract_owners(|name| interfaces.get(name.as_str()).copied()) {
+                for invariant in &owner.invariants {
+                    signature.insert(
+                        (
+                            "interface".to_owned(),
+                            owner.name.as_str().to_owned(),
+                            invariant.id.as_str().to_owned(),
+                        ),
+                        invariant.clone(),
+                    );
+                }
             }
         }
+
         current = definition
             .extends
             .as_ref()

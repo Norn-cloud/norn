@@ -218,3 +218,27 @@ fn binding_indexes_survive_model_snapshot_and_legacy_snapshots_remain_index_free
     assert_eq!(restored_old.ddl_hash(), legacy.ddl_hash());
     assert_eq!(restored_old.model_hash(), legacy.model_hash());
 }
+
+#[test]
+fn invariant_free_child_ancestry_changes_hash_and_survives_snapshot_reconstruction() {
+    let object = object_type();
+    let mut first = invariant_interface(1, "self.name != \"\"");
+    first.name = norn_ir::InterfaceName("model.Parent".to_owned());
+    let mut child = interface(1);
+    let flat = Model::from_definitions_with_interfaces(
+        std::slice::from_ref(&object),
+        &[],
+        &[child.clone(), first.clone()],
+    )
+    .expect("flat model");
+    child.extends = vec![first.name.clone()];
+    let inherited = Model::from_definitions_with_interfaces(&[object], &[], &[child, first])
+        .expect("inherited model");
+    assert_eq!(flat.ddl_hash(), inherited.ddl_hash());
+    assert_ne!(flat.model_hash(), inherited.model_hash());
+    assert!(inherited.is_a("model.Item", "model.Parent"));
+    let restored =
+        Model::from_snapshot(&inherited.definitions_snapshot()).expect("snapshot rebuilds");
+    assert_eq!(restored.model_hash(), inherited.model_hash());
+    assert!(restored.is_a("model.Item", "model.Parent"));
+}
