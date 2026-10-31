@@ -2618,12 +2618,20 @@
         },
         {
           "id": "INV-CORE-LINKED-REVERSAL",
-          "runtime": "missing",
+          "runtime": "tested",
           "model": "bounded_model_checked",
           "proof": "reference_proved",
-          "residual": "The public kernel has no linked journal reversal yet; quantity-ledger reversals are covered by INV-QL-APPEND-REVERSAL. The model and reference proof cover the pack law only.",
+          "residual": "The cell quantity ledger refuses a repeated reversal and a reversal of a reversal, and keeps reversals append-only (tested). The public kernel has no linked reversal of accounting journal legs yet. The model and reference proof cover the pack law.",
           "evidence": {
-            "runtime": [],
+            "runtime": [
+              {
+                "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+                "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+                "selectors": [
+                  "test:linked_reversal_is_append_only_and_cannot_repeat_or_reverse_a_reversal"
+                ]
+              }
+            ],
             "model": [
               {
                 "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
@@ -2650,75 +2658,157 @@
         },
         {
           "id": "INV-CORE-QUANTITY-CONSERVATION",
-          "runtime": "missing",
-          "model": "missing",
-          "proof": "missing",
+          "runtime": "tested",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
           "evidence": {
-            "runtime": [],
-            "model": [],
-            "proof": []
+            "runtime": [
+              {
+                "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+                "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+                "selectors": [
+                  "test:reserve_full_post_and_in_transit_loss_are_conserved"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "selectors": [
+                  "invariant:quantityConserved"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "selectors": [
+                  "theorem:received_eq_issued_add_onHand",
+                  "theorem:move_conserves"
+                ]
+              }
+            ]
           },
-          "residual": "Specified only; the kernel quantity ledger enforces partition conservation (INV-QL-CONSERVATION). Core-pack model and proof are pending."
+          "residual": "The cell quantity ledger conserves reserved, posted, in-transit and lost quantity across partitions (tested). The reference proof shows received = issued + on hand for every movement history of one resource; it is not a refinement proof of the Rust ledger."
         },
         {
           "id": "INV-CORE-ESCROW-NON-NEGATIVE",
-          "runtime": "missing",
-          "model": "missing",
-          "proof": "missing",
+          "runtime": "tested",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
           "evidence": {
-            "runtime": [],
-            "model": [],
-            "proof": []
+            "runtime": [
+              {
+                "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+                "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+                "selectors": [
+                  "test:reserve_full_post_and_in_transit_loss_are_conserved",
+                  "test:balance_and_hold_overflow_refuse_exactly",
+                  "test:funding_policy_matrix_requires_explicit_same_vector_netting_and_funds_remainder"
+                ]
+              }
+            ],
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "selectors": [
+                  "invariant:escrowNonNegative"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "selectors": [
+                  "theorem:qstep_valid",
+                  "theorem:qexec_valid",
+                  "theorem:valid_available_non_negative"
+                ]
+              }
+            ]
           },
-          "residual": "Specified only; the kernel quantity ledger refuses spending held or absent quantity. Core-pack model and proof are pending."
+          "residual": "The cell quantity ledger refuses a reservation or post that would spend held or absent quantity and refuses hold overflow (tested). The reference proof covers one balance partition and every workflow of receive, issue, reserve, release and consume steps."
         },
         {
           "id": "INV-CORE-COMMITMENT-COMPLETION",
           "runtime": "missing",
-          "model": "missing",
-          "proof": "missing",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
           "evidence": {
             "runtime": [],
-            "model": [],
-            "proof": []
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "selectors": [
+                  "invariant:neverDropped",
+                  "invariant:terminalAbsorbing",
+                  "invariant:endsByDue"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "selectors": [
+                  "theorem:terminal_absorbing",
+                  "theorem:cstep_rank",
+                  "theorem:deadline_terminates",
+                  "theorem:bstep_never_drops"
+                ]
+              }
+            ]
           },
-          "residual": "Specified only; no runtime enforcement, model or proof yet."
+          "residual": "No runtime enforcement yet: implementing types are not yet checked to refine the commitment lifecycle, and the deadline timer is an assumption. The model and reference proof cover the pack lifecycle: terminal states absorb, no event removes a commitment, every transition lowers the rank (at most two steps), and the deadline event ends any open commitment."
         }
       ],
       "runtime": {
         "status": "partial",
         "artifacts": [
-          "crates/norn-kernel/tests/accounting_commit.rs"
+          "crates/norn-kernel/tests/accounting_commit.rs",
+          "crates/norn-cell/tests/quantity_reservations.rs"
         ],
         "commands": [
-          "cargo test --locked -p norn-kernel --test accounting_commit"
+          "cargo test --locked -p norn-kernel --test accounting_commit",
+          "cargo test --locked -p norn-cell --test quantity_reservations"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": []
       },
       "model": {
-        "status": "partial",
-        "bound": "Apalache depth 4 over four journal slots of two legs, accounts 0..3, two units and amounts -2..2, with post, reverse and refused amend or delete steps",
+        "status": "bounded_model_checked",
+        "bound": "Apalache depth 4 over four journal slots of two legs, accounts 0..3, two units and amounts -2..2, with post, reverse and refused amend or delete steps; and depth 4 over one resource in two locations with quantities 1..2 and holds, plus two commitments due at times 1 and 2 under a clock that advances to 3",
         "artifacts": [
-          "verification/core-physics-v1/models/core-value-ledger.qnt"
+          "verification/core-physics-v1/models/core-value-ledger.qnt",
+          "verification/core-physics-v1/models/core-quantity-commitment.qnt"
         ],
         "commands": [
           "quint typecheck verification/core-physics-v1/models/core-value-ledger.qnt",
-          "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4"
+          "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+          "quint typecheck verification/core-physics-v1/models/core-quantity-commitment.qnt",
+          "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": [
+          "target/verification-results/core-quantity-commitment-quint.json",
           "target/verification-results/core-value-ledger-quint.json"
         ]
       },
       "proof": {
-        "status": "partial",
+        "status": "reference_proved",
         "scope": "reference",
         "artifacts": [
-          "verification/core-physics-v1/proofs/CoreValueLedger.lean"
+          "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+          "verification/core-physics-v1/proofs/CoreQuantity.lean"
         ],
         "commands": [
-          "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean"
+          "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+          "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": []
@@ -2726,11 +2816,14 @@
       "limitations": [
         "The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel.",
         "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops.",
-        "Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack."
+        "Commitment completion has no runtime enforcement yet; the cell deadline timer is assumed to raise the deadline event for every open commitment.",
+        "The quantity and escrow references model one resource and one balance partition; multi-partition behaviour is tested in the cell, not proved."
       ],
       "sourceFiles": [
         "verification/core-physics-v1/models/core-value-ledger.qnt",
-        "verification/core-physics-v1/proofs/CoreValueLedger.lean"
+        "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+        "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+        "verification/core-physics-v1/proofs/CoreQuantity.lean"
       ]
     }
   ]
