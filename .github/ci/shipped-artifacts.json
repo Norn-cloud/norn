@@ -30106,7 +30106,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "624dd6448186975998a0b2495a576322be6f9014e4e62e47ea7fa67481f5c51f",
+      "sha256": "f9871cfb0fd23359f2e3260514e4002319902a1af914d1f041e633e7a4e4cea3",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32886,7 +32886,7 @@
     },
     {
       "path": "welldb/crates/welldb-ivm/src/lib.rs",
-      "sha256": "f2a08cfea274cfabf9b987898de3719037288c50e375e45a8bb927a4ec185bc8",
+      "sha256": "f8bf16aaeaa7cd69dcf5812ae22044de72433bd93ea7409e33f11c1420f44773",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32905,6 +32905,24 @@
     {
       "path": "welldb/crates/welldb-ivm/src/plan.rs",
       "sha256": "f88297b548d2aa51593cae81682eaf5a21bcc3a39018f754a338eb19f9cd5fa1",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/src/source.rs",
+      "sha256": "3b2eb94068d55be03b70601aca502219488b3326ab3fc310d5f521efda96d9a8",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32977,6 +32995,24 @@
     {
       "path": "welldb/crates/welldb-ivm/tests/plan.rs",
       "sha256": "a4919c7f052d2c6c24fad66f6e3f35d993fdec880d16717aefc515a1c9a8a96b",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/tests/source.rs",
+      "sha256": "ffccf03d8e8e05780677c74cde3367be7900307ef51199575917ffac9d39af98",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
