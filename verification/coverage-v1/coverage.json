@@ -334,6 +334,7 @@
         "crates/norn-host/Cargo.toml",
         "crates/norn-host/src/lib.rs",
         "crates/norn-host/src/refusal.rs",
+        "crates/norn-host/src/scope.rs",
         "crates/norn-ir/Cargo.toml",
         "crates/norn-ir/src/access.rs",
         "crates/norn-ir/src/action.rs",
