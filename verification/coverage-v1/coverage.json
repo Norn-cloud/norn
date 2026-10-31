@@ -703,6 +703,8 @@
         "registry/core/artifacts/core.Claim.interface.json",
         "registry/core/artifacts/core.Commitment.interface.json",
         "registry/core/artifacts/core.EconomicEvent.interface.json",
+        "registry/core/artifacts/core.Hold.interface.json",
+        "registry/core/artifacts/core.LedgerEffect.interface.json",
         "registry/core/artifacts/core.Resource.interface.json",
         "registry/core/artifacts/core.Entitlement.entity.json",
         "registry/core/artifacts/core.Order.interface.json",
