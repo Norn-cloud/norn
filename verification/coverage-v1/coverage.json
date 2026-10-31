@@ -2589,6 +2589,7 @@
         "crates/norn-testkit/src/model.rs",
         "crates/norn-testkit/src/runner.rs",
         "crates/norn-testkit/src/strategy.rs",
+        "verification/engine-alpha-v1/models/order-economics.qnt",
         "verification/kernel-v2/generate.py",
         "verification/kernel-v2/models/commit-admission.qnt",
         "verification/kernel-v2/models/projection-trust.qnt",
