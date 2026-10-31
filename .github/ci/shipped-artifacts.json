@@ -18240,6 +18240,96 @@
       "connector": null
     },
     {
+      "path": "registry/core/artifacts/core.Agent.interface.json",
+      "sha256": "eaee552893d34ce8cf3f325217510b682abb807804ec9584fbfb56b79243092f",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/core/artifacts/core.AgentRole.interface.json",
+      "sha256": "c7ac415004307cc2608ce13234de4e8969aeafc6346a372636ca9761b9745fcd",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/core/artifacts/core.Claim.interface.json",
+      "sha256": "060d34282d5576fdf3a6f698ecfa28f71ca43506dbd7271bf59fa3378e7346be",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/core/artifacts/core.Commitment.interface.json",
+      "sha256": "3642640070cae38a7023f3cbbd6249da7387901c88bdf731147858801d9e01df",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/core/artifacts/core.EconomicEvent.interface.json",
+      "sha256": "437129033b9fff48812d2f429b6964492d3c1589d60da420bf0d2fe22b7fcea6",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "registry/core/artifacts/core.Entitlement.entity.json",
       "sha256": "0e03dad095caaaf9641abcd3b9f586ef919f7c6c1395a71e250974c794000917",
       "origin": "authored",
@@ -18260,6 +18350,24 @@
     {
       "path": "registry/core/artifacts/core.Order.interface.json",
       "sha256": "7fde09890b1cb4b57c5bacc613ee8a7907a3f80ca258cf3efdf5aa8df73e90b9",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/core/artifacts/core.Resource.interface.json",
+      "sha256": "23df67cddb18a8ce2813546eb79522d6cc2e45c2075f91896bc16a5ffdc4ba6b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18368,6 +18476,24 @@
     {
       "path": "registry/core/artifacts/std.value_types.entity.json",
       "sha256": "a2e18079991e2b0e9eef76754f4b1ea0713da5b7fe287d34ecd09789de10664e",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/core/src/physics.ts",
+      "sha256": "7fa82411a19679b231685db74b798e9b6c40b047ddc137c7d4622a019ab1c277",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -23456,6 +23582,24 @@
     {
       "path": "tools/norn-ts/test/connector.test.ts",
       "sha256": "c59a19c959f0c4a1407266f5ce80372d056012d9cab1e2ba40fb979fb3937396",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "tools/norn-ts/test/core-physics.test.ts",
+      "sha256": "d18379ba8b9a8ecda4af83206df457258674aa6733813a97c98517865f70134c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29935,7 +30079,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "e15d52dad5516e39a3b57a3a7a9f90c49863be55bab923e74364780c379708a6",
+      "sha256": "f4c79d0f67f349fbfd309defd96096df7d11863f3a70caefeaeb20b2813313ef",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
