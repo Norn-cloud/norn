@@ -292,7 +292,8 @@
         "The Verus function is not linked to the retained store implementation by extraction or a proved refinement.",
         "The closed custom ActionIR subset currently contains only upsert_input_object; it is evidence for the authority pattern, not a general verified action language.",
         "Only the final representation-free hard-invariant ownership Boolean predicate has extracted production correspondence. Descriptor parsing, enum mapping, artifact activation/lookup, store-path completeness, and atomic persistence remain outside that proof.",
-        "No normalized durable production profile is retained in this workspace."
+        "No normalized durable production profile is retained in this workspace.",
+        "The native perimeter currently projects typed refusals only; full host integration and its authorization paths remain subsequent ports."
       ],
       "sourceFiles": [
         "Cargo.toml",
@@ -330,6 +331,9 @@
         "crates/norn-graph/src/algorithms.rs",
         "crates/norn-graph/src/graph.rs",
         "crates/norn-graph/src/lib.rs",
+        "crates/norn-host/Cargo.toml",
+        "crates/norn-host/src/lib.rs",
+        "crates/norn-host/src/refusal.rs",
         "crates/norn-ir/Cargo.toml",
         "crates/norn-ir/src/access.rs",
         "crates/norn-ir/src/action.rs",

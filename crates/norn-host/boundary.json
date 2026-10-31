@@ -1,0 +1,10 @@
+{
+  "name": "norn-host",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-cell",
+    "norn-kernel"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}
