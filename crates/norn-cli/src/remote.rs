@@ -170,12 +170,11 @@ fn response_text(reader: impl std::io::Read, is_sse: bool) -> Result<String, Str
         .block_on(async {
             futures_util::pin_mut!(events);
             while let Some(event) = events.next().await {
-                if let Some(data) = event.map_err(|e| e.to_string())?.data {
-                    if serde_json::from_str::<Value>(&data)
+                if let Some(data) = event.map_err(|e| e.to_string())?.data
+                    && serde_json::from_str::<Value>(&data)
                         .is_ok_and(|value| value.get("id") == Some(&json!(1)))
-                    {
-                        return Ok(data);
-                    }
+                {
+                    return Ok(data);
                 }
             }
             Err("MCP stream ended before its response".into())
