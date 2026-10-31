@@ -33,7 +33,8 @@ export async function runAlpha(definitions: Definitions, surfaces: Surfaces, run
     for (const surface of ["api", "mcp", "cli"] satisfies Surface[]) {
       const orderId = `alpha-${surface}`;
       const query = { tenant, orderId };
-      await invoke(surface, "alpha.order.create", { id: orderId, customer: "alpha-customer", total: "10" });
+      const create = { id: orderId, order_number: orderId, order_date: "2026-10-31", currency: "USD", counterparty: "alpha-customer", total_amount: "10" };
+      await invoke(surface, "alpha.order.create", create);
       const initial = await snapshot(query);
       strictEqual(initial.state.status, "draft");
       strictEqual(initial.state.invoiced, false);
@@ -71,7 +72,7 @@ export async function runAlpha(definitions: Definitions, surfaces: Surfaces, run
         strictEqual(completed.events.length > invoiced.events.length, true);
         deepStrictEqual(await runtime.replay(query), completed);
         for (const field of ["invoiced", "completed", "outstanding"]) {
-          await refuse(surface, "alpha.order.create", { id: `${orderId}-computed-${field}`, customer: "alpha-customer", total: "10", [field]: field === "outstanding" ? "999" : false }, query);
+          await refuse(surface, "alpha.order.create", { ...create, id: `${orderId}-computed-${field}`, order_number: `${orderId}-computed-${field}`, [field]: field === "outstanding" ? "999" : false }, query);
         }
         deepStrictEqual(
           await surfaces.invoke(surface, "alpha.order.undeclared", { id: orderId }, "operator"),
