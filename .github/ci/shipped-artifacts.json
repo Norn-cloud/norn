@@ -266,7 +266,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "1faeef64d62e3b42300335ec8b1004f2133eefa8e7ebf4d2d125c2aff38f2145",
+      "sha256": "4e598c16d947b3a4c749496f83ed891616f89af912173bd85cc35a16aec09f52",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -12213,7 +12213,7 @@
     },
     {
       "path": "crates/norn-metrics/Cargo.toml",
-      "sha256": "5b466e2739b664f7b56974b237946a3c5c41e064cb7040072ae363308b46ea8e",
+      "sha256": "72976fa7f251328cfa754aebadb3e6bce693fde605ba2b4f80c18bff9d1ed92c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12266,8 +12266,26 @@
       "connector": null
     },
     {
+      "path": "crates/norn-metrics/src/analysis.rs",
+      "sha256": "fb92dadb97ae2d726753626399d1cb6aff17c120c00007b8da167867efac675e",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "crates/norn-metrics/src/lib.rs",
-      "sha256": "3e14abddb72ac7134981a706399795af300928fb1ce462a29829182719a0697c",
+      "sha256": "043ec50f35c973fc190e28c5bd3a997a9212ea78c5847bc98f58e37ca7a9e697",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12286,6 +12304,24 @@
     {
       "path": "crates/norn-metrics/src/temporal.rs",
       "sha256": "17142f81570105dedecf4d79ede93fa0b934a92732ef923616f24e936aa765c1",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-metrics/tests/analysis.rs",
+      "sha256": "e77cb10ebca91c9ddcb7678f3c14c5696c37d6ae627aa341832ce2517f97d03e",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30061,7 +30097,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "102bd415dabad34924507c2c7411b1593c0a0fa085ded5afde292d0cd6fe903f",
+      "sha256": "a36e27fa1378b2dd2118a6ebf774fcd374b7834c719e98376330427510a0e5f4",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
