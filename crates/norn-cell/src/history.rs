@@ -110,8 +110,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )?;
         if let Some(next) = next {
             let Some(receipt) = self.receipt_for_fact_version_with_budget(
-                world, root, key, to_u64(next, "next historical version")?, budget,
-            )? else {
+                world,
+                root,
+                key,
+                to_u64(next, "next historical version")?,
+                budget,
+            )?
+            else {
                 return Ok(crate::reactive::BudgetedRead::Exhausted);
             };
             if receipt.body.commit_seq <= commit_seq {
