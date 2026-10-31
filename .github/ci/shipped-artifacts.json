@@ -18510,6 +18510,42 @@
       "connector": null
     },
     {
+      "path": "registry/packs/odoo/odoo.link.ts",
+      "sha256": "15683232122ac2dc564f7e359f75f9ae843070476c244fcd66df0e97b2f9c807",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/packs/odoo/odoo.pack.ts",
+      "sha256": "af8e288eed39140890a62ce038e07d993f2dfd6eb3d655ce15b7c74b47631c20",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "registry/packs/shopify/shopify.link.ts",
       "sha256": "32a650e308abb7709136e2483d18d8e9978d21f60dfe7f809f60d0b01ef5cecf",
       "origin": "authored",
