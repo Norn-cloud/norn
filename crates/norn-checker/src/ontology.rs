@@ -13,6 +13,30 @@ const PACK_CODE: &str = "ontology_pack.validation.invalid_payload";
 const INSTANCE_CODE: &str = "ontology_instance.validation.invalid_payload";
 const REGISTRY_CODE: &str = "ontology_registry.validation.invalid_payload";
 const PACK_VERSION: &str = "0.1";
+/// Licences reviewed for redistribution: the only ones a pack may vendor or
+/// `import` from.
+const REDISTRIBUTABLE_LICENSES: [&str; 3] = ["MIT", "Apache-2.0", "CC-BY-4.0"];
+const IMPORT_MODES: [&str; 3] = ["import", "map_only", "study_only"];
+const TERM_KINDS: [&str; 6] = [
+    "class",
+    "property",
+    "value_object",
+    "concept_scheme_root",
+    "action",
+    "predicate",
+];
+/// Term kinds that take one closed promotion shape; the others are
+/// vocabulary handles (members, operations, conditions) and take none.
+const SHAPED_KINDS: [&str; 3] = ["class", "value_object", "concept_scheme_root"];
+/// Term kinds that belong to a class and must name it in `domainTermId`.
+const DOMAIN_KINDS: [&str; 2] = ["property", "action"];
+
+/// The terms of one pack: status and kind by term id.
+#[derive(Debug, Default)]
+struct PackTerms {
+    statuses: BTreeMap<String, String>,
+    kinds: BTreeMap<String, String>,
+}
 
 #[derive(Debug, Clone)]
 struct RegistryTerm {
@@ -354,15 +378,14 @@ fn validate_registry_targets(
                 let Some(target_term_id) = string_field(field, "targetTermId") else {
                     continue;
                 };
-                let valid_target = registry
-                    .terms
-                    .get(target_term_id)
-                    .is_some_and(|target| target.status == "active" && target.kind != "property");
+                let valid_target = registry.terms.get(target_term_id).is_some_and(|target| {
+                    target.status == "active" && SHAPED_KINDS.contains(&target.kind.as_str())
+                });
                 if !valid_target {
                     diagnostics.push(diagnostic(
                         REGISTRY_CODE,
                         format!(
-                            "targetTermId '{target_term_id}' must resolve to an active non-property term in the supplied registry"
+                            "targetTermId '{target_term_id}' must resolve to an active class, value_object or concept_scheme_root term in the supplied registry"
                         ),
                         format!(
                             "registry.packs[{pack_index}].shapes[{shape_index}].fields[{field_index}].targetTermId"
@@ -446,18 +469,20 @@ pub(crate) fn validate_ontology_pack_payload(
     validate_mappings(
         pack.get("mappings"),
         &source_ids,
-        &terms,
+        &terms.statuses,
         diagnostics,
         artifact_id,
     );
     validate_shapes(pack.get("shapes"), &terms, diagnostics, artifact_id);
 }
 
+/// Validates the source manifest; returns each source id with its import
+/// mode (absent when the mode itself is invalid).
 fn validate_sources(
     value: Option<&JsonValue>,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
-) -> BTreeSet<String> {
+) -> BTreeMap<String, Option<String>> {
     let Some(sources) = non_empty_array(
         value,
         "payload.sources",
@@ -465,9 +490,9 @@ fn validate_sources(
         artifact_id,
         PACK_CODE,
     ) else {
-        return BTreeSet::new();
+        return BTreeMap::new();
     };
-    let mut ids = BTreeSet::new();
+    let mut ids = BTreeMap::new();
 
     for (index, source) in sources.iter().enumerate() {
         let path = format!("payload.sources[{index}]");
@@ -490,6 +515,8 @@ fn validate_sources(
                 "canonicalUrl",
                 "license",
                 "redistribution",
+                "importMode",
+                "importer",
                 "files",
             ],
             &path,
@@ -505,6 +532,15 @@ fn validate_sources(
             artifact_id,
             PACK_CODE,
         );
+        let import_mode = require_literal(
+            source,
+            "importMode",
+            &IMPORT_MODES,
+            format!("{path}.importMode"),
+            diagnostics,
+            artifact_id,
+            PACK_CODE,
+        );
         if let Some(source_id) = source_id {
             if !valid_prefixed_id(&source_id, "source.") {
                 diagnostics.push(diagnostic(
@@ -514,7 +550,7 @@ fn validate_sources(
                     artifact_id,
                 ));
             }
-            if !ids.insert(source_id) {
+            if ids.insert(source_id, import_mode.clone()).is_some() {
                 diagnostics.push(diagnostic(
                     PACK_CODE,
                     "sourceId must be unique within the pack",
@@ -550,9 +586,173 @@ fn validate_sources(
             diagnostics,
             artifact_id,
         );
+        validate_source_use(
+            source,
+            import_mode.as_deref(),
+            license.as_deref(),
+            &path,
+            diagnostics,
+            artifact_id,
+        );
     }
 
     ids
+}
+
+/// The source-manifest rules of an import mode (norn#56): an imported
+/// source names its importer and carries a redistributable licence, and a
+/// source the pack imports or maps from is content-pinned.
+fn validate_source_use(
+    source: &BTreeMap<String, JsonValue>,
+    import_mode: Option<&str>,
+    license: Option<&str>,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    match source.get("importer") {
+        Some(JsonValue::Object(importer)) => {
+            let importer_path = format!("{path}.importer");
+            reject_unknown_fields(
+                importer,
+                &["name", "version"],
+                &importer_path,
+                diagnostics,
+                artifact_id,
+                PACK_CODE,
+            );
+            if let Some(name) = required_string(
+                importer,
+                "name",
+                format!("{importer_path}.name"),
+                diagnostics,
+                artifact_id,
+                PACK_CODE,
+            ) && !valid_dotted_name(&name)
+            {
+                diagnostics.push(diagnostic(
+                    PACK_CODE,
+                    "importer name must be a lowercase dotted identifier",
+                    format!("{importer_path}.name"),
+                    artifact_id,
+                ));
+            }
+            if let Some(version) = required_string(
+                importer,
+                "version",
+                format!("{importer_path}.version"),
+                diagnostics,
+                artifact_id,
+                PACK_CODE,
+            ) && !valid_semver(&version)
+            {
+                diagnostics.push(diagnostic(
+                    PACK_CODE,
+                    "importer version must be a strict semantic version",
+                    format!("{importer_path}.version"),
+                    artifact_id,
+                ));
+            }
+        }
+        Some(_) => diagnostics.push(diagnostic(
+            PACK_CODE,
+            "importer must be an object",
+            format!("{path}.importer"),
+            artifact_id,
+        )),
+        None if import_mode == Some("import") => diagnostics.push(diagnostic(
+            PACK_CODE,
+            "an imported source must name its importer",
+            format!("{path}.importer"),
+            artifact_id,
+        )),
+        None => {}
+    }
+
+    if import_mode == Some("import")
+        && !license.is_some_and(|license| REDISTRIBUTABLE_LICENSES.contains(&license))
+    {
+        diagnostics.push(diagnostic(
+            PACK_CODE,
+            "an imported source's license is not on the reviewed redistribution allowlist; map it instead",
+            format!("{path}.license"),
+            artifact_id,
+        ));
+    }
+
+    if matches!(import_mode, Some("import" | "map_only")) && !source_is_content_pinned(source) {
+        diagnostics.push(diagnostic(
+            PACK_CODE,
+            "a source the pack imports or maps from must be content-pinned: file hashes, or a commit or hash in releaseId",
+            format!("{path}.releaseId"),
+            artifact_id,
+        ));
+    }
+}
+
+/// Two or more dot-separated components, each a lowercase identifier
+/// (`norn.importers.frappe`).
+fn valid_dotted_name(value: &str) -> bool {
+    let mut components = value.split('.');
+    let valid = |component: &str| {
+        component
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase())
+            && !component.ends_with('-')
+            && component.chars().all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+            })
+    };
+    components.clone().count() >= 2 && components.all(valid)
+}
+
+/// A strict SemVer 2.0.0 version: `MAJOR.MINOR.PATCH` without leading
+/// zeroes, with optional pre-release and build identifiers.
+fn valid_semver(value: &str) -> bool {
+    let (rest, build) = match value.split_once('+') {
+        Some((rest, build)) => (rest, Some(build)),
+        None => (value, None),
+    };
+    let (core, pre) = match rest.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (rest, None),
+    };
+    let numeric = |part: &str| {
+        !part.is_empty()
+            && part.chars().all(|character| character.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))
+    };
+    let identifier = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    };
+    let core_parts: Vec<&str> = core.split('.').collect();
+    core_parts.len() == 3
+        && core_parts.iter().all(|part| numeric(part))
+        && pre.is_none_or(|pre| {
+            pre.split('.').all(|part| {
+                identifier(part)
+                    && (!part.chars().all(|character| character.is_ascii_digit()) || numeric(part))
+            })
+        })
+        && build.is_none_or(|build| build.split('.').all(identifier))
+}
+
+/// Whether a source's bytes are fixed: a content hash as (or after `@` in)
+/// the release id, or at least one file hash.
+fn source_is_content_pinned(source: &BTreeMap<String, JsonValue>) -> bool {
+    let release_pinned = string_field(source, "releaseId").is_some_and(|release| {
+        valid_content_hash(release)
+            || release
+                .rsplit_once('@')
+                .is_some_and(|(_, pin)| valid_content_hash(pin))
+    });
+    let file_pinned =
+        matches!(source.get("files"), Some(JsonValue::Array(files)) if !files.is_empty());
+    release_pinned || file_pinned
 }
 
 fn validate_source_files(
@@ -595,7 +795,7 @@ fn validate_source_files(
         ));
     }
     if redistribution == Some("vendored")
-        && !matches!(license, Some("MIT" | "Apache-2.0" | "CC-BY-4.0"))
+        && !license.is_some_and(|license| REDISTRIBUTABLE_LICENSES.contains(&license))
     {
         diagnostics.push(diagnostic(
             PACK_CODE,
@@ -624,14 +824,23 @@ fn validate_source_files(
             artifact_id,
             PACK_CODE,
         );
-        required_string(
+        if let Some(file_path) = required_string(
             file,
             "path",
             format!("{path}.path"),
             diagnostics,
             artifact_id,
             PACK_CODE,
-        );
+        ) && redistribution == Some("reference_only")
+            && !is_absolute_web_iri(&file_path)
+        {
+            diagnostics.push(diagnostic(
+                PACK_CODE,
+                "a reference_only source pins its bytes by absolute HTTPS URL",
+                format!("{path}.path"),
+                artifact_id,
+            ));
+        }
         if let Some(hash) = required_string(
             file,
             "sha256",
@@ -655,14 +864,15 @@ fn validate_terms(
     value: Option<&JsonValue>,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
-) -> BTreeMap<String, String> {
+) -> PackTerms {
     let Some(terms) = non_empty_array(value, "payload.terms", diagnostics, artifact_id, PACK_CODE)
     else {
-        return BTreeMap::new();
+        return PackTerms::default();
     };
     let mut statuses = BTreeMap::new();
     let mut kinds = BTreeMap::new();
     let mut parents = BTreeMap::new();
+    let mut domains = Vec::new();
     let mut supersessions = Vec::new();
 
     for (index, term) in terms.iter().enumerate() {
@@ -682,7 +892,26 @@ fn validate_terms(
             status,
             parent,
             superseded_by,
+            domain,
         } = validate_term_declaration(term, &path, diagnostics, artifact_id);
+        if let Some(kind) = term_kind.as_deref() {
+            match &domain {
+                Some(_) if SHAPED_KINDS.contains(&kind) => diagnostics.push(diagnostic(
+                    PACK_CODE,
+                    format!("a {kind} term has no domainTermId"),
+                    format!("{path}.domainTermId"),
+                    artifact_id,
+                )),
+                Some(domain) => domains.push((domain.clone(), path.clone())),
+                None if DOMAIN_KINDS.contains(&kind) => diagnostics.push(diagnostic(
+                    PACK_CODE,
+                    format!("a {kind} term names the class it belongs to in domainTermId"),
+                    format!("{path}.domainTermId"),
+                    artifact_id,
+                )),
+                None => {}
+            }
+        }
         if let (Some(term_id), Some(term_kind)) = (term_id.as_ref(), term_kind) {
             kinds.insert(term_id.clone(), term_kind);
         }
@@ -727,8 +956,20 @@ fn validate_terms(
         diagnostics,
         artifact_id,
     );
+    for (domain, path) in domains {
+        if statuses.get(&domain).map(String::as_str) != Some("active")
+            || kinds.get(&domain).map(String::as_str) != Some("class")
+        {
+            diagnostics.push(diagnostic(
+                PACK_CODE,
+                format!("domainTermId '{domain}' must resolve to an active class term in the pack"),
+                format!("{path}.domainTermId"),
+                artifact_id,
+            ));
+        }
+    }
 
-    statuses
+    PackTerms { statuses, kinds }
 }
 
 fn compatible_parent_kinds(child: &str, parent: &str) -> bool {
@@ -736,6 +977,8 @@ fn compatible_parent_kinds(child: &str, parent: &str) -> bool {
         (child, parent),
         ("class", "class")
             | ("property", "property")
+            | ("action", "action")
+            | ("predicate", "predicate")
             | ("value_object", "value_object" | "concept_scheme_root")
     )
 }
@@ -765,7 +1008,7 @@ fn validate_parent_cycles(
 
 fn validate_mappings(
     value: Option<&JsonValue>,
-    source_ids: &BTreeSet<String>,
+    source_ids: &BTreeMap<String, Option<String>>,
     terms: &BTreeMap<String, String>,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
@@ -808,7 +1051,7 @@ fn validate_mappings(
 
 fn validate_shapes(
     value: Option<&JsonValue>,
-    terms: &BTreeMap<String, String>,
+    terms: &PackTerms,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
@@ -858,7 +1101,7 @@ fn validate_shapes(
         validate_shape_term(
             shape,
             &path,
-            terms,
+            &terms.statuses,
             &mut shaped_terms,
             diagnostics,
             artifact_id,
@@ -881,8 +1124,22 @@ fn validate_shapes(
         validate_shape_fields(shape.get("fields"), &path, diagnostics, artifact_id);
     }
 
-    for (term_id, status) in terms {
-        if status == "active" && !shaped_terms.contains(term_id) {
+    for (term_id, kind) in &terms.kinds {
+        if !SHAPED_KINDS.contains(&kind.as_str()) && shaped_terms.contains(term_id) {
+            diagnostics.push(diagnostic(
+                PACK_CODE,
+                format!("a {kind} term '{term_id}' takes no closed shape"),
+                "payload.shapes",
+                artifact_id,
+            ));
+        }
+    }
+    for (term_id, status) in &terms.statuses {
+        let shaped_kind = terms
+            .kinds
+            .get(term_id)
+            .is_none_or(|kind| SHAPED_KINDS.contains(&kind.as_str()));
+        if status == "active" && shaped_kind && !shaped_terms.contains(term_id) {
             diagnostics.push(diagnostic(
                 PACK_CODE,
                 format!("active term '{term_id}' requires one closed shape"),
@@ -1895,6 +2152,7 @@ struct TermDeclaration {
     status: Option<String>,
     parent: Option<String>,
     superseded_by: Option<String>,
+    domain: Option<String>,
 }
 
 fn validate_term_identity(
@@ -1914,6 +2172,7 @@ fn validate_term_identity(
             "semanticAuthority",
             "parentTermId",
             "supersededBy",
+            "domainTermId",
         ],
         path,
         diagnostics,
@@ -1967,7 +2226,7 @@ fn validate_term_declaration(
     let term_kind = require_literal(
         term,
         "termKind",
-        &["class", "property", "value_object", "concept_scheme_root"],
+        &TERM_KINDS,
         format!("{path}.termKind"),
         diagnostics,
         artifact_id,
@@ -2008,12 +2267,21 @@ fn validate_term_declaration(
         artifact_id,
         PACK_CODE,
     );
+    let domain = optional_string(
+        term,
+        "domainTermId",
+        format!("{path}.domainTermId"),
+        diagnostics,
+        artifact_id,
+        PACK_CODE,
+    );
     TermDeclaration {
         term_id,
         term_kind,
         status,
         parent,
         superseded_by,
+        domain,
     }
 }
 
@@ -2155,7 +2423,7 @@ fn validate_mapping_identity(
 fn validate_mapping_references(
     mapping: &BTreeMap<String, JsonValue>,
     path: &str,
-    source_ids: &BTreeSet<String>,
+    source_ids: &BTreeMap<String, Option<String>>,
     terms: &BTreeMap<String, String>,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
@@ -2186,15 +2454,22 @@ fn validate_mapping_references(
         artifact_id,
         PACK_CODE,
     );
-    if let Some(source_id) = source_id.as_deref()
-        && !source_ids.contains(source_id)
-    {
-        diagnostics.push(diagnostic(
-            PACK_CODE,
-            format!("sourceId '{source_id}' does not resolve within the pack"),
-            format!("{path}.sourceId"),
-            artifact_id,
-        ));
+    if let Some(source_id) = source_id.as_deref() {
+        match source_ids.get(source_id) {
+            None => diagnostics.push(diagnostic(
+                PACK_CODE,
+                format!("sourceId '{source_id}' does not resolve within the pack"),
+                format!("{path}.sourceId"),
+                artifact_id,
+            )),
+            Some(Some(mode)) if mode == "study_only" => diagnostics.push(diagnostic(
+                PACK_CODE,
+                format!("sourceId '{source_id}' is study_only; a mapping may cite only import or map_only sources"),
+                format!("{path}.sourceId"),
+                artifact_id,
+            )),
+            Some(_) => {}
+        }
     }
     if let Some(iri) = required_string(
         mapping,
@@ -2288,7 +2563,7 @@ fn validate_mapping_review(
 fn validate_mapping_record(
     mapping: &BTreeMap<String, JsonValue>,
     path: &str,
-    source_ids: &BTreeSet<String>,
+    source_ids: &BTreeMap<String, Option<String>>,
     terms: &BTreeMap<String, String>,
     state: &mut MappingValidation,
     diagnostics: &mut Vec<Diagnostic>,

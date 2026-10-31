@@ -328,7 +328,7 @@ impl NativeEngine {
         Self::configured(conn)
     }
 
-    fn configured(conn: rusqlite::Connection) -> Result<Self, CellError> {
+    fn configured(mut conn: rusqlite::Connection) -> Result<Self, CellError> {
         use rusqlite::config::DbConfig;
         use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
         use std::sync::Arc;
