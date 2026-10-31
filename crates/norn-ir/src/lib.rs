@@ -90,7 +90,8 @@ pub use business_pack::{
     BusinessPackKind, BusinessPackRoot, CompositionPackKind, CompositionPackRoot, MappingRelation,
     OntologyMapping, OntologyPackKind, OntologyPackRoot, OntologyShape, OntologyShapeField,
     OntologySource, OntologySourceFile, OntologyTerm, OntologyTermKind, OntologyTermStatus,
-    PackArtifactKind, PackArtifactRef, SemanticAuthority, ShapeValueType, SourceRedistribution,
+    PackArtifactKind, PackArtifactRef, SemanticAuthority, ShapeValueType, SourceImportMode,
+    SourceImporter, SourceRedistribution,
 };
 pub use connector::{
     ApiKeyFormat, ConnectorAuth, ConnectorChildMergeProfile, ConnectorCommand,

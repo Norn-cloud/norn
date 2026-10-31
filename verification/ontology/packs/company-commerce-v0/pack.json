@@ -26,6 +26,7 @@
         "canonicalUrl": "https://schema.org/version/30.0/",
         "license": "CC-BY-SA-3.0",
         "redistribution": "reference_only",
+        "importMode": "map_only",
         "files": [
           {
             "path": "https://schema.org/version/latest/schemaorg-current-https.jsonld",
@@ -41,6 +42,11 @@
         "canonicalUrl": "https://example.invalid/norn/toy-taxonomy/1/",
         "license": "Apache-2.0",
         "redistribution": "vendored",
+        "importMode": "import",
+        "importer": {
+          "name": "norn.ontology.company-commerce-builder",
+          "version": "0.1.0"
+        },
         "files": [
           {
             "path": "verification/ontology/fixtures/toy-taxonomy/categories.json",
