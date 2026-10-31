@@ -1808,7 +1808,12 @@ pub(crate) fn check_typed_root(
         ArtifactPayload::SourceSchema(_) | ArtifactPayload::Mapping(_) => {
             check_document_root(payload, &object, diagnostics, artifact_id);
         }
-        ArtifactPayload::Action(_) | ArtifactPayload::Rule(_) | ArtifactPayload::Law(_) => {}
+        // Strict serde roots, decoded by their own local checks.
+        ArtifactPayload::Action(_)
+        | ArtifactPayload::Rule(_)
+        | ArtifactPayload::Law(_)
+        | ArtifactPayload::Claim(_)
+        | ArtifactPayload::Ruling(_) => {}
     }
 }
 

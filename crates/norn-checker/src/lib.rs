@@ -117,6 +117,7 @@ pub mod property_types;
 pub mod quantity_ledger;
 pub mod receipt;
 pub mod rule_bindings;
+pub mod ruling;
 #[allow(
     missing_docs,
     clippy::pedantic,

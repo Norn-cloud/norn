@@ -26,7 +26,7 @@ export interface components {
          * NornArtifactEnvelope
          * @description A canonical Norn IR artifact. Each branch pairs the envelope kind with its matching closed payload schema.
          */
-        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"];
+        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"] | components["schemas"]["NornArtifactEnvelopeClaim"] | components["schemas"]["NornArtifactEnvelopeRuling"];
         /** NornArtifactEnvelopeAction */
         NornArtifactEnvelopeAction: components["schemas"]["NornArtifactEnvelopeCommon"] & {
             /** @enum {string} */
@@ -50,6 +50,18 @@ export interface components {
              * @enum {string}
              */
             kind: "business_pack";
+        };
+        /** NornArtifactEnvelopeClaim */
+        NornArtifactEnvelopeClaim: components["schemas"]["NornArtifactEnvelopeCommon"] & {
+            /** @enum {string} */
+            kind: "claim";
+            payload: components["schemas"]["NornIrClaimPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "claim";
         };
         /**
          * ArtifactEnvelope
@@ -180,6 +192,18 @@ export interface components {
              * @enum {string}
              */
             kind: "rule";
+        };
+        /** NornArtifactEnvelopeRuling */
+        NornArtifactEnvelopeRuling: components["schemas"]["NornArtifactEnvelopeCommon"] & {
+            /** @enum {string} */
+            kind: "ruling";
+            payload: components["schemas"]["NornIrRulingPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ruling";
         };
         /** NornArtifactEnvelopeSetting */
         NornArtifactEnvelopeSetting: components["schemas"]["NornArtifactEnvelopeCommon"] & {
@@ -761,7 +785,12 @@ export interface components {
             required: boolean;
             version?: string | null;
         };
-        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law";
+        /** @description Exact identity of an artifact: one version of one id. */
+        NornIrArtifactKey: {
+            artifactId: string;
+            version: string;
+        };
+        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law" | "claim" | "ruling";
         /** @enum {string} */
         NornIrArtifactLifecycle: "draft" | "proposed" | "approved" | "active" | "deprecated" | "superseded" | "rejected";
         NornIrArtifactProvenance: {
@@ -808,6 +837,36 @@ export interface components {
         };
         /** @description An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone. */
         NornIrCalendarDate: string;
+        /** @description The payload of a `claim` artifact ([`ruling::ClaimIr`], norn#62). */
+        NornIrClaimPayload: {
+            claimVersion: components["schemas"]["NornIrIrVersion01"];
+            /** @description Non-empty. */
+            evidence: components["schemas"]["NornIrEvidence"][];
+            /** @description Stable identity, unique in a set. */
+            id: string;
+            note?: string;
+            statement: components["schemas"]["NornIrClaimStatement"];
+        };
+        /** @description What a claim states. Closed: a new statement is a checker change. */
+        NornIrClaimStatement: components["schemas"]["NornIrClaimStatementOneOf0"] | components["schemas"]["NornIrClaimStatementOneOf1"];
+        /**
+         * @description A lifecycle state is a function of other facts, so no declared
+         *     transition may target it.
+         */
+        NornIrClaimStatementOneOf0: {
+            /** @description The members it is derived from (non-empty). */
+            from: components["schemas"]["NornIrMemberRef"][];
+            /** @enum {string} */
+            kind: "derived_state";
+            /** @description A `state` member. */
+            state: components["schemas"]["NornIrMemberRef"];
+        };
+        /** @description Two mappings observe the same object and disagree on one member. */
+        NornIrClaimStatementOneOf1: {
+            /** @enum {string} */
+            kind: "divergence";
+            witness: components["schemas"]["NornIrDivergenceWitness"];
+        };
         /** @description A closed set of values of one field. */
         NornIrCodeSet: {
             /** @description The dataset id. */
@@ -1520,6 +1579,11 @@ export interface components {
          * @enum {string}
          */
         NornIrDeadLetterRoute: "ledger" | "queue";
+        /** @description Who decided a ruling. */
+        NornIrDecider: {
+            authority: components["schemas"]["NornIrDecisionAuthority"];
+            principal: string;
+        };
         /**
          * @description An exact decimal number written as a JSON string: an optional `-`, an
          *     integer part without leading zeros, and an optional fraction
@@ -1528,6 +1592,11 @@ export interface components {
          *     Trailing fraction zeros are kept: they carry the literal's scale.
          */
         NornIrDecimalLiteral: string;
+        /**
+         * @description The authority level of a decider.
+         * @enum {string}
+         */
+        NornIrDecisionAuthority: "owner" | "lead" | "agent";
         /**
          * @description A literal default value of a property's type (any JSON except `null`).
          *
@@ -1573,6 +1642,16 @@ export interface components {
             links?: components["schemas"]["NornIrLinkId"][];
             /** @description The terminal property. */
             property: string;
+        };
+        /**
+         * @description A concrete witness of a divergence: one real object, observed by two
+         *     mappings, mapped to different values of `target`.
+         */
+        NornIrDivergenceWitness: {
+            left: components["schemas"]["NornIrObservation"];
+            right: components["schemas"]["NornIrObservation"];
+            /** @description The canonical `property` member both observations map. */
+            target: components["schemas"]["NornIrMemberRef"];
         };
         /** @description A recognized source action and the checked predicate that admits it. */
         NornIrEntitlementActionMap: {
@@ -1987,6 +2066,12 @@ export interface components {
             /** @description The stored value; stable once published. */
             value: string;
         };
+        /** @description One piece of evidence and its strength. */
+        NornIrEvidence: {
+            note?: string;
+            source: components["schemas"]["NornIrEvidenceSource"];
+            strength: components["schemas"]["NornIrEvidenceStrength"];
+        };
         /**
          * @description A content-addressed reference to evidence (raw metadata, a profile
          *     query result, a sample file).
@@ -1997,6 +2082,35 @@ export interface components {
             /** @description Where the evidence is stored (an object-store URI or a fixture path). */
             uri: string;
         };
+        /** @description Where a piece of evidence lives, pinned exactly. */
+        NornIrEvidenceSource: components["schemas"]["NornIrEvidenceSourceOneOf0"] | components["schemas"]["NornIrEvidenceSourceOneOf1"];
+        /**
+         * @description A Norn artifact by its Norn1 semantic hash (a definition, a proof
+         *     receipt, a test fixture).
+         */
+        NornIrEvidenceSourceOneOf0: {
+            artifactId: string;
+            /** @enum {string} */
+            kind: "artifact";
+            sha256: string;
+            version: string;
+        };
+        /** @description A file of an upstream system at an immutable release. */
+        NornIrEvidenceSourceOneOf1: {
+            /** @enum {string} */
+            kind: "upstream";
+            /** @description A path (and optional `#anchor`) within that release. */
+            locator: string;
+            /** @description An immutable release, tag, or revision hash. */
+            release: string;
+            /** @description The system (`erpnext`, `shopify`). */
+            system: string;
+        };
+        /**
+         * @description How strong one piece of evidence is: the AGENTS.md evidence labels.
+         * @enum {string}
+         */
+        NornIrEvidenceStrength: "structural" | "exhaustive_finite" | "bounded" | "checked_proof" | "runtime_enforced" | "sampled" | "refuted" | "unknown";
         /**
          * @description Where customization code runs.
          *
@@ -3169,6 +3283,71 @@ export interface components {
             kind: "null";
         };
         /**
+         * @description A member of a definition. Names are the IR's own: an object type or
+         *     interface name, a property, link, lifecycle-property, or transition id,
+         *     an object-map id, a law id.
+         */
+        NornIrMember: components["schemas"]["NornIrMemberOneOf0"] | components["schemas"]["NornIrMemberOneOf1"] | components["schemas"]["NornIrMemberOneOf2"] | components["schemas"]["NornIrMemberOneOf3"] | components["schemas"]["NornIrMemberOneOf4"] | components["schemas"]["NornIrMemberOneOf5"] | components["schemas"]["NornIrMemberOneOf6"] | components["schemas"]["NornIrMemberOneOf7"];
+        /** @description The artifact as a whole (an action, a decision, a mapping). */
+        NornIrMemberOneOf0: {
+            /** @enum {string} */
+            kind: "artifact";
+        };
+        /** @description An object type or interface. */
+        NornIrMemberOneOf1: {
+            /** @enum {string} */
+            kind: "type";
+            typeName: string;
+        };
+        /** @description A property of a type. */
+        NornIrMemberOneOf2: {
+            /** @enum {string} */
+            kind: "property";
+            property: string;
+            typeName: string;
+        };
+        /** @description A link of a type. */
+        NornIrMemberOneOf3: {
+            /** @enum {string} */
+            kind: "link";
+            link: string;
+            typeName: string;
+        };
+        /** @description A state of a type's lifecycle (a value of its lifecycle property). */
+        NornIrMemberOneOf4: {
+            /** @enum {string} */
+            kind: "state";
+            lifecycle: string;
+            state: string;
+            typeName: string;
+        };
+        /** @description A declared transition of a type's lifecycle. */
+        NornIrMemberOneOf5: {
+            /** @enum {string} */
+            kind: "transition";
+            lifecycle: string;
+            transition: string;
+            typeName: string;
+        };
+        /** @description An object map of a mapping. */
+        NornIrMemberOneOf6: {
+            /** @enum {string} */
+            kind: "object_map";
+            map: string;
+        };
+        /** @description A law. */
+        NornIrMemberOneOf7: {
+            /** @enum {string} */
+            kind: "law";
+            law: string;
+        };
+        /** @description A member of one exact artifact. */
+        NornIrMemberRef: {
+            artifactId: string;
+            member: components["schemas"]["NornIrMember"];
+            version: string;
+        };
+        /**
          * @description How many objects one end of a link may relate to (Gel `single`/`multi`).
          * @enum {string}
          */
@@ -3423,6 +3602,21 @@ export interface components {
         NornIrObligationPolicyRootPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /** @description One source record and the object map that reads it. */
+        NornIrObservation: {
+            /** @description The object map id. */
+            map: string;
+            /**
+             * @description The mapping where the divergence was observed. Rechecking evaluates
+             *     the admitted version of this mapping id.
+             */
+            mapping: components["schemas"]["NornIrArtifactKey"];
+            record: components["schemas"]["NornIrObservationPropertyRecord"];
+        };
+        /** @description The source record, as the map's dataset delivers it. */
+        NornIrObservationPropertyRecord: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
         /** @description A reviewed mapping from a Norn term to an external IRI of a pinned source. */
         NornIrOntologyMapping: {
             /**
@@ -3590,7 +3784,7 @@ export interface components {
             [key: string]: components["schemas"]["NornIrZenExpression"];
         };
         /** @description Artifact kinds a composition pack may contain (not `derived`). */
-        NornIrPackArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "source_schema" | "mapping" | "law";
+        NornIrPackArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "source_schema" | "mapping" | "law" | "claim" | "ruling";
         /** @description One exact artifact version in a composition pack. */
         NornIrPackArtifactRef: {
             artifactId: string;
@@ -3599,6 +3793,11 @@ export interface components {
         } & {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description Who may set a parameter a ruling introduces.
+         * @enum {string}
+         */
+        NornIrParameterAuthority: "tenant" | "jurisdiction" | "normative_profile";
         /** @description One obligation of an [`ObligationPolicyRoot`]. */
         NornIrPolicyObligation: {
             appliesTo: string;
@@ -4009,6 +4208,20 @@ export interface components {
             /** @enum {string} */
             state: "deprecated";
         };
+        /** @description When a deferred ruling is revisited. */
+        NornIrRevisitTrigger: components["schemas"]["NornIrRevisitTriggerOneOf0"] | components["schemas"]["NornIrRevisitTriggerOneOf1"];
+        /** @description On a date (`YYYY-MM-DD`). */
+        NornIrRevisitTriggerOneOf0: {
+            /** @enum {string} */
+            kind: "date";
+            on: string;
+        };
+        /** @description When this evidence changes. */
+        NornIrRevisitTriggerOneOf1: {
+            /** @enum {string} */
+            kind: "evidence";
+            source: components["schemas"]["NornIrEvidenceSource"];
+        };
         /** @description `principal` is a member of at least one of `anyOf`. */
         NornIrRoleCondition: {
             anyOf: string[];
@@ -4261,6 +4474,65 @@ export interface components {
          * @enum {string}
          */
         NornIrRuleValueTypeV1: "string" | "number" | "boolean" | "json";
+        /** @description An option considered and not chosen. */
+        NornIrRulingAlternative: {
+            note?: string;
+            outcome: components["schemas"]["NornIrRulingOutcome"];
+        };
+        /** @description The structured outcome of a ruling. */
+        NornIrRulingOutcome: components["schemas"]["NornIrRulingOutcomeOneOf0"] | components["schemas"]["NornIrRulingOutcomeOneOf1"] | components["schemas"]["NornIrRulingOutcomeOneOf2"] | components["schemas"]["NornIrRulingOutcomeOneOf3"] | components["schemas"]["NornIrRulingOutcomeOneOf4"];
+        /** @description One definition is chosen. */
+        NornIrRulingOutcomeOneOf0: {
+            definition: components["schemas"]["NornIrMemberRef"];
+            /** @enum {string} */
+            kind: "choose";
+        };
+        /** @description A parameter decides; its default and who may set it. */
+        NornIrRulingOutcomeOneOf1: {
+            default: components["schemas"]["NornIrJsonValue"];
+            /** @enum {string} */
+            kind: "parameterise";
+            /** @description The `setting` artifact holding the parameter. */
+            parameter: components["schemas"]["NornIrMemberRef"];
+            /** @description Non-empty. */
+            setBy: components["schemas"]["NornIrParameterAuthority"][];
+        };
+        /** @description Different definitions in disjoint scopes (two or more cases). */
+        NornIrRulingOutcomeOneOf2: {
+            cases: components["schemas"]["NornIrScopedCase"][];
+            /** @enum {string} */
+            kind: "scoped";
+        };
+        /** @description Not decided yet. */
+        NornIrRulingOutcomeOneOf3: {
+            /** @enum {string} */
+            kind: "defer";
+            revisit: components["schemas"]["NornIrRevisitTrigger"];
+        };
+        /** @description The claim is rejected. */
+        NornIrRulingOutcomeOneOf4: {
+            /** @enum {string} */
+            kind: "reject";
+        };
+        /** @description The payload of a `ruling` artifact ([`ruling::RulingIr`], norn#62). */
+        NornIrRulingPayload: {
+            /** @description The definitions it governs (non-empty), at the versions it ruled on. */
+            affects: components["schemas"]["NornIrMemberRef"][];
+            alternatives?: components["schemas"]["NornIrRulingAlternative"][];
+            /** @description `YYYY-MM-DD`. */
+            decidedAt: string;
+            decidedBy: components["schemas"]["NornIrDecider"];
+            evidence?: components["schemas"]["NornIrEvidence"][];
+            /** @description Stable identity, unique in a set. */
+            id: string;
+            note?: string;
+            outcome: components["schemas"]["NornIrRulingOutcome"];
+            /** @description The `claim` artifacts it decides (non-empty, exact versions). */
+            resolves: components["schemas"]["NornIrArtifactKey"][];
+            rulingVersion: components["schemas"]["NornIrIrVersion01"];
+            /** @description The ruling this one supersedes. */
+            supersedes?: components["schemas"]["NornIrArtifactKey"];
+        };
         /** @description The sample policy a [`SampleSet`] was taken under. */
         NornIrSamplePolicy: {
             /**
@@ -4295,6 +4567,11 @@ export interface components {
             orgId?: string | null;
             tenantId?: string | null;
             workspaceId?: string | null;
+        };
+        /** @description One case of a scoped outcome. */
+        NornIrScopedCase: {
+            definition: components["schemas"]["NornIrMemberRef"];
+            scope: components["schemas"]["NornIrScopeRef"];
         };
         /**
          * @description Ontology terms are semantic only: they never grant mutation authority.

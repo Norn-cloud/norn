@@ -100,7 +100,9 @@ pub fn project(set: &ResolvedArtifactSet<'_>) -> Result<DefinitionCatalog, Catal
             | ArtifactPayload::BusinessPack(_)
             | ArtifactPayload::Policy(_)
             | ArtifactPayload::Derived(_)
-            | ArtifactPayload::SourceSchema(_) => {}
+            | ArtifactPayload::SourceSchema(_)
+            | ArtifactPayload::Claim(_)
+            | ArtifactPayload::Ruling(_) => {}
         }
     }
     for (artifact, output) in fact_decisions(envelopes.iter().copied()) {

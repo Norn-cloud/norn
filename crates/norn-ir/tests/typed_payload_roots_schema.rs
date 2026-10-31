@@ -15,7 +15,7 @@ use norn_ir::{
 
 const UPDATE_SCHEMAS_ENV: &str = "NORN_IR_UPDATE_PAYLOAD_SCHEMAS";
 
-fn payload_root_cases() -> [(&'static str, ArtifactKind); 14] {
+fn payload_root_cases() -> [(&'static str, ArtifactKind); 16] {
     [
         ("entity.schema.json", ArtifactKind::Entity),
         ("relation.schema.json", ArtifactKind::Relation),
@@ -31,6 +31,8 @@ fn payload_root_cases() -> [(&'static str, ArtifactKind); 14] {
         ("source_schema.schema.json", ArtifactKind::SourceSchema),
         ("mapping.schema.json", ArtifactKind::Mapping),
         ("law.schema.json", ArtifactKind::Law),
+        ("claim.schema.json", ArtifactKind::Claim),
+        ("ruling.schema.json", ArtifactKind::Ruling),
     ]
 }
 
@@ -578,6 +580,8 @@ fn envelope_kind_selects_its_closed_payload_root() {
             }
             ArtifactKind::Mapping => assert!(matches!(payload, ArtifactPayload::Mapping(_))),
             ArtifactKind::Law => assert!(matches!(payload, ArtifactPayload::Law(_))),
+            ArtifactKind::Claim => assert!(matches!(payload, ArtifactPayload::Claim(_))),
+            ArtifactKind::Ruling => assert!(matches!(payload, ArtifactPayload::Ruling(_))),
         }
     }
 }

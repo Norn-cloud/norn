@@ -27,6 +27,10 @@ pub enum SealableNodeKind {
     Mapping,
     /// Scoped temporal law.
     Law,
+    /// A claim about definitions.
+    Claim,
+    /// A governed ruling.
+    Ruling,
     Field,
     SurfaceSlot,
 }
@@ -47,6 +51,8 @@ impl From<ArtifactKind> for SealableNodeKind {
             ArtifactKind::SourceSchema => Self::SourceSchema,
             ArtifactKind::Mapping => Self::Mapping,
             ArtifactKind::Law => Self::Law,
+            ArtifactKind::Claim => Self::Claim,
+            ArtifactKind::Ruling => Self::Ruling,
         }
     }
 }

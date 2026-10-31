@@ -1,0 +1,473 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClaimPayload",
+  "description": "The payload of a `claim` artifact ([`ruling::ClaimIr`], norn#62).",
+  "type": "object",
+  "properties": {
+    "claimVersion": {
+      "$ref": "#/$defs/IrVersion01"
+    },
+    "evidence": {
+      "description": "Non-empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      }
+    },
+    "id": {
+      "description": "Stable identity, unique in a set.",
+      "type": "string"
+    },
+    "note": {
+      "type": "string"
+    },
+    "statement": {
+      "$ref": "#/$defs/ClaimStatement"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "claimVersion",
+    "id",
+    "statement",
+    "evidence"
+  ],
+  "$defs": {
+    "ArtifactKey": {
+      "description": "Exact identity of an artifact: one version of one id.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version"
+      ]
+    },
+    "ClaimStatement": {
+      "description": "What a claim states. Closed: a new statement is a checker change.",
+      "oneOf": [
+        {
+          "description": "A lifecycle state is a function of other facts, so no declared\ntransition may target it.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "The members it is derived from (non-empty).",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MemberRef"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "derived_state"
+            },
+            "state": {
+              "description": "A `state` member.",
+              "$ref": "#/$defs/MemberRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "state",
+            "from"
+          ]
+        },
+        {
+          "description": "Two mappings observe the same object and disagree on one member.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "divergence"
+            },
+            "witness": {
+              "$ref": "#/$defs/DivergenceWitness"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "witness"
+          ]
+        }
+      ]
+    },
+    "DivergenceWitness": {
+      "description": "A concrete witness of a divergence: one real object, observed by two\nmappings, mapped to different values of `target`.",
+      "type": "object",
+      "properties": {
+        "left": {
+          "$ref": "#/$defs/Observation"
+        },
+        "right": {
+          "$ref": "#/$defs/Observation"
+        },
+        "target": {
+          "description": "The canonical `property` member both observations map.",
+          "$ref": "#/$defs/MemberRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "left",
+        "right"
+      ]
+    },
+    "Evidence": {
+      "description": "One piece of evidence and its strength.",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/EvidenceSource"
+        },
+        "strength": {
+          "$ref": "#/$defs/EvidenceStrength"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "strength"
+      ]
+    },
+    "EvidenceSource": {
+      "description": "Where a piece of evidence lives, pinned exactly.",
+      "oneOf": [
+        {
+          "description": "A Norn artifact by its Norn1 semantic hash (a definition, a proof\nreceipt, a test fixture).",
+          "type": "object",
+          "properties": {
+            "artifactId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "artifactId",
+            "version",
+            "sha256"
+          ]
+        },
+        {
+          "description": "A file of an upstream system at an immutable release.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "upstream"
+            },
+            "locator": {
+              "description": "A path (and optional `#anchor`) within that release.",
+              "type": "string"
+            },
+            "release": {
+              "description": "An immutable release, tag, or revision hash.",
+              "type": "string"
+            },
+            "system": {
+              "description": "The system (`erpnext`, `shopify`).",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "system",
+            "release",
+            "locator"
+          ]
+        }
+      ]
+    },
+    "EvidenceStrength": {
+      "description": "How strong one piece of evidence is: the AGENTS.md evidence labels.",
+      "type": "string",
+      "enum": [
+        "structural",
+        "exhaustive_finite",
+        "bounded",
+        "checked_proof",
+        "runtime_enforced",
+        "sampled",
+        "refuted",
+        "unknown"
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      ]
+    },
+    "Member": {
+      "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id.",
+      "oneOf": [
+        {
+          "description": "The artifact as a whole (an action, a decision, a mapping).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An object type or interface.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "type"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName"
+          ]
+        },
+        {
+          "description": "A property of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "property"
+            },
+            "property": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "property"
+          ]
+        },
+        {
+          "description": "A link of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "link"
+            },
+            "link": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "link"
+          ]
+        },
+        {
+          "description": "A state of a type's lifecycle (a value of its lifecycle property).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "state"
+          ]
+        },
+        {
+          "description": "A declared transition of a type's lifecycle.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transition"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "transition": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "transition"
+          ]
+        },
+        {
+          "description": "An object map of a mapping.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_map"
+            },
+            "map": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "map"
+          ]
+        },
+        {
+          "description": "A law.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "law"
+            },
+            "law": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "law"
+          ]
+        }
+      ]
+    },
+    "MemberRef": {
+      "description": "A member of one exact artifact.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "member": {
+          "$ref": "#/$defs/Member"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version",
+        "member"
+      ]
+    },
+    "Observation": {
+      "description": "One source record and the object map that reads it.",
+      "type": "object",
+      "properties": {
+        "map": {
+          "description": "The object map id.",
+          "type": "string"
+        },
+        "mapping": {
+          "description": "The mapping where the divergence was observed. Rechecking evaluates\nthe admitted version of this mapping id.",
+          "$ref": "#/$defs/ArtifactKey"
+        },
+        "record": {
+          "description": "The source record, as the map's dataset delivers it.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mapping",
+        "map",
+        "record"
+      ]
+    }
+  }
+}

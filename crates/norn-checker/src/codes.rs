@@ -412,6 +412,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         Tier::T2,
         "BusinessPackIR payload is invalid at {path}: {detail}",
     ),
+    introduced(
+        "claim.validation.invalid_document",
+        Tier::T2,
+        "claim document is invalid: {detail}",
+        "0.2.0",
+    ),
     entry(
         "connector.validation.invalid_payload",
         Tier::T2,
@@ -2380,6 +2386,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "rule.validation.jdm_unresolved_sub_decision",
         Tier::T2,
         "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",
+    ),
+    introduced(
+        "ruling.validation.invalid_document",
+        Tier::T2,
+        "ruling document is invalid: {detail}",
+        "0.2.0",
     ),
     entry(
         "sealing.extension_point.capability_missing",
