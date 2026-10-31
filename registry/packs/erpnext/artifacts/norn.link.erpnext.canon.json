@@ -608,22 +608,6 @@
         "toTermIds": [
           "norn.commerce.order.amount.total"
         ]
-      },
-      {
-        "confidenceBasisPoints": 6000,
-        "correspondenceId": "corr.sales.order.per.delivered",
-        "evidenceRefs": [
-          "source.erpnext"
-        ],
-        "fromTermId": "norn.erpnext.sales.order.per.delivered",
-        "justification": "Delivered share follows from the quantities of the transfers that fulfil the order.",
-        "relation": "derived",
-        "reviewedAt": "2026-10-31T00:00:00Z",
-        "reviewedBy": "lane-g (agent, proposed)",
-        "toTermIds": [
-          "norn.core.event.fulfils",
-          "norn.core.resource.quantity"
-        ]
       }
     ],
     "fromPack": {
@@ -708,6 +692,11 @@
         "note": "On Hold and Closed are set by users; the canon order state is derived and has no hold or close.",
         "reason": "canon_gap",
         "termId": "norn.erpnext.sales.order.status"
+      },
+      {
+        "note": "A delivered share needs the ordered quantity, which the canon order does not carry yet.",
+        "reason": "canon_gap",
+        "termId": "norn.erpnext.sales.order.per.delivered"
       },
       {
         "note": "The canon has no link from an invoice to the order it bills.",

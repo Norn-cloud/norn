@@ -18518,7 +18518,7 @@
     },
     {
       "path": "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
-      "sha256": "10d34105842829232527e69b68de8939e8f5945b62b513494008e9404d18934f",
+      "sha256": "63ff1fbbd9dd01c76ad6f4e03ec2b7d16d6314496b63eb3d38b02c5d72d81f91",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
