@@ -29,6 +29,16 @@ pub(crate) struct FactSnapshot {
     pub values: Option<BTreeMap<String, Value>>,
 }
 
+fn historical_record(snapshot: FactSnapshot) -> Option<ObjectRecord> {
+    snapshot.values.map(|values| ObjectRecord {
+        object_type: snapshot.object_type,
+        id: snapshot.key,
+        scope: snapshot.scope,
+        version: snapshot.version,
+        values,
+    })
+}
+
 // A projection may omit unproven fields, but each retained member must stay
 // at its authenticated path; arrays cannot invent, duplicate or reorder items.
 fn history_projection_is_subset(proposed: &Value, authenticated: &Value) -> bool {
@@ -94,13 +104,23 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(version) = version else {
             return Ok(crate::reactive::BudgetedRead::Missing);
         };
-        self.object_at_version_with_budget(
+        let Some(snapshot) = self.proven_snapshot_with_budget(
             world,
-            object_type,
+            root,
             key,
             to_u64(version, "historical version")?,
             budget,
-        )
+        )?
+        else {
+            return Ok(crate::reactive::BudgetedRead::Exhausted);
+        };
+        if !snapshot.lineage.iter().any(|name| name == object_type) {
+            return Ok(crate::reactive::BudgetedRead::Missing);
+        }
+        Ok(match historical_record(snapshot) {
+            Some(record) => crate::reactive::BudgetedRead::Found(record),
+            None => crate::reactive::BudgetedRead::Missing,
+        })
     }
 
     fn proven_snapshot(
@@ -226,13 +246,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
     ) -> Result<Option<ObjectRecord>, CellError> {
         let snapshot = self.proven_snapshot(world, object_type, key, version)?;
-        Ok(snapshot.values.map(|values| ObjectRecord {
-            object_type: snapshot.object_type,
-            id: snapshot.key,
-            scope: snapshot.scope,
-            version: snapshot.version,
-            values,
-        }))
+        Ok(historical_record(snapshot))
     }
 
     /// Budgeted exact-version read for historical projections.
@@ -248,18 +262,33 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<crate::reactive::BudgetedRead, CellError> {
+        Ok(
+            match self.proven_snapshot_with_budget(world, object_type, key, version, budget)? {
+                Some(snapshot) => match historical_record(snapshot) {
+                    Some(record) => crate::reactive::BudgetedRead::Found(record),
+                    None => crate::reactive::BudgetedRead::Missing,
+                },
+                None => crate::reactive::BudgetedRead::Exhausted,
+            },
+        )
+    }
+
+    fn proven_snapshot_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        version: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<FactSnapshot>, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
         let length: Option<i64> = self.conn.query_optional(&format!("SELECT octet_length(\"snapshot\") + octet_length(\"hash\") FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"), params![world, root, key, to_i64(version, "fact version")?], |row| row.get(0))?;
         let length = length.ok_or_else(unproven_event)?;
         if !budget.charge_rows(1) || !budget.charge(to_u64(length, "historical snapshot bytes")?) {
-            return Ok(crate::reactive::BudgetedRead::Exhausted);
+            return Ok(None);
         }
-        Ok(
-            match self.object_at_version(world, object_type, key, version)? {
-                Some(record) => crate::reactive::BudgetedRead::Found(record),
-                None => crate::reactive::BudgetedRead::Missing,
-            },
-        )
+        self.proven_snapshot(world, object_type, key, version)
+            .map(Some)
     }
 
     /// Authenticate a complete snapshot against engine-materialized committed values.

@@ -126,6 +126,71 @@ fn cursor_selects_latest_committed_incarnation_including_tombstones() {
 }
 
 #[test]
+fn cursor_checks_authenticated_historical_lineage_without_resurrecting_a_subtype() {
+    use norn_cell::reactive::BudgetedRead;
+    let base = model();
+    let mut definitions: Vec<_> = base.object_types().cloned().collect();
+    let root = definitions
+        .iter()
+        .find(|d| d.name.as_str() == "proof.Item")
+        .expect("root")
+        .clone();
+    for name in ["proof.Left", "proof.Right"] {
+        let mut subtype = root.clone();
+        subtype.name = ObjectTypeName(name.into());
+        subtype.extends = Some(root.name.clone());
+        subtype.properties.clear();
+        definitions.push(subtype);
+    }
+    let mut store =
+        CellStore::open_in_memory(Model::from_definitions(&definitions, &[]).expect("typed model"))
+            .expect("store");
+    let first = store
+        .commit(&batch(vec![put("proof.Left", "item", "left")]))
+        .expect("left")
+        .receipt()
+        .body
+        .commit_seq;
+    let latest = store
+        .commit(&batch(vec![
+            FactWriteRow::Delete {
+                object_type: "proof.Left".into(),
+                key: "item".into(),
+            },
+            put("proof.Right", "item", "right"),
+        ]))
+        .expect("recreate sibling")
+        .receipt()
+        .body
+        .commit_seq;
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let mut budget = DecodeBudget::new(&limits);
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Left", "item", first, &mut budget)
+            .expect("old left"),
+        BudgetedRead::Found(_)
+    ));
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Left", "item", latest, &mut budget)
+            .expect("latest root incarnation"),
+        BudgetedRead::Missing
+    ));
+    let BudgetedRead::Found(record) = store
+        .read()
+        .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", latest, &mut budget)
+        .expect("root")
+    else {
+        panic!("latest sibling missing")
+    };
+    assert_eq!(record.object_type, "proof.Right");
+    assert_eq!(record.values["value"], Value::from("right"));
+}
+
+#[test]
 fn commitments_capture_each_materialized_version_and_survive_restart() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
