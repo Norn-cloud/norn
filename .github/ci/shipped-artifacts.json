@@ -30007,7 +30007,7 @@
     },
     {
       "path": "verification/core-physics-v1/proofs/CoreQuantity.lean",
-      "sha256": "85817e7b56ba0c56943e589eb3729aca2e648a9d0166181561ab0909967f6e87",
+      "sha256": "49ac491febb6631839fc5d5f8e3afb2754ee1bcba0710438eac5e3afc4f08d12",
       "origin": "authored",
       "category": "generic-proof",
       "license": "Apache-2.0",
@@ -30043,7 +30043,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "65da7487fc37184ee33c9cf91859b915971484d1991fc6888e61dafe3a3f69f4",
+      "sha256": "2ac27e4dd64069f4680306bef7519a9533fd88aeb144803213dfc43e66b0cb76",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

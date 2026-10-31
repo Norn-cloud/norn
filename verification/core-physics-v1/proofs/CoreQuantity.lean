@@ -15,8 +15,10 @@ proved.
 
 Laws (ids as cited by the core pack):
 * `core.law.quantity_conservation`: for one resource and unit, stock received
-  equals stock issued plus stock on hand. A transformation is an issue of its
-  inputs and a receipt of its outputs, so the law holds per resource.
+  equals stock issued plus stock on hand. This is conservation per resource
+  only. It does not couple a transformation's outputs to its inputs: a
+  production receipt with no recorded consumption satisfies it, so that
+  coupling is unverified here.
 * `core.law.escrow_non_negative`: holds (escrow, reservations, quota use) never
   go negative and never exceed the balance, so available stock is never
   negative.
