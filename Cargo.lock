@@ -1639,6 +1639,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-metrics"
+version = "0.1.0"
+dependencies = [
+ "norn-checker",
+ "norn-ir",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "norn-projections"
 version = "0.1.0"
 dependencies = [
