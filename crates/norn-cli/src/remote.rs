@@ -3,8 +3,7 @@ use clap::{Args, Subcommand};
 use futures_util::StreamExt as _;
 use norn_ir::RuntimeValue;
 use serde_json::{Value, json};
-use std::io::{Read as _, Write as _};
-use std::process::ExitCode;
+use std::io::Read as _;
 use std::time::Duration;
 
 #[derive(Debug, Args)]
@@ -39,25 +38,6 @@ enum RemoteCommand {
     },
 }
 
-pub(super) fn run(args: &RemoteArgs) -> ExitCode {
-    match execute(args) {
-        Ok((text, failed)) => {
-            if std::io::stdout().write_all(text.as_bytes()).is_err() {
-                return ExitCode::FAILURE;
-            }
-            if failed {
-                ExitCode::FAILURE
-            } else {
-                ExitCode::SUCCESS
-            }
-        }
-        Err(error) => {
-            super::write_err(&format!("norn remote: {error}"));
-            ExitCode::FAILURE
-        }
-    }
-}
-
 fn request(command: &RemoteCommand, input: &str) -> Result<String, String> {
     match command {
         RemoteCommand::List => Ok(json!({
@@ -86,7 +66,7 @@ fn request(command: &RemoteCommand, input: &str) -> Result<String, String> {
     }
 }
 
-fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
+pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     let mut input = String::new();
     if matches!(args.command, RemoteCommand::Call { .. }) {
         std::io::stdin()
