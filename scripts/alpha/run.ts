@@ -33,23 +33,23 @@ export async function runAlpha(definitions: Definitions, surfaces: Surfaces, run
     for (const surface of ["api", "mcp", "cli"] satisfies Surface[]) {
       const orderId = `alpha-${surface}`;
       const query = { tenant, orderId };
-      await invoke(surface, "create_order", { id: orderId });
+      await invoke(surface, "alpha.order.create", { id: orderId, customer: "alpha-customer", total: "10" });
       const initial = await snapshot(query);
       strictEqual(initial.state.status, "draft");
       strictEqual(initial.state.invoiced, false);
       strictEqual(initial.state.completed, false);
-      const denied = await surfaces.invoke(surface, "submit", { id: orderId }, "forbidden");
+      const denied = await surfaces.invoke(surface, "alpha.order.submit", { id: orderId }, "forbidden");
       deepStrictEqual(denied, { kind: "refused", code: "authz.denied" });
       deepStrictEqual((await snapshot(query)).state, initial.state);
-      await refuse(surface, "approve", { id: orderId }, query);
-      await invoke(surface, "submit", { id: orderId });
-      await refuse(surface, "record_invoice", { id: `${orderId}-early`, order_id: orderId, amount: "10", reference: "early" }, query);
-      await invoke(surface, "approve", { id: orderId });
+      await refuse(surface, "alpha.order.approve", { id: orderId }, query);
+      await invoke(surface, "alpha.order.submit", { id: orderId });
+      await refuse(surface, "alpha.order.record_invoice", { id: `${orderId}-early`, order_id: orderId, amount: "10", reference: "early" }, query);
+      await invoke(surface, "alpha.order.approve", { id: orderId });
       const subscription = await surfaces.subscribe(query);
       try {
         // next() consumes the initial subscription snapshot before the mutation.
         deepStrictEqual(await subscription.next(), (await snapshot(query)).state);
-        await invoke(surface, "record_invoice", { id: `${orderId}-invoice`, order_id: orderId, amount: "10", reference: "alpha" });
+        await invoke(surface, "alpha.order.record_invoice", { id: `${orderId}-invoice`, order_id: orderId, amount: "10", reference: "alpha" });
         const invoiced = await snapshot(query);
         deepStrictEqual(invoiced.state, {
           status: "approved", invoice_count: 1, invoiced_total: "10",
@@ -57,11 +57,11 @@ export async function runAlpha(definitions: Definitions, surfaces: Surfaces, run
         });
         deepStrictEqual(await subscription.next(), invoiced.state);
         // The same economic fact identity must never be overwritten.
-        await refuse(surface, "record_invoice", { id: `${orderId}-invoice`, order_id: orderId, amount: "20", reference: "changed" }, query);
-        await invoke(surface, "record_payment", { id: `${orderId}-payment`, order_id: orderId, amount: "4" });
+        await refuse(surface, "alpha.order.record_invoice", { id: `${orderId}-invoice`, order_id: orderId, amount: "20", reference: "changed" }, query);
+        await invoke(surface, "alpha.order.record_payment", { id: `${orderId}-payment`, order_id: orderId, amount: "4" });
         strictEqual((await snapshot(query)).state.outstanding, "6");
         strictEqual((await snapshot(query)).state.completed, false);
-        await invoke(surface, "record_payment", { id: `${orderId}-payment-2`, order_id: orderId, amount: "6" });
+        await invoke(surface, "alpha.order.record_payment", { id: `${orderId}-payment-2`, order_id: orderId, amount: "6" });
         const completed = await snapshot(query);
         deepStrictEqual(completed.state, {
           status: "approved", invoice_count: 1, invoiced_total: "10",
@@ -71,10 +71,12 @@ export async function runAlpha(definitions: Definitions, surfaces: Surfaces, run
         strictEqual(completed.events.length > invoiced.events.length, true);
         deepStrictEqual(await runtime.replay(query), completed);
         for (const field of ["invoiced", "completed", "outstanding"]) {
-          await refuse(surface, "update_order", { id: orderId, [field]: field === "outstanding" ? "999" : false }, query);
+          await refuse(surface, "alpha.order.create", { id: `${orderId}-computed-${field}`, customer: "alpha-customer", total: "10", [field]: field === "outstanding" ? "999" : false }, query);
         }
-        await refuse(surface, "invoice", { id: orderId }, query);
-        await refuse(surface, "complete", { id: orderId }, query);
+        deepStrictEqual(
+          await surfaces.invoke(surface, "alpha.order.undeclared", { id: orderId }, "operator"),
+          { kind: "refused", code: "action.unknown" },
+        );
       } finally {
         await subscription.close();
       }
