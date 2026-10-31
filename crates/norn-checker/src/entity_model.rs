@@ -508,6 +508,10 @@ impl<'a, 'r> Checker<'a, 'r> {
                     let mut property = crate::entity_instance::EffectiveProperty::from_resolved(
                         resolved, markings,
                     );
+                    property.protected |= lineage_defs
+                        .iter()
+                        .flat_map(|owner| &owner.properties)
+                        .any(|inherited| inherited.id == property.id && inherited.protected);
                     if let Some(reads) = computed_reads.get(resolved.property.id.as_str()) {
                         property.computed_inputs = reads.fields.iter().cloned().collect();
                         property.computed_reads_all = reads.whole_root;

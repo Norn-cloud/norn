@@ -419,6 +419,13 @@ impl<'a> TypeCatalog<'a> {
         Ok(declared || temporal)
     }
 
+    /// Whether the type or any ancestor is append-only.
+    pub(crate) fn immutable(&self, object_type: &ObjectTypeName) -> bool {
+        self.ancestry(object_type)
+            .iter()
+            .any(|definition| definition.immutable)
+    }
+
     /// `object_type` and then its supertypes, nearest first. Bounded by the
     /// catalog size, so a cyclic `extends` chain (which the checker rejects)
     /// cannot loop.
@@ -1663,6 +1670,7 @@ impl<X> DecisionRefusal<X> {
                 actual_bytes,
                 max_bytes,
             } => Self::commit_identifier_refusal(field, actual_bytes, max_bytes),
+            CommitError::ImmutableObject { key } => invalid(format!("{key} is immutable")),
             CommitError::NotPending { consumed } => Self::NotPending { consumed },
             CommitError::Conflict {
                 key,
@@ -1881,8 +1889,26 @@ fn prepare_decision_with_limits_and_source_owned_targets<X>(
         turn,
         output,
         limits,
-        AdmissionOrigin::Command,
+        AdmissionOrigin::Rule,
         source_owned_targets,
+    )
+}
+
+pub(crate) fn prepare_action_decision<X>(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    output: &DecisionOutput,
+    limits: &EnvelopeLimits,
+) -> Result<PreparedDecision, DecisionRefusal<X>> {
+    prepare_decision_with_limits_for(
+        catalog,
+        slice,
+        turn,
+        output,
+        limits,
+        AdmissionOrigin::Action,
+        &BTreeSet::new(),
     )
 }
 
@@ -1937,7 +1963,8 @@ pub(crate) fn prepare_observed_properties<X>(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AdmissionOrigin {
-    Command,
+    Rule,
+    Action,
     Observation,
     OwnedRows,
 }
@@ -2376,6 +2403,33 @@ fn apply_change<X>(
     let Some(entry) = working.get_mut(&key) else {
         return Err(DecisionRefusal::NotInSlice { key });
     };
+    if entry.values.is_some()
+        && catalog.immutable(&key.object_type)
+        && !matches!(change, FactChange::Create { .. })
+    {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: format!("{key} is immutable"),
+        });
+    }
+    if origin != AdmissionOrigin::Rule {
+        let protected = |property: &str| {
+            catalog
+                .effective_type(&key.object_type)
+                .and_then(|effective| effective.property(property))
+                .is_some_and(|property| property.protected)
+        };
+        let forbidden = match change {
+            FactChange::Create { values, .. } => values.keys().any(|property| protected(property)),
+            FactChange::Set { property, .. } => protected(property.as_str()),
+            FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
+            FactChange::Delete { .. } => false,
+        };
+        if forbidden {
+            return Err(DecisionRefusal::InvalidOutput {
+                reason: format!("{key} has protected properties writable only by rules"),
+            });
+        }
+    }
     let event = match change {
         FactChange::Create { values, .. } => {
             if entry.values.is_some() {

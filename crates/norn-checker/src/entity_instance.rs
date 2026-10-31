@@ -312,6 +312,8 @@ pub enum EffectiveKind {
 /// One effective property with every constraint set that applies to it.
 #[derive(Debug, Clone)]
 pub struct EffectiveProperty {
+    /// Only declared rule outputs may update this stored property.
+    pub protected: bool,
     /// The property id: the key in object payloads.
     pub id: PropertyId,
     /// The resolved type.
@@ -404,6 +406,7 @@ impl EffectiveProperty {
                 property.default.clone()
             },
             computed,
+            protected: property.protected,
             patterns,
             record_members: Vec::new(),
         }
@@ -445,6 +448,7 @@ impl EffectiveProperty {
             }
             *remaining = remaining.saturating_sub(1);
             let property = norn_ir::Property {
+                protected: false,
                 id: member.id.clone(),
                 description: None,
                 property_type: member.property_type.clone(),

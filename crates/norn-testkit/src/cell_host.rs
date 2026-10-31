@@ -737,6 +737,7 @@ pub fn law_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, links: Vec<Link>| ObjectTypeDef {
+        immutable: false,
         name: ObjectTypeName(name.to_owned()),
         description: None,
         status: ResourceStatus::default(),
@@ -2131,6 +2132,7 @@ pub fn override_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, link: Link| ObjectTypeDef {
+        immutable: false,
         name: ObjectTypeName(name.to_owned()),
         description: None,
         status: ResourceStatus::default(),

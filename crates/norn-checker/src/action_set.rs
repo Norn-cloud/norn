@@ -769,6 +769,22 @@ impl Defined<'_> {
                 None
             }
         };
+        if let Some(JsonValue::Object(properties)) = root.input_schema.get("properties") {
+            for property in properties.keys().filter(|property| {
+                self.effective_object_type
+                    .as_ref()
+                    .and_then(|effective| effective.as_ref().ok())
+                    .and_then(|effective| effective.property(property))
+                    .is_some_and(|property| property.protected)
+            }) {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!("action input {property:?} is a protected system property"),
+                    action,
+                    &format!("/payload/inputSchema/properties/{property}"),
+                ));
+            }
+        }
         let owned = |id: &str| {
             lifecycles
                 .unwrap_or_default()
@@ -1213,7 +1229,7 @@ fn owned_rows_effect_findings(
             });
             let computed = child_effective
                 .and_then(|child| child.property(property.as_str()))
-                .is_none_or(|property| property.computed);
+                .is_none_or(|property| property.computed || property.protected);
             let lifecycle =
                 child_effective.is_some_and(|child| child.lifecycle(property.as_str()).is_some());
             if lifecycle {
@@ -1282,7 +1298,7 @@ fn owned_rows_effect_findings(
         {
             continue;
         }
-        if property.computed {
+        if property.computed || property.protected {
             findings.push(finding(
                 codes::TARGET_NOT_WRITABLE,
                 format!(

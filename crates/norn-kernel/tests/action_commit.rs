@@ -4018,3 +4018,47 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
             .exists()
     );
 }
+
+#[test]
+fn protected_properties_refuse_action_input_and_accept_rule_output() {
+    let mut types = order_types();
+    types[0]
+        .properties
+        .iter_mut()
+        .find(|property| property.id.as_str() == "so_number")
+        .unwrap()
+        .protected = true;
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let action = upsert_action("commerce.sales_order.create", &json!({"kind":"upsert"}));
+    let action_call = call(&action, "PROTECTED", "protected-action");
+    assert!(
+        matches!(commit_action(&mut cell, &catalog, &action_call, &Allow),
+        Err(ActionRefusal::InvalidInput { field }) if field == "so_number")
+    );
+    assert!(cell.ledger().is_empty());
+    let key = FactKey::new(ORDER, "PROTECTED");
+    let output = serde_json::from_value(json!({"facts":[{
+        "op":"create","objectType":ORDER,"key":"PROTECTED","values":{"so_number":"rule-created"}
+    }],"commands":[],"timers":[]}))
+    .unwrap();
+    norn_kernel::commit_decision(
+        &mut cell,
+        &catalog,
+        &FactSlice::new(),
+        &action_call.turn,
+        &output,
+    )
+    .unwrap();
+    let output = serde_json::from_value(json!({"facts":[{
+        "op":"set","objectType":ORDER,"key":"PROTECTED","property":"so_number","value":"rule-updated"
+    }],"commands":[],"timers":[]})).unwrap();
+    let slice = norn_kernel::load_slice(&cell, [key.clone()]).unwrap();
+    let mut rule_turn = action_call.turn.clone();
+    rule_turn.id = "protected-rule-update".to_owned();
+    norn_kernel::commit_decision(&mut cell, &catalog, &slice, &rule_turn, &output).unwrap();
+    assert_eq!(
+        cell.load(&key).unwrap().values.unwrap().get("so_number"),
+        Some(&JsonValue::String("rule-updated".to_owned()))
+    );
+}
