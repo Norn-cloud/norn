@@ -40,7 +40,7 @@ export async function runAlpha(definitions: Definitions, surfaces: Surfaces, run
       strictEqual(initial.state.invoiced, false);
       strictEqual(initial.state.completed, false);
       const denied = await surfaces.invoke(surface, "alpha.order.submit", { id: orderId }, "forbidden");
-      deepStrictEqual(denied, { kind: "refused", code: "authz.denied" });
+      deepStrictEqual(denied, { kind: "refused", code: "action.permission_denied" });
       deepStrictEqual((await snapshot(query)).state, initial.state);
       await refuse(surface, "alpha.order.approve", { id: orderId }, query);
       await invoke(surface, "alpha.order.submit", { id: orderId });
