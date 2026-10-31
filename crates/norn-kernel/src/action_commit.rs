@@ -1098,6 +1098,24 @@ where
     clippy::too_many_lines,
     reason = "the admitted action effect, host, and turn policy are explicit commit inputs"
 )]
+fn upsert_stored_input(
+    catalog: &TypeCatalog<'_>,
+    action: &ActionRoot,
+    object_type: &ObjectTypeName,
+    input: &JsonObject,
+) -> JsonObject {
+    let mut values = input.clone();
+    for binding in &action.create_links {
+        if catalog
+            .effective_type(object_type)
+            .is_some_and(|definition| definition.property(&binding.target_id_field).is_none())
+        {
+            values.remove(&binding.target_id_field);
+        }
+    }
+    values
+}
+
 fn commit_upsert<H>(
     host: &mut H,
     catalog: &TypeCatalog<'_>,
@@ -1261,15 +1279,8 @@ where
         .clone_from(&preparation.precondition_outcomes);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
 
-    let mut business_input = preparation.effective_input.clone();
-    for binding in &action.create_links {
-        if catalog
-            .effective_type(object_type)
-            .is_some_and(|definition| definition.property(&binding.target_id_field).is_none())
-        {
-            business_input.remove(&binding.target_id_field);
-        }
-    }
+    let mut business_input =
+        upsert_stored_input(catalog, action, object_type, &preparation.effective_input);
     if let Some(quantity) = &action.quantity_effect {
         business_input.remove(&quantity.balance_versions_field);
     }
@@ -3142,8 +3153,14 @@ where
             return Ok(ActionOutcome::Replayed { record });
         }
 
+        let stored_input = upsert_stored_input(
+            catalog,
+            call.action,
+            object_type,
+            &preparation.effective_input,
+        );
         let base_values = catalog
-            .effective_object_values(object_type, &preparation.effective_input)
+            .effective_object_values(object_type, &stored_input)
             .map_err(|error| {
                 ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
                     reason: format!("the effective values for {}: {error}", object_type.as_str()),
@@ -3214,7 +3231,7 @@ where
         let changes = vec![FactChange::Create {
             object_type: object_type.clone(),
             key: target.key.clone(),
-            values: generated_input.clone(),
+            values: upsert_stored_input(catalog, call.action, object_type, &generated_input),
         }];
         let pending = Pending {
             effective_input: generated_input,
