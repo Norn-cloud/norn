@@ -113,13 +113,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if receipt.body.commit_seq > commit_seq {
             return Err(unproven_snapshot());
         }
-        let Some(snapshot) = self.proven_snapshot_with_budget(
-            world,
-            root,
-            key,
-            version,
-            budget,
-        )?
+        let Some(snapshot) = self.proven_snapshot_with_budget(world, root, key, version, budget)?
         else {
             return Ok(crate::reactive::BudgetedRead::Exhausted);
         };

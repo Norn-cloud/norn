@@ -1170,7 +1170,7 @@
     },
     {
       "path": "crates/norn-cell/src/history.rs",
-      "sha256": "1a0b297424d006c1cf4cd3ed44774a8d2edd8a22b3892bcf314c696daee88677",
+      "sha256": "44f111f16cd1283d1c432ae298e41ad558e26d547728030f7277ee16f229db29",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
