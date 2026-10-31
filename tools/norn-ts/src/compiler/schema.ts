@@ -370,7 +370,6 @@ export class SchemaProjection {
       case "boolean":
         return { type: E.boolean, nullable: false }
       case "value-type":
-        if (actionInput && schema.type.kind === "decimal" && !schema.type.unit && !schema.type.currencySource) return { type: "decimal", scale: schema.type.scale }
         return { type: schema.type, nullable: false }
       case "literals":
         return { type: E.enumeration(...schema.values), nullable: false }
