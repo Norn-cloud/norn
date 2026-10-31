@@ -2235,7 +2235,7 @@
     },
     {
       "path": "crates/norn-checker/src/consistency/chase.rs",
-      "sha256": "45fa9098d7f29f795fb19ec509d5553969d62c900f1e238bd32c9beddad68f97",
+      "sha256": "1ed551c897ef4c63572ebaf7ed89ee36ec89ea4b0f0484b58b022334af15eda8",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

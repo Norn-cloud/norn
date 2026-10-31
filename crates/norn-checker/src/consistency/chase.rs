@@ -152,7 +152,7 @@ pub fn chase(
     let failure = match run(&theory.dependencies, &all_rules, facts, &all_facts, budget) {
         Ok(model) => return Ok(ChaseOutcome::Model(model)),
         Err(Halt::Refused(error)) => return Err(error),
-        Err(Halt::Conflict(failure)) => failure,
+        Err(Halt::Conflict(failure)) => *failure,
     };
     // Provenance gives a sufficient support; deletion then makes it minimal.
     let mut rules: Vec<usize> = failure.rules.iter().copied().collect();
@@ -168,7 +168,7 @@ pub fn chase(
         fails(theory, &rules, facts, kept, budget)
     });
     let failure = match run(&theory.dependencies, &rules, facts, &inputs, budget) {
-        Err(Halt::Conflict(minimal)) => minimal,
+        Err(Halt::Conflict(minimal)) => *minimal,
         Ok(_) | Err(Halt::Refused(_)) => failure,
     };
     let rule_id = |index: &usize| theory.dependencies.get(*index).map(|d| d.id().to_owned());
@@ -312,7 +312,7 @@ struct Failure {
 }
 
 enum Halt {
-    Conflict(Failure),
+    Conflict(Box<Failure>),
     Refused(ChaseError),
 }
 
@@ -477,14 +477,14 @@ impl State {
                                 .iter()
                                 .filter_map(|&i| self.records.get(i).map(|r| r.fact.clone()))
                                 .collect();
-                            return Err(Halt::Conflict(Failure {
+                            return Err(Halt::Conflict(Box::new(Failure {
                                 egd: index,
                                 left,
                                 right,
                                 matched,
                                 rules,
                                 inputs,
-                            }));
+                            })));
                         }
                         (Value::Null(_), Value::Const(_)) => true,
                         (Value::Const(_), Value::Null(_)) => false,
