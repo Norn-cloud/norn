@@ -6,7 +6,7 @@ exclude = ["patches/timely", "patches/differential-dataflow", "patches/columnati
 [workspace.package]
 publish = false
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 rust-version = "1.90"
 
 [workspace.lints.rust]
