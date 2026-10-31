@@ -381,15 +381,14 @@ fn validate_registry_targets(
                 let Some(target_term_id) = string_field(field, "targetTermId") else {
                     continue;
                 };
-                let valid_target = registry
-                    .terms
-                    .get(target_term_id)
-                    .is_some_and(|target| target.status == "active" && target.kind != "property");
+                let valid_target = registry.terms.get(target_term_id).is_some_and(|target| {
+                    target.status == "active" && SHAPED_KINDS.contains(&target.kind.as_str())
+                });
                 if !valid_target {
                     diagnostics.push(diagnostic(
                         REGISTRY_CODE,
                         format!(
-                            "targetTermId '{target_term_id}' must resolve to an active non-property term in the supplied registry"
+                            "targetTermId '{target_term_id}' must resolve to an active class, value_object or concept_scheme_root term in the supplied registry"
                         ),
                         format!(
                             "registry.packs[{pack_index}].shapes[{shape_index}].fields[{field_index}].targetTermId"
