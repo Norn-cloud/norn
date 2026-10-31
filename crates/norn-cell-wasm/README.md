@@ -21,7 +21,8 @@ Every argument and result is JSON text. Invalid *input* throws an `Error`
 | `version()` | `version_json` | `{abi: "norn-cell-abi/4", crateVersion, planFormat, verdictFormat, maxSafeInteger}` |
 
 `modelJson` accepts the legacy `ObjectTypeDef` array for models without
-interfaces, or `{ "objectTypes": [...], "interfaces": [...] }` for the
+interfaces, or `{ "objectTypes": [...], "interfaces": [...], "propertyTypes": [...] }`
+(`propertyTypes` optional) for the
 complete admitted model. The kernel's shared `TypeCatalog` checks canonical
 identity through type hierarchies, interface membership and invariants, link
 declarations, admissible target types, and cardinality. Without types no link
@@ -32,7 +33,7 @@ fails closed.
 inside its commit transaction (the current ledger position, whether the
 consumed delivery is pending, each plan object's `{version, concrete, links}`,
 each plan link's version, in order, and one complete bounded adjacency per
-plan `linkReads` entry. Each `linkReads` item is a canonically ordered array of
+plan `linkReads` entry). Each `linkReads` item is a canonically ordered array of
 `{key, version}` live targets; `[]` is a complete empty set and `null` means
 the host could not prove completeness within the plan's slice-profile bounds.
 The shim must enforce both the row count and aggregate UTF-8 target-key byte
@@ -42,6 +43,32 @@ by canonical target object type, then key, in UTF-8 byte order. A set over
 either bound must be represented as `null`, which refuses with
 `commit.unsupported_link_read`; an oversized, duplicated, or misordered array
 is malformed ABI input and makes `checkCommit` throw.
+
+The view also accepts optional `implicitObjects` (`{key, state}` with the
+same object-state shape), `implicitLinkReads` (`{source, link, targets}`),
+and `implicitPresenceReads` (`{source, link, excluded, present}`). Missing
+arrays default to empty. `targets` is a complete ordered array of
+`{key, version}` or `null` when completeness cannot be established;
+`present` is `true`, `false`, or `null` when the presence query is unavailable.
+
+When admission needs more host state, its refused verdict includes
+`readRequest` and `readLimits: {maxRecords, maxCanonicalBytes}`. Requests are:
+
+- `{kind: "object", key}`: add `{key, state}` to `implicitObjects`.
+- `{kind: "link_targets", source, link}`: add the complete bounded target
+  snapshot to `implicitLinkReads`.
+- `{kind: "link_presence", source, link, excluded}`: query whether a live
+  target exists outside the canonical `excluded` keys and add the answer
+  with the same source, link and exclusions to `implicitPresenceReads`.
+
+The host answers within the same commit transaction and retries `checkCommit`
+with these additional reads until a final verdict is reached. It must enforce
+both returned limits before materializing data: `maxRecords` bounds the
+records and `maxCanonicalBytes` bounds aggregate UTF-8 key bytes. Implicit
+object/adjacency reads also share a byte budget; presence exclusions include
+the source key in their byte budget. Over-budget adjacency and unavailable
+presence queries use `null`; truncated data must never claim completeness.
+Duplicate, misordered or oversized implicit snapshots are malformed ABI input.
 
 `norn-cell-abi/2` (#3013) added link writes; `norn-cell-abi/3` (#3018) adds
 the model argument, canonical keys, and the kernel's `commit.link_target`,

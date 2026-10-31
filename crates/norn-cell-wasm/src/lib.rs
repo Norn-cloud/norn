@@ -1196,7 +1196,21 @@ fn checked_link_read_targets(
 /// canonical `LinkKey`s), the current version of each of its `links`, in
 /// plan order, and each `linkReads` entry as a complete ordered array of
 /// `{key, version}` targets or `null` when unavailable. `model` is the same
-/// object-type list.
+/// object-type list (or structured model with optional `propertyTypes`).
+///
+/// The view optionally includes `implicitObjects: [{key, state}]`,
+/// `implicitLinkReads: [{source, link, targets}]`, and
+/// `implicitPresenceReads: [{source, link, excluded, present}]`.
+/// Missing reads return a refused verdict with `readRequest` and
+/// `readLimits: {maxRecords, maxCanonicalBytes}`. Requests are
+/// `{kind: "object", key}`, `{kind: "link_targets", source, link}`, or
+/// `{kind: "link_presence", source, link, excluded}`. The host answers by
+/// adding the corresponding implicit read and retries within the same
+/// transaction. Target snapshots are complete ordered `{key, version}` arrays;
+/// `null` targets or presence answers mean unavailable, never truncated data.
+/// Enforce the returned record and aggregate UTF-8 key-byte limits before
+/// materializing data; implicit object/adjacency reads share a byte budget,
+/// and presence exclusions include the source key in their byte budget.
 ///
 /// Result, refused: `{format: "norn-cell-abi/verdict@4", accepted: false,
 /// refusal}` with [`refusal_value`]'s document. Accepted: `{format,
