@@ -364,6 +364,7 @@
         "crates/norn-ir/src/members.rs",
         "crates/norn-ir/src/metric.rs",
         "crates/norn-ir/src/osi.rs",
+        "crates/norn-ir/src/policy_value.rs",
         "crates/norn-ir/src/provenance.rs",
         "crates/norn-ir/src/rule.rs",
         "crates/norn-ir/src/runtime.rs",
