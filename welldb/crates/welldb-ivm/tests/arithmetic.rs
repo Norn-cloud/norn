@@ -42,11 +42,21 @@ fn wide_carry_borrow_and_population_overflow_preserve_the_domain() {
     let carried = low.checked_add(one).expect("carry");
     assert_eq!(carried.to_parts(), (false, [0, 1, 0, 0]));
     assert_eq!(carried.checked_add(one.negated()), Some(low));
-    let max = ExactSum::from_parts(false, [u64::MAX, u64::MAX, u64::MAX, u64::MAX >> 1]).expect("maximum");
+    let max = ExactSum::from_parts(false, [u64::MAX, u64::MAX, u64::MAX, u64::MAX >> 1])
+        .expect("maximum");
     assert_eq!(max.checked_add(one), None);
-    let mut total = BucketAgg { sum: ExactSum::ZERO, population: u64::MAX };
+    let mut total = BucketAgg {
+        sum: ExactSum::ZERO,
+        population: u64::MAX,
+    };
     let before = total;
-    assert_eq!(total.add(&BucketAgg { sum: one, population: 1 }), Err(MetricError::PopulationOverflow));
+    assert_eq!(
+        total.add(&BucketAgg {
+            sum: one,
+            population: 1
+        }),
+        Err(MetricError::PopulationOverflow)
+    );
     assert_eq!(total, before);
 }
 
@@ -54,9 +64,23 @@ fn wide_carry_borrow_and_population_overflow_preserve_the_domain() {
 #[test]
 fn wide_wire_rejects_out_of_domain_values_and_normalizes_negative_zero() {
     #[derive(serde::Serialize)]
-    struct Wire { negative: bool, limbs: [u64; 4] }
-    let invalid = serde_json::to_string(&Wire { negative: false, limbs: [0, 0, 0, 1 << 63] }).expect("typed wire");
+    struct Wire {
+        negative: bool,
+        limbs: [u64; 4],
+    }
+    let invalid = serde_json::to_string(&Wire {
+        negative: false,
+        limbs: [0, 0, 0, 1 << 63],
+    })
+    .expect("typed wire");
     assert!(serde_json::from_str::<ExactSum>(&invalid).is_err());
-    let zero = serde_json::to_string(&Wire { negative: true, limbs: [0; 4] }).expect("zero wire");
-    assert_eq!(serde_json::from_str::<ExactSum>(&zero).expect("normalized"), ExactSum::ZERO);
+    let zero = serde_json::to_string(&Wire {
+        negative: true,
+        limbs: [0; 4],
+    })
+    .expect("zero wire");
+    assert_eq!(
+        serde_json::from_str::<ExactSum>(&zero).expect("normalized"),
+        ExactSum::ZERO
+    );
 }

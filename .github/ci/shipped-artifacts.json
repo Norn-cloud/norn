@@ -29944,7 +29944,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "8a9698c3ddf1c8ec5ef8027dd3b0289ea8735a567a19d94cd398dfa24b7651e8",
+      "sha256": "02d435c90bee9d2e876262ff141c862685c9c3587dc6ad0464b8c23351762480",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -32687,8 +32687,44 @@
       "connector": null
     },
     {
+      "path": "welldb/crates/welldb-ivm/src/arithmetic.rs",
+      "sha256": "b6ecb149cb0769f0fe2e0f158c0dd7df583c30cfd171cb429a5169d9188f8864",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "welldb/crates/welldb-ivm/src/lib.rs",
-      "sha256": "683d0fc1df6963fd8f2f057b23bfafa7b82afca80262b53994e265b62bf9d0b8",
+      "sha256": "eaeda53f5241e37a61d767ff949a92636991e79b40c4ae67242e1206d941be13",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "welldb/crates/welldb-ivm/tests/arithmetic.rs",
+      "sha256": "64ed7ce4e8794572ee3e2f95955c4cede575fa5993d3e41576fc81addbf646d7",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
