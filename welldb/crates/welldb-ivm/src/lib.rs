@@ -338,3 +338,6 @@ mod plan;
 
 mod state;
 pub use state::*;
+
+mod source;
+pub use source::SourceState;
