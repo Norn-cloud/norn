@@ -8,6 +8,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 | Link | Terms | Mapped | Residual | Canon gaps | Non-conforming |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `norn.link.erpnext.canon` | 59 | 40 | 8 | 11 | 0 |
+| `norn.link.odoo.canon` | 42 | 27 | 3 | 11 | 1 |
 | `norn.link.shopify.canon` | 35 | 14 | 5 | 16 | 0 |
 
 ## `norn.link.erpnext.canon`
@@ -85,6 +86,64 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 ### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
 
 None.
+
+## `norn.link.odoo.canon`
+
+`norn.ontology-pack.odoo` → `norn.ontology-pack.canon`
+
+### Maps
+
+- `norn.odoo.account.move` subsumes `norn.finance.invoice`
+- `norn.odoo.account.move.action.post` subsumes `norn.finance.invoice.post`
+- `norn.odoo.account.move.amount.residual` subsumes `norn.finance.invoice.amount.outstanding`
+- `norn.odoo.account.move.amount.tax` subsumes `norn.finance.invoice.amount.tax`
+- `norn.odoo.account.move.amount.total` subsumes `norn.finance.invoice.amount.total`
+- `norn.odoo.account.move.amount.untaxed` subsumes `norn.finance.invoice.amount.net`
+- `norn.odoo.account.move.currency.id` subsumes `norn.finance.invoice.currency`
+- `norn.odoo.account.move.date` subsumes `norn.finance.invoice.date.posting`
+- `norn.odoo.account.move.gives.rise.to` subsumes `norn.finance.invoice.gives.rise.to`
+- `norn.odoo.account.move.invoice.date.due` subsumes `norn.finance.invoice.date.due`
+- `norn.odoo.account.move.line` equivalent `norn.finance.ledger.entry`
+- `norn.odoo.account.move.partner.id` subsumes `norn.finance.invoice.party`
+- `norn.odoo.account.move.posting` subsumed_by `norn.finance.accounting.transaction`
+- `norn.odoo.account.move.reverse` subsumes `norn.finance.invoice.reverse`
+- `norn.odoo.account.payment.action.post` subsumes `norn.finance.payment.post`
+- `norn.odoo.account.payment.amount` subsumes `norn.finance.payment.amount`
+- `norn.odoo.account.payment.date` subsumes `norn.finance.payment.date.posting`
+- `norn.odoo.account.payment.partner.id` subsumes `norn.finance.payment.party`
+- `norn.odoo.account.payment.payment.type` subsumes `norn.finance.payment.direction`
+- `norn.odoo.product.product` subsumed_by `norn.core.resource.type`
+- `norn.odoo.res.partner` subsumes `norn.core.agent`
+- `norn.odoo.sale.order` subsumes `norn.commerce.order`
+- `norn.odoo.sale.order.amount.total` subsumes `norn.commerce.order.amount.total`
+- `norn.odoo.sale.order.partner.id` subsumes `norn.commerce.order.party`
+- `norn.odoo.stock.move` subsumed_by `norn.core.event`
+- `norn.odoo.stock.move.product.uom.qty` subsumed_by `norn.core.resource.quantity`
+- `norn.odoo.stock.picking` subsumed_by `norn.core.event.transfer`
+
+### Residual (system-specific)
+
+- `norn.odoo.account.move.move.type`
+- `norn.odoo.res.partner.type`
+- `norn.odoo.stock.picking.picking.type.id`
+
+### Missing from the canon
+
+- `norn.odoo.account.move.invoice.date`
+- `norn.odoo.account.move.line.credit`
+- `norn.odoo.account.move.line.debit`
+- `norn.odoo.account.move.payment.state`
+- `norn.odoo.account.move.state`
+- `norn.odoo.account.payment`
+- `norn.odoo.product.product.default.code`
+- `norn.odoo.res.partner.is.company`
+- `norn.odoo.sale.order.invoice.status`
+- `norn.odoo.sale.order.state`
+- `norn.odoo.stock.picking.partner.id`
+
+### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
+
+- `norn.odoo.account.move.button.draft`
 
 ## `norn.link.shopify.canon`
 
