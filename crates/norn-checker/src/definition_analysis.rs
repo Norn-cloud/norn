@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 pub enum Unknown {
     /// The candidate failed ordinary admission.
     NotAdmitted,
-    /// The graph has no qualified table-local input schema.
+    /// The graph or its table-local input is outside the qualified profile.
     GraphInput,
     /// The artifact cannot be bound to its semantic identity.
     ArtifactIdentity,
