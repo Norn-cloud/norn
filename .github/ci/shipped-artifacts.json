@@ -3978,7 +3978,7 @@
     },
     {
       "path": "crates/norn-checker/tests/obligations.rs",
-      "sha256": "4c9175d8fb73f37daa065f454baa56fe022386dd5968f0667dc002e5949dcc5b",
+      "sha256": "3dff2e53514362a2bcaebade9b064d763e03479fa9013c9c60d476f877f2323d",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

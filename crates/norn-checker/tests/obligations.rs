@@ -754,19 +754,34 @@ fn transition_frames_only_assess_conditional_preservation() {
     documents[3]["payload"]["modality"] = json!({"kind":"always"});
     documents[3]["payload"]["response"]["expression"] = json!("self.paid == true");
     let definitions = source(&documents);
-    let challenge = approve(&definitions).challenge(&definitions, &BTreeSet::new())
+    let challenge = approve(&definitions)
+        .challenge(&definitions, &BTreeSet::new())
         .expect("challenge");
     let body = challenge.body();
-    let law = body["lawStatements"].as_array().expect("laws").iter()
-        .position(|entry| entry["artifactId"] == documents[3]["artifactId"]).expect("law");
+    let law = body["lawStatements"]
+        .as_array()
+        .expect("laws")
+        .iter()
+        .position(|entry| entry["artifactId"] == documents[3]["artifactId"])
+        .expect("law");
     let transition = LawWriter::Transition {
-        object_type: "erpnext.SalesOrder".into(), property: "status".into(), transition: "shipped".into()
+        object_type: "erpnext.SalesOrder".into(),
+        property: "status".into(),
+        transition: "shipped".into(),
     };
-    let writer = body["writerStatements"].as_array().expect("writers").iter()
-        .position(|entry| entry["identity"] == transition.to_json()).expect("writer");
+    let writer = body["writerStatements"]
+        .as_array()
+        .expect("writers")
+        .iter()
+        .position(|entry| entry["identity"] == transition.to_json())
+        .expect("writer");
     let mut preservation = false;
-    for goal in body["obligations"].as_array().expect("goals").iter()
-        .filter(|entry| entry["law"] == json!(law)) {
+    for goal in body["obligations"]
+        .as_array()
+        .expect("goals")
+        .iter()
+        .filter(|entry| entry["law"] == json!(law))
+    {
         if goal["goal"]["kind"] == "preservation" && goal["goal"]["writer"] == json!(writer) {
             assert_eq!(goal["assessment"], "transition_frame");
             preservation = true;
