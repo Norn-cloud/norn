@@ -142,11 +142,11 @@ ln -sfn "$hax_engine" "$bin_root/hax-engine"
   ppx_deriving_yojson.3.10.0
 
 if [[ ! -x "$source_root/aeneas/charon/bin/charon" ]]; then
-  make -C "$source_root/aeneas" setup-charon
+  env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas" setup-charon
 fi
 test "$(git -C "$source_root/aeneas/charon" rev-parse HEAD)" = a1d989057b50b0429ccd96c5b4c4428b9b218b21
-make -C "$source_root/aeneas/charon" build-dev
-make -C "$source_root/aeneas" build-dev
+env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas/charon" build-dev
+env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas" build-dev
 ln -sfn "$source_root/aeneas/bin/aeneas" "$bin_root/aeneas"
 ln -sfn "$source_root/aeneas/charon/bin/charon" "$bin_root/charon"
 
