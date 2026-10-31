@@ -206,6 +206,8 @@ declare module "@norn/authoring" {
       readonly identity?: ReadonlyArray<KeySpec<EffectiveProperties<E, I, S["Type"]>>>
       /** Literal defaults; numbers are exact decimal literals. */
       readonly defaults?: { readonly [P in keyof S["Type"]]?: S["Type"][P] }
+      /** Read-only EntityIR expressions over self; the Rust checker validates them. */
+      readonly computed?: { readonly [P in keyof S["Type"]]?: Expression<S["Type"][P]> }
       readonly lifecycles?: ReadonlyArray<LifecycleSpec<EffectiveProperties<E, I, S["Type"]>>>
     }
 

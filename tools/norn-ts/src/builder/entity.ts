@@ -84,6 +84,7 @@ export interface PropertyDecl {
   readonly type: PropertyType
   readonly nullable?: boolean
   readonly markings?: ReadonlyArray<string>
+  readonly computed?: string
   readonly default?: DefaultValue
   readonly at?: SourceLocation
 }
@@ -259,6 +260,7 @@ function propertyJson(p: PropertyDecl, withDefault: boolean): Json {
     description: p.description,
     type: p.type as unknown as Json,
     constraints: p.nullable === true ? { nullable: true } : undefined,
+    computed: withDefault ? p.computed : undefined,
     default: withDefault && p.default !== undefined ? defaultJson(p.default) : undefined,
   } as unknown as Json
 }
@@ -275,6 +277,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
   }
   if (def._tag === "Interface") {
     for (const p of def.properties) {
+      if (p.computed !== undefined) diagnostics.report("NORN-FLOW-LITERAL", `interface property ${p.id} cannot declare a computation`, p.at ?? def.at)
       if (p.default !== undefined) diagnostics.report("NORN-FLOW-LITERAL", `interface property ${p.id} cannot declare a default`, p.at ?? def.at)
     }
   }

@@ -473,7 +473,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings"])
+    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "computed", "lifecycles", "markings", "propertyMarkings"])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()
@@ -483,6 +483,11 @@ class DefinitionCompiler {
         if (!projected.some((p) => p.id === key)) throw new CompileError("NORN-FLOW-LITERAL", `default for undeclared property ${key}`, value)
         defaults.set(key, this.defaultValue(value))
       }
+    }
+    const computed = new Map<string, string>()
+    const computedNode = members.get("computed")
+    if (computedNode) for (const [key, value] of this.closedRecord(computedNode, projected.map((p) => p.id), [])) {
+      computed.set(key, this.zen(value, "self"))
     }
     const implementsNode = members.get("implements")
     const extendsNode = members.get("extends")
@@ -500,6 +505,7 @@ class DefinitionCompiler {
           type: p.projection.type,
           ...(p.projection.nullable ? { nullable: true } : {}),
           ...(value === undefined ? {} : { default: value }),
+          ...(computed.has(p.id) ? { computed: computed.get(p.id)! } : {}),
           at: this.at(p.node),
         }
       }),
