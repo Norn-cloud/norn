@@ -256,7 +256,7 @@ impl ExportRecord {
                 || installed.ddl_hash != model.ddl_hash()
                 || self.model_hash != model.model_hash()
                 || self.ddl_hash != model.ddl_hash()
-                || self.ddl_sql != model.schema().to_sql()
+                || self.ddl_sql != model.ddl_sql()
             {
                 return Err(invalid(
                     "typed definitions installation disagrees with its model or receipt",
@@ -320,7 +320,7 @@ impl ExportRecord {
                 let model = Model::from_snapshot(snapshot)?;
                 if self.model_hash != model.model_hash()
                     || self.ddl_hash != model.ddl_hash()
-                    || self.ddl_sql != model.schema().to_sql()
+                    || self.ddl_sql != model.ddl_sql()
                 {
                     return Err(ExportError::IdentityMismatch);
                 }
