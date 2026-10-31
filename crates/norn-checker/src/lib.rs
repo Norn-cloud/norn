@@ -81,6 +81,7 @@ pub mod posting;
 pub mod table_analysis;
 pub use metric::check_metrics_and_questions;
 pub mod naming_series;
+pub mod norm_precedence;
 pub mod object_types;
 pub mod obligations;
 #[allow(
