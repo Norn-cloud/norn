@@ -33,7 +33,9 @@ export interface Subscription {
   close(): Promise<void>;
 }
 export interface Surfaces {
-  /** The adapter is bound to the fresh tenant opened by Runtime. */
+  /** Bound to Runtime's fresh tenant. Map operator per action: sales for
+   * create/submit/cancel, approver for approve, billing for record_invoice,
+   * treasury for record_payment. Never use an all-powerful shared principal. */
   invoke(surface: Surface, action: string, args: { [key: string]: Json }, actor: Actor): Promise<Invocation>;
   subscribe(query: Query): Promise<Subscription>;
   query(query: Query): Promise<OrderState>;
