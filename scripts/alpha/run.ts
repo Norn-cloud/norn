@@ -62,6 +62,7 @@ export async function runAlpha(definitions: Definitions, surfaces: Surfaces, run
         await invoke(surface, "alpha.order.record_payment", { id: `${orderId}-payment`, order_id: orderId, amount: "4" });
         strictEqual((await snapshot(query)).state.outstanding, "6");
         strictEqual((await snapshot(query)).state.completed, false);
+        await refuse(surface, "alpha.order.record_payment", { id: `${orderId}-payment`, order_id: orderId, amount: "8" }, query);
         await invoke(surface, "alpha.order.record_payment", { id: `${orderId}-payment-2`, order_id: orderId, amount: "6" });
         const completed = await snapshot(query);
         deepStrictEqual(completed.state, {
