@@ -888,13 +888,17 @@ fn unresolved_pack_members_preserve_admission_and_legacy_recovery() {
     let limits = ResourceLimitProfile::norn_limits_v1();
     let registry = BTreeSet::new();
     let enrolled = check_with(&[], &inherited_pack_base(), &registry, None, &limits)
-        .receipt.law_enrollment;
+        .receipt
+        .law_enrollment;
     for missing_version in [false, true] {
         let mut base = inherited_pack_base();
         let members = base.last_mut().expect("pack")["payload"]["artifacts"]
-            .as_array_mut().expect("members");
+            .as_array_mut()
+            .expect("members");
         if missing_version {
-            for member in members { member["version"] = json!(999); }
+            for member in members {
+                member["version"] = json!(999);
+            }
         } else {
             members.push(json!({"artifactId":"missing.law", "version":1, "kind":"law"}));
         }
@@ -910,8 +914,10 @@ fn unresolved_pack_members_preserve_admission_and_legacy_recovery() {
         historical.expr_profile = "norn-zen/4".to_owned();
         historical.diagnostics = empty_diagnostics_for("0.1.0");
         let (body, digest) = as_legacy_receipt(&historical);
-        assert_eq!(recover_legacy_admission_receipt(
-            &digest, &[], &envelopes(&base), &limits
-        ).expect("unresolved pack must not interrupt historical templates"), body);
+        assert_eq!(
+            recover_legacy_admission_receipt(&digest, &[], &envelopes(&base), &limits)
+                .expect("unresolved pack must not interrupt historical templates"),
+            body
+        );
     }
 }
