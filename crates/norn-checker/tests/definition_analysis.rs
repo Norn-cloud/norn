@@ -79,61 +79,35 @@ fn runtime_defaults_do_not_borrow_the_unmodified_root_input_domain() {
 }
 
 #[test]
-fn unsupported_rule_graphs_never_disappear_from_analysis() {
-    for (path, value, base_unknown) in [
-        (
-            "/payload/graph/viewport",
-            json!({"x":"bad","y":-4,"zoom":1.25}),
-            Unknown::NotAdmitted,
-        ),
-        (
-            "/payload/graph/viewport",
-            json!({"x":12.5,"y":-4,"zoom":1.25,"unknown":true}),
-            Unknown::NotAdmitted,
-        ),
-        (
-            "/payload/graph/nodes/1/semanticUnknown",
-            json!(true),
-            Unknown::GraphInput,
-        ),
-        (
-            "/payload/graph/edges/0/semanticUnknown",
-            json!(true),
-            Unknown::GraphInput,
-        ),
-    ] {
+fn retained_graphs_require_profile_validation_beyond_wire_decoding() {
+    let check_base = |graph: Value| {
+        assert!(serde_json::from_value::<norn_ir::jdm::JdmGraph>(graph.clone()).is_ok());
         let mut rule = table_rule();
-        // Object indexing inserts the unsupported field, including at nested nodes/edges.
-        let (parent, key) = path.rsplit_once('/').expect("field path");
-        rule.pointer_mut(parent).expect("parent")[key] = value;
-        let checked = check(&[rule.clone()]);
-        assert!(!checked.receipt.admitted, "{path}");
-        assert_eq!(checked.analysis, Err(Unknown::NotAdmitted));
-        // Malformed layout is refused even in the base: viewport coordinates must
-        // be decimals and unknown viewport fields are rejected. Base semantic
-        // admission is external to this API; unsupported admitted graphs must
-        // still yield GraphInput rather than a successful empty report.
+        rule["payload"]["graph"] = graph;
         let base = [serde_json::from_value(rule).expect("base rule")];
-        let checked = check_artifact_set_with_receipt(
-            &[],
-            &EntityArtifactSetContext {
-                registry: &BTreeSet::new(),
-                base: &base,
-                tenant: None,
-            },
-            &ResourceLimitProfile::norn_limits_v1(),
-        )
-        .expect("check base");
-        assert_eq!(
-            checked.receipt.admitted,
-            base_unknown != Unknown::NotAdmitted,
-            "{path}: {:?}",
-            checked.diagnostics
-        );
-        assert_eq!(checked.analysis, Err(base_unknown), "{path}");
+        check_artifact_set_with_receipt(&[], &EntityArtifactSetContext {
+            registry: &BTreeSet::new(), base: &base, tenant: None,
+        }, &ResourceLimitProfile::norn_limits_v1()).expect("check base")
+    };
+    for node in [
+        None,
+        Some(json!({"id":"table","name":"table","type":"functionNode","content":"inert source"})),
+        Some(json!({"id":"table","name":"table","type":"customNode","content":{"kind":"outside","config":{}}})),
+    ] {
+        let graph = if let Some(node) = node {
+            let mut graph = table_rule()["payload"]["graph"].clone();
+            graph["nodes"][1] = node;
+            graph
+        } else {
+            json!({"nodes":[],"edges":[]})
+        };
+        let checked = check_base(graph);
+        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+        assert_eq!(checked.analysis, Err(Unknown::GraphInput));
     }
-    // Non-rule definitions still produce ordinary evidence, without a graph requirement.
-    assert!(check(&[order()]).analysis.is_ok());
+    let valid = check_base(json!({"nodes":[{"id":"input","name":"input","type":"inputNode"},{"id":"output","name":"output","type":"outputNode"}],"edges":[{"id":"direct","sourceId":"input","targetId":"output"}]}));
+    assert!(valid.receipt.admitted);
+    assert!(valid.analysis.expect("valid table-free graph").tables.is_empty());
 }
 
 #[test]

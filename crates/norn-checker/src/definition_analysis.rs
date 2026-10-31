@@ -70,8 +70,16 @@ fn analyze_tables(
     if artifact.kind() != ArtifactKind::Rule {
         return Ok(());
     }
-    let graph = crate::jdm_profile::decode_graph(artifact).ok_or(Unknown::GraphInput)?;
     let payload = artifact.payload.to_json_value();
+    let raw_graph = payload.as_object().and_then(|p| p.get("graph")).ok_or(Unknown::GraphInput)?;
+    let mut findings = Vec::new();
+    crate::jdm_profile::validate_jdm_graph(
+        raw_graph, &artifact.dependencies, &mut findings, Some(&artifact.artifact_id),
+    );
+    if !findings.is_empty() {
+        return Err(Unknown::GraphInput);
+    }
+    let graph = crate::jdm_profile::decode_graph(artifact).ok_or(Unknown::GraphInput)?;
     let schema = payload
         .as_object()
         .and_then(|p| p.get("inputSchema"))
