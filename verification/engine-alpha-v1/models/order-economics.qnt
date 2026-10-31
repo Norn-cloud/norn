@@ -66,4 +66,21 @@ module order_economics {
     and outstanding(totals[i]) + totals[i].allocated_total == totals[i].invoiced_total)
   def invariant = replayEqualsProjection and refusalIsNoop and appendOnly and derived
   temporal safety = always(invariant)
+
+  // A feasibility witness: real economic events can reach completion, while
+  // the other cell/order stays untouched. This rules out all-refuse vacuity.
+  run partialThenCompletedTest = init
+    .then(approve(0, 0))
+    .then(record({ cell: 0, order: 0, kind: "invoice", id: 0, amount: 2 }))
+    .then(record({ cell: 0, order: 0, kind: "payment", id: 0, amount: 1 }))
+    .then(all { assert(invariant and invoiced(totals[0]) and not(completed(totals[0]))),
+      record({ cell: 0, order: 0, kind: "payment", id: 1, amount: 1 }) })
+    .then(all { assert(invariant and completed(totals[0]) and outstanding(totals[0]) == 0
+      and totals[1] == zero and totals[2] == zero and totals[3] == zero),
+      record({ cell: 0, order: 1, kind: "invoice", id: 0, amount: 1 }) })
+    .then(all { assert(invariant and not(accepted)), approve(0, 1) })
+    .then(record({ cell: 0, order: 1, kind: "invoice", id: 0, amount: 1 }))
+    .then(all { assert(invariant and not(accepted)), approve(1, 0) })
+    .then(record({ cell: 1, order: 0, kind: "invoice", id: 0, amount: 1 }))
+    .then(all { assert(invariant and accepted and invoiced(totals[2])), approve(1, 1) })
 }
