@@ -1,4 +1,4 @@
-/** Alpha acceptance #3762. Adapters call the real engine; no fixture responders. */
+/** Alpha acceptance. Adapters call the real engine; no fixture responders. */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Surface = "api" | "mcp" | "cli";
 export type Actor = "operator" | "forbidden";
