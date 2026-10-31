@@ -1052,3 +1052,49 @@ fn portable_commit_cannot_forge_owned_row_authority_with_action_call_marker() {
         json!("commit.owned_rows_protected")
     );
 }
+
+// Admission law: every declared stored field reaches native validation even
+// without invariants; undeclared payload bytes remain opaque in the plan.
+#[test]
+fn declared_fact_values_reach_native_admission_without_invariants() {
+    let model = json!([{
+        "name": "law.Thing",
+        "properties": [{"id": "title", "type": {"kind": "text"}}]
+    }]).to_string();
+    for (values, accepted, code) in [
+        (r#"{"title":"ok","opaque":1e100}"#, true, ""),
+        (r#"{"title":false}"#, false, "commit.effective_values"),
+        (r#"{"title":1e100}"#, false, "commit.unrepresentable_property"),
+    ] {
+        let commit = format!(r#"{{"consumes":null,"reads":[],"writes":[{{"key":{},"expected":0,"mutation":{{"put":{{"values":{values}}}}}}}],"events":[],"effects":[]}}"#, key(0));
+        let plan = parse(&decode_commit_json(&commit, &model).expect("plan"));
+        assert_eq!(plan["writes"][0]["values"], values);
+        let verdict = parse(&check_commit_json(&commit, &view(0, false, &[(0, None)], &[]), &model).expect("verdict"));
+        assert_eq!(verdict["accepted"], accepted);
+        if !accepted { assert_eq!(verdict["refusal"]["code"], code); }
+    }
+}
+
+// Link admission uses the concrete source contract even through a base alias.
+#[test]
+fn declared_link_values_reach_native_admission_through_base_alias() {
+    let mut types = serde_json::to_value(law_object_types()).expect("model");
+    types[1]["links"] = json!([{
+        "id":"rel", "target":"law.Thing", "cardinality":{"to":"many","from":"many"},
+        "properties":[{"id":"when","type":{"kind":"timestamp"}}]
+    }]);
+    let model = types.to_string();
+    for (values, accepted, code) in [
+        (r#"{"when":"2026-10-31T00:00:00Z","opaque":1e100}"#, true, ""),
+        (r#"{"when":"invalid"}"#, false, "commit.effective_values"),
+        (r#"{"when":false}"#, false, "commit.effective_values"),
+        (r#"{"when":1e100}"#, false, "commit.unrepresentable_property"),
+    ] {
+        let commit = format!(r#"{{"consumes":null,"reads":[],"writes":[],"events":[],"effects":[],"links":[{{"key":{},"expected":0,"mutation":{{"add":{{"values":{values}}}}}}}]}}"#, link_key(0,"rel",1));
+        let plan = parse(&decode_commit_json(&commit, &model).expect("plan"));
+        assert_eq!(plan["links"][0]["values"], values);
+        let verdict = parse(&check_commit_json(&commit, &view(0, false, &[(1, Some("law.Child")), (1, Some("law.Thing"))], &[0]), &model).expect("verdict"));
+        assert_eq!(verdict["accepted"], accepted);
+        if !accepted { assert_eq!(verdict["refusal"]["code"], code); }
+    }
+}

@@ -97,6 +97,11 @@ pub enum AbiError {
         /// Its value.
         value: u64,
     },
+    /// A declared property cannot be represented by the runtime.
+    UnrepresentableProperty {
+        /// The declared property name.
+        property: String,
+    },
     /// A result document could not be encoded.
     Encode(String),
 }
@@ -109,6 +114,9 @@ impl fmt::Display for AbiError {
                 f,
                 "{field} {value} exceeds the largest exactly representable integer {MAX_SAFE_INTEGER}"
             ),
+            Self::UnrepresentableProperty { property } => {
+                write!(f, "commit.unrepresentable_property: {property}")
+            }
             Self::Encode(detail) => write!(f, "result could not be encoded: {detail}"),
         }
     }
@@ -265,11 +273,9 @@ impl WireCommit {
         objects
     }
 
-    /// The same commit as kernel types. Fact values are decoded only when
-    /// their type has effective invariants; other values remain opaque to
-    /// preserve exact JSON payload transport. Events and effects remain
-    /// opaque to the check.
-    fn admission(&self, catalog: &TypeCatalog<'_>) -> Result<CellCommit<(), (), ()>, AbiError> {
+    /// Admit declared fact and link fields through the native kernel checks.
+    /// Undeclared payload fields, events and effects stay opaque.
+    fn admission(&self, catalog: &TypeCatalog<'_>, lookup: &ViewLookup) -> Result<CellCommit<(), (), ()>, AbiError> {
         Ok(CellCommit {
             consumes: self.consumes.clone(),
             reads: self.reads.clone(),
@@ -282,11 +288,10 @@ impl WireCommit {
                         expected: write.expected,
                         mutation: match &write.mutation {
                             WireMutation::Put { values } => {
-                                let values = match catalog.has_invariants(&write.key.object_type) {
-                                    Ok(true) => values
-                                        .to_effective_object(catalog, &write.key.object_type)?,
-                                    Ok(false) | Err(_) => JsonObject::default(),
-                                };
+                                let declared = catalog
+                                    .effective_object_values(&write.key.object_type, &JsonObject::new())
+                                    .map_err(invalid("model"))?;
+                                let values = values.project(&declared)?;
                                 FactMutation::Put { values }
                             }
                             WireMutation::Delete => FactMutation::Delete,
@@ -299,17 +304,37 @@ impl WireCommit {
             links: self
                 .links
                 .iter()
-                .map(|link| LinkWrite {
-                    key: link.key.clone(),
-                    expected: link.expected,
-                    mutation: match link.mutation {
-                        WireLinkMutation::Add { .. } => LinkMutation::Add {
-                            values: JsonObject::default(),
+                .map(|link| {
+                    Ok(LinkWrite {
+                        key: link.key.clone(),
+                        expected: link.expected,
+                        mutation: match &link.mutation {
+                            WireLinkMutation::Add { values } => {
+                                let model = CommitModel::new(catalog);
+                                let canonical = model.canonical(&link.key.source);
+                                let source = self.writes.iter()
+                                    .find(|write| model.canonical(&write.key) == canonical)
+                                    .and_then(|write| match write.mutation {
+                                        WireMutation::Put { .. } => Some(&write.key.object_type),
+                                        WireMutation::Delete => None,
+                                    })
+                                    .or_else(|| lookup.objects.get(&canonical)
+                                        .and_then(|object| object.concrete.as_ref()))
+                                    .unwrap_or(&link.key.source.object_type);
+                                let declared = catalog
+                                    .effective_link_values(
+                                        source,
+                                        link.key.link.as_str(),
+                                        &JsonObject::new(),
+                                    )
+                                    .map_err(invalid("model"))?;
+                                LinkMutation::Add { values: values.project(&declared)? }
+                            }
+                            WireLinkMutation::Remove => LinkMutation::Remove,
                         },
-                        WireLinkMutation::Remove => LinkMutation::Remove,
-                    },
+                    })
                 })
-                .collect(),
+                .collect::<Result<_, AbiError>>()?,
             link_reads: self.link_reads.clone(),
         })
     }
@@ -358,30 +383,20 @@ impl ObjectText {
         }
     }
 
-    fn to_effective_object(
-        &self,
-        catalog: &TypeCatalog<'_>,
-        object_type: &ObjectTypeName,
-    ) -> Result<JsonObject, AbiError> {
-        let text = self.effective_values_text(catalog, object_type)?;
-        let value = RuntimeValue::from_json_text(text.as_ref()).map_err(|error| {
-            AbiError::InvalidInput {
-                argument: "commit",
-                detail: error.to_string(),
-            }
-        })?;
-        match value {
-            RuntimeValue::Object(values) => Ok(values),
-            RuntimeValue::Null
-            | RuntimeValue::Bool(_)
-            | RuntimeValue::Number(_)
-            | RuntimeValue::String(_)
-            | RuntimeValue::Array(_) => Err(AbiError::InvalidInput {
-                argument: "commit",
-                detail: "fact values must be a runtime object".to_owned(),
-            }),
-        }
+    /// Decode only declared stored fields; never parse opaque numeric payloads.
+    fn project(&self, declared: &JsonObject) -> Result<JsonObject, AbiError> {
+        let raw: BTreeMap<String, Box<RawValue>> =
+            serde_json::from_str(self.0.get()).map_err(invalid("commit"))?;
+        raw.into_iter()
+            .filter(|(name, _)| declared.contains_key(name))
+            .map(|(name, value)| {
+                RuntimeValue::from_json_text(value.get())
+                    .map(|value| (name.clone(), value))
+                    .map_err(|_| AbiError::UnrepresentableProperty { property: name })
+            })
+            .collect()
     }
+
 }
 
 // ------------------------------------------------------------------ model
@@ -1200,7 +1215,14 @@ pub fn check_commit_json(commit: &str, view: &str, model: &str) -> Result<String
     let model = CommitModel::new(&catalog);
     let seq_now = safe("view.seq", view.seq)?;
     let lookup = lookup(&wire, model, view)?;
-    let admission = wire.admission(&catalog)?;
+    let admission = match wire.admission(&catalog, &lookup) {
+        Ok(admission) => admission,
+        Err(AbiError::UnrepresentableProperty { property }) => {
+            return to_text(&json!({ "format": VERDICT_FORMAT, "accepted": false,
+                "refusal": { "code": "commit.unrepresentable_property", "property": property } }));
+        }
+        Err(error) => return Err(error),
+    };
     let admitted = match check_commit(&admission, &model, &lookup) {
         Ok(admitted) => admitted,
         Err(CommitError::Host(request)) => {
