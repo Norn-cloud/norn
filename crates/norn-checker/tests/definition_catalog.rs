@@ -36,7 +36,7 @@ fn envelope(value: Value) -> ArtifactEnvelope {
 
 fn catalog(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> DefinitionCatalog {
     let set = resolve_artifact_set(artifacts, base).expect("set resolves");
-    project(&set).expect("catalog projects")
+    project(&set, base).expect("catalog projects")
 }
 
 fn sales_order() -> ArtifactEnvelope {
@@ -318,11 +318,19 @@ fn laws_bind_their_subject_and_response() {
         .iter()
         .find(|row| row.at.artifact_id == "erpnext.invariant_identity.law")
         .expect("the invariant law is a row");
-    assert_eq!(identity.subject, "erpnext.PurchaseOrder");
+    let purchase_order = MemberRef {
+        artifact_id: "erpnext.PurchaseOrder.entity".to_owned(),
+        version: "0.1.0".to_owned(),
+        member: Member::Type {
+            type_name: "erpnext.PurchaseOrder".to_owned(),
+        },
+    };
+    assert_eq!(identity.subject, purchase_order);
+    assert!(catalog.contains(&identity.subject));
     assert_eq!(
         identity.binds,
         Some(LawBinding::Invariant {
-            type_name: "erpnext.PurchaseOrder".to_owned(),
+            owner: purchase_order,
             invariant: "amount_frozen".to_owned(),
         })
     );
@@ -479,4 +487,30 @@ fn a_parent_row_mutation_writes_its_child_types() {
             "shop.OrderLine.entity type:shop.OrderLine"
         ]
     );
+}
+
+#[test]
+fn installed_dependencies_of_installed_artifacts_are_projected() {
+    // A candidate pack ships an installed action; the action's entity is
+    // installed too and only the action references it.
+    let pack = envelope(json!({
+        "irVersion": "0.1", "artifactId": "commerce.invoicing.pack", "kind": "business_pack",
+        "namespace": "commerce", "name": "Invoicing", "version": "0.1.0", "lifecycle": "draft",
+        "scope": { "orgId": "org_demo", "environmentId": "dev" },
+        "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "packId": "commerce.invoicing", "packVersion": "0.1.0", "packKind": "composition",
+            "artifacts": [{
+                "artifactId": "commerce.sales_order.submit_invoice.action",
+                "kind": "action", "version": "0.1.0"
+            }]
+        }
+    }));
+    let catalog = catalog(&[pack], &[submit_invoice(), sales_order()]);
+    let order = catalog
+        .artifact("commerce.SalesOrder.entity", "0.1.0")
+        .expect("the action's installed entity is pinned");
+    assert!(!order.candidate);
+    assert!(catalog.contains(&catalog.writes[0].target));
+    assert_eq!(catalog.writes[0].target, invoice_transition());
 }
