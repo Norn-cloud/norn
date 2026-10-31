@@ -47,13 +47,16 @@ test.skipIf(!checker)("Rust admits the core physics interfaces over the shared v
 // Commitment ⊓ Claim = ∅. Until the checker enforces disjoint primitives, this
 // holds the published registry to it: no type implements both, directly or
 // through interface parents.
-type Payload = { payload?: { objectType?: { name: string; implements?: string[] }; interface?: { name: string; extends?: string[] } } }
+type Payload = { payload?: { objectType?: { name: string; extends?: string; implements?: string[] }; interface?: { name: string; extends?: string[] } } }
 
 function bothCommitmentAndClaim(artifacts: ReadonlyArray<Payload>): string[] {
   const parents = new Map<string, string[]>()
   for (const { payload } of artifacts) {
     if (payload?.interface) parents.set(payload.interface.name, payload.interface.extends ?? [])
-    if (payload?.objectType) parents.set(payload.objectType.name, payload.objectType.implements ?? [])
+    if (payload?.objectType) {
+      const { name, extends: supertype, implements: implemented = [] } = payload.objectType
+      parents.set(name, supertype === undefined ? [...implemented] : [supertype, ...implemented])
+    }
   }
   const ancestors = (name: string, seen: Set<string>): Set<string> => {
     for (const parent of parents.get(name) ?? []) if (!seen.has(parent)) ancestors(parent, seen.add(parent))
@@ -70,6 +73,11 @@ test("no registry type is both a core.Commitment and a core.Claim", () => {
   const all = [...compiled.artifacts, ...compiled.baseArtifacts] as Payload[]
   expect(bothCommitmentAndClaim(all)).toEqual([])
   // The check bites: a type implementing both, even through a parent, is found.
-  const bad: Payload[] = [{ payload: { interface: { name: "x.Promise", extends: ["core.Commitment"] } } }, { payload: { objectType: { name: "x.Both", implements: ["x.Promise", "core.Claim"] } } }]
-  expect(bothCommitmentAndClaim([...all, ...bad])).toEqual(["x.Both"])
+  const bad: Payload[] = [
+    { payload: { interface: { name: "x.Promise", extends: ["core.Commitment"] } } },
+    { payload: { objectType: { name: "x.Both", implements: ["x.Promise", "core.Claim"] } } },
+    { payload: { objectType: { name: "x.Order", implements: ["core.Commitment"] } } },
+    { payload: { objectType: { name: "x.InvoicedOrder", extends: "x.Order", implements: ["core.Claim"] } } },
+  ]
+  expect(bothCommitmentAndClaim([...all, ...bad])).toEqual(["x.Both", "x.InvoicedOrder"])
 })
