@@ -878,7 +878,8 @@ fn create_link_consumes_only_fields_without_a_declared_scalar_property() {
         let state = host.load(&target).expect("stored object");
         assert_eq!(
             state
-                .values()
+                .values
+                .as_ref()
                 .expect("object values")
                 .contains_key("season_code"),
             stored
