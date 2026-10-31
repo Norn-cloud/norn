@@ -24001,6 +24001,24 @@
       "connector": null
     },
     {
+      "path": "tools/norn-ts/test/pack-link.test.ts",
+      "sha256": "8b64625a350024c3a446e5636d9993832a16f02059d19f2aaa72ae88f81226fc",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "tools/norn-ts/test/profile-corpus.test.ts",
       "sha256": "8ab474460c1a035070c404df7d6c2f386ba32c623e24d8e40f713824943f45c8",
       "origin": "authored",
