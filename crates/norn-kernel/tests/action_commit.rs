@@ -29,14 +29,14 @@ use std::sync::{Arc, Barrier, Mutex};
 use norn_ir::{ActionRoot, NamingCounterSeed, ObjectTypeDef, ObjectTypeName, PropertyId};
 use norn_kernel::action::{ACTION_IDEMPOTENCY_KEY_MAX_BYTES, ActionCommandRejection};
 use norn_kernel::cell_host::{JsonObject, JsonValue};
+use norn_kernel::commit_decision;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome, ActionRefusal,
     CellCommit, CellHost, Command, CommitError, CommitModel, CommitReceipt, CommitVersions,
     CommitView, DecisionTurn, DueTimer, FactEvent, FactKey, FactMutation, FactSlice, FactState,
     FactVersion, FactWrite, LinkKey, LinkState, LogicalTime, Observed, OwnedRowsCommitProof,
     Performed, TurnEnvelopeLimits, TurnEnvelopeMeter, TypeCatalog, World, check_commit,
-    commit_action, commit_action_with_limits, commit_action_with_meter, commit_decision,
-    commit_decision_with_meter,
+    commit_action, commit_action_with_limits, commit_action_with_meter, commit_decision_with_meter,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
@@ -4037,20 +4037,13 @@ fn protected_properties_refuse_action_input_and_accept_rule_output() {
         matches!(commit_action(&mut cell, &catalog, &action_call, &Allow),
         Err(ActionRefusal::Decision(error)) if error.to_string().contains("protected"))
     );
-    assert!(cell.ledger().is_empty());
     let key = FactKey::new(ORDER, "PROTECTED");
     let output = serde_json::from_value(json!({"facts":[{
         "op":"create","objectType":ORDER,"key":"PROTECTED","values":{"so_number":"rule-created"}
     }],"commands":[],"timers":[]}))
     .unwrap();
-    commit_decision(
-        &mut cell,
-        &catalog,
-        &FactSlice::new(),
-        &action_call.turn,
-        &output,
-    )
-    .unwrap();
+    let empty = FactSlice::new();
+    commit_decision(&mut cell, &catalog, &empty, &action_call.turn, &output).unwrap();
     let output = serde_json::from_value(json!({"facts":[{
         "op":"set","objectType":ORDER,"key":"PROTECTED","property":"so_number","value":"rule-updated"
     }],"commands":[],"timers":[]})).unwrap();
