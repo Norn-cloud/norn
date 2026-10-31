@@ -832,11 +832,15 @@ def selector_gate_order_canaries() -> None:
         ("full", "verification-executed-test-selectors"),
         ("fast", "verification-executed-test-selectors-fast"),
     ):
+        producer = {"id": "selector-order-canary-producer", "profile": profile,
+                    "evidenceKind": "rust-tests"}
+        baseline = [(profile, producer["id"]), *registrations]
+        validator.validate_selector_gate_order(baseline, [*gates, producer])
         candidate = [(profile, gate_id)] + [
-            item for item in registrations if item[1] != gate_id
+            item for item in baseline if item[1] != gate_id
         ]
         try:
-            validator.validate_selector_gate_order(candidate, gates)
+            validator.validate_selector_gate_order(candidate, [*gates, producer])
         except validator.InvalidCoverage:
             continue
         raise AssertionError(f"{profile} selector check accepted before its producers")
