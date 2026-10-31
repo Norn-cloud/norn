@@ -1093,11 +1093,6 @@ where
     )
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "the admitted action effect, host, and turn policy are explicit commit inputs"
-)]
 fn upsert_stored_input(
     catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
@@ -1116,6 +1111,11 @@ fn upsert_stored_input(
     values
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "the admitted action effect, host, and turn policy are explicit commit inputs"
+)]
 fn commit_upsert<H>(
     host: &mut H,
     catalog: &TypeCatalog<'_>,
@@ -1280,7 +1280,7 @@ where
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
 
     let mut business_input =
-        upsert_stored_input(catalog, action, object_type, &preparation.effective_input);
+        upsert_stored_input(catalog, action, &object_type, &preparation.effective_input);
     if let Some(quantity) = &action.quantity_effect {
         business_input.remove(&quantity.balance_versions_field);
     }
