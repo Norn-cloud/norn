@@ -28,6 +28,11 @@ test("typed claim and ruling handles compile to the ClaimIR and RulingIR goldens
     evidence: [RU.evidence.upstream("erpnext", "v16.0.0", "erpnext/selling/doctype/sales_order/sales_order.py#set_status", "structural", "status follows per_billed, computed from Sales Invoice items")],
   }), options)
   expect(canonicalJson(built.artifact)).toBe(canonicalJson(golden[0]))
+
+  // Registry mode emits `active` envelopes; a ruling must never be ratified by authoring.
+  const registry = compileDefinitions(join(ROOT, "rulings.source.ts"), { ...options, registryPackagePath: "registry/core" })
+  if (!registry.ok) throw new Error(JSON.stringify(registry.diagnostics))
+  for (const artifact of registry.artifacts as Array<{ lifecycle: string }>) expect(artifact.lifecycle).toBe("draft")
 }, 30_000)
 
 test("raw IR in a claim is refused even when it forges the handle type", () => {

@@ -164,10 +164,19 @@ export function rulingIR(def: RulingMeta): RulingIR {
   }
 }
 
+/**
+ * The envelope of a claim or ruling. Registry mode would emit `active`, which
+ * ratifies a ruling; authoring never ratifies, so both kinds stay `draft`.
+ */
+function draftEnvelope(kind: "claim" | "ruling", def: Base, payload: unknown, options: EnvelopeOptions): Json {
+  const built = envelope({ kind, artifactId: def.id, namespace: def.id.split(".")[0]!, name: def.title, version: def.version }, payload, options) as Record<string, Json>
+  return { ...built, lifecycle: "draft" }
+}
+
 export function lowerClaim(def: ClaimDef, options: EnvelopeOptions): { readonly ok: true; readonly artifact: Json } {
-  return { ok: true, artifact: envelope({ kind: "claim", artifactId: def.id, namespace: def.id.split(".")[0]!, name: def.title, version: def.version }, claimIR(def), options) }
+  return { ok: true, artifact: draftEnvelope("claim", def, claimIR(def), options) }
 }
 
 export function lowerRuling(def: RulingDef, options: EnvelopeOptions): { readonly ok: true; readonly artifact: Json } {
-  return { ok: true, artifact: envelope({ kind: "ruling", artifactId: def.id, namespace: def.id.split(".")[0]!, name: def.title, version: def.version }, rulingIR(def), options) }
+  return { ok: true, artifact: draftEnvelope("ruling", def, rulingIR(def), options) }
 }

@@ -229,7 +229,6 @@ fn a_ruling_is_dated_decided_and_never_its_own_successor() {
 }
 
 #[test]
-<<<<<<< HEAD
 fn the_typed_authoring_goldens_pass_the_local_checks() {
     // `fixtures/ruling-ir/rulings.json` is compiled from `rulings.source.ts`
     // by `tools/norn-ts` (`test/ruling.test.ts` keeps it byte-identical).
@@ -244,8 +243,9 @@ fn the_typed_authoring_goldens_pass_the_local_checks() {
     for artifact in &golden {
         assert_eq!(findings(artifact), [], "{}", artifact["artifactId"]);
     }
-||||||| b2b79d2
-=======
+}
+
+#[test]
 fn scoped_cases_are_disjoint_and_revisit_evidence_is_pinned() {
     let mut overlapping = ruling();
     overlapping["payload"]["outcome"] = json!({ "kind": "scoped", "cases": [
@@ -267,5 +267,4 @@ fn scoped_cases_are_disjoint_and_revisit_evidence_is_pinned() {
         findings(&deferred),
         refused(INVALID_RULING, "/payload/outcome/revisit/source")
     );
->>>>>>> ruling/c3-obligations
 }
