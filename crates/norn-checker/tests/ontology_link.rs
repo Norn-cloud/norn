@@ -341,6 +341,27 @@ fn links_resolve_pinned_packs_and_active_terms_of_one_kind() {
 }
 
 #[test]
+fn a_link_without_a_pinned_endpoint_is_refused_not_dropped() {
+    // Built past envelope validation, as a direct caller of the public API can.
+    let mut artifacts = registry(link());
+    let mut payload = artifacts[2].payload.to_json_value();
+    if let norn_ir::JsonValue::Object(object) = &mut payload
+        && let Some(norn_ir::JsonValue::Object(from)) = object.get_mut("fromPack")
+    {
+        from.remove("version");
+    }
+    let mut envelope = serde_json::to_value(&artifacts[2]).expect("envelope serializes");
+    envelope["payload"] = serde_json::to_value(&payload).expect("payload serializes");
+    artifacts[2] = serde_json::from_value(envelope).expect("envelope decodes");
+    let diagnostics = validate_link_registry(&artifacts).expect_err("the link must be refused");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.message.contains("must pin a packId and a version"))
+    );
+}
+
+#[test]
 fn evidence_must_be_a_mapped_source_of_the_from_pack() {
     let mut candidate = link();
     candidate["payload"]["correspondences"][0]["evidenceRefs"] = json!(["source.shop-blog"]);

@@ -47,7 +47,6 @@ export const Pack = Norn.packLink({
     {"correspondenceId": "corr.guard.supplier.on.hold", "fromTermId": "norn.erpnext.guard.supplier.on.hold", "relation": "subsumed_by", "toTermIds": ["norn.finance.guard.party.disabled"], "justification": "A supplier on hold is blocked like a disabled party.", "evidenceRefs": ["source.erpnext"], "confidenceBasisPoints": 6500, "reviewedBy": "lane-g (agent, proposed)", "reviewedAt": "2026-10-31T00:00:00Z"},
     {"correspondenceId": "corr.sales.order.customer", "fromTermId": "norn.erpnext.sales.order.customer", "relation": "subsumed_by", "toTermIds": ["norn.commerce.order.party"], "justification": "The ordering customer.", "evidenceRefs": ["source.erpnext"], "confidenceBasisPoints": 8500, "reviewedBy": "lane-g (agent, proposed)", "reviewedAt": "2026-10-31T00:00:00Z"},
     {"correspondenceId": "corr.sales.order.grand.total", "fromTermId": "norn.erpnext.sales.order.grand.total", "relation": "subsumed_by", "toTermIds": ["norn.commerce.order.amount.total"], "justification": "The committed total.", "evidenceRefs": ["source.erpnext"], "confidenceBasisPoints": 8500, "reviewedBy": "lane-g (agent, proposed)", "reviewedAt": "2026-10-31T00:00:00Z"},
-    {"correspondenceId": "corr.sales.order.per.delivered", "fromTermId": "norn.erpnext.sales.order.per.delivered", "relation": "derived", "toTermIds": ["norn.core.event.fulfils", "norn.core.resource.quantity"], "justification": "Delivered share follows from the quantities of the transfers that fulfil the order.", "evidenceRefs": ["source.erpnext"], "confidenceBasisPoints": 6000, "reviewedBy": "lane-g (agent, proposed)", "reviewedAt": "2026-10-31T00:00:00Z"},
   ],
   residuals: [
     {"termId": "norn.erpnext.payment.entry", "reason": "canon_gap", "note": "Internal transfers move money between one agent's own accounts; the canon has no account-to-account movement. Receive and pay entries are payments: see the member correspondences."},
@@ -65,6 +64,7 @@ export const Pack = Norn.packLink({
     {"termId": "norn.erpnext.item.has.variants", "reason": "system_specific", "note": "Variant templates are an ERPNext catalogue feature."},
     {"termId": "norn.erpnext.stock.entry.purpose", "reason": "system_specific", "note": "Projected as the event's class (transfer or transformation), not as a property."},
     {"termId": "norn.erpnext.sales.order.status", "reason": "canon_gap", "note": "On Hold and Closed are set by users; the canon order state is derived and has no hold or close."},
+    {"termId": "norn.erpnext.sales.order.per.delivered", "reason": "canon_gap", "note": "A delivered share needs the ordered quantity, which the canon order does not carry yet."},
     {"termId": "norn.erpnext.sales.order.per.billed", "reason": "canon_gap", "note": "The canon has no link from an invoice to the order it bills."},
     {"termId": "norn.erpnext.delivery.note.customer", "reason": "canon_gap", "note": "The canon transfer event has no provider and receiver agents yet."},
     {"termId": "norn.erpnext.delivery.note.is.return", "reason": "system_specific", "note": "A return is a transfer in the opposite direction."},

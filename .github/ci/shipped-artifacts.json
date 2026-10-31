@@ -3027,7 +3027,7 @@
     },
     {
       "path": "crates/norn-checker/src/ontology/link_registry.rs",
-      "sha256": "30b3d3028a2ebb2ff96e2855293a31fc3b0a718349e0c50e2ffe6840a81528da",
+      "sha256": "42e9fd2ce8f1f491c290e4cfff19add73bafe8816aa9433d31a8ba3b15125bb3",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -4014,7 +4014,7 @@
     },
     {
       "path": "crates/norn-checker/tests/ontology_link.rs",
-      "sha256": "09c37f9fddc339503afe362d3c7fb06da41a509ff2981a45d4d008e3f8bf0c0d",
+      "sha256": "3a6153f88cc14f81e3f3b1a5a9466b7f4156ab278abfaab35f671a9cfe0bce94",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18560,7 +18560,7 @@
     },
     {
       "path": "registry/packs/erpnext/erpnext.link.ts",
-      "sha256": "53c580f1b64bcfdeab9fd73a9dc14003dc6c5a57af963055b1be90ec45cab418",
+      "sha256": "3c493f35f7f159599dab11e04875cdad6406044f5a895426e500fff439171235",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
