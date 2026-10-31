@@ -85,14 +85,23 @@ fn retained_graphs_require_profile_validation_beyond_wire_decoding() {
         let mut rule = table_rule();
         rule["payload"]["graph"] = graph;
         let base = [serde_json::from_value(rule).expect("base rule")];
-        check_artifact_set_with_receipt(&[], &EntityArtifactSetContext {
-            registry: &BTreeSet::new(), base: &base, tenant: None,
-        }, &ResourceLimitProfile::norn_limits_v1()).expect("check base")
+        check_artifact_set_with_receipt(
+            &[],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None,
+            },
+            &ResourceLimitProfile::norn_limits_v1(),
+        )
+        .expect("check base")
     };
     for node in [
         None,
         Some(json!({"id":"table","name":"table","type":"functionNode","content":"inert source"})),
-        Some(json!({"id":"table","name":"table","type":"customNode","content":{"kind":"outside","config":{}}})),
+        Some(
+            json!({"id":"table","name":"table","type":"customNode","content":{"kind":"outside","config":{}}}),
+        ),
     ] {
         let graph = if let Some(node) = node {
             let mut graph = table_rule()["payload"]["graph"].clone();
@@ -105,9 +114,17 @@ fn retained_graphs_require_profile_validation_beyond_wire_decoding() {
         assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
         assert_eq!(checked.analysis, Err(Unknown::GraphInput));
     }
-    let valid = check_base(json!({"nodes":[{"id":"input","name":"input","type":"inputNode"},{"id":"output","name":"output","type":"outputNode"}],"edges":[{"id":"direct","sourceId":"input","targetId":"output"}]}));
+    let valid = check_base(
+        json!({"nodes":[{"id":"input","name":"input","type":"inputNode"},{"id":"output","name":"output","type":"outputNode"}],"edges":[{"id":"direct","sourceId":"input","targetId":"output"}]}),
+    );
     assert!(valid.receipt.admitted);
-    assert!(valid.analysis.expect("valid table-free graph").tables.is_empty());
+    assert!(
+        valid
+            .analysis
+            .expect("valid table-free graph")
+            .tables
+            .is_empty()
+    );
 }
 
 #[test]
