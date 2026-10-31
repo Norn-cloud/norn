@@ -88,8 +88,11 @@ pub fn check_non_vacuity(theory: &Theory, budget: ChaseBudget) -> Vec<Diagnostic
             Ok(ChaseOutcome::Conflict(conflict)) => {
                 findings.push(vacuous(theory, relation, &conflict));
             }
-            // Theory-level refusals are the same for every relation.
-            Err(error) => return vec![refusal(theory, &error)],
+            // A refusal stops the run but keeps the contradictions already found.
+            Err(error) => {
+                findings.push(refusal(theory, &error));
+                return findings;
+            }
         }
     }
     findings

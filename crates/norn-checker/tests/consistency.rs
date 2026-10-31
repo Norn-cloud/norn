@@ -363,3 +363,36 @@ fn malformed_theories_are_refused() {
         )))
     );
 }
+
+#[test]
+fn a_later_refusal_keeps_earlier_contradictions() {
+    // `Invoice` is vacuous within the budget; the frozen `Zeta` tuple, checked
+    // later, drives a 40-step existential chain that exhausts it.
+    let mut theory = contradictory_lifecycle();
+    theory.dependencies.push(tgd(
+        "zeta.0",
+        &[atom("Zeta", &[var("x")])],
+        &[atom("Zeta1", &[var("x"), var("y")])],
+    ));
+    for k in 1..40 {
+        theory.dependencies.push(tgd(
+            &format!("zeta.{k}"),
+            &[atom(&format!("Zeta{k}"), &[var("x"), var("y")])],
+            &[atom(&format!("Zeta{}", k + 1), &[var("y"), var("z")])],
+        ));
+    }
+    let budget = ChaseBudget {
+        max_steps: 2000,
+        ..ChaseBudget::default()
+    };
+    assert!(matches!(
+        non_vacuity_witness(&theory, "Invoice", budget),
+        Ok(ChaseOutcome::Conflict(_))
+    ));
+    assert!(matches!(
+        non_vacuity_witness(&theory, "Zeta", budget),
+        Err(ChaseError::BudgetExceeded { .. })
+    ));
+    let findings = check_non_vacuity(&theory, budget);
+    assert_eq!(codes_of(&findings), [codes::VACUOUS, codes::CHASE_REFUSED]);
+}
