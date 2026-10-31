@@ -266,7 +266,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "16ea272834d1a8a7b56cbfb551968cffd33a2ea3e553484c529eed914670a00b",
+      "sha256": "3b94e5f92025b13ed49ba233ce254f182a60ac2cb1b8404604d52ae34f484b52",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -1026,7 +1026,7 @@
     },
     {
       "path": "crates/norn-cell/Cargo.toml",
-      "sha256": "2518a5f6132bd8a7e51da024990cd1f1826ba86f29337fc2b04bcc21a5cc6d72",
+      "sha256": "cb70fab2b3b9b9ee6bb1bc863842a39d7bda628331c2e2aae5c70dfdd2cd103b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -1098,7 +1098,7 @@
     },
     {
       "path": "crates/norn-cell/src/engine.rs",
-      "sha256": "866a19a5cc942a8748123289d1113299a219b05715196cb937c8a8ff32589f59",
+      "sha256": "73b037233135826ac7da60167dd3750fd486d1208f67ed0400049a7b29a59fcb",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
