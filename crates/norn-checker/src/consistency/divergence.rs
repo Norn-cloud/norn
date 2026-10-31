@@ -128,15 +128,18 @@ pub fn find_divergences(
             ) else {
                 return Err(unexplained(property));
             };
-            // Identity must rest on the two reported records alone: a chain
+            // Identity must rest on the two reported records alone: every
+            // witness fact must be one the pair itself holds (an identical
+            // fact of a third record does not count against it), so a chain
             // through a third record has no pairwise witness.
-            let involved: BTreeSet<usize> = conflict
-                .witness
-                .iter()
-                .filter_map(position)
-                .filter_map(|i| owners.get(i).copied())
-                .collect();
-            if involved != BTreeSet::from([left_owner, right_owner]) {
+            let pair = [left_owner, right_owner];
+            let held = |fact: &Fact| {
+                inputs
+                    .iter()
+                    .zip(&owners)
+                    .any(|(input, owner)| input == fact && pair.contains(owner))
+            };
+            if !conflict.witness.iter().all(held) {
                 return Err(unexplained(property));
             }
             let (Some(left_fact), Some(right_fact)) = (inputs.get(left), inputs.get(right)) else {

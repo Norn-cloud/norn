@@ -161,3 +161,29 @@ fn repeated_values_are_attributed_to_their_own_records() {
     let pairs: Vec<_> = found.iter().map(|d| (d.left.0, d.right.0)).collect();
     assert_eq!(pairs, [(0, 1), (0, 2)]);
 }
+
+#[test]
+fn an_identical_fact_of_a_third_record_does_not_block_a_valid_pair() {
+    // Sol R2 S3: observation 0 duplicates observation 1's key fact; 1 and 2
+    // still establish the shared key on their own.
+    let observations = [
+        observed("a", &[("email", "\"e\"")]),
+        observed("a", &[("email", "\"e\""), ("total", "1")]),
+        observed("b", &[("email", "\"e\""), ("total", "2")]),
+    ];
+    let keys = [CanonKey {
+        type_name: "shop.Order".to_owned(),
+        key: "by_email".to_owned(),
+        properties: vec!["email".to_owned()],
+    }];
+    let found = find_divergences(&observations, &keys, ChaseBudget::default()).unwrap();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        (found[0].left.0, found[0].right.0, found[0].identity.clone()),
+        (
+            1,
+            2,
+            WitnessIdentity::SharedKey("shop.Order".to_owned(), "by_email".to_owned())
+        )
+    );
+}
