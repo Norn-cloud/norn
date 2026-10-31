@@ -23671,7 +23671,7 @@
     },
     {
       "path": "tools/norn-ts/test/translation-validation.test.ts",
-      "sha256": "7cbd0ce3be73229a62cbe58a23cbad9f206bb7a2cdd1edd6e9ad3f01b2891bd4",
+      "sha256": "c5008188261ce93d1bac9f27e1f57dd4498a1a4619ac6325782eab875d02d95c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
