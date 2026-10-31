@@ -1,13 +1,11 @@
 //! Thin remote client: the server's live MCP catalog supplies every tool.
-
-use std::io::{Read as _, Write as _};
-use std::process::ExitCode;
-use std::time::Duration;
-
 use clap::{Args, Subcommand};
 use futures_util::StreamExt as _;
 use norn_ir::RuntimeValue;
 use serde_json::{Value, json};
+use std::io::{Read as _, Write as _};
+use std::process::ExitCode;
+use std::time::Duration;
 
 #[derive(Debug, Args)]
 pub(super) struct RemoteArgs {
