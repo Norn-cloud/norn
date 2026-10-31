@@ -59,6 +59,10 @@ fn link() -> Value {
     })
 }
 
+#[expect(
+    clippy::unwrap_in_result,
+    reason = "a test mutation must stay envelope JSON; failing to decode is a test bug, not a refusal"
+)]
 fn validate(value: Value) -> Result<(), Vec<norn_ir::Diagnostic>> {
     serde_json::from_value::<ArtifactEnvelope>(value)
         .expect("fixture must stay envelope JSON")

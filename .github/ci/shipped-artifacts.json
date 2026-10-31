@@ -4014,7 +4014,7 @@
     },
     {
       "path": "crates/norn-checker/tests/ontology_link.rs",
-      "sha256": "bd56bd099f8d2c2f6c91bc8b772c353c17502d6420db90919ca33f8cd7bd0310",
+      "sha256": "bb56f3e3738987ea20641615edf45b5f2e7843085713ef3a051f4e43ff1420b3",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -11403,7 +11403,7 @@
     },
     {
       "path": "crates/norn-ir/tests/typed_payload_roots_fixtures.rs",
-      "sha256": "231d158dd4a438631411463d3e30a7cb163f7b4f61b2ee2e6e48dc82aca531ce",
+      "sha256": "70787229c1104c921d1fdfb6e9d03a5537d0660128ef958db61af165a8828f57",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
