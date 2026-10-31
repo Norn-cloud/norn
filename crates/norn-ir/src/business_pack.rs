@@ -177,7 +177,20 @@ pub struct OntologySource {
     pub canonical_url: String,
     pub license: String,
     pub redistribution: SourceRedistribution,
-    /// Required (non-empty) for vendored sources.
+    /// How the pack uses the source (norn#56 source manifest).
+    pub import_mode: SourceImportMode,
+    /// The importer that read the source. Required for `import` (checker
+    /// rule); a reviewed hand mapping has none.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "SourceImporter")]
+    pub importer: Option<SourceImporter>,
+    /// Required (non-empty) for vendored sources. A source the pack imports
+    /// or maps from is content-pinned: by these hashes or by a commit or
+    /// hash in `releaseId` (checker rule).
     #[serde(
         default,
         deserialize_with = "present_non_null",
@@ -195,7 +208,32 @@ pub enum SourceRedistribution {
     Vendored,
 }
 
-/// A hash-pinned file of a vendored source.
+/// How a pack uses one of its sources.
+///
+/// `import` takes content into the pack's own terms, so its licence must
+/// permit redistribution. `map_only` only maps Norn terms to the source; no
+/// source content enters the pack (the clean-room mode for copyleft and
+/// API-terms sources). `study_only` informs review; no mapping may cite it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceImportMode {
+    Import,
+    MapOnly,
+    StudyOnly,
+}
+
+/// The importer that read a source: an id and its strict version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceImporter {
+    /// A lowercase dotted identifier (`norn.importers.frappe`).
+    pub name: String,
+    /// A strict semantic version.
+    pub version: String,
+}
+
+/// A hash-pinned file of a source: a repository path for vendored files,
+/// or the absolute HTTPS URL of the pinned bytes otherwise.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OntologySourceFile {
