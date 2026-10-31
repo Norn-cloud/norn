@@ -105,7 +105,7 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                                 names.add(item.id)
                             pending.extend(ast.iter_child_nodes(item))
                     return names
-                def decorators(statements, inherited):
+                def decorators(statements, inherited, method_scope=None):
                     aliases = dict(inherited)
                     for node in statements:
                         if isinstance(node, ast.Import):
@@ -121,11 +121,11 @@ def analyze(sources: dict[str, bytes], revision='working-tree'):
                                 qualified = '.'.join([aliases.get(parts[0], 'local'), *parts[1:]])
                                 if qualified in {'frappe.whitelist', 'odoo.api.constrains', 'odoo.api.depends', 'temporalio.workflow.defn', 'temporalio.activity.defn'}:
                                     emit(qualified, 'decorator:' + qualified, .97, decorator.lineno)
-                            child = dict(aliases)
+                            child = dict(method_scope if method_scope is not None else aliases)
                             if not isinstance(node, ast.ClassDef):
                                 child.update({key: 'local' for key in bound_names(node.body)})
                                 child.update({arg.arg: 'local' for arg in ast.walk(node.args) if isinstance(arg, ast.arg)})
-                            decorators(node.body, child)
+                            decorators(node.body, child, method_scope=child if isinstance(node, ast.ClassDef) else None)
                             aliases[node.name] = 'local'
                         else:
                             # Conditional/reassigned bindings need semantic resolution.
