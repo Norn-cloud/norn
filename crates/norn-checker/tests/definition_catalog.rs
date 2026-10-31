@@ -713,3 +713,23 @@ fn a_transition_write_binds_the_version_its_action_pins() {
         ]
     );
 }
+
+#[test]
+fn a_supertype_name_binds_the_first_installed_artifact_like_the_entity_model() {
+    // Two installed versions declare `shop.Request`; the candidate subtype
+    // names it only through `extends`. The entity model binds the first one
+    // in base order, and so does every catalog lookup.
+    let [parent, child] = request_types();
+    let mut newer = serde_json::to_value(&parent).expect("envelope encodes");
+    newer["version"] = json!("2.0.0");
+    let action = approve_action(
+        "shop.approve.action",
+        "shop.RushRequest",
+        "shop.RushRequest.entity",
+        "1.0.0",
+    );
+    let catalog = catalog(&[child, action], &[envelope(newer), parent]);
+    assert!(catalog.artifact("shop.Request.entity", "2.0.0").is_some());
+    assert!(catalog.artifact("shop.Request.entity", "1.0.0").is_none());
+    assert_eq!(catalog.writes[0].target.version, "2.0.0");
+}

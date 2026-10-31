@@ -71,7 +71,10 @@ pub fn project(
                 .map(|artifact| (artifact, false)),
         )
         .collect();
-    let mut rows = Rows::default();
+    let mut rows = Rows {
+        bound: bound_types(set, base),
+        ..Rows::default()
+    };
     for (artifact, candidate) in &all {
         let reference = ArtifactRef::of(artifact).map_err(CatalogError::Hash)?;
         rows.artifacts.insert(CatalogArtifact {
@@ -198,6 +201,25 @@ fn type_names(artifact: &ArtifactEnvelope) -> (Option<String>, Vec<String>) {
     }
 }
 
+/// The one artifact each type name binds to, as the entity model binds it:
+/// a candidate's own declaration, else the first installed artifact (in
+/// base order) that declares it.
+fn bound_types(
+    set: &ResolvedArtifactSet<'_>,
+    base: &[ArtifactEnvelope],
+) -> BTreeMap<String, ArtifactKey> {
+    let mut bound = BTreeMap::new();
+    for artifact in set.artifacts.iter().copied().chain(base) {
+        if let Some(name) = type_names(artifact).0 {
+            bound.entry(name).or_insert_with(|| ArtifactKey {
+                artifact_id: artifact.artifact_id.clone(),
+                version: artifact.version.clone(),
+            });
+        }
+    }
+    bound
+}
+
 /// The base artifacts the candidates reach, transitively, starting from
 /// the ones they reference directly.
 fn base_closure<'a>(
@@ -217,21 +239,18 @@ fn base_closure<'a>(
         .chain(&set.base_dependencies)
         .copied()
         .collect();
-    // Installed types by name: a subtype, implementor, or extension reaches
-    // the types it names even without an envelope dependency on them.
-    let mut by_type: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    for artifact in base {
-        if let Some(name) = type_names(artifact).0 {
-            by_type
-                .entry(name)
-                .or_default()
-                .push((artifact.artifact_id.clone(), artifact.version.clone()));
-        }
-    }
+    // A subtype, implementor, or extension reaches the types it names even
+    // without an envelope dependency on them: the one artifact each name is
+    // bound to.
+    let bound = bound_types(set, base);
     while let Some(artifact) = frontier.pop() {
         let mut next = references(artifact);
         for name in type_names(artifact).1 {
-            next.extend(by_type.get(&name).into_iter().flatten().cloned());
+            next.extend(
+                bound
+                    .get(&name)
+                    .map(|key| (key.artifact_id.clone(), key.version.clone())),
+            );
         }
         if !candidates.contains(&(artifact.artifact_id.as_str(), artifact.version.as_str())) {
             next.push((artifact.artifact_id.clone(), artifact.version.clone()));
@@ -269,6 +288,8 @@ struct Rows {
     depends_on: BTreeSet<DependsOnRow>,
     mappings: BTreeSet<MappingRow>,
     laws: BTreeSet<LawRow>,
+    /// Type name → the artifact the name binds to ([`bound_types`]).
+    bound: BTreeMap<String, ArtifactKey>,
     /// Object type name → the child types of its owned collections.
     children: BTreeMap<String, Vec<String>>,
 }
@@ -435,21 +456,7 @@ impl Rows {
 
     /// Object type name → the artifact declaring it, over every type row.
     fn type_index(&self) -> BTreeMap<String, ArtifactKey> {
-        self.types
-            .iter()
-            .filter_map(|row| {
-                let Member::Type { type_name } = &row.at.member else {
-                    return None;
-                };
-                Some((
-                    type_name.clone(),
-                    ArtifactKey {
-                        artifact_id: row.at.artifact_id.clone(),
-                        version: row.at.version.clone(),
-                    },
-                ))
-            })
-            .collect()
+        self.bound.clone()
     }
 
     fn depends_on(&mut self, artifact: &ArtifactEnvelope, all: &[&ArtifactEnvelope]) {
@@ -567,10 +574,17 @@ impl Rows {
             let current = Member::Type {
                 type_name: out.last().cloned().unwrap_or_default(),
             };
+            let bound = self.bound.get(&*out.last().cloned().unwrap_or_default());
             let Some(parent) = self
                 .types
                 .iter()
-                .find(|row| row.at.member == current && row.kind == TypeKind::ObjectType)
+                .find(|row| {
+                    row.at.member == current
+                        && row.kind == TypeKind::ObjectType
+                        && bound.is_none_or(|key| {
+                            row.at.artifact_id == key.artifact_id && row.at.version == key.version
+                        })
+                })
                 .and_then(|row| row.extends.first())
             else {
                 break;
@@ -597,34 +611,41 @@ impl Rows {
                 .iter()
                 .any(|row| row.at.artifact_id == at.artifact_id && row.at.version == at.version)
         };
-        let admitted = |at: &MemberRef, step: usize| match owner {
-            Some(owner) if step == 0 => {
-                (at.artifact_id == owner.artifact_id && at.version == owner.version)
+        // The type itself binds the version the reference pins; each
+        // supertype, the artifact its name is bound to. Extensions (artifacts
+        // that declare no type) bind their own rows.
+        let admitted = |at: &MemberRef, step: usize, name: &str| {
+            let pinned = if step == 0 {
+                owner
+            } else {
+                self.bound.get(name)
+            };
+            pinned.is_none_or(|key| {
+                (at.artifact_id == key.artifact_id && at.version == key.version)
                     || !declares_type(at)
-            }
-            Some(_) | None => true,
+            })
         };
         self.lineage(type_name)
             .into_iter()
             .enumerate()
             .find_map(|(step, name)| {
-                let wanted = with_type(member, name);
+                let wanted = with_type(member, name.clone());
                 let found = match &wanted {
                     Member::Property { .. } => self
                         .properties
                         .iter()
                         .map(|row| &row.at)
-                        .find(|at| at.member == wanted && admitted(at, step)),
+                        .find(|at| at.member == wanted && admitted(at, step, &name)),
                     Member::Link { .. } => self
                         .links
                         .iter()
                         .map(|row| &row.at)
-                        .find(|at| at.member == wanted && admitted(at, step)),
+                        .find(|at| at.member == wanted && admitted(at, step, &name)),
                     Member::Transition { .. } => self
                         .transitions
                         .iter()
                         .map(|row| &row.at)
-                        .find(|at| at.member == wanted && admitted(at, step)),
+                        .find(|at| at.member == wanted && admitted(at, step, &name)),
                     Member::Artifact {}
                     | Member::Type { .. }
                     | Member::State { .. }
