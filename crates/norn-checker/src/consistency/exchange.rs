@@ -64,9 +64,9 @@ fn join(theories: &[&Theory], keep: impl Fn(&Dependency) -> bool) -> Theory {
 /// source and mapping permit data that breaks a target constraint.
 ///
 /// Evidence level: each reported witness is verified, but the search for
-/// witnesses is bounded (one unfolding of each constraint body through the
-/// mapping heads, within `budget`) and can miss some. The absence of an
-/// `unpreserved_constraint` warning therefore means no witness was found
+/// witnesses is bounded (each single-step unfolding of a constraint's body
+/// through the mapping heads, within `budget`) and can miss some. The absence
+/// of an `unpreserved_constraint` warning therefore means no witness was found
 /// within the bound; it is not a proof that the source preserves the
 /// constraint.
 #[must_use]
