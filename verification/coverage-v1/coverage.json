@@ -2566,15 +2566,14 @@
       },
       "limitations": [
         "Assurance is limited to simulation and tests; no formal or certified claims.",
-        "This slice contains vendored MIT sources only and carries no passing runtime or simulation evidence.",
+        "This slice contains vendored MIT sources and exact decimal primitives only and carries no passing runtime or simulation evidence.",
         "Authorization, source completeness, host lifecycle and analytical board integration remain host obligations."
       ],
       "sourceFiles": [
         "welldb/Cargo.toml",
         "welldb/crates/welldb-ivm/Cargo.toml",
-        "welldb/crates/welldb-ivm/src/arithmetic.rs",
         "welldb/crates/welldb-ivm/src/lib.rs",
-        "welldb/crates/welldb-ivm/tests/arithmetic.rs",
+        "welldb/crates/welldb-ivm/tests/decimal.rs",
         "welldb/patches/columnation/Cargo.toml",
         "welldb/patches/columnation/src/lib.rs",
         "welldb/patches/differential-dataflow/Cargo.toml",

@@ -1,4 +1,4 @@
-//! Exact arithmetic primitives for incremental metrics.
+//! Exact decimal primitives for incremental metrics.
 //! This slice has no live-view evaluator or export adapter yet.
 #![forbid(unsafe_code)]
 
@@ -72,10 +72,6 @@ pub enum MetricError {
     DuckDb,
 }
 
-/// Exact checked arithmetic.
-pub mod arithmetic;
-pub use arithmetic::{BucketAgg, ExactSum, PartsError};
-
 // Wire decoding cannot bypass decimal normalization/representability.
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -97,24 +93,5 @@ impl TryFrom<DecimalWire> for Decimal {
     type Error = &'static str;
     fn try_from(wire: DecimalWire) -> Result<Self, Self::Error> {
         Self::new(wire.mantissa, wire.scale).map_err(|_error| "unrepresentable decimal")
-    }
-}
-
-impl PartialOrd for Decimal {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Decimal {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let scale = self.scale.max(other.scale);
-        // Valid decimals always fit the 256-bit rescaling domain.
-        match (
-            ExactSum::scaled(*self, scale),
-            ExactSum::scaled(*other, scale),
-        ) {
-            (Ok(a), Ok(b)) => a.cmp(&b),
-            (Err(_), _) | (_, Err(_)) => unreachable!("valid Decimal rescaling fits 256 bits"),
-        }
     }
 }
