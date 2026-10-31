@@ -197,6 +197,8 @@ pub mod codes {
     /// An owned collection does not match its many/from-one link, exact child
     /// type, stable text id, ordering integer, or platform row bound.
     pub const INVALID_OWNED_COLLECTION: &str = "object_type.validation.invalid_owned_collection";
+    /// A kernel-owned row identity or ordering field cannot require rule-only writes.
+    pub const PROTECTED_OWNED_ROW_FIELD: &str = "object_type.validation.protected_owned_row_field";
 
     // T1-ONT-1d (#2514): links and invariants.
 

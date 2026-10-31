@@ -1014,3 +1014,20 @@ fn row_operation_items_must_admit_the_bounded_json_operation_profile() {
         }
     }
 }
+
+#[test]
+fn kernel_owned_row_fields_cannot_be_protected() {
+    for (index, member) in [(0, "rowIdProperty"), (1, "orderingKey")] {
+        let mut child = child_type("text", "integer");
+        child["properties"][index]["protected"] = json!(true);
+        let findings = entity_model_findings(
+            parent_type(20, &json!({ "to": "many", "from": "one" })),
+            child,
+        );
+        assert_finding(
+            &findings,
+            object_codes::PROTECTED_OWNED_ROW_FIELD,
+            &format!("/objectTypes/0/ownedCollections/0/{member}"),
+        );
+    }
+}

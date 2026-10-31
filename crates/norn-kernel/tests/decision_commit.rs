@@ -2263,7 +2263,7 @@ fn append_only_types_admit_create_but_refuse_every_later_mutation() {
         )
         .unwrap_err();
         assert!(
-            matches!(error, DecisionRefusal::InvalidOutput { reason } if reason.contains("is immutable"))
+            matches!(*error, DecisionRefusal::InvalidOutput { reason } if reason.contains("is immutable"))
         );
         assert_eq!(cell.load(&order).unwrap(), before);
         assert_eq!(cell.ledger().len(), ledger_len);

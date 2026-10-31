@@ -1427,6 +1427,16 @@ impl<'a> Checker<'a, '_> {
                     );
                     kind && !property.nullable() && !property.property.is_read_only()
                 });
+                if child_table
+                    .get(property_id)
+                    .is_some_and(|property| property.property.protected)
+                {
+                    self.out.push(error(
+                        codes::PROTECTED_OWNED_ROW_FIELD,
+                        format!("{member} is kernel-owned and may not be protected"),
+                        span_at(&at, &[member]),
+                    ));
+                }
                 if !valid {
                     self.out.push(error(
                         codes::INVALID_OWNED_COLLECTION,

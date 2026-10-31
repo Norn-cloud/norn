@@ -2420,8 +2420,7 @@ fn apply_change<X>(
         };
         let forbidden = match change {
             FactChange::Create { values, .. } => {
-                origin != AdmissionOrigin::OwnedRows
-                    && values.keys().any(|property| protected(property.as_str()))
+                values.keys().any(|property| protected(property.as_str()))
             }
             FactChange::Set { property, .. } => protected(property.as_str()),
             FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),

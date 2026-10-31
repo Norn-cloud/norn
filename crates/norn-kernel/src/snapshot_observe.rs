@@ -1237,6 +1237,10 @@ pub fn prepare_observed_snapshot(
             .effective_type(&key.object_type)
             .and_then(|effective| effective.property(snapshot.property.as_str()))
             .is_some_and(|property| property.protected)
+            && effective_original
+                .as_ref()
+                .and_then(|values| values.get(snapshot.property.as_str()))
+                != Some(&JsonValue::String(snapshot.state.clone()))
         {
             return Err(invalid(
                 &snapshot.property,
@@ -1692,19 +1696,10 @@ fn property_changes(
     values: &JsonObject,
 ) -> Vec<FactChange> {
     let Some(existing) = &original.values else {
-        let mut initial = values.clone();
-        for lifecycle in catalog.lifecycles(&key.object_type).into_values() {
-            if let [state] = lifecycle.initial.as_slice() {
-                initial.insert(
-                    lifecycle.property.as_str().to_owned(),
-                    JsonValue::String(state.clone()),
-                );
-            }
-        }
         return vec![FactChange::Create {
             object_type: key.object_type.clone(),
             key: key.key.clone(),
-            values: initial,
+            values: values.clone(),
         }];
     };
     values

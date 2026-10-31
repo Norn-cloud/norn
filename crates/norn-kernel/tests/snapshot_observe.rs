@@ -1226,40 +1226,58 @@ fn empty_authority_cannot_request_an_unbounded_snapshot_envelope() {
 #[test]
 fn observations_cannot_reconcile_a_protected_lifecycle() {
     let mut object_type = model(&json!([{ "id":"submit", "from":["draft"], "to":"submitted" }]));
-    object_type
+    let status = object_type
         .properties
         .iter_mut()
-        .find(|property| property.id.as_str() == "status")
-        .unwrap()
-        .protected = true;
+        .find(|p| p.id.as_str() == "status")
+        .unwrap();
+    status.protected = true;
     let catalog = TypeCatalog::new([&object_type]);
     let key = FactKey::new("test.SnapshotOrder", "PROTECTED");
     let provenance = provenance("protected.source");
-    let snapshots = [ObservedLifecycleSnapshot {
-        property: PropertyId("status".to_owned()),
-        state: "submitted".to_owned(),
-        provenance: provenance.clone(),
-    }];
-    let values: JsonObject = serde_json::from_value(json!({"amount":5})).unwrap();
     let mut cell = cell();
-    let delivery = next_delivery(&mut cell, "protected-observation");
-    let slice = load_slice(&cell, [key.clone()]).unwrap();
-    let refusal = commit_observed_snapshot(
-        &mut cell,
-        &catalog,
-        &slice,
-        &turn("protected-observation", delivery.consumed()),
-        ObservedSnapshot {
-            key: &key,
-            values: &values,
-            lifecycles: &snapshots,
-            provenance: &provenance,
-        },
-    )
-    .unwrap_err();
-    assert!(matches!(refusal, ObservationCommitRefusal::Observation(
-        norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { reason, .. }) if reason.contains("protected lifecycle")));
-    assert!(!cell.load(&key).unwrap().exists());
-    assert!(cell.ledger().is_empty());
-    assert!(cell.observe().unwrap().is_some());
+    for (id, amount, state, refused) in [
+        ("initialize", 5, None, false),
+        ("refuse-change", 6, Some("submitted"), true),
+        ("unchanged", 6, Some("draft"), false),
+    ] {
+        let delivery = next_delivery(&mut cell, id);
+        let slice = load_slice(&cell, [key.clone()]).unwrap();
+        let before = cell.load(&key).unwrap();
+        let ledger_len = cell.ledger().len();
+        let lifecycles = state.map(|state| ObservedLifecycleSnapshot {
+            property: PropertyId("status".to_owned()),
+            state: state.to_owned(),
+            provenance: provenance.clone(),
+        });
+        let values = serde_json::from_value(json!({"amount":amount})).unwrap();
+        let result = commit_observed_snapshot(
+            &mut cell,
+            &catalog,
+            &slice,
+            &turn(id, delivery.consumed()),
+            ObservedSnapshot {
+                key: &key,
+                values: &values,
+                lifecycles: lifecycles.as_slice(),
+                provenance: &provenance,
+            },
+        );
+        if refused {
+            assert!(matches!(result, Err(ObservationCommitRefusal::Observation(
+                norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { reason, .. })) if reason.contains("protected lifecycle")));
+            assert_eq!(cell.load(&key).unwrap(), before);
+            assert_eq!(cell.ledger().len(), ledger_len);
+            assert!(cell.observe().unwrap().is_some());
+            // Consume the refused delivery before injecting the next case.
+            cell.commit(norn_kernel::CellCommit::empty().consuming(delivery.consumed()))
+                .unwrap();
+        } else {
+            result.unwrap();
+            assert_eq!(
+                cell.load(&key).unwrap().values.unwrap()["amount"],
+                json!(amount)
+            );
+        }
+    }
 }
