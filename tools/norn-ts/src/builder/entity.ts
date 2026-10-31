@@ -37,7 +37,7 @@ export interface EnumValue {
   readonly description?: string
 }
 
-/** One of the ten EntityIR v2 value kinds (`PropertyType`). */
+/** An EntityIR v2 value kind (`PropertyType`); records are not authored here. */
 export type PropertyType =
   | { readonly kind: "text"; readonly format?: TextFormat }
   | { readonly kind: "integer" }
@@ -48,6 +48,7 @@ export type PropertyType =
   | { readonly kind: "duration" }
   | { readonly kind: "enum"; readonly values: ReadonlyArray<EnumValue> }
   | { readonly kind: "ref"; readonly name: string }
+  | { readonly kind: "json-ext" }
 
 export const text = (format?: TextFormat): PropertyType => (format === undefined ? { kind: "text" } : { kind: "text", format })
 export const integer: PropertyType = { kind: "integer" }
@@ -63,6 +64,8 @@ export const boolean: PropertyType = { kind: "boolean" }
 export const timestamp = (timezone: TimezonePolicy): PropertyType => ({ kind: "timestamp", timezone })
 export const date: PropertyType = { kind: "date" }
 export const duration: PropertyType = { kind: "duration" }
+/** Opaque JSON the checker does not interpret (EntityIR `json-ext`). */
+export const json: PropertyType = { kind: "json-ext" }
 export const enumeration = (...values: ReadonlyArray<string | EnumValue>): PropertyType => ({
   kind: "enum",
   values: values.map((v) => (typeof v === "string" ? { value: v } : { ...v })),

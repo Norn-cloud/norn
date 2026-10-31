@@ -15,3 +15,12 @@ The [quickstart](../../QUICK_START.md) uses an independently authored definition
 `bun run typecheck` and `bun test` exercise the profile, compiler, builders and
 native/WASM checker contracts. The public frontend has no remote deployment or
 product-server commands.
+
+## Metric and board registrations
+
+`Norn.metric`, `Norn.board`, and `Norn.json` use the shared `norn.board/1`
+authoring contract. `compileDefinitions` and `compilePack` return host
+registrations in `boards`, separately from ordinary definition `artifacts`.
+`prepareBoardsDeploy` stages those registrations under `boards/` alongside the
+definitions. The public compile CLI emits definition artifacts; native host
+registration and rendering are subsequent integration steps.

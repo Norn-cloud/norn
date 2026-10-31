@@ -51,6 +51,8 @@ export type PackResult =
       readonly ok: true
       /** Compiled artifacts (module order, then declaration order), then imported ones. */
       readonly artifacts: ReadonlyArray<Json>
+      /** `Norn.board` documents (`norn.board/1`), in module order. */
+      readonly boards: ReadonlyArray<Json>
       /** artifactId → the module (or imported file) it came from. */
       readonly sources: ReadonlyMap<string, string>
       readonly sourceMap: ReadonlyArray<DefinitionSource>
@@ -149,6 +151,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
   const results = compileDefinitionFiles(modules, envelope, {}, { allowEmpty: true })
   const failures: PackModuleFailure[] = []
   const artifacts: Json[] = []
+  const boards: Json[] = []
   const sources = new Map<string, string>()
   const flows: PackFlow[] = []
   const sourceMap: DefinitionSource[] = []
@@ -168,6 +171,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     sourceMap.push(...result.sourceMap.map((s) => ({ ...s, at: { ...s.at, file: posix(relative(root, resolve(TOOL_ROOT, s.at.file))) } })))
     warnings.push(...result.warnings.map((warning) => ({ ...warning, file })))
     for (const artifact of result.artifacts) add(artifact, file)
+    boards.push(...result.boards)
     if (result.flows > 0) {
       // A flow lowers through the syntax compiler to its Run type and decide rule (T7-EFX-2).
       const flow = compileFile(path, { ...envelope(path), sourceRoot: root })
@@ -197,7 +201,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
   const flowSourceMap = flows.length > 0
     ? { format: FLOW_SOURCE_MAP_DRAFT_FORMAT, flows: flows.map((flow) => flow.flowSourceMap) }
     : undefined
-  return { ok: true, artifacts, sources, sourceMap, warnings, flows, baseArtifacts, profile, ...(flowSourceMap ? { flowSourceMap } : {}) }
+  return { ok: true, artifacts, boards, sources, sourceMap, warnings, flows, baseArtifacts, profile, ...(flowSourceMap ? { flowSourceMap } : {}) }
 }
 
 /** Check a compiled set with the Rust checker (the CheckReceipt hash comes from the checker). */

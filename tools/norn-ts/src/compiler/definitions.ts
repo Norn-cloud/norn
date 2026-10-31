@@ -15,6 +15,7 @@ import ts from "typescript"
 import type { Diagnostic, ProfileChecker } from "../check.ts"
 import type { Json } from "../canonical.ts"
 import { BudgetExceeded, type ExpansionBudget } from "../builder/budget.ts"
+import * as B from "../builder/board.ts"
 import * as C from "../builder/connector.ts"
 import * as A from "../builder/action.ts"
 import * as P from "../builder/access.ts"
@@ -33,7 +34,7 @@ import { SchemaProjection } from "./schema.ts"
 import { CompileError } from "./types.ts"
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | B.MetricDef | B.BoardDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -46,6 +47,8 @@ export type DefinitionsResult =
       readonly ok: true
       readonly definitions: ReadonlyArray<Definition>
       readonly artifacts: ReadonlyArray<Json>
+      /** `Norn.board` documents (`norn.board/1`): host registrations written beside the artifacts. */
+      readonly boards: ReadonlyArray<Json>
       /** Top-level `Norn.flow` definitions the module also declares (lowered by the flow compiler, `compileFile`). */
       readonly flows: number
       readonly sourceMap: ReadonlyArray<DefinitionSource>
@@ -64,7 +67,10 @@ const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
 const FLOW = "@norn/authoring#Norn.flow"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
+const METRIC = "@norn/authoring#Norn.metric"
+const BOARD = "@norn/authoring#Norn.board"
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, METRIC, BOARD])
+const METRICS: ReadonlySet<string> = new Set([METRIC])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
@@ -72,7 +78,7 @@ const ACTIONS: ReadonlySet<string> = new Set([ACTION])
 const DECISIONS: ReadonlySet<string> = new Set([DECISION])
 /** Nesting bound for literal JSON data (access conditions, graphs). */
 const MAX_DATA_DEPTH = 64
-const VALUE_TYPE_CALLS = new Set(["@norn/authoring#Norn.decimal", "@norn/authoring#Norn.ref", "@norn/authoring#Norn.timestamp", "@norn/authoring#Norn.date"])
+const VALUE_TYPE_CALLS = new Set(["@norn/authoring#Norn.decimal", "@norn/authoring#Norn.ref", "@norn/authoring#Norn.timestamp", "@norn/authoring#Norn.date", "@norn/authoring#Norn.json"])
 /** `DECIMAL_LITERAL_PATTERN` without the sign (the sign is a prefix `-`). */
 const DECIMAL_TEXT = /^(0|[1-9][0-9]*)(\.[0-9]+)?$/
 
@@ -114,12 +120,21 @@ export function compileDefinitionFiles(
   /** `allowEmpty`: a module with no ontology definition (a flow-only module) is not an error. */
   mode: { readonly allowEmpty?: boolean } = {},
 ): DefinitionsResult[] {
-  return lowerEach<{ readonly definitions: Definition[]; readonly artifacts: Json[]; readonly flows: number; readonly sourceMap: DefinitionSource[]; readonly warnings: Diagnostic[] }>(files, overrides, (compiler, source) => {
+  return lowerEach<{ readonly definitions: Definition[]; readonly artifacts: Json[]; readonly boards: Json[]; readonly flows: number; readonly sourceMap: DefinitionSource[]; readonly warnings: Diagnostic[] }>(files, overrides, (compiler, source) => {
     const { definitions, flows } = compiler.compile(source, mode.allowEmpty === true)
     const envelopeOptions = typeof options === "function" ? options(resolve(source.fileName)) : options
     const artifacts: Json[] = []
+    const boards: Json[] = []
     const diagnostics: Diagnostic[] = []
     for (const def of definitions) {
+      // A metric is inlined into the boards that reference it; a board is a host registration.
+      if (def._tag === "Metric") continue
+      if (def._tag === "Board") {
+        const { orgId, environmentId } = envelopeOptions.scope
+        if (orgId === undefined || environmentId === undefined) diagnostics.push(diagnostic(source, "NORN-FLOW-LITERAL", "a Norn.board needs an org and environment scope"))
+        else boards.push(B.lowerBoard(def, { orgId, environmentId }))
+        continue
+      }
       const built =
         def._tag === "Action" ? A.lowerAction(def, envelopeOptions)
         : def._tag === "Access" ? P.lowerAccess(def, envelopeOptions)
@@ -136,7 +151,7 @@ export function compileDefinitionFiles(
       }
       else for (const d of built.diagnostics) diagnostics.push({ ...diagnostic(source, d.code, d.message), ...(d.at ? { start: { line: d.at.line, column: d.at.column ?? 1 } } : {}) })
     }
-    return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, value: { definitions, artifacts, flows, sourceMap: compiler.sourceMap, warnings: compiler.warnings } }
+    return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, value: { definitions, artifacts, boards, flows, sourceMap: compiler.sourceMap, warnings: compiler.warnings } }
   }).map((r): DefinitionsResult => (r.ok ? { ok: true, ...r.value } : r))
 }
 
@@ -243,12 +258,14 @@ class DefinitionCompiler {
           : id === CONNECTOR ? this.connector(init)
           : id === MAPPING ? this.mapping(init)
           : id === LAW ? this.law(init)
+          : id === METRIC ? this.metric(init)
+          : id === BOARD ? this.board(init)
           : this.decision(init)
         this.expansion.assert(def)
         out.push(def)
       }
     }
-    if (out.length === 0 && !allowEmpty) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.type, Norn.interfaceType, Norn.action, Norn.access, Norn.decision, Norn.mapping, or Norn.connector definition", source)
+    if (out.length === 0 && !allowEmpty) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.type, Norn.interfaceType, Norn.action, Norn.access, Norn.decision, Norn.mapping, Norn.connector, Norn.metric, or Norn.board definition", source)
     return { definitions: out, flows }
   }
 
@@ -378,6 +395,68 @@ class DefinitionCompiler {
     }
     const data = Object.fromEntries([...m].map(([key, node]) => [key, this.json(node)]))
     return SS.sourceSchema({ ...data as unknown as SS.SourceSchemaSpec, at: this.at(call) })
+  }
+
+  /** The property ids a referenced object type declares. */
+  private propertyIds(input: ts.Expression): { readonly name: string; readonly properties: ReadonlySet<string> } {
+    const { call, members } = this.referenced(input, OBJECT_TYPES, "a Norn.type definition")
+    const properties = this.schemas.properties(this.schemas.read(this.member(members, "properties", call)))
+    return { name: this.string(this.member(members, "name", call)), properties: new Set(properties.map((p) => p.id)) }
+  }
+
+  private property(input: ts.Expression, type: { readonly name: string; readonly properties: ReadonlySet<string> }): string {
+    const id = this.string(input)
+    if (!type.properties.has(id)) throw new CompileError("NORN-FLOW-LITERAL", `${type.name} declares no property ${id}`, input)
+    return id
+  }
+
+  private metric(call: ts.CallExpression): B.MetricDef {
+    const m = this.meta(call, ["id", "title", "over", "measure", "time", "where", "owner"])
+    const need = (key: string): ts.Expression => this.member(m, key, call)
+    const over = this.propertyIds(need("over"))
+    const measure = this.closedRecord(need("measure"), ["sum", "count"], [])
+    if (measure.size !== 1) throw new CompileError("NORN-FLOW-LITERAL", "a measure is exactly { sum } or { count: \"objects\" }", need("measure"))
+    const sum = measure.get("sum")
+    const count = measure.get("count")
+    if (count && this.string(count) !== "objects") throw new CompileError("NORN-FLOW-LITERAL", "count is \"objects\"", count)
+    const where = m.get("where")
+    return B.metric({
+      id: this.string(need("id")), title: this.string(need("title")), over: over.name,
+      measure: sum ? { sum: this.property(sum, over) } : { count: "objects" },
+      time: this.property(need("time"), over),
+      ...(where ? { where: this.list(where).map((node) => {
+        const f = this.closedRecord(node, ["property", "op", "value"], ["property", "op", "value"])
+        const op = this.string(f.get("op")!)
+        if (op !== "eq" && op !== "ne") throw new CompileError("NORN-FLOW-LITERAL", "a metric filter op is \"eq\" or \"ne\"", f.get("op")!)
+        return { property: this.property(f.get("property")!, over), op, value: this.string(f.get("value")!) }
+      }) } : {}),
+      owner: this.string(need("owner")), at: this.at(call),
+    })
+  }
+
+  private board(call: ts.CallExpression): B.BoardDef {
+    const m = this.meta(call, ["id", "title", "version", "rows", "results", "panels"])
+    const need = (key: string): ts.Expression => this.member(m, key, call)
+    return B.board({
+      id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")),
+      rows: this.typeName(need("rows"), OBJECT_TYPES), results: this.typeName(need("results"), OBJECT_TYPES),
+      panels: this.list(need("panels")).map((node) => {
+        const p = this.closedRecord(node, ["id", "title", "metric", "groupBy", "window", "maxAgeMs"], ["id", "title", "metric", "window", "maxAgeMs"])
+        const ref = this.referenced(p.get("metric")!, METRICS, "a Norn.metric definition")
+        const metric = this.metric(ref.call)
+        const over = this.propertyIds(this.member(ref.members, "over", ref.call))
+        const window = this.closedRecord(p.get("window")!, ["start", "end"], ["start", "end"])
+        const age = this.json(p.get("maxAgeMs")!)
+        if (typeof age !== "number" || !Number.isSafeInteger(age) || age <= 0) throw new CompileError("NORN-FLOW-LITERAL", "maxAgeMs is a positive integer", p.get("maxAgeMs")!)
+        const groupBy = p.get("groupBy")
+        return {
+          id: this.string(p.get("id")!), title: this.string(p.get("title")!), metric,
+          ...(groupBy ? { groupBy: this.property(groupBy, over) } : {}),
+          window: { start: this.string(window.get("start")!), end: this.string(window.get("end")!) }, maxAgeMs: age,
+        }
+      }),
+      at: this.at(call),
+    })
   }
 
   private markings(call: ts.CallExpression): E.MarkingsDef {
