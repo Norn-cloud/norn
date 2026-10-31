@@ -30007,7 +30007,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "8737f12f5aed2d7d9b1658a57bfff4fbfa2fbf8e061328cd5f4afa35ffce34e6",
+      "sha256": "fd83cd5a8e7b1d2c60fc3a1ba90a917216f8414c46edae4432f07c9a9249b63d",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
