@@ -887,7 +887,8 @@ fn a_row_mutation_writes_the_child_types_of_the_version_it_pins() {
         .iter()
         .map(|row| {
             format!(
-                "{}@{} {}",
+                "{} -> {}@{} {}",
+                row.writer.artifact_id,
                 row.target.artifact_id,
                 row.target.version,
                 row.target.member.id()
