@@ -111,27 +111,54 @@ pub fn find_divergences(
         };
         theory.dependencies.push(functional(property));
         let mut inputs = facts.clone();
+        // Kept aligned with `inputs`, so a dropped fact drops its owner.
+        let mut owners = owner.clone();
         while let ChaseOutcome::Conflict(conflict) = chase(&theory, &inputs, budget)? {
+            let position = |fact: &Fact| inputs.iter().position(|input| input == fact);
             let witness: Vec<usize> = conflict
                 .witness
                 .iter()
                 .filter(|fact| fact.relation == property)
-                .filter_map(|fact| inputs.iter().position(|input| input == fact))
+                .filter_map(position)
                 .collect();
-            let ([_, right], Some(left_fact), Some(right_fact)) = (
+            let (&[left, right], Some(&left_owner), Some(&right_owner)) = (
                 witness.as_slice(),
-                witness.first().and_then(|i| inputs.get(*i)),
-                witness.get(1).and_then(|i| inputs.get(*i)),
+                witness.first().and_then(|i| owners.get(*i)),
+                witness.get(1).and_then(|i| owners.get(*i)),
             ) else {
+                return Err(unexplained(property));
+            };
+            // Identity must rest on the two reported records alone: a chain
+            // through a third record has no pairwise witness.
+            let involved: BTreeSet<usize> = conflict
+                .witness
+                .iter()
+                .filter_map(position)
+                .filter_map(|i| owners.get(i).copied())
+                .collect();
+            if involved != BTreeSet::from([left_owner, right_owner]) {
+                return Err(unexplained(property));
+            }
+            let (Some(left_fact), Some(right_fact)) = (inputs.get(left), inputs.get(right)) else {
                 return Err(unexplained(property));
             };
             let identity = if left_fact.values.first() == right_fact.values.first() {
                 WitnessIdentity::SameObjectKey
             } else {
+                let (Some(a), Some(b)) =
+                    (observations.get(left_owner), observations.get(right_owner))
+                else {
+                    return Err(unexplained(property));
+                };
                 let Some(key) = keys.iter().find(|key| {
                     conflict
                         .rules
                         .contains(&format!("key:{}/{}", key.type_name, key.key))
+                        && key.properties.iter().all(|p| {
+                            a.values
+                                .get(p)
+                                .is_some_and(|value| b.values.get(p) == Some(value))
+                        })
                 }) else {
                     return Err(unexplained(property));
                 };
@@ -142,29 +169,24 @@ pub fn find_divergences(
                 Some(Value::Const(text)) => text.clone(),
                 Some(Value::Null(_)) | None => String::new(),
             };
-            let observed = |fact: &Fact| {
-                facts
-                    .iter()
-                    .position(|input| input == fact)
-                    .and_then(|position| owner.get(position).copied())
-                    .unwrap_or_default()
-            };
             found.push(Divergence {
                 type_name: type_name.to_owned(),
                 property: name.to_owned(),
                 identity,
-                left: (observed(left_fact), value(left_fact)),
-                right: (observed(right_fact), value(right_fact)),
+                left: (left_owner, value(left_fact)),
+                right: (right_owner, value(right_fact)),
             });
             // Drop the second value and look for the next divergence.
-            inputs.remove(*right);
+            inputs.remove(right);
+            owners.remove(right);
         }
     }
     Ok(found)
 }
 
-/// A conflict that is not two observations of one object is an engine bug;
-/// fail closed rather than drop it.
+/// A conflict that two observations alone do not explain (an engine bug, or
+/// identity through a chain of three or more records, which a pairwise
+/// witness cannot carry) fails closed rather than being dropped.
 fn unexplained(property: &str) -> ChaseError {
     ChaseError::Internal(format!(
         "a conflict on {property} has no two-record witness"

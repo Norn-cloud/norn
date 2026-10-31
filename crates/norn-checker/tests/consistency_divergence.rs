@@ -4,7 +4,8 @@
 use std::collections::BTreeMap;
 
 use norn_checker::consistency::{
-    CanonKey, ChaseBudget, Divergence, MappedObservation, WitnessIdentity, find_divergences,
+    CanonKey, ChaseBudget, ChaseError, Divergence, MappedObservation, WitnessIdentity,
+    find_divergences,
 };
 
 fn observed(key: &str, values: &[(&str, &str)]) -> MappedObservation {
@@ -119,4 +120,44 @@ fn an_exhausted_budget_is_a_refusal() {
         ..ChaseBudget::default()
     };
     assert!(find_divergences(&erp_and_storefront(), &[by_number()], budget).is_err());
+}
+
+#[test]
+fn identity_through_a_chain_of_records_fails_closed() {
+    // Sol R1 S1: A and C share no key; only B links them (email, then
+    // phone), so no pairwise witness exists.
+    let observations = [
+        observed("a", &[("email", "\"e\""), ("total", "1")]),
+        observed("b", &[("email", "\"e\""), ("phone", "\"p\"")]),
+        observed("c", &[("phone", "\"p\""), ("total", "2")]),
+    ];
+    let keys = [
+        CanonKey {
+            type_name: "shop.Order".to_owned(),
+            key: "by_email".to_owned(),
+            properties: vec!["email".to_owned()],
+        },
+        CanonKey {
+            type_name: "shop.Order".to_owned(),
+            key: "by_phone".to_owned(),
+            properties: vec!["phone".to_owned()],
+        },
+    ];
+    assert!(matches!(
+        find_divergences(&observations, &keys, ChaseBudget::default()),
+        Err(ChaseError::Internal(_))
+    ));
+}
+
+#[test]
+fn repeated_values_are_attributed_to_their_own_records() {
+    // Sol R1 S2: `[1, 2, 2]` on one object is (0, 1) then (0, 2).
+    let observations = [
+        observed("SO-7", &[("total", "1")]),
+        observed("SO-7", &[("total", "2")]),
+        observed("SO-7", &[("total", "2")]),
+    ];
+    let found = find_divergences(&observations, &[], ChaseBudget::default()).unwrap();
+    let pairs: Vec<_> = found.iter().map(|d| (d.left.0, d.right.0)).collect();
+    assert_eq!(pairs, [(0, 1), (0, 2)]);
 }
