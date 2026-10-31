@@ -250,6 +250,8 @@ export class SchemaProjection {
       }
       case "@norn/authoring#Norn.date":
         return { kind: "value-type", type: E.date, node: call }
+      case "@norn/authoring#Norn.json":
+        return { kind: "value-type", type: E.json, node: call }
       default:
         throw projection(`${id ?? call.expression.getText()} is not a schema in the structural subset`, call)
     }

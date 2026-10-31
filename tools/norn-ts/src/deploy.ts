@@ -79,6 +79,38 @@ export function deployToDir(artifacts: ReadonlyArray<Json>, dir: string): DirDep
   return { dir, written, removed: toRemove }
 }
 
+/**
+ * Write `norn.board/1` documents into `<dir>/boards/<id>.json`, replacing the
+ * directory's previous boards. The native host ignores subdirectories when it
+ * admits definitions; `norn dev --board <file>` registers a board. Checks run
+ * when this is called; the returned write runs after the artifact deploy.
+ */
+export function prepareBoardsDeploy(boards: ReadonlyArray<Json>, dir: string): () => ReadonlyArray<string> {
+  const target = join(dir, "boards")
+  const ids = boards.map((b) => {
+    if (typeof b !== "object" || b === null || Array.isArray(b) || !("id" in b) || typeof b.id !== "string") throw new DeployRefused("a board needs a string id")
+    return b.id
+  })
+  for (const id of ids) if (!FILE_SAFE.test(id) || id.startsWith(".")) throw new DeployRefused(`board id ${JSON.stringify(id)} cannot name a file`)
+  if (new Set(ids).size !== ids.length) throw new DeployRefused("two boards share an id")
+  if (existsSync(target)) {
+    if (lstatSync(target).isSymbolicLink()) throw new DeployRefused(`${target} is a symlink`)
+    for (const file of readdirSync(target)) {
+      if (!file.endsWith(".json") || !lstatSync(join(target, file)).isFile()) throw new DeployRefused(`${target}/${file} is not a board file`)
+    }
+  }
+  return () => {
+    if (existsSync(target)) rmSync(target, { recursive: true })
+    if (boards.length === 0) return []
+    mkdirSync(target, { recursive: true })
+    return boards.map((board, i) => {
+      const file = `boards/${ids[i]}.json`
+      writeFileSync(join(dir, file), canonicalJson(board), { flag: "wx" })
+      return file
+    })
+  }
+}
+
 /** The artifacts a dev defs directory currently holds (empty when it does not exist). */
 export function installedInDir(dir: string): Json[] {
   if (!existsSync(dir)) return []

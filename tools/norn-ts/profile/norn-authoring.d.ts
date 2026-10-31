@@ -77,6 +77,9 @@ declare module "@norn/authoring" {
     /** A calendar date with no time and no zone (EntityIR `date`; `YYYY-MM-DD`). */
     function date(): Schema.String
 
+    /** Opaque JSON the checker does not interpret (EntityIR `json-ext`), e.g. a metric result's buckets. */
+    function json(): Schema.Unknown
+
     /** One declared transition of a lifecycle over the states `V`. */
     interface TransitionSpec<V extends string> {
       readonly id: string
@@ -461,6 +464,48 @@ declare module "@norn/authoring" {
       }>
     }
     function sourceSchema(meta: SourceSchemaSpec): { readonly _tag: "NornSourceSchema" }
+
+    /** Opaque metric definition; `Norn.board` panels reference it. */
+    interface MetricDefinition<T> {
+      readonly _tag: "NornMetric"
+      readonly __types?: { readonly type: T }
+    }
+
+    /**
+     * An additive measure over one object type: an exact-money SUM (a decimal
+     * with a closed singleton currency) or an object COUNT, filtered by text or
+     * enum equality. Property names are checked against the type.
+     */
+    function metric<T>(meta: {
+      readonly id: string
+      readonly title: string
+      readonly over: TypeDefinition<T>
+      readonly measure: { readonly sum: keyof T & string } | { readonly count: "objects" }
+      readonly time: keyof T & string
+      readonly where?: ReadonlyArray<{ readonly property: keyof T & string; readonly op: "eq" | "ne"; readonly value: string }>
+      readonly owner: string
+    }): MetricDefinition<T>
+
+    /** One live panel: a metric, an optional group-by property, a UTC window and a freshness bound. */
+    interface BoardPanel<T> {
+      readonly id: string
+      readonly title: string
+      readonly metric: MetricDefinition<T>
+      readonly groupBy?: keyof T & string
+      readonly window: { readonly start: string; readonly end: string }
+      readonly maxAgeMs: number
+    }
+
+    /** A host-registered live board: native metric panels with their row and result types. */
+    function board<const Ts extends ReadonlyArray<unknown>>(meta: {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      readonly rows: TypeDefinition<unknown>
+      readonly results: TypeDefinition<unknown>
+      /** Each panel's group-by is checked against its own metric's type. */
+      readonly panels: { readonly [K in keyof Ts]: BoardPanel<Ts[K]> }
+    }): { readonly _tag: "NornBoard" }
 
     /** Opaque mapping definition; the syntax compiler lowers the call. */
     interface MappingDefinition {
