@@ -112,6 +112,9 @@ fn artifacts_text(case: &Value) -> String {
 }
 
 fn context_text(case: &Value) -> String {
+    if let Some(text) = case["contextText"].as_str() {
+        return text.to_owned();
+    }
     let mut members = vec![format!("\"base\":{}", array_text(case, "base"))];
     if let Some(extra) = case["context"].as_object() {
         members.extend(
@@ -371,6 +374,28 @@ fn inline_layout_base_is_resolved_as_a_referenced_sub_decision() {
 fn invalid_input_is_an_error() {
     assert!(output_of("artifacts-not-json").starts_with("error: invalid artifacts: "));
     assert!(output_of("context-unknown-member").starts_with("error: invalid context: "));
+    let outputs = outputs();
+    for case in ["context-array", "context-string", "context-number", "context-boolean"] {
+        let output = outputs
+            .iter()
+            .find(|(name, _, _)| name == case)
+            .map(|(_, _, output)| output)
+            .unwrap_or_else(|| panic!("no case {case}"));
+        assert!(output.starts_with("error: invalid context: "), "{case}");
+    }
+    for case in [
+        "context-tenant-array",
+        "context-tenant-string",
+        "context-tenant-number",
+        "context-tenant-boolean",
+    ] {
+        let output = outputs
+            .iter()
+            .find(|(name, _, _)| name == case)
+            .map(|(_, _, output)| output)
+            .unwrap_or_else(|| panic!("no case {case}"));
+        assert!(output.starts_with("error: invalid context.tenant: "), "{case}");
+    }
     assert!(output_of("expression-bad-expected-type").starts_with("error: invalid expectedType: "));
 }
 
