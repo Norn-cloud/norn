@@ -1,0 +1,35 @@
+{
+  "sha256": "f339fa709320a1d7f30b1e56964022ae7c2bb683071b0475ed54a941c5b5a471",
+  "origin": "derived",
+  "category": "software",
+  "license": "MIT",
+  "sources": [
+    {
+      "id": "software.zen",
+      "revision": "44530255a36df637edc86f6d29495c342805e21b",
+      "evidence": {
+        "path": "vendor/zen/provenance.json",
+        "sha256": "2be533422f792ad7bd5d7da505c2ca00b1571cc856d3f75805e6ec691a0f9016"
+      }
+    }
+  ],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "vendor/zen/provenance.json",
+      "sha256": "2be533422f792ad7bd5d7da505c2ca00b1571cc856d3f75805e6ec691a0f9016"
+    },
+    {
+      "path": "vendor/zen/LICENSE",
+      "sha256": "2493262dd0c053f65dea03b3286a3c835f98c24264cda6d5c5b444d8ea5af6b3"
+    }
+  ],
+  "notices": [
+    {
+      "path": "vendor/zen/LICENSE",
+      "sha256": "2493262dd0c053f65dea03b3286a3c835f98c24264cda6d5c5b444d8ea5af6b3"
+    }
+  ],
+  "connector": null
+}

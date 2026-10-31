@@ -1,0 +1,19 @@
+{
+  "sha256": "8bdd7026d2f67649f13f135e49cca668d9d1d4e24d6186ea35476e2feaaecf97",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "packages/norn-sdk/package.json"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
