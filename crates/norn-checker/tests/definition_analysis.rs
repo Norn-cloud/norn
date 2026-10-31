@@ -160,7 +160,9 @@ fn executable_unicode_spelling_has_a_distinct_protected_identity() {
     let report = |literal: &str| {
         let mut rule = table_rule();
         rule["payload"]["graph"]["nodes"][1]["content"]["inputs"][0]
-            .as_object_mut().expect("input").remove("field");
+            .as_object_mut()
+            .expect("input")
+            .remove("field");
         rule["payload"]["graph"]["nodes"][1]["content"]["rules"][0]["condition"] =
             json!(format!("len('{literal}') == 2"));
         let checked = check(&[rule]);
