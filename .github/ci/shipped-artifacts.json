@@ -266,7 +266,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "1faeef64d62e3b42300335ec8b1004f2133eefa8e7ebf4d2d125c2aff38f2145",
+      "sha256": "4e598c16d947b3a4c749496f83ed891616f89af912173bd85cc35a16aec09f52",
       "origin": "derived",
       "category": "generated",
       "license": "Apache-2.0",
@@ -12213,7 +12213,7 @@
     },
     {
       "path": "crates/norn-metrics/Cargo.toml",
-      "sha256": "5b466e2739b664f7b56974b237946a3c5c41e064cb7040072ae363308b46ea8e",
+      "sha256": "72976fa7f251328cfa754aebadb3e6bce693fde605ba2b4f80c18bff9d1ed92c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12267,7 +12267,7 @@
     },
     {
       "path": "crates/norn-metrics/src/analysis.rs",
-      "sha256": "be81d1ac634d21220bd8df927b006d38407b58144a485c1c2702b3ae5a032a7b",
+      "sha256": "bd0d5aa3e2e4285fe7bad0fc4790eaae64208a1d220418af8a99bf18ba7d2157",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12285,7 +12285,7 @@
     },
     {
       "path": "crates/norn-metrics/src/lib.rs",
-      "sha256": "3e14abddb72ac7134981a706399795af300928fb1ce462a29829182719a0697c",
+      "sha256": "043ec50f35c973fc190e28c5bd3a997a9212ea78c5847bc98f58e37ca7a9e697",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -12304,6 +12304,24 @@
     {
       "path": "crates/norn-metrics/src/temporal.rs",
       "sha256": "17142f81570105dedecf4d79ede93fa0b934a92732ef923616f24e936aa765c1",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "crates/norn-metrics/tests/analysis.rs",
+      "sha256": "0fc3d30b9276d1244394c70092e11d5106b3faa894b5c42ae9f5d19657d13e55",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30061,7 +30079,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "43edc7fee309096ef949e377137732e1d655b83c185549f7cb103c67fda30eee",
+      "sha256": "20819d68c1f8788ee7b7fc6076b0ebe3bf88fd2b102b89f00f4be11a169e3dbc",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
