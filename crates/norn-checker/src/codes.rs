@@ -413,6 +413,18 @@ pub static REGISTRY: &[CodeEntry] = &[
         "BusinessPackIR payload is invalid at {path}: {detail}",
     ),
     introduced(
+        "catalog.derived_state.declared_transition",
+        Tier::T3,
+        "a declared transition targets a state a claim says is derived: {detail}",
+        "0.2.0",
+    ),
+    introduced(
+        "claim.reference.unknown_member",
+        Tier::T3,
+        "a claim names a member the admitted set does not hold: {detail}",
+        "0.2.0",
+    ),
+    introduced(
         "claim.validation.invalid_document",
         Tier::T2,
         "claim document is invalid: {detail}",
@@ -2386,6 +2398,42 @@ pub static REGISTRY: &[CodeEntry] = &[
         "rule.validation.jdm_unresolved_sub_decision",
         Tier::T2,
         "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",
+    ),
+    introduced(
+        "ruling.obligation.catalog_unavailable",
+        Tier::T3,
+        "claims cannot be checked without the definition catalog: {detail}",
+        "0.2.0",
+    ),
+    introduced(
+        "ruling.obligation.contradiction_persists",
+        Tier::T3,
+        "a divergence witness still contradicts under the admitted mappings: {detail}",
+        "0.2.0",
+    ),
+    introduced(
+        "ruling.obligation.unruled_divergence",
+        Tier::T3,
+        "no ratified ruling resolves a known divergence: {detail}",
+        "0.2.0",
+    ),
+    introduced(
+        "ruling.obligation.witness_unevaluable",
+        Tier::T3,
+        "a divergence witness cannot be evaluated: {detail}",
+        "0.2.0",
+    ),
+    introduced(
+        "ruling.reference.unknown_claim",
+        Tier::T3,
+        "a ruling resolves a claim the set does not contain: {detail}",
+        "0.2.0",
+    ),
+    introduced(
+        "ruling.reference.unknown_member",
+        Tier::T3,
+        "a ruling names a member the admitted set does not hold: {detail}",
+        "0.2.0",
     ),
     introduced(
         "ruling.validation.invalid_document",

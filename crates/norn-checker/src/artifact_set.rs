@@ -373,6 +373,10 @@ pub fn check_artifact_set(
                 &normalized_base,
                 normalized_context.registry,
             ))
+            .chain(crate::claims::check_claim_set(
+                &normalized_artifacts,
+                &normalized_base,
+            ))
             .collect::<Vec<_>>(),
         Err(resolution) => normalized_artifacts
             .iter()
