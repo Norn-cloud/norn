@@ -4489,12 +4489,21 @@ fn prepare_action_input_inner<'a, X>(
     action_version: Option<&'a str>,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     let schema = norn_expr::schema::Schema::parse_action(
-        &norn_ir::JsonValue::Object(action.input_schema.clone()), "$input",
-    ).map_err(|violation| ActionRefusal::InvalidInput { field: violation.path })?;
-    let normalized = schema.decode_action_input(RuntimeValue::Object(raw_input.clone()), "$input")
-        .map_err(|violation| ActionRefusal::InvalidInput { field: violation.path })?;
+        &norn_ir::JsonValue::Object(action.input_schema.clone()),
+        "$input",
+    )
+    .map_err(|violation| ActionRefusal::InvalidInput {
+        field: violation.path,
+    })?;
+    let normalized = schema
+        .decode_action_input(RuntimeValue::Object(raw_input.clone()), "$input")
+        .map_err(|violation| ActionRefusal::InvalidInput {
+            field: violation.path,
+        })?;
     let RuntimeValue::Object(normalized) = normalized else {
-        return Err(ActionRefusal::InvalidInput { field: "$input".to_owned() });
+        return Err(ActionRefusal::InvalidInput {
+            field: "$input".to_owned(),
+        });
     };
     let profile = ResourceLimitProfile::norn_limits_v1();
     if !has_action_preparation_features(action) {
@@ -5579,6 +5588,43 @@ mod reference_lineage_tests {
         reason = "kernel proof assertions"
     )]
     use super::*;
+
+    #[test]
+    fn decimal_input_preparation_keeps_wire_text_and_exact_execution_value() {
+        let mut action: ActionRoot = serde_json::from_str(
+            r#"{
+          "actionId":"test.decimal", "scopeRequired":["orgId","environmentId"],
+          "idempotent":true, "ledgered":true,
+          "inputSchema":{"type":"object","properties":{"amount":{"type":"decimal","scale":2}},
+            "required":["amount"],"additionalProperties":false},
+          "outputSchema":{"type":"object","properties":{},"additionalProperties":false}
+        }"#,
+        )
+        .expect("action");
+        action.derive.clear();
+        action.slice.clear();
+        action.preconditions.clear();
+        let raw = JsonObject::from([(
+            "amount".to_owned(),
+            RuntimeValue::String("9007199254740993.25".to_owned()),
+        )]);
+        let prepared = prepare_action_input::<()>(&action, &raw).expect("exact input");
+        assert_eq!(prepared.raw_input, &raw);
+        assert_eq!(
+            prepared.effective_input.get("amount"),
+            Some(&RuntimeValue::Number(
+                Decimal::parse("9007199254740993.25").expect("decimal")
+            ))
+        );
+        let number = JsonObject::from([(
+            "amount".to_owned(),
+            RuntimeValue::Number(Decimal::from(1_u64)),
+        )]);
+        assert!(matches!(
+            prepare_action_input::<()>(&action, &number),
+            Err(ActionRefusal::InvalidInput { .. })
+        ));
+    }
 
     #[test]
     fn reference_proof_rejects_changed_outputs_and_keeps_added_guards_full() {
