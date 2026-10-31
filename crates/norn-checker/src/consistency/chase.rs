@@ -64,7 +64,7 @@ impl fmt::Display for Fact {
 pub struct ChaseBudget {
     /// Facts held at once.
     pub max_facts: usize,
-    /// Labelled nulls created.
+    /// Labelled nulls the chase creates (input nulls do not count).
     pub max_nulls: usize,
     /// Metered match attempts per run.
     pub max_steps: usize,
@@ -113,7 +113,8 @@ pub struct Conflict {
     /// The constants it equated.
     pub right: Value,
     /// A subset-minimal set of rule ids that still fails on [`Self::witness`]:
-    /// dropping any one of them (within budget) removes every conflict.
+    /// dropping any one of them removes every conflict. Each subset is
+    /// checked by a real chase; if one exhausts the budget, [`chase`] refuses.
     pub rules: Vec<String>,
     /// A subset-minimal set of the supplied facts that still fails.
     pub witness: Vec<Fact>,
@@ -157,19 +158,26 @@ pub fn chase(
     // Provenance gives a sufficient support; deletion then makes it minimal.
     let mut rules: Vec<usize> = failure.rules.iter().copied().collect();
     let mut inputs: Vec<usize> = failure.inputs.iter().copied().collect();
-    if !fails(theory, &rules, facts, &inputs, budget) {
+    // Every sub-chase is a real chase; a refused one refuses the whole
+    // explanation, so minimality is never claimed on an unchecked subset.
+    if !fails(theory, &rules, facts, &inputs, budget)? {
         rules.clone_from(&all_rules);
         inputs.clone_from(&all_facts);
     }
     shrink(&mut rules, |kept| {
         fails(theory, kept, facts, &inputs, budget)
-    });
+    })?;
     shrink(&mut inputs, |kept| {
         fails(theory, &rules, facts, kept, budget)
-    });
+    })?;
     let failure = match run(&theory.dependencies, &rules, facts, &inputs, budget) {
         Err(Halt::Conflict(minimal)) => *minimal,
-        Ok(_) | Err(Halt::Refused(_)) => failure,
+        Err(Halt::Refused(error)) => return Err(error),
+        Ok(_) => {
+            return Err(ChaseError::Internal(
+                "the minimised conflict no longer fails".to_owned(),
+            ));
+        }
     };
     let rule_id = |index: &usize| theory.dependencies.get(*index).map(|d| d.id().to_owned());
     Ok(ChaseOutcome::Conflict(Conflict {
@@ -191,25 +199,30 @@ fn fails(
     facts: &[Fact],
     inputs: &[usize],
     budget: ChaseBudget,
-) -> bool {
-    matches!(
-        run(&theory.dependencies, rules, facts, inputs, budget),
-        Err(Halt::Conflict(_))
-    )
+) -> Result<bool, ChaseError> {
+    match run(&theory.dependencies, rules, facts, inputs, budget) {
+        Ok(_) => Ok(false),
+        Err(Halt::Conflict(_)) => Ok(true),
+        Err(Halt::Refused(error)) => Err(error),
+    }
 }
 
 /// Drop each element whose removal keeps `still_fails` true.
-fn shrink(items: &mut Vec<usize>, mut still_fails: impl FnMut(&[usize]) -> bool) {
+fn shrink(
+    items: &mut Vec<usize>,
+    mut still_fails: impl FnMut(&[usize]) -> Result<bool, ChaseError>,
+) -> Result<(), ChaseError> {
     let mut position = 0;
     while position < items.len() {
         let mut candidate = items.clone();
         candidate.remove(position);
-        if still_fails(&candidate) {
+        if still_fails(&candidate)? {
             *items = candidate;
         } else {
             position = position.saturating_add(1);
         }
     }
+    Ok(())
 }
 
 /// Positions are `(relation, index)`. A frontier variable at body position
@@ -409,6 +422,7 @@ struct State {
     records: Vec<Record>,
     seen: BTreeSet<Fact>,
     next_null: usize,
+    created_nulls: usize,
     meter: Meter,
     budget: ChaseBudget,
 }
@@ -425,6 +439,7 @@ fn run(
         records: Vec::new(),
         seen: BTreeSet::new(),
         next_null: 0,
+        created_nulls: 0,
         meter: Meter {
             steps: 0,
             limit: budget.max_steps,
@@ -490,7 +505,7 @@ impl State {
     }
 
     fn fresh_null(&mut self) -> Result<Value, Halt> {
-        if self.next_null >= self.budget.max_nulls {
+        if self.created_nulls >= self.budget.max_nulls {
             return Err(Halt::Refused(ChaseError::BudgetExceeded {
                 resource: "nulls",
                 limit: self.budget.max_nulls,
@@ -498,6 +513,7 @@ impl State {
         }
         let id = self.next_null;
         self.next_null = id.saturating_add(1);
+        self.created_nulls = self.created_nulls.saturating_add(1);
         Ok(Value::Null(id))
     }
 
