@@ -18458,12 +18458,16 @@
     {
       "path": "registry/packs/PROJECTION.md",
       "sha256": "aa28a0ab7ba3492e51da4be90e093aa82b6f73423d5e4478354fdd38d3ae005a",
-      "origin": "authored",
-      "category": "code",
+      "origin": "derived",
+      "category": "generated",
       "license": "Apache-2.0",
       "sources": [],
       "analyzed_sources": [],
-      "parents": [],
+      "parents": [
+        "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
+        "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
+        "crates/norn-checker/tests/registry_packs.rs"
+      ],
       "rights_evidence": [
         {
           "path": "NOTICE",
@@ -18592,12 +18596,15 @@
     {
       "path": "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
       "sha256": "dfa17c83f78a68d1f85bd5957c48808e166d5c251fbadc1151bd512631525d0b",
-      "origin": "authored",
-      "category": "code",
+      "origin": "derived",
+      "category": "generated",
       "license": "Apache-2.0",
       "sources": [],
       "analyzed_sources": [],
-      "parents": [],
+      "parents": [
+        "registry/packs/shopify/shopify.link.ts",
+        "registry/packs/shopify/shopify.pack.ts"
+      ],
       "rights_evidence": [
         {
           "path": "NOTICE",
@@ -18610,12 +18617,15 @@
     {
       "path": "registry/packs/shopify/artifacts/norn.ontology-pack.shopify.json",
       "sha256": "c5e4ef7ac1a4385f1773d25e1b0a760c9dad730b2156c3204218712bbdf83bed",
-      "origin": "authored",
-      "category": "code",
+      "origin": "derived",
+      "category": "generated",
       "license": "Apache-2.0",
       "sources": [],
       "analyzed_sources": [],
-      "parents": [],
+      "parents": [
+        "registry/packs/shopify/shopify.link.ts",
+        "registry/packs/shopify/shopify.pack.ts"
+      ],
       "rights_evidence": [
         {
           "path": "NOTICE",
