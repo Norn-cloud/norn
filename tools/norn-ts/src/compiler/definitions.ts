@@ -21,6 +21,7 @@ import * as P from "../builder/access.ts"
 import * as E from "../builder/entity.ts"
 import * as SS from "../builder/source-schema.ts"
 import * as OP from "../builder/ontology-pack.ts"
+import * as PL from "../builder/pack-link.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
 import * as R from "../builder/rule.ts"
@@ -34,7 +35,7 @@ import { SchemaProjection } from "./schema.ts"
 import { CompileError } from "./types.ts"
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -56,6 +57,7 @@ export type DefinitionsResult =
 
 const SOURCE_SCHEMA = "@norn/authoring#Norn.sourceSchema"
 const ONTOLOGY_PACK = "@norn/authoring#Norn.ontologyPack"
+const PACK_LINK = "@norn/authoring#Norn.packLink"
 const MARKINGS = "@norn/authoring#Norn.markings"
 const TYPE = "@norn/authoring#Norn.type"
 const INTERFACE = "@norn/authoring#Norn.interfaceType"
@@ -66,7 +68,7 @@ const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
 const FLOW = "@norn/authoring#Norn.flow"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
@@ -131,6 +133,7 @@ export function compileDefinitionFiles(
         : def._tag === "Law" ? L.lowerLaw(def, envelopeOptions)
         : def._tag === "SourceSchema" ? SS.lowerSourceSchema(def, envelopeOptions)
         : def._tag === "OntologyPack" ? OP.lowerOntologyPack(def, envelopeOptions)
+        : def._tag === "PackLink" ? PL.lowerPackLink(def, envelopeOptions)
         : def._tag === "Markings" ? E.lowerMarkings(def, envelopeOptions)
         : E.lowerEntity(def, envelopeOptions)
       if (built.ok) {
@@ -239,6 +242,7 @@ class DefinitionCompiler {
         const def =
           id === SOURCE_SCHEMA ? this.sourceSchema(init)
           : id === ONTOLOGY_PACK ? this.ontologyPack(init)
+          : id === PACK_LINK ? this.packLink(init)
           : id === MARKINGS ? this.markings(init)
           : id === TYPE ? this.objectType(init)
           : id === INTERFACE ? this.interfaceType(init)
@@ -403,6 +407,18 @@ class DefinitionCompiler {
     }
     const data = Object.fromEntries([...m].map(([key, node]) => [key, this.json(node)]))
     return OP.ontologyPack({ ...data as unknown as OP.OntologyPackSpec, at: this.at(call) })
+  }
+
+  /** Closed records; resolution against the linked packs is the Rust link registry's. */
+  private packLink(call: ts.CallExpression): PL.PackLinkDef {
+    const m = this.meta(call, ["id", "title", "version", "fromPack", "toPack", "correspondences", "residuals"])
+    const need = (key: string): ts.Expression => this.member(m, key, call)
+    for (const key of ["fromPack", "toPack"]) this.closedRecord(need(key), ["packId", "version"], ["packId", "version"])
+    for (const node of this.list(need("correspondences"))) this.closedRecord(node, ["correspondenceId", "fromTermId", "relation", "toTermIds", "justification", "evidenceRefs", "confidenceBasisPoints", "reviewedBy", "reviewedAt", "transformRef", "rulingRef"], ["correspondenceId", "fromTermId", "relation", "toTermIds", "justification", "evidenceRefs", "confidenceBasisPoints", "reviewedBy", "reviewedAt"])
+    const residuals = m.get("residuals")
+    for (const node of residuals ? this.list(residuals) : []) this.closedRecord(node, ["termId", "reason", "note"], ["termId", "reason", "note"])
+    const data = Object.fromEntries([...m].map(([key, node]) => [key, this.json(node)]))
+    return PL.packLink({ ...data as unknown as PL.PackLinkSpec, at: this.at(call) })
   }
 
   private markings(call: ts.CallExpression): E.MarkingsDef {
