@@ -19000,7 +19000,7 @@
     },
     {
       "path": "tools/norn-code/recognizer.py",
-      "sha256": "c57404b850f042bc76c900eabe08b195c8c3d608820853cb265afb52a2d1af14",
+      "sha256": "95346d7d17d2e0c3dd9773b5952dd644569909b26e9c2c39f18ce68818118a27",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -19090,7 +19090,7 @@
     },
     {
       "path": "tools/norn-code/tests/test_recognizer.py",
-      "sha256": "eb86e528b6317616547f591393d61cbb241275e05d11a5d7cf11d47384eab95d",
+      "sha256": "19a7856e12fcdb8f5b22c82ca76223c0ed2a7e910b7b0959c1d54647df49b445",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

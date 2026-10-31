@@ -63,8 +63,8 @@ class RecognizerTests(unittest.TestCase):
 class DecoratorTests(unittest.TestCase):
     def test_bound_decorator(self):
         report = analyze({'x.py': b'from odoo import api as a\n@a.constrains("amount")\ndef check(): pass\n'})
-        self.assertEqual(report['recognized'][1]['signal'], 'decorator:odoo.api.constrains')
-        self.assertEqual(report['recognized'][1]['evidence']['line'], 2)
+        match = next(m for m in report['recognized'] if m['signal'] == 'decorator:odoo.api.constrains')
+        self.assertEqual(match['evidence']['line'], 2)
 
 
 class RobustnessTests(unittest.TestCase):
@@ -78,6 +78,23 @@ class RobustnessTests(unittest.TestCase):
     def test_escaped_import_does_not_hide_later_import(self):
         report = analyze({'x.ts': b'import "\\x66s"; import "effect";'})
         self.assertEqual(report['recognized'][0]['framework'], 'effect')
+
+class ReviewRegressions(unittest.TestCase):
+    def test_type_only_declarations_do_not_claim_runtime_use(self):
+        for source in ['import type { State } from "xstate";', 'export type { Effect } from "effect";', 'import { type State } from "xstate";']:
+            self.assertEqual(analyze({'x.ts': source.encode()})['recognized'], [])
+        self.assertEqual(analyze({'x.ts': b'export { Effect } from "effect";'})['recognized'][0]['framework'], 'effect')
+
+    def test_nested_import_does_not_change_outer_decorator(self):
+        source = b'from odoo import api\ndef unrelated():\n from other import api\n@api.depends("x")\ndef check(): pass\n'
+        self.assertTrue(any(m['signal']=='decorator:odoo.api.depends' for m in analyze({'x.py':source})['recognized']))
+        source = b'from odoo import api\napi = object()\n@api.depends("x")\ndef check(): pass\n'
+        self.assertFalse(any(m['signal'].startswith('decorator:') for m in analyze({'x.py':source})['recognized']))
+
+    def test_configuration_line_evidence(self):
+        sources = {'hooks.py':b'# header\n\napp_name = "x"\n', 'package.json': b'{\n"dependencies": {\n"effect": "4"\n}}', 'pyproject.toml':b'[project]\nname="x"\ndependencies=[\n"frappe>=15"\n]\n'}
+        by_path = {m['evidence']['file']:m['evidence']['line'] for m in analyze(sources)['recognized']}
+        self.assertEqual(by_path, {'hooks.py':3,'package.json':3,'pyproject.toml':4})
 
 
 if __name__ == '__main__':
