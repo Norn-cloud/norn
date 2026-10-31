@@ -21,7 +21,7 @@ function fromModule(compiled: ReturnType<typeof pack>, module: string) {
   return compiled.artifacts.filter((artifact) => compiled.sources.get((artifact as { artifactId: string }).artifactId)?.endsWith(module))
 }
 
-const PRIMITIVES = ["core.Agent", "core.AgentRole", "core.Claim", "core.Commitment", "core.EconomicEvent", "core.Hold", "core.LedgerEffect", "core.Resource"]
+const PRIMITIVES = ["core.Agent", "core.AgentRole", "core.Claim", "core.Commitment", "core.EconomicEvent", "core.Hold", "core.LedgerEffect", "core.Resource", "core.Settlement"]
 
 test("the core physics pack declares exactly its primitives", () => {
   const ids = fromModule(pack(), "physics.ts").map((artifact) => (artifact as { artifactId: string }).artifactId).sort()

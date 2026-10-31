@@ -149,3 +149,18 @@ export const Claim = Norn.interfaceType({
     { id: "arises_from", description: "The commitment that gave rise to the claim (givesRiseTo, seen from the claim).", target: Commitment, cardinality: { to: "one", from: "many" } },
   ],
 })
+
+export const Settlement = Norn.interfaceType({
+  name: "core.Settlement",
+  title: "Settlement",
+  version: "0.1.0",
+  description: "An economic event settling part or all of a claim (REA fulfillment: EconomicEvent settles Claim). Settlements are many-to-many: one payment can settle several invoices, and one invoice can be settled by several payments, each for a settled amount. A claim's settlement state (open, partly or fully settled) is derived from its settlements and is never stored as a status.",
+  properties: Schema.Struct({
+    settled_amount: Norn.ref("core.money_amount"),
+    currency: Norn.ref("core.code"),
+  }),
+  links: [
+    { id: "event", description: "The economic event that settles the claim, such as a payment.", target: EconomicEvent, cardinality: { to: "one", from: "many", required: true } },
+    { id: "claim", description: "The claim settled, in whole or in part.", target: Claim, cardinality: { to: "one", from: "many", required: true } },
+  ],
+})
