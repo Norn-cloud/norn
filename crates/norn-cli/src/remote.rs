@@ -46,7 +46,11 @@ pub(super) fn run(args: RemoteArgs) -> ExitCode {
             if std::io::stdout().write_all(text.as_bytes()).is_err() {
                 return ExitCode::FAILURE;
             }
-            if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+            if failed {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
         }
         Err(error) => {
             super::write_err(&format!("norn remote: {error}"));
@@ -59,8 +63,12 @@ fn request(command: &RemoteCommand, input: &str) -> Result<String, String> {
     match command {
         RemoteCommand::List => Ok(json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/list"
-        }).to_string()),
-        RemoteCommand::Call { name, idempotency_key } => {
+        })
+        .to_string()),
+        RemoteCommand::Call {
+            name,
+            idempotency_key,
+        } => {
             if idempotency_key.trim().is_empty() {
                 return Err("idempotency key must be nonblank".into());
             }
@@ -82,7 +90,9 @@ fn request(command: &RemoteCommand, input: &str) -> Result<String, String> {
 fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     let mut input = String::new();
     if matches!(args.command, RemoteCommand::Call { .. }) {
-        std::io::stdin().take(4 * 1024 * 1024 + 1).read_to_string(&mut input)
+        std::io::stdin()
+            .take(4 * 1024 * 1024 + 1)
+            .read_to_string(&mut input)
             .map_err(|e| e.to_string())?;
         if input.len() > 4 * 1024 * 1024 {
             return Err("tool arguments exceed 4 MiB".into());
@@ -92,23 +102,32 @@ fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(30)))
-        .build().into();
-    let mut call = agent.post(&args.url)
+        .build()
+        .into();
+    let mut call = agent
+        .post(&args.url)
         .header("content-type", "application/json")
         .header("accept", "application/json, text/event-stream")
         .header("mcp-protocol-version", "2025-11-25")
         .header("x-norn-org-id", &args.org)
         .header("x-norn-environment-id", &args.env);
     if let Some(variable) = &args.token_env {
-        let token = std::env::var(variable).map_err(|_e| "token environment variable is unavailable")?;
+        let token =
+            std::env::var(variable).map_err(|_e| "token environment variable is unavailable")?;
         call = call.header("authorization", format!("Bearer {token}"));
     }
     if let Some(actor) = &args.dev_actor {
         call = call.header("x-norn-actor", actor);
     }
-    let mut response = call.send(body.as_bytes()).map_err(|_e| "MCP HTTP request failed")?;
-    let text = response.body_mut().with_config().limit(8 * 1024 * 1024)
-        .read_to_string().map_err(|_e| "MCP response could not be read")?;
+    let mut response = call
+        .send(body.as_bytes())
+        .map_err(|_e| "MCP HTTP request failed")?;
+    let text = response
+        .body_mut()
+        .with_config()
+        .limit(8 * 1024 * 1024)
+        .read_to_string()
+        .map_err(|_e| "MCP response could not be read")?;
     let value: Value = serde_json::from_str(&text).map_err(|_e| "invalid MCP JSON response")?;
     if value.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
         || value.get("id") != Some(&json!(1))
@@ -127,15 +146,29 @@ mod tests {
 
     #[test]
     fn call_preserves_exact_arguments_and_operation_identity() -> Result<(), String> {
-        let body = request(&RemoteCommand::Call {
-            name: "sales_order.approve".into(), idempotency_key: "operation-1".into(),
-        }, r#"{"amount":12345678901234567890.123456789}"#)?;
+        let body = request(
+            &RemoteCommand::Call {
+                name: "sales_order.approve".into(),
+                idempotency_key: "operation-1".into(),
+            },
+            r#"{"amount":12345678901234567890.123456789}"#,
+        )?;
         assert!(body.contains("12345678901234567890.123456789"));
         let value: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-        assert_eq!(value.pointer("/params/_meta/norn~1idempotencyKey"), Some(&json!("operation-1")));
-        assert!(request(&RemoteCommand::Call {
-            name: "sales_order.approve".into(), idempotency_key: "operation-1".into(),
-        }, "[]").is_err());
+        assert_eq!(
+            value.pointer("/params/_meta/norn~1idempotencyKey"),
+            Some(&json!("operation-1"))
+        );
+        assert!(
+            request(
+                &RemoteCommand::Call {
+                    name: "sales_order.approve".into(),
+                    idempotency_key: "operation-1".into(),
+                },
+                "[]"
+            )
+            .is_err()
+        );
         Ok(())
     }
 }
