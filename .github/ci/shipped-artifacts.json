@@ -18927,6 +18927,78 @@
       "connector": null
     },
     {
+      "path": "tools/norn-code/analyze.py",
+      "sha256": "9af935fa3989906d563a20be453c70404163dc7acf1973cc728b06ea007caf2d",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "tools/norn-code/canon_v0.json",
+      "sha256": "464b0fe008b2d73df9acba7eef1cd6313e5688314677ecdbffdcb114937a7882",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "tools/norn-code/contracts.py",
+      "sha256": "65f42522f6ad47d0800868ec65eea5b191dcc37b936052d307266981bf0be638",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "tools/norn-code/erpnext_probe.py",
+      "sha256": "d011ed1ab87f0cf10b765ebb71b9f4b6d8ed5d0d56b3a20cc520d0cdbdd22013",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "tools/norn-code/recognizer.py",
       "sha256": "575f8350e63f54aa94a4bf0c63c37631911fc78eb718f5a12e1b0996d8320504",
       "origin": "authored",
@@ -18983,6 +19055,24 @@
     {
       "path": "tools/norn-code/tests/fingerprints.json",
       "sha256": "bd22dd9b2b57b7ee748cf974f9814420bd9d996d2a3fc6b4918b06c4096fcf67",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "tools/norn-code/tests/test_contracts.py",
+      "sha256": "69898adf4c85f42e7c679442354904fd4b101ea2a8ac28f362ecbf71e81b10bd",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30043,7 +30133,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "3dc2230e20f809d23c79edafeae75c86d15caf3ce0106472336dea6c04e661ee",
+      "sha256": "96650ea31dcd54da1e713eae51daa04896c8bb8b465f5c80197d29140cfc682b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
