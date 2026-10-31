@@ -2803,6 +2803,72 @@
         "verification/core-physics-v1/models/core-value-ledger.qnt",
         "verification/core-physics-v1/proofs/CoreValueLedger.lean"
       ]
+    },
+    {
+      "id": "cell-abi",
+      "obligations": [
+        "CELL-ABI-EXACT"
+      ],
+      "obligationClaims": [
+        {
+          "id": "CELL-ABI-EXACT",
+          "runtime": "tested",
+          "model": "deferred",
+          "proof": "deferred",
+          "residual": "Native ABI examples and fixed-seed traces only; no WASM host, SQLite, network or unbounded refinement claim.",
+          "evidence": {
+            "runtime": [
+              {
+                "artifact": "crates/norn-cell-wasm/tests/abi.rs",
+                "command": "cargo test --locked -p norn-cell-wasm",
+                "selectors": [
+                  "test:payload_numbers_cross_the_abi_as_exact_bytes"
+                ]
+              }
+            ],
+            "model": [],
+            "proof": []
+          }
+        }
+      ],
+      "runtime": {
+        "status": "tested",
+        "artifacts": [
+          "crates/norn-cell-wasm/tests/abi.rs",
+          "crates/norn-cell-wasm/tests/law_traces.rs"
+        ],
+        "commands": [
+          "cargo test --locked -p norn-cell-wasm"
+        ],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "deferred",
+        "bound": "No formal model is promoted for this ABI.",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "proof": {
+        "status": "deferred",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "limitations": [
+        "Native regression tests and sampled traces do not prove implementation correspondence or host durability."
+      ],
+      "sourceFiles": [
+        "crates/norn-cell-wasm/Cargo.toml",
+        "crates/norn-cell-wasm/src/lib.rs",
+        "crates/norn-cell-wasm/src/wasm.rs",
+        "crates/norn-cell-wasm/tests/abi.rs",
+        "crates/norn-cell-wasm/tests/law_traces.rs",
+        "crates/norn-cell-wasm/scripts/build-pkg.sh"
+      ]
     }
   ]
 }

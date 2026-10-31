@@ -1,0 +1,33 @@
+[package]
+name = "norn-cell-wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "cell ABI: JSON-in/JSON-out WASM bindings over the kernel's CellHost commit contract for apps/cell-shim (ring 1; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+norn-kernel = { path = "../norn-kernel" }
+serde = { version = "1.0.228", features = ["derive"] }
+# `raw_value`: payloads (fact values, events, command and timer payloads)
+# cross the ABI as their exact source bytes, never through an f64 or a
+# JavaScript number (T3-NUM-1, #2770).
+serde_json = { version = "1.0.150", features = ["raw_value"] }
+
+# The JS bindings exist only on wasm32; native callers (the tests) use the
+# plain Rust functions. Exact pin, shared with norn-checker-wasm: the
+# wasm-bindgen CLI that post-processes the module must be the same version
+# (scripts/build-pkg.sh, CI workflow `cell-shim`).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.129"
+
+[dev-dependencies]
+# Test support only: the host-agnostic CellHost laws and the reference
+# MemoryCell the shim's law traces are recorded from.
+norn-testkit = { path = "../norn-testkit" }
+
+[lints]
+workspace = true
