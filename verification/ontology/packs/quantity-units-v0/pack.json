@@ -25,7 +25,8 @@
         "retrievedAt": "2026-08-22",
         "canonicalUrl": "https://github.com/qudt/qudt-public-repo/tree/v3.4.0",
         "license": "CC-BY-4.0; attribution to QUDT.org required",
-        "redistribution": "reference_only"
+        "redistribution": "reference_only",
+        "importMode": "map_only"
       },
       {
         "sourceId": "source.ucum",
@@ -34,7 +35,8 @@
         "retrievedAt": "2026-08-22",
         "canonicalUrl": "https://ucum.org/ucum",
         "license": "UCUM-License-1.1; reference and interoperability use only; no derivative works",
-        "redistribution": "reference_only"
+        "redistribution": "reference_only",
+        "importMode": "study_only"
       },
       {
         "sourceId": "source.skos",
@@ -43,7 +45,8 @@
         "retrievedAt": "2026-08-22",
         "canonicalUrl": "https://www.w3.org/TR/2009/REC-skos-reference-20090818/",
         "license": "W3C-Document-License",
-        "redistribution": "reference_only"
+        "redistribution": "reference_only",
+        "importMode": "study_only"
       }
     ],
     "terms": [

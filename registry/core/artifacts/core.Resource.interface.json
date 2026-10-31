@@ -1,0 +1,78 @@
+{
+  "artifactId": "core.Resource.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Resource",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "Something of value that is conserved: goods, money, time, capacity or a right, held as a quantity in exactly one unit (a UCUM unit, or a currency for money).",
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "The agent that owns the resource.",
+          "id": "owner",
+          "target": "core.Agent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "The agent that holds the resource, when it is not the owner.",
+          "id": "custodian",
+          "target": "core.Agent"
+        }
+      ],
+      "name": "core.Resource",
+      "properties": [
+        {
+          "id": "resource_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.Resource.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
