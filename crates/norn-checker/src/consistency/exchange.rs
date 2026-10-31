@@ -92,8 +92,16 @@ pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) 
         }
     }
     let source_side = join(&[exchange.source, exchange.mapping], |_| true);
+    // Validated above, so the source signature is available.
+    let source_signature = exchange.source.signature().unwrap_or_default();
+    let source: BTreeSet<&str> = exchange
+        .source_schema
+        .keys()
+        .chain(source_signature.keys())
+        .map(String::as_str)
+        .collect();
     for constraint in &exchange.target.dependencies {
-        match unpreserved(constraint, exchange.mapping, &source_side, budget) {
+        match unpreserved(constraint, exchange.mapping, &source_side, &source, budget) {
             Ok(None) => {}
             Ok(Some(witness)) => findings.push(finding(
                 codes::UNPRESERVED,
@@ -123,6 +131,7 @@ fn unpreserved(
     constraint: &Dependency,
     mapping: &Theory,
     source_side: &Theory,
+    source: &BTreeSet<&str>,
     budget: ChaseBudget,
 ) -> Result<Option<Vec<Fact>>, ChaseError> {
     let body = match constraint {
@@ -133,7 +142,13 @@ fn unpreserved(
         if let ChaseOutcome::Model(model) = chase(source_side, &candidate, budget)?
             && first_violation(constraint, &model, budget)?.is_some()
         {
-            return Ok(Some(candidate));
+            // Report the verified source instance, not the unfolding seed.
+            return Ok(Some(
+                model
+                    .into_iter()
+                    .filter(|fact| source.contains(fact.relation.as_str()))
+                    .collect(),
+            ));
         }
     }
     Ok(None)
@@ -278,13 +293,10 @@ pub fn check_instance(
         return vec![refusal(exchange.mapping, &error)];
     }
     let empty = Theory::default();
-    let mut findings = closed_world(exchange.source, &empty, facts, budget);
-    findings.extend(closed_world(
-        exchange.target,
-        exchange.mapping,
-        facts,
-        budget,
-    ));
+    let (mut findings, normalized) = closed_world(exchange.source, &empty, facts, budget);
+    // The mapping reads the data as the source's own equations resolve it.
+    let mapped = normalized.as_deref().unwrap_or(facts);
+    findings.extend(closed_world(exchange.target, exchange.mapping, mapped, budget).0);
     findings
 }
 
@@ -295,7 +307,7 @@ fn closed_world(
     derivations: &Theory,
     facts: &[Fact],
     budget: ChaseBudget,
-) -> Vec<Diagnostic> {
+) -> (Vec<Diagnostic>, Option<Vec<Fact>>) {
     let mut equations = derivations.clone();
     equations.dependencies.extend(
         constraints
@@ -307,7 +319,7 @@ fn closed_world(
     let model = match chase(&equations, facts, budget) {
         Ok(ChaseOutcome::Model(model)) => model,
         Ok(ChaseOutcome::Conflict(conflict)) => {
-            return vec![finding(
+            let violation = finding(
                 codes::INSTANCE_VIOLATION,
                 DiagnosticSeverity::Error,
                 format!(
@@ -316,9 +328,10 @@ fn closed_world(
                     conflict_message(&conflict)
                 ),
                 origin_of(&equations, &conflict.egd),
-            )];
+            );
+            return (vec![violation], None);
         }
-        Err(error) => return vec![refusal(&equations, &error)],
+        Err(error) => return (vec![refusal(&equations, &error)], None),
     };
     let mut findings = Vec::new();
     for constraint in constraints
@@ -340,11 +353,11 @@ fn closed_world(
             )),
             Err(error) => {
                 findings.push(refusal(constraints, &error));
-                return findings;
+                return (findings, None);
             }
         }
     }
-    findings
+    (findings, Some(model))
 }
 
 /// Mapping totality: a warning for every source relation no mapping reads

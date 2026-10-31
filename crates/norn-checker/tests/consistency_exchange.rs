@@ -362,3 +362,96 @@ fn a_mapping_with_an_equation_is_refused() {
         [codes::MALFORMED]
     );
 }
+
+#[test]
+fn instance_validation_maps_the_source_as_its_equations_resolve_it() {
+    // Sol R1 S1 on #70: `S(_:n0, "a")` is `S("a", "a")` under the source EGD,
+    // which maps to `T("a")`, and the canon requires "b".
+    let schema = BTreeMap::from([("S".to_owned(), vec!["x".to_owned(), "y".to_owned()])]);
+    let source = Theory {
+        dependencies: vec![egd(
+            "source.diagonal",
+            &[atom("S", &[var("x"), var("y")])],
+            var("x"),
+            var("y"),
+        )],
+    };
+    let mapping = Theory {
+        dependencies: vec![tgd(
+            "map.s",
+            &[atom("S", &[konst("a"), var("y")])],
+            &[atom("T", &[var("y")])],
+        )],
+    };
+    let target = Theory {
+        dependencies: vec![egd(
+            "canon.t_is_b",
+            &[atom("T", &[var("y")])],
+            var("y"),
+            konst("b"),
+        )],
+    };
+    let exchange = Exchange {
+        source_schema: &schema,
+        source: &source,
+        mapping: &mapping,
+        target: &target,
+    };
+    let data = [Fact {
+        relation: "S".to_owned(),
+        values: vec![Value::Null(0), Value::Const("a".to_owned())],
+    }];
+    let findings = check_instance(&exchange, &data, ChaseBudget::default());
+    assert_eq!(codes_of(&findings), [codes::INSTANCE_VIOLATION]);
+    assert!(
+        findings[0].message.contains("breaks canon.t_is_b"),
+        "{}",
+        findings[0].message
+    );
+}
+
+#[test]
+fn an_unpreserved_witness_is_the_verified_source_instance() {
+    // Sol R1 S2 on #70: the witness includes what the source constraints
+    // add (`R`), so it is itself a valid source instance.
+    let schema = BTreeMap::from([
+        ("S".to_owned(), vec!["x".to_owned()]),
+        ("R".to_owned(), vec!["x".to_owned()]),
+    ]);
+    let source = Theory {
+        dependencies: vec![tgd(
+            "source.s_is_r",
+            &[atom("S", &[var("x")])],
+            &[atom("R", &[var("x")])],
+        )],
+    };
+    let mapping = Theory {
+        dependencies: vec![tgd(
+            "map.s",
+            &[atom("S", &[var("x")])],
+            &[atom("T", &[var("x")])],
+        )],
+    };
+    let target = Theory {
+        dependencies: vec![tgd(
+            "canon.t_is_u",
+            &[atom("T", &[var("x")])],
+            &[atom("U", &[var("x")])],
+        )],
+    };
+    let exchange = Exchange {
+        source_schema: &schema,
+        source: &source,
+        mapping: &mapping,
+        target: &target,
+    };
+    let findings = check_schema_compatibility(&exchange, ChaseBudget::default());
+    assert_eq!(codes_of(&findings), [codes::UNPRESERVED]);
+    assert!(
+        findings[0]
+            .message
+            .ends_with("breaks canon.t_is_u: S(_:n0), R(_:n0)"),
+        "{}",
+        findings[0].message
+    );
+}
