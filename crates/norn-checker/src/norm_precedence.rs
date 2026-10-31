@@ -3,7 +3,7 @@
 //! This module checks that model; it does not issue permissions or prove that
 //! obligations have been fulfilled. Authority order is a trusted policy input.
 use norn_ir::deontic::DeonticModality;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// One definition norm grounded over one common finite action/subject universe.
 pub struct GroundedNorm {
@@ -132,29 +132,31 @@ pub fn check_norm_precedence(
             return Err(NormUnknown::Invalid);
         }
     }
-    let mut edges = vec![Vec::new(); norms.len()];
-    let mut incoming = vec![0_usize; norms.len()];
+    let mut edges: BTreeMap<usize, Vec<(usize, PriorityReason)>> = BTreeMap::new();
+    let mut incoming: BTreeMap<usize, usize> =
+        norms.iter().enumerate().map(|(i, _)| (i, 0)).collect();
     for (high, winner) in norms.iter().enumerate() {
         for (low, loser) in norms.iter().enumerate() {
-            if opposed(winner.modality, loser.modality) {
-                if let Some(reason) = preferred(winner, loser) {
-                    edges[high].push((low, reason));
-                    incoming[low] += 1;
-                }
+            if opposed(winner.modality, loser.modality)
+                && let Some(reason) = preferred(winner, loser)
+            {
+                edges.entry(high).or_default().push((low, reason));
+                let count = incoming.get_mut(&low).ok_or(NormUnknown::Invalid)?;
+                *count = count.checked_add(1).ok_or(NormUnknown::Limit)?;
             }
         }
     }
     let mut queue: VecDeque<_> = incoming
         .iter()
-        .enumerate()
-        .filter_map(|(i, count)| (*count == 0).then_some(i))
+        .filter_map(|(i, count)| (*count == 0).then_some(*i))
         .collect();
     let mut order = Vec::new();
     while let Some(index) = queue.pop_front() {
         order.push(index);
-        for (low, _) in &edges[index] {
-            incoming[*low] -= 1;
-            if incoming[*low] == 0 {
+        for (low, _) in edges.get(&index).into_iter().flatten() {
+            let count = incoming.get_mut(low).ok_or(NormUnknown::Invalid)?;
+            *count = count.checked_sub(1).ok_or(NormUnknown::Invalid)?;
+            if *count == 0 {
                 queue.push_back(*low);
             }
         }
@@ -164,11 +166,15 @@ pub fn check_norm_precedence(
     }
     let mut results = Vec::new();
     for context in 0..contexts {
-        let active: Vec<_> = norms
+        let active: BTreeSet<_> = norms
             .iter()
-            .map(|norm| norm.applicable.contains(&context) && !norm.excepted.contains(&context))
+            .enumerate()
+            .filter_map(|(i, norm)| {
+                (norm.applicable.contains(&context) && !norm.excepted.contains(&context))
+                    .then_some(i)
+            })
             .collect();
-        let mut defeated = vec![false; norms.len()];
+        let mut defeated = BTreeSet::new();
         let mut result = NormContext {
             survivors: Vec::new(),
             obligations: Vec::new(),
@@ -176,16 +182,17 @@ pub fn check_norm_precedence(
             defeats: Vec::new(),
         };
         for high in &order {
-            if !active[*high] || defeated[*high] {
+            if !active.contains(high) || defeated.contains(high) {
                 continue;
             }
             result.survivors.push(*high);
-            if norms[*high].modality == DeonticModality::Obligation {
+            if norms.get(*high).ok_or(NormUnknown::Invalid)?.modality == DeonticModality::Obligation
+            {
                 result.obligations.push(*high);
             }
-            for (low, reason) in &edges[*high] {
-                if active[*low] && !defeated[*low] {
-                    defeated[*low] = true;
+            for (low, reason) in edges.get(high).into_iter().flatten() {
+                if active.contains(low) && !defeated.contains(low) {
+                    defeated.insert(*low);
                     result.defeats.push(NormDefeat {
                         winner: *high,
                         loser: *low,
@@ -195,8 +202,11 @@ pub fn check_norm_precedence(
             }
         }
         for (offset, left) in result.survivors.iter().enumerate() {
-            for right in result.survivors.iter().skip(offset + 1) {
-                if opposed(norms[*left].modality, norms[*right].modality) {
+            for right in result.survivors.iter().skip(offset.saturating_add(1)) {
+                if opposed(
+                    norms.get(*left).ok_or(NormUnknown::Invalid)?.modality,
+                    norms.get(*right).ok_or(NormUnknown::Invalid)?.modality,
+                ) {
                     result.conflicts.push((*left, *right));
                 }
             }
