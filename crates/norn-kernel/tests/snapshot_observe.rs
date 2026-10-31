@@ -1222,3 +1222,44 @@ fn empty_authority_cannot_request_an_unbounded_snapshot_envelope() {
     );
     assert!(cell.observe().unwrap().is_some());
 }
+
+#[test]
+fn observations_cannot_reconcile_a_protected_lifecycle() {
+    let mut object_type = model(&json!([{ "id":"submit", "from":["draft"], "to":"submitted" }]));
+    object_type
+        .properties
+        .iter_mut()
+        .find(|property| property.id.as_str() == "status")
+        .unwrap()
+        .protected = true;
+    let catalog = TypeCatalog::new([&object_type]);
+    let key = FactKey::new("test.SnapshotOrder", "PROTECTED");
+    let provenance = provenance("protected.source");
+    let snapshots = [ObservedLifecycleSnapshot {
+        property: PropertyId("status".to_owned()),
+        state: "submitted".to_owned(),
+        provenance: provenance.clone(),
+    }];
+    let values: JsonObject = serde_json::from_value(json!({"amount":5})).unwrap();
+    let mut cell = cell();
+    let delivery = next_delivery(&mut cell, "protected-observation");
+    let slice = load_slice(&cell, [key.clone()]).unwrap();
+    let refusal = commit_observed_snapshot(
+        &mut cell,
+        &catalog,
+        &slice,
+        &turn("protected-observation", delivery.consumed()),
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &snapshots,
+            provenance: &provenance,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(refusal, ObservationCommitRefusal::Observation(
+        norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { reason, .. }) if reason.contains("protected lifecycle")));
+    assert!(!cell.load(&key).unwrap().exists());
+    assert!(cell.ledger().is_empty());
+    assert!(cell.observe().unwrap().is_some());
+}

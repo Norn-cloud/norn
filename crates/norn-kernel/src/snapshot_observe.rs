@@ -1270,6 +1270,16 @@ pub fn prepare_observed_snapshot(
                 "the snapshot repeats a lifecycle property",
             ));
         }
+        if catalog
+            .effective_type(&key.object_type)
+            .and_then(|effective| effective.property(snapshot.property.as_str()))
+            .is_some_and(|property| property.protected)
+        {
+            return Err(invalid(
+                &snapshot.property,
+                "protected lifecycle properties are writable only by rules",
+            ));
+        }
         reconcile(catalog, key, &mut current, snapshot, &turn.id, &mut events)?;
         check_observation_event_limit(events.len())?;
     }
