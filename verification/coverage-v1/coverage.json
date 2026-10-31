@@ -2333,6 +2333,7 @@
         "vendor/zen/core/types/tests/variable.rs",
         "vendor/zen/core/types/tests/variable_type.rs",
         "verification/coverage-v1/negative_canaries.py",
+        "verification/coverage-v1/test_welldb_enrollment.py",
         "verification/coverage-v1/validate.py",
         "verification/coverage-v1/validate_result.py",
         "verification/stripmine-2026-08-22/models/authority-commit.qnt",
