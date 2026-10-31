@@ -341,3 +341,6 @@ pub use state::*;
 
 mod source;
 pub use source::SourceState;
+
+/// Pure metric evaluation semantics.
+pub mod semantics;
