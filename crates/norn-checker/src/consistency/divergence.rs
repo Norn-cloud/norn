@@ -111,10 +111,7 @@ pub fn find_divergences(
         };
         theory.dependencies.push(functional(property));
         let mut inputs = facts.clone();
-        loop {
-            let ChaseOutcome::Conflict(conflict) = chase(&theory, &inputs, budget)? else {
-                break;
-            };
+        while let ChaseOutcome::Conflict(conflict) = chase(&theory, &inputs, budget)? {
             let witness: Vec<usize> = conflict
                 .witness
                 .iter()

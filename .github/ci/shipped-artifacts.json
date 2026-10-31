@@ -2253,7 +2253,7 @@
     },
     {
       "path": "crates/norn-checker/src/consistency/divergence.rs",
-      "sha256": "8013f9ea7b9776c50191fe75c79ddab0b41f50956cd5c8446d10a74766e9c687",
+      "sha256": "bcee90400eb609985a483dbc61166eb17ca332a560534f9772bed0df4cf8d576",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
