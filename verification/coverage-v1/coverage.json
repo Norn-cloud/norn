@@ -2532,7 +2532,9 @@
         "INV-CORE-LINKED-REVERSAL",
         "INV-CORE-QUANTITY-CONSERVATION",
         "INV-CORE-ESCROW-NON-NEGATIVE",
-        "INV-CORE-COMMITMENT-COMPLETION"
+        "INV-CORE-COMMITMENT-COMPLETION",
+        "INV-CORE-STOCK-VALUATION",
+        "INV-CORE-COMMITMENT-CLAIM-DISJOINT"
       ],
       "obligationClaims": [
         {
@@ -2765,6 +2767,30 @@
             ]
           },
           "residual": "No runtime enforcement yet: implementing types are not yet checked to refine the commitment lifecycle, and the deadline timer is an assumption. The model and reference proof cover the pack lifecycle: terminal states absorb, no event removes a commitment, every transition lowers the rank (at most two steps), and the deadline event ends any open commitment."
+        },
+        {
+          "id": "INV-CORE-STOCK-VALUATION",
+          "runtime": "missing",
+          "model": "missing",
+          "proof": "missing",
+          "residual": "Specified only: the parameter is core.Resource.valuation_method (fifo, moving_average); no runtime valuation, model or proof yet.",
+          "evidence": {
+            "runtime": [],
+            "model": [],
+            "proof": []
+          }
+        },
+        {
+          "id": "INV-CORE-COMMITMENT-CLAIM-DISJOINT",
+          "runtime": "missing",
+          "model": "missing",
+          "proof": "missing",
+          "residual": "Specified only: the checker does not yet refuse a type implementing both primitives; tools/norn-ts/test/core-physics.test.ts holds the published registry to it (a TypeScript test, not a runtime selector).",
+          "evidence": {
+            "runtime": [],
+            "model": [],
+            "proof": []
+          }
         }
       ],
       "runtime": {
@@ -2781,7 +2807,7 @@
         "resultArtifacts": []
       },
       "model": {
-        "status": "bounded_model_checked",
+        "status": "partial",
         "bound": "Apalache depth 4 over four journal slots of two legs, accounts 0..3, two units and amounts -2..2, with post, reverse and refused amend or delete steps; and depth 4 over one resource in two locations with quantities 1..2 and holds, plus two commitments due at times 1 and 2 under a clock that advances to 3",
         "artifacts": [
           "verification/core-physics-v1/models/core-value-ledger.qnt",
@@ -2800,7 +2826,7 @@
         ]
       },
       "proof": {
-        "status": "reference_proved",
+        "status": "partial",
         "scope": "reference",
         "artifacts": [
           "verification/core-physics-v1/proofs/CoreValueLedger.lean",
@@ -2817,7 +2843,8 @@
         "The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel.",
         "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops.",
         "Commitment completion has no runtime enforcement yet; the cell deadline timer is assumed to raise the deadline event for every open commitment.",
-        "The quantity and escrow references model one resource and one balance partition; multi-partition behaviour is tested in the cell, not proved."
+        "The quantity and escrow references model one resource and one balance partition; multi-partition behaviour is tested in the cell, not proved.",
+        "Stock valuation and Commitment/Claim disjointness are specified only; the checker does not yet refuse a type implementing both primitives."
       ],
       "sourceFiles": [
         "verification/core-physics-v1/models/core-value-ledger.qnt",

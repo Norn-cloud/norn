@@ -29953,7 +29953,7 @@
     },
     {
       "path": "verification/core-physics-v1/obligations.json",
-      "sha256": "9dbb6dd622e7399c5971ffeadcf15a418db96d4a9c9ae735cd964f2a23aa8e26",
+      "sha256": "285a0be2696c7e2e4a3b13ed6d64a236a5c4bcfce2ae5ae19aafdb8b776a08aa",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30007,7 +30007,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "e9a453c5fa04696be34073e6c483ea45e5a9e7d1cc07808066594ed0a9049114",
+      "sha256": "ebd27328cef522b9ed802dd628c0a2eaaf0d008e7cb3663de59576deb30a1b74",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -30097,7 +30097,7 @@
     },
     {
       "path": "verification/coverage-v1/validate.py",
-      "sha256": "ad9d7b02c6ec119eadfbc2dc94b650554657c1f4bc7820fdeee89ca88d99aff4",
+      "sha256": "75eec830ce4f5872223eba8b99723a12a9377ccf22bf9448544769b8069b918e",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
