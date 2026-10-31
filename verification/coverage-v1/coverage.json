@@ -1504,6 +1504,7 @@
         "Legacy unversioned relation mutation is retained for migration and pre-reset tests, checks only immutable identity plus endpoint existence, is not credited as authoritative RelationIR enforcement, and must be migrated or disabled before public production."
       ],
       "sourceFiles": [
+        "crates/norn-checker/src/claims.rs",
         "crates/norn-checker/src/definition_catalog.rs",
         "crates/norn-checker/src/lint/mapping.rs",
         "crates/norn-checker/src/mapping.rs",
@@ -1514,6 +1515,7 @@
         "crates/norn-checker/src/mapping/vendor.rs",
         "crates/norn-checker/src/ontology.rs",
         "crates/norn-checker/src/ruling.rs",
+        "crates/norn-checker/tests/claims.rs",
         "crates/norn-checker/tests/definition_catalog.rs",
         "crates/norn-checker/tests/ruling_local.rs",
         "crates/norn-ir/src/definition_catalog.rs",
