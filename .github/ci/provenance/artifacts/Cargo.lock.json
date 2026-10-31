@@ -1,0 +1,39 @@
+{
+  "sha256": "ebce11177f845149f1355f42e7f53dc01828a0b94753baad98d24ffca44d0d93",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "Cargo.toml",
+    "crates/norn-api/Cargo.toml",
+    "crates/norn-authz/Cargo.toml",
+    "crates/norn-canonical/Cargo.toml",
+    "crates/norn-cell/Cargo.toml",
+    "crates/norn-checker-wasm/Cargo.toml",
+    "crates/norn-checker/Cargo.toml",
+    "crates/norn-cli/Cargo.toml",
+    "crates/norn-decisions/Cargo.toml",
+    "crates/norn-expr/Cargo.toml",
+    "crates/norn-graph/Cargo.toml",
+    "crates/norn-ir/Cargo.toml",
+    "crates/norn-kernel/Cargo.toml",
+    "crates/norn-projections/Cargo.toml",
+    "crates/norn-skeleton-guard/Cargo.toml",
+    "crates/norn-testkit/Cargo.toml",
+    "vendor/zen/core/engine/Cargo.toml",
+    "vendor/zen/core/expression/Cargo.toml",
+    "vendor/zen/core/macros/Cargo.toml",
+    "vendor/zen/core/template/Cargo.toml",
+    "vendor/zen/core/types/Cargo.toml"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

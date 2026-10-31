@@ -10,6 +10,10 @@
 //!   Norn-owned terms, reviewed external mappings, and closed promotion shapes
 //!   (`packKind: "ontology"`). Semantic only: it never grants mutation
 //!   authority.
+//! - [`OntologyLinkRoot`]: checked term correspondences from one ontology
+//!   pack into another, such as a system pack into the canon
+//!   (`packKind: "link"`, norn#56). Semantic only: executable transforms stay
+//!   `mapping` artifacts, which a correspondence may name but never embeds.
 //!
 //! Both forms are closed at the top. The composition form's artifact
 //! references keep unchecked members in a flattened `additional` map (see
@@ -40,6 +44,7 @@ use crate::rule::JsonObject;
 #[schemars(transform = one_of_forms)]
 pub enum BusinessPackRoot {
     Ontology(OntologyPackRoot),
+    Link(OntologyLinkRoot),
     Composition(CompositionPackRoot),
 }
 
@@ -49,6 +54,7 @@ pub enum BusinessPackRoot {
 pub enum BusinessPackKind {
     Composition,
     Ontology,
+    Link,
 }
 
 /// The only `packKind` literal of a composition pack.
@@ -419,4 +425,127 @@ pub enum ShapeValueType {
     TermRef,
     ExternalIdentifier,
     CategoryRef,
+}
+
+/// The only `packKind` literal of a link pack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OntologyLinkKind {
+    #[default]
+    Link,
+}
+
+/// A link pack: checked correspondences from the terms of one ontology pack
+/// (`fromPack`) to the terms of another (`toPack`). Every active term of the
+/// source pack is accounted for, by a correspondence or a residual
+/// (registry rule).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OntologyLinkRoot {
+    /// In the opaque `norn.link.*` namespace (checker rule).
+    pub pack_id: String,
+    pub pack_version: IrVersion01,
+    pub pack_kind: OntologyLinkKind,
+    /// The pack whose terms are mapped.
+    pub from_pack: LinkedPack,
+    /// The pack the terms map into.
+    pub to_pack: LinkedPack,
+    /// Non-empty.
+    pub correspondences: Vec<TermCorrespondence>,
+    /// Source terms with no correspondence, and why.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub residuals: Vec<LinkResidual>,
+    /// Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "JsonObject")]
+    pub extensions: Option<JsonObject>,
+}
+
+/// One linked pack, pinned by its artifact id and exact artifact version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinkedPack {
+    pub pack_id: String,
+    pub version: String,
+}
+
+/// One checked correspondence from a source-pack term to target-pack terms.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TermCorrespondence {
+    /// Unique within the link.
+    pub correspondence_id: String,
+    /// An active term of `fromPack`.
+    pub from_term_id: String,
+    pub relation: CorrespondenceRelation,
+    /// Active terms of `toPack`: exactly one, or one or more for `derived`.
+    pub to_term_ids: Vec<String>,
+    pub justification: String,
+    /// Non-empty; at least one names a mapped source of `fromPack`'s
+    /// manifest (`source.*`), the others are absolute HTTPS IRIs.
+    pub evidence_refs: Vec<String>,
+    /// 0 through 10000 (checker rule).
+    pub confidence_basis_points: WholeNumber,
+    pub reviewed_by: String,
+    /// UTC RFC 3339.
+    pub reviewed_at: String,
+    /// The `mapping` artifact that executes a `derived` correspondence, when
+    /// one exists. The correspondence is semantic either way.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub transform_ref: Option<String>,
+    /// The ruling that settled a divergence this correspondence resolves.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub ruling_ref: Option<String>,
+}
+
+/// How a source term relates to its target terms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrespondenceRelation {
+    /// Same meaning and extension.
+    Equivalent,
+    /// Every instance of the source term is an instance of the target term.
+    SubsumedBy,
+    /// Every instance of the target term is an instance of the source term.
+    Subsumes,
+    /// The source term's value is a function of the target terms.
+    Derived,
+}
+
+/// A source term the link does not map.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinkResidual {
+    /// An active term of `fromPack`.
+    pub term_id: String,
+    pub reason: ResidualReason,
+    pub note: String,
+}
+
+/// Why a source term has no correspondence (norn-platform#2986; lead
+/// ruling 2026-10-31 for `non_conforming`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResidualReason {
+    /// Detail specific to the source system; the canon drops it.
+    SystemSpecific,
+    /// The target lacks a term for it; the canon should grow one.
+    CanonGap,
+    /// Source behaviour that breaks a target law (editing posted data in
+    /// place). The law holds; the link flags the behaviour and never maps it.
+    NonConforming,
 }
