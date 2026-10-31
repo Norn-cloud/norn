@@ -12,7 +12,7 @@
       "artifacts": {
         "canonical": {
           "path": "pack.json",
-          "sha256": "6be7cc762b7d16ba695b933070e8d191c2da4ffdbcda89d23f531706d189694f"
+          "sha256": "6583550e7184a5e513c11a56aef713b53fb891474a78ce7d35fb58aab535577e"
         },
         "owl": {
           "path": "ontology.owl.ttl",
@@ -24,7 +24,7 @@
         },
         "projectionContract": {
           "path": "projection-contract.json",
-          "sha256": "3a38f9e2cb0ddc87bb9e0b78bde0ba554cbaef317deecd040ec45b5b24df6b50"
+          "sha256": "311375517fc722a8fc00aa938dda99503914d58786ceb5977ba03664b2457f38"
         },
         "proofObligations": {
           "path": "proof-obligations.json",
@@ -39,7 +39,7 @@
       "artifacts": {
         "canonical": {
           "path": "pack.json",
-          "sha256": "fc885fcaabbed29071054e5dff28db243f84250d37ce5a4bb53bf88f27923de6"
+          "sha256": "612fce414c7f0c44dfbe6f45649d0503d414694893b980cba0190e0b5380688a"
         },
         "owl": {
           "path": "ontology.owl.ttl",
@@ -51,7 +51,7 @@
         },
         "projectionContract": {
           "path": "projection-contract.json",
-          "sha256": "edaf42bdd4c8e27c6f46e50e071f53a4def10ed82ddac5beb0361a1a108c3acf"
+          "sha256": "643773dfc0f5044698f0b77ce5f234e33e111b152dce44e216e37a9fb15ba51e"
         },
         "proofObligations": {
           "path": "proof-obligations.json",
