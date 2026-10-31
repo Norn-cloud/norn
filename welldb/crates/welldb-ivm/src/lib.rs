@@ -2,6 +2,13 @@
 //! This slice has no live-view evaluator or export adapter yet.
 #![forbid(unsafe_code)]
 
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Verified export commit sequence.
+pub type Seq = u64;
+/// Verified export content address, supplied by the future adapter.
+pub type RecordHash = String;
+
 /// Norn-compatible normalized exact decimal: |mantissa| < 2^96, scale ≤ 28.
 /// Fields are private so invalid decimals cannot enter through construction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -118,3 +125,213 @@ impl Ord for Decimal {
         }
     }
 }
+
+/// WellDB-owned subset of runtime values; malformed inputs remain representable
+/// so validity refusals can be evaluated in capture order, before selection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Value {
+    /// JSON null (invalid for admitted operands).
+    Null,
+    /// Boolean (invalid for admitted operands).
+    Bool(bool),
+    /// Exact numeric token.
+    Decimal(Decimal),
+    /// Text, enum, ISO date or UTC timestamp token.
+    Text(String),
+}
+/// Stable qualified identity, ordered by type then object ID.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ObjectKey {
+    /// Concrete object type.
+    pub object_type: String,
+    /// Object ID; capture order within the measure type.
+    pub id: String,
+}
+/// Exactly one actor at one authorization epoch (§24.4).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ClassId {
+    /// Stable actor identity, scoped by the future adapter.
+    pub actor: String,
+    /// Authorization epoch.
+    pub epoch: u64,
+}
+/// Per-class authorization capabilities. Context-dependent gates are unsupported.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ClassSpec {
+    /// Actor/epoch pair.
+    pub id: ClassId,
+    /// Unsupported if true.
+    pub requires_acted_by_context: bool,
+    /// Unsupported if true.
+    pub requires_link_context: bool,
+}
+/// Access to one object for one class. Absent access means hidden.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Access {
+    /// Object admitted by the per-record policy.
+    pub visible: bool,
+    /// Operand properties whose markings deny access.
+    pub masked: BTreeSet<String>,
+}
+/// Current object state, retained even when hidden (§24.4).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Record {
+    /// Complete values after adapter-resolved defaults and lifecycle changes.
+    pub values: BTreeMap<String, Value>,
+    /// Class-specific visibility and markings.
+    pub access: BTreeMap<ClassId, Access>,
+    /// Last write's export sequence.
+    pub seq: Seq,
+    /// Last write's export content address.
+    pub hash: RecordHash,
+}
+/// Operand placement; all target operands use the plan's one required link.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Placement {
+    /// Direct measure property.
+    Measure,
+    /// Property on the required single forward-link target.
+    Target,
+}
+/// Admitted property constraint; non-null, non-computed operands only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Property {
+    /// Unformatted text.
+    Text,
+    /// Closed enum values.
+    Enum(BTreeSet<String>),
+    /// ISO Gregorian date, year 0000..9999.
+    Date,
+    /// UTC timestamp at nanosecond precision, year 0000..9999.
+    Timestamp,
+    /// Decimal property maximum fractional scale; no SQL-style precision.
+    Decimal {
+        /// Maximum fractional digits.
+        scale: u8,
+    },
+    /// Conjoined effective constraints, including inherited/reference-chain sets.
+    Constrained {
+        /// The underlying admitted scalar property.
+        base: Box<Property>,
+        /// Every effective constraint set; all must pass.
+        constraints: Vec<ScalarConstraints>,
+    },
+}
+/// Effective scalar constraints mirrored from the source property checker.
+/// Bounds are exact decimal literals, not bounded runtime Decimals: a declared
+/// bound may lie outside the 96-bit runtime domain. Text lengths count Unicode
+/// scalar values; patterns use native regex-lite search (unanchored) semantics.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ScalarConstraints {
+    /// Inclusive exact lower bound, using the native decimal-literal grammar.
+    pub min: Option<String>,
+    /// Inclusive exact upper bound.
+    pub max: Option<String>,
+    /// Minimum number of Unicode scalar values (Text only).
+    pub min_length: Option<u64>,
+    /// Maximum number of Unicode scalar values (Text only).
+    pub max_length: Option<u64>,
+    /// Regex-lite pattern that must have a match (Text only).
+    pub pattern: Option<String>,
+}
+impl Property {
+    /// Base scalar kind, without effective constraint wrappers.
+    #[must_use]
+    pub fn base(&self) -> &Self {
+        match self {
+            Self::Constrained { base, .. } => base.base(),
+            Self::Text | Self::Enum(_) | Self::Date | Self::Timestamp | Self::Decimal { .. } => {
+                self
+            }
+        }
+    }
+}
+/// Ordered, deduplicated field binding (§24.1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Field {
+    /// Property identity.
+    pub property: String,
+    /// Direct or target binding.
+    pub placement: Placement,
+    /// Runtime value constraint.
+    pub kind: Property,
+}
+/// One required forward link across all lowered fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LinkSpec {
+    /// Forward link role.
+    pub role: String,
+    /// Concrete target type.
+    pub target_type: String,
+}
+/// Direct text predicate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Filter {
+    /// Index in the ordered fields.
+    pub field: usize,
+    /// True for equality; false for inequality.
+    pub equal: bool,
+    /// Text literal.
+    pub value: String,
+}
+/// Closed count or fixed-scale exact sum.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Aggregate {
+    /// Count contributing objects.
+    Count,
+    /// Sum a direct decimal, at fixed scale ≤ 28.
+    Sum {
+        /// Amount field index.
+        amount: usize,
+        /// Fixed accumulator scale.
+        scale: u8,
+        /// Optional singleton currency field and value.
+        currency: Option<(usize, String)>,
+    },
+}
+/// Admitted closed metric profile, mirrored rather than linked to Norn (§24.1).
+/// `validate` rejects structural violations; the adapter owns full IR admission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Plan {
+    /// Concrete measure type.
+    pub measure_type: String,
+    /// One link, present iff any lowered field uses its target.
+    pub link: Option<LinkSpec>,
+    /// Capture order: time, optional group, amount/currency, then filters,
+    /// deduplicating repeated paths by first occurrence.
+    pub fields: Vec<Field>,
+    /// Time field index.
+    pub time: usize,
+    /// Optional group field index (at most one).
+    pub group: Option<usize>,
+    /// Count or exact sum.
+    pub aggregate: Aggregate,
+    /// At most sixteen direct equality/inequality predicates.
+    pub filters: Vec<Filter>,
+    /// Fixed half-open window, Unix nanoseconds. Bounds exceed i64 if needed.
+    pub window: (i128, i128),
+    /// Disclosure minimum, including empty ungrouped populations.
+    pub min_group_size: u64,
+    /// Pinned installed definition version.
+    pub definition_version: u64,
+}
+/// Unsupported plan/snapshot reason at build time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Unsupported(pub String);
+
+mod plan;
