@@ -71,7 +71,7 @@ def load(directory: Path = COVERAGE) -> dict[str, Any]:
     return document
 
 
-def write(document: dict[str, Any], directory: Path = COVERAGE) -> None:
+def write(document: dict[str, Any], directory: Path) -> None:
     """Replace `directory` with `document` in the split layout (codemod and canaries)."""
     index = {key: value for key, value in document.items() if key != "subsystems"}
     bodies: dict[str, dict[str, Any]] = {}
