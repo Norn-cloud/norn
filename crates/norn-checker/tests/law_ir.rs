@@ -293,7 +293,15 @@ fn composition_pack_member_kinds_follow_the_canonical_enum() {
     );
     values.push(pack);
     assert!(run(values.clone(), &entities()).is_empty());
-    for kind in ["derived", "unknown"] {
+    for kind in [
+        json!("derived"),
+        json!("unknown"),
+        json!({"law": null}),
+        json!(null),
+        json!(false),
+        json!(0),
+        json!([]),
+    ] {
         let mut invalid = values.clone();
         invalid.last_mut().expect("pack")["payload"]["artifacts"][0]["kind"] = json!(kind);
         assert!(
