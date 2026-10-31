@@ -1,6 +1,6 @@
 //! Preregistration metadata contracts; ledger registration and execution follow.
-use crate::analysis_native::ExportPlan;
 use crate::Refusal;
+use crate::analysis_native::ExportPlan;
 use norn_ir::runtime::encode;
 use serde::{Deserialize, Serialize};
 
@@ -90,4 +90,3 @@ impl Declaration {
         Ok(())
     }
 }
-

@@ -36,4 +36,3 @@ pub struct ExportPlan {
     /// Exact declared population; an unavailable or unreadable member refuses all.
     pub samples: Vec<Sample>,
 }
-
