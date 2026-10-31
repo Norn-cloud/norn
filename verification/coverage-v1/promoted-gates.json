@@ -1194,7 +1194,7 @@
       "id": "cell-abi-runtime",
       "profile": "fast",
       "command": "cargo test --locked -p norn-cell-wasm",
-      "evidenceKind": "test",
+      "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
         {
