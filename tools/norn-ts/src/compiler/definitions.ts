@@ -401,6 +401,9 @@ class DefinitionCompiler {
   private propertyIds(input: ts.Expression): { readonly name: string; readonly properties: ReadonlySet<string> } {
     const root = this.referenced(input, OBJECT_TYPES, "a Norn.type definition")
     const pending = [root], seen = new Set<ts.CallExpression>(), properties = new Set<string>()
+    const enqueue = (ref: ts.Expression, kinds: ReadonlySet<string>, what: string): void => {
+      if (!ts.isStringLiteralLike(this.deref(ref))) pending.push(this.referenced(ref, kinds, what))
+    }
     for (let next = pending.pop(); next; next = pending.pop()) {
       const { call, members } = next
       this.guard(call)
@@ -410,10 +413,10 @@ class DefinitionCompiler {
       for (const p of this.schemas.properties(this.schemas.read(this.member(members, "properties", call)))) properties.add(p.id)
       const parent = members.get("extends"), implemented = members.get("implements")
       if (this.id(call) === INTERFACE) {
-        for (const ref of parent ? this.list(parent) : []) pending.push(this.referenced(ref, INTERFACES, "a Norn.interfaceType definition"))
+        for (const ref of parent ? this.list(parent) : []) enqueue(ref, INTERFACES, "a Norn.interfaceType definition")
       } else {
-        if (parent) pending.push(this.referenced(parent, OBJECT_TYPES, "a Norn.type definition"))
-        for (const ref of implemented ? this.list(implemented) : []) pending.push(this.referenced(ref, INTERFACES, "a Norn.interfaceType definition"))
+        if (parent) enqueue(parent, OBJECT_TYPES, "a Norn.type definition")
+        for (const ref of implemented ? this.list(implemented) : []) enqueue(ref, INTERFACES, "a Norn.interfaceType definition")
       }
     }
     return { name: this.string(this.member(root.members, "name", root.call)), properties }
