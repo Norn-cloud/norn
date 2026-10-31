@@ -94,13 +94,20 @@ fn link_identity_and_endpoints_are_pinned() {
     candidate["payload"]["toPack"] = candidate["payload"]["fromPack"].clone();
     refuses(candidate, "payload.toPack.packId", "two different packs");
 
-    let mut candidate = link();
-    candidate["payload"]["fromPack"]["version"] = json!("latest");
-    refuses(
-        candidate,
-        "payload.fromPack.version",
-        "exact semantic version",
-    );
+    for version in ["latest", "1.2", "v1.2.3", "01.2.3"] {
+        let mut candidate = link();
+        candidate["payload"]["fromPack"]["version"] = json!(version);
+        refuses(
+            candidate,
+            "payload.fromPack.version",
+            "exact semantic version",
+        );
+    }
+    for version in ["1.2.3-rc.1", "1.2.3+build.1"] {
+        let mut candidate = link();
+        candidate["payload"]["fromPack"]["version"] = json!(version);
+        validate(candidate).expect("a strict SemVer pin is exact");
+    }
 }
 
 #[test]

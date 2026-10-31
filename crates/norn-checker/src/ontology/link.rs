@@ -8,8 +8,7 @@ use norn_ir::{Diagnostic, JsonValue};
 
 use super::{
     as_object, diagnostic, is_absolute_web_iri, non_empty_array, reject_unknown_fields,
-    require_literal, required_string, valid_prefixed_id, valid_semantic_version,
-    valid_utc_date_time,
+    require_literal, required_string, valid_prefixed_id, valid_semver, valid_utc_date_time,
 };
 
 pub(super) const LINK_CODE: &str = "ontology_link.validation.invalid_payload";
@@ -161,7 +160,7 @@ fn validate_endpoint(
         diagnostics,
         artifact_id,
         LINK_CODE,
-    ) && !valid_semantic_version(&version)
+    ) && !valid_semver(&version)
     {
         diagnostics.push(diagnostic(
             LINK_CODE,
