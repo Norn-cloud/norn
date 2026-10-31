@@ -422,6 +422,30 @@ pub static REGISTRY: &[CodeEntry] = &[
         Tier::T2,
         "resourceId '{resourceId}' does not match a declared connector resource",
     ),
+    introduced(
+        "consistency.chase.refused",
+        Tier::T3,
+        "the chase exceeded its {resource} budget of {limit}; consistency is unknown",
+        "0.2.0",
+    ),
+    introduced(
+        "consistency.theory.malformed",
+        Tier::T3,
+        "the lowered theory is malformed: {detail}",
+        "0.2.0",
+    ),
+    introduced(
+        "consistency.theory.not_weakly_acyclic",
+        Tier::T3,
+        "TGDs [{rules}] create existential values on a cycle, so the chase may not terminate",
+        "0.2.0",
+    ),
+    introduced(
+        "consistency.theory.vacuous",
+        Tier::T3,
+        "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
+        "0.2.0",
+    ),
     entry(
         "customization.validation.invalid_payload",
         Tier::T2,
