@@ -17,7 +17,7 @@ module order_economics {
     invoiced_total: t.invoiced_total + (if (e.kind == "invoice") e.amount else 0),
     allocated_total: t.allocated_total + (if (e.kind == "payment") e.amount else 0),
   }
-  pure def fold(events: List[Event], cell: int, order: int): Totals =
+  pure def foldOrder(events: List[Event], cell: int, order: int): Totals =
     events.foldl(zero, (t, e) => if (e.cell == cell and e.order == order) add(t, e) else t)
   pure def invoiced(t: Totals): bool = t.invoice_count > 0
   pure def completed(t: Totals): bool = invoiced(t) and t.allocated_total >= t.invoiced_total
@@ -58,7 +58,7 @@ module order_economics {
     any { record({ cell: cell, order: order, kind: kind, id: id, amount: amount }), approve(cell, order) }
   }
   def replayEqualsProjection = 0.to(1).forall(cell => 0.to(1).forall(order =>
-    totals[slot(cell, order)] == fold(ledger, cell, order)))
+    totals[slot(cell, order)] == foldOrder(ledger, cell, order)))
   def refusalIsNoop = not(accepted) implies (ledger == beforeLedger and totals == beforeTotals)
   def appendOnly = ledger.slice(0, beforeLedger.length()) == beforeLedger
   def derived = totals.indices().forall(i =>
