@@ -1,7 +1,11 @@
 {
   "schemaVersion": "norn.verification.coverage.v1",
   "promotedGateManifest": "verification/coverage-v1/promoted-gates.json",
-  "leanCompositeGates": {},
+  "leanCompositeGates": {
+    "verification/kernel-l1/Reference.lean": "scripts/verify-kernel-l1-lean.sh",
+    "verification/kernel-l1/Audit.lean": "scripts/verify-kernel-l1-lean.sh",
+    "verification/kernel-l1/VersionProof.lean": "scripts/verify-kernel-l1-aeneas.sh"
+  },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [
     "missing",
@@ -94,6 +98,13 @@
                 "selectors": [
                   "theorem:accepted_commit_keeps_effect_event_atomic"
                 ]
+              },
+              {
+                "artifact": "verification/kernel-l1/Reference.lean",
+                "command": "scripts/verify-kernel-l1-lean.sh",
+                "selectors": [
+                  "theorem:fresh_atomic"
+                ]
               }
             ]
           }
@@ -121,6 +132,13 @@
                 "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
                 "selectors": [
                   "theorem:stale_commit_rejects"
+                ]
+              },
+              {
+                "artifact": "verification/kernel-l1/VersionProof.lean",
+                "command": "scripts/verify-kernel-l1-aeneas.sh",
+                "selectors": [
+                  "theorem:version_correspondence"
                 ]
               }
             ]
@@ -275,12 +293,17 @@
         "artifacts": [
           "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
           "verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
-          "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean"
+          "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+          "verification/kernel-l1/Reference.lean",
+          "verification/kernel-l1/Audit.lean",
+          "verification/kernel-l1/VersionProof.lean"
         ],
         "commands": [
           "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
           "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
-          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean"
+          "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+          "scripts/verify-kernel-l1-lean.sh",
+          "scripts/verify-kernel-l1-aeneas.sh"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": []
@@ -292,7 +315,8 @@
         "The Verus function is not linked to the retained store implementation by extraction or a proved refinement.",
         "The closed custom ActionIR subset currently contains only upsert_input_object; it is evidence for the authority pattern, not a general verified action language.",
         "Only the final representation-free hard-invariant ownership Boolean predicate has extracted production correspondence. Descriptor parsing, enum mapping, artifact activation/lookup, store-path completeness, and atomic persistence remain outside that proof.",
-        "No normalized durable production profile is retained in this workspace."
+        "No normalized durable production profile is retained in this workspace.",
+        "Kernel L1 adds a single-object mathematical reference and a checked-successor correspondence fragment only. VersionProof does not prove stale-CAS admission, durable persistence, or whole-kernel refinement; no evidence status is promoted by its enrollment."
       ],
       "sourceFiles": [
         "Cargo.toml",

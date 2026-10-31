@@ -18439,7 +18439,7 @@
     },
     {
       "path": "scripts/bootstrap-verification-tools.sh",
-      "sha256": "911f12636b82f96d56a944dcf5f3a0ef870a714ee1c65819e049f5dc04dc0d9d",
+      "sha256": "9aedcb497061029d7ce62a83d0291d2313e3694e212c670c668231b08860bfd4",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18745,7 +18745,7 @@
     },
     {
       "path": "scripts/verify-kernel-l1-lean.sh",
-      "sha256": "042611a98efba0ee08469a6c54eca081a0f89a5441f0918e7eb775b787061a06",
+      "sha256": "2ceb15b60263ac266cd4b6f6c30546bbd2aaeb6e4860583c4f80369d31875745",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18781,7 +18781,7 @@
     },
     {
       "path": "scripts/verify-promoted-subsystems.sh",
-      "sha256": "af640ee1b4375c7d1f797bcd899e05185a2e0b23d385a1b4c9c6dd05084d0764",
+      "sha256": "00fc71d64b3d1cf45b337a79b6cd088c9ae8fab7b4672a44dff1a442d929c60c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29917,7 +29917,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "733dff6ea6f2e98a8e3b8d914992924cd2c479eb6ca33d8e08365687e8075504",
+      "sha256": "eb36b399cf04e89015e265ac75f12286bfeb5978a6b7f4ecc0970654c1870dcb",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29953,7 +29953,7 @@
     },
     {
       "path": "verification/coverage-v1/promoted-gates.json",
-      "sha256": "511ef4ff64c10febee94065c33b3b08920844271eb03a79bffbc357ac92fdf95",
+      "sha256": "d5d631ae2d1c68ffed6411d8e696a334085cebac05be49b94aa805818f7b7886",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",

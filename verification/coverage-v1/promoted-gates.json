@@ -1108,6 +1108,36 @@
       ],
       "resultArtifacts": [],
       "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-l1-reference",
+      "profile": "full",
+      "command": "scripts/verify-kernel-l1-lean.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-l1-version-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-kernel-l1-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
     }
   ]
 }

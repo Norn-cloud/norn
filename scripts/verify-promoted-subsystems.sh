@@ -703,6 +703,14 @@ run_gate full kernel-v2-commit-conformance \
   "cargo test --locked -p norn-testkit --test kernel_quint" rust-tests \
   cargo test --locked -p norn-testkit --test kernel_quint
 
+
+run_gate full kernel-l1-reference \
+  "scripts/verify-kernel-l1-lean.sh" command \
+  scripts/verify-kernel-l1-lean.sh
+run_gate full kernel-l1-version-correspondence \
+  "scripts/verify-kernel-l1-aeneas.sh" command \
+  scripts/verify-kernel-l1-aeneas.sh
+
 mapfile -t declared_quint_results < <(
   python3 - verification/coverage-v1/coverage.json <<'PY'
 import json
