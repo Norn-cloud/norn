@@ -18456,6 +18456,24 @@
       "connector": null
     },
     {
+      "path": "registry/packs/PROJECTION.md",
+      "sha256": "aa28a0ab7ba3492e51da4be90e093aa82b6f73423d5e4478354fdd38d3ae005a",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "registry/packs/canon/artifacts/norn.ontology-pack.canon.json",
       "sha256": "6c7ffa3979f942a7bdf46fbdd4c523c4baa3af7ccf5d4cf4d62dd787787a931d",
       "origin": "authored",
@@ -18548,6 +18566,42 @@
     {
       "path": "registry/packs/erpnext/erpnext.pack.ts",
       "sha256": "8e782d49f947ce219067e8209c3d40be0a201ae83135e54384e249d9619315e3",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
+      "sha256": "dfa17c83f78a68d1f85bd5957c48808e166d5c251fbadc1151bd512631525d0b",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "registry/packs/shopify/artifacts/norn.ontology-pack.shopify.json",
+      "sha256": "c5e4ef7ac1a4385f1773d25e1b0a760c9dad730b2156c3204218712bbdf83bed",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
