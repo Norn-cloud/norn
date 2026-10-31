@@ -1189,6 +1189,21 @@
       ],
       "resultArtifacts": [],
       "generatedArtifacts": []
+    },
+    {
+      "id": "cell-abi-runtime",
+      "profile": "fast",
+      "command": "cargo test --locked -p norn-cell-wasm",
+      "evidenceKind": "test",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "cell-abi",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
     }
   ]
 }

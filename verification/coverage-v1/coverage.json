@@ -2807,11 +2807,11 @@
     {
       "id": "cell-abi",
       "obligations": [
-        "CELL-ABI-EXACT"
+        "KERNEL-V2-COMMIT"
       ],
       "obligationClaims": [
         {
-          "id": "CELL-ABI-EXACT",
+          "id": "KERNEL-V2-COMMIT",
           "runtime": "tested",
           "model": "deferred",
           "proof": "deferred",
