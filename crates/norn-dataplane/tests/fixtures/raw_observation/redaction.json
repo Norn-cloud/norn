@@ -1,0 +1,44 @@
+{
+  "description": "Compliance redaction before load: a versioned deterministic policy, recorded in the observation.",
+  "draft": {
+    "source": "erpnext",
+    "source_id": "Customer/CUST-0042",
+    "event_id": "Customer/CUST-0042@2026-10-01 08:00:00.000001",
+    "kind": "upsert",
+    "source_version": "2026-10-01 08:00:00.000001",
+    "payload": {
+      "doctype": "Customer",
+      "name": "CUST-0042",
+      "modified": "2026-10-01 08:00:00.000001",
+      "customer_name": "Acme Trading",
+      "mobile_no": "+20 100 000 0000",
+      "tax/id": "EG-123",
+      "contacts": [
+        { "contact": "C-1", "email_id": "a@example.com" },
+        { "contact": "C-2", "email_id": "b@example.com" }
+      ]
+    },
+    "extracted_at": 1790841600010,
+    "pipeline_version": "norn-dataplane.frappe-webhook/1"
+  },
+  "policy": {
+    "id": "pii.customer",
+    "version": "2026-10-01",
+    "pointers": ["/mobile_no", "/contacts/*/email_id", "/tax~1id", "/not_present", "/mobile_no"]
+  },
+  "expect": {
+    "redacted": ["/contacts/0/email_id", "/contacts/1/email_id", "/mobile_no", "/tax~1id"],
+    "payload": {
+      "doctype": "Customer",
+      "name": "CUST-0042",
+      "modified": "2026-10-01 08:00:00.000001",
+      "customer_name": "Acme Trading",
+      "mobile_no": "[redacted]",
+      "tax/id": "[redacted]",
+      "contacts": [
+        { "contact": "C-1", "email_id": "[redacted]" },
+        { "contact": "C-2", "email_id": "[redacted]" }
+      ]
+    }
+  }
+}

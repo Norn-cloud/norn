@@ -1,0 +1,31 @@
+[package]
+name = "norn-dataplane"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "raw-observation contract, dlt profile, Iceberg writer glue (ring 1; see AGENTS.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Norn1 canonical hashing of observed payloads (re-exported by norn-ir; the
+# skeleton gives this crate no direct norn-canonical edge).
+norn-ir = { path = "../norn-ir" }
+# Webhook signatures (Frappe and Shopify: base64 HMAC-SHA256, constant-time
+# verification through `Mac::verify_slice`).
+base64 = "0.22.1"
+hmac = "0.12.1"
+sha2 = "0.10.9"
+# Frappe `modified` / Shopify RFC 3339 normalization and the sweep lookback.
+jiff = { version = "0.2.37", default-features = false, features = ["std"] }
+# The raw-observation JSON Schema is generated from the Rust types, never
+# hand-written.
+schemars = { version = "1.2.1", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.20"
+
+[lints]
+workspace = true

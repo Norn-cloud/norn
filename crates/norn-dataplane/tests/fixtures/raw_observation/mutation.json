@@ -1,0 +1,25 @@
+{
+  "description": "A Frappe doc_events on_update webhook for a Sales Order, as received.",
+  "draft": {
+    "source": "erpnext",
+    "source_id": "Sales Order/SO-0001",
+    "event_id": "Sales Order/SO-0001@2026-10-01 09:15:02.481233",
+    "kind": "upsert",
+    "source_version": "2026-10-01 09:15:02.481233",
+    "payload": {
+      "doctype": "Sales Order",
+      "name": "SO-0001",
+      "modified": "2026-10-01 09:15:02.481233",
+      "docstatus": 0,
+      "customer": "CUST-0042",
+      "grand_total": 1250.5,
+      "items": [
+        { "item_code": "WIDGET-1", "qty": 3, "rate": 250.1 },
+        { "item_code": "WIDGET-2", "qty": 1, "rate": 500.2 }
+      ]
+    },
+    "extracted_at": 1790846102512,
+    "pipeline_version": "norn-dataplane.frappe-webhook/1"
+  },
+  "policy": null
+}
