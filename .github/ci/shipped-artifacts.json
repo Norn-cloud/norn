@@ -19017,6 +19017,42 @@
       "connector": null
     },
     {
+      "path": "tools/norn-code/tests/test_xstate.py",
+      "sha256": "55299cdad1887584f4e8276d3307c15120bbe457f4945c6c24986ffd76bda8d0",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "tools/norn-code/xstate.py",
+      "sha256": "ba774b5ff2c6ae2f1573e1cfebb8429b830200ec35e9a9253617241e40a32983",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "tools/norn-ts/README.md",
       "sha256": "a3a9c460341f02dd009f096df633502c11591fc714ee27767fac0029be4e0799",
       "origin": "authored",
@@ -30007,7 +30043,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "b8cc881767822da4171a7de9186ae89326d3da787b35cfac794bdcf021122f63",
+      "sha256": "3dc2230e20f809d23c79edafeae75c86d15caf3ce0106472336dea6c04e661ee",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
