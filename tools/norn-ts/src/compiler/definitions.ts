@@ -394,15 +394,17 @@ class DefinitionCompiler {
 
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
-      "name", "title", "version", "description", "extends", "properties", "invariants", "markings", "propertyMarkings",
+      "name", "title", "version", "description", "extends", "properties", "links", "invariants", "markings", "propertyMarkings",
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const invariantsNode = members.get("invariants")
+    const linksNode = members.get("links")
     return E.interfaceType({
       ...rest,
       extends: members.has("extends") ? this.list(members.get("extends")!).map((parent) => this.typeName(parent, INTERFACES)) : [],
       properties: projected.map((p) => ({ id: p.id, ...(propertyMarkings.has(p.id) ? { markings: propertyMarkings.get(p.id)! } : {}), type: p.projection.type, ...(p.projection.nullable ? { nullable: true } : {}), at: this.at(p.node) })),
+      links: linksNode ? this.list(linksNode).map((x) => this.interfaceLink(x)) : [],
       invariants: invariantsNode ? this.list(invariantsNode).map((x) => this.invariant(x)) : [],
       at: this.at(call),
     })
@@ -470,21 +472,32 @@ class DefinitionCompiler {
 
   private link(input: ts.Expression): E.LinkDecl {
     const m = this.closedRecord(input, ["id", "description", "target", "cardinality", "inverse", "acyclic"], ["id", "target", "cardinality"])
+    const inverse = m.get("inverse"), acyclic = m.get("acyclic")
+    return {
+      ...this.linkCore(m, OBJECT_TYPES),
+      ...(inverse ? { inverse: this.string(inverse) } : {}),
+      ...(acyclic ? { acyclic: this.boolean(acyclic) } : {}),
+    }
+  }
+
+  /** An interface link requirement: its target may be an object type or an interface. */
+  private interfaceLink(input: ts.Expression): E.InterfaceLinkDecl {
+    return this.linkCore(this.closedRecord(input, ["id", "description", "target", "cardinality"], ["id", "target", "cardinality"]), ANY_TYPE)
+  }
+
+  private linkCore(m: Members, targets: ReadonlySet<string>): E.InterfaceLinkDecl {
     const c = this.closedRecord(m.get("cardinality")!, ["to", "from", "required"], ["to", "from"])
     const multiplicity = (e: ts.Expression): E.Multiplicity => {
       const v = this.string(e)
       if (v !== "one" && v !== "many") throw new CompileError("NORN-FLOW-LITERAL", "a multiplicity is \"one\" or \"many\"", e)
       return v
     }
-    const description = m.get("description"), inverse = m.get("inverse"), required = c.get("required")
-    const acyclic = m.get("acyclic")
+    const description = m.get("description"), required = c.get("required")
     return {
       id: this.string(m.get("id")!),
       ...(description ? { description: this.string(description) } : {}),
-      target: this.typeName(m.get("target")!, OBJECT_TYPES),
+      target: this.typeName(m.get("target")!, targets),
       cardinality: { to: multiplicity(c.get("to")!), from: multiplicity(c.get("from")!), ...(required ? { required: this.boolean(required) } : {}) },
-      ...(inverse ? { inverse: this.string(inverse) } : {}),
-      ...(acyclic ? { acyclic: this.boolean(acyclic) } : {}),
     }
   }
 
