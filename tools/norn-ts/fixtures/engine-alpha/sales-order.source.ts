@@ -27,7 +27,7 @@ export const SalesOrder = Norn.type({
       { id: "submit", from: ["draft"], to: "submitted" },
       { id: "approve", from: ["submitted"], to: "approved" },
       { id: "cancel", from: ["draft", "submitted", "approved"], to: "cancelled",
-        guards: [Norn.unsafeZen<boolean>("self.invoice_count == 0")] },
+        guards: [Norn.unsafeZen<boolean>("self.invoice_count == 0 and self.allocated_total == 0")] },
     ],
   }],
 })
@@ -46,7 +46,21 @@ export const PaymentAllocation = Norn.type({
   links: [{ id: "order", target: SalesOrder, cardinality: { to: "one", from: "many", required: true } }],
 })
 
-const InvoiceInput = Schema.Struct({ id: Schema.String, order_id: Schema.String, amount: Schema.Finite, reference: Schema.String })
+export const Create = Norn.action({
+  id: "alpha.order.create", title: "Create order", version: "0.1.0",
+  input: Schema.Struct({
+    id: Schema.String, order_number: Schema.String, order_date: Schema.String,
+    currency: Schema.String, counterparty: Schema.String, total_amount: Norn.decimal(2),
+  }),
+  output: Schema.Struct({ id: Schema.String }),
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  slice: [{ name: "counterparty", type: "party.Customer", key: { property: { from: "input", property: "counterparty" } } }],
+  createLinks: [{ link: "counterparty", targetType: "party.Customer", targetIdField: "counterparty" }],
+  writes: [{ type: SalesOrder, change: "created" }],
+  effect: { kind: "upsert_input_object", type: SalesOrder, objectIdField: "id", writeMode: { kind: "create_only" } },
+})
+
+const InvoiceInput = Schema.Struct({ id: Schema.String, order_id: Schema.String, amount: Norn.decimal(2), reference: Schema.String })
 export const RecordInvoice = Norn.action({
   id: "alpha.order.record_invoice", title: "Record invoice", version: "0.1.0",
   input: InvoiceInput, output: Schema.Struct({ id: Schema.String }),
@@ -58,7 +72,7 @@ export const RecordInvoice = Norn.action({
   effect: { kind: "upsert_input_object", type: SalesInvoice, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
 
-const PaymentInput = Schema.Struct({ id: Schema.String, order_id: Schema.String, amount: Schema.Finite })
+const PaymentInput = Schema.Struct({ id: Schema.String, order_id: Schema.String, amount: Norn.decimal(2) })
 export const RecordPayment = Norn.action({
   id: "alpha.order.record_payment", title: "Record payment allocation", version: "0.1.0",
   input: PaymentInput, output: Schema.Struct({ id: Schema.String }),
@@ -95,6 +109,9 @@ export const Cancel = Norn.action({
 export const Access = Norn.access({
   id: "alpha.order.access", title: "Alpha duty separation", version: "0.1.0",
   rules: [
+    { ruleId: "sales_create", actions: [Create], resourceType: SalesOrder, scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["sales"] } }] },
+    { ruleId: "order_reads", actions: ["norn.read"], resourceType: SalesOrder, scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["sales", "approver", "billing", "treasury"] } }] },
+    { ruleId: "customer_reads", actions: ["norn.read"], resourceType: "party.Customer", scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["sales"] } }] },
     { ruleId: "sales_submit", actions: [Submit], resourceType: SalesOrder, scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["sales"] } }] },
     { ruleId: "approver_decides", actions: [Approve, Cancel], resourceType: SalesOrder, scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["approver"] } }] },
     { ruleId: "billing_invoices", actions: [RecordInvoice], resourceType: SalesInvoice, scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["billing"] } }] },

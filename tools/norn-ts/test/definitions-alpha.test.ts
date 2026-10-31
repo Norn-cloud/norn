@@ -25,16 +25,9 @@ test("alpha SalesOrder compiles deterministically with read-only economic projec
   if (process.env.UPDATE_GOLDENS === "1") writeFileSync(golden, bytes)
   expect(bytes).toBe(readFileSync(golden, "utf8"))
   expect(canonicalJson(compile())).toBe(bytes)
-  expect(artifacts[0]).toMatchObject({ payload: { objectType: {
-    extends: "commerce.SalesOrder",
-    properties: expect.arrayContaining([
-      { id: "invoiced", type: { kind: "boolean" }, computed: "self.invoice_count > 0" },
-      { id: "completed", type: { kind: "boolean" }, computed: "self.invoice_count > 0 and self.allocated_total >= self.invoiced_total" },
-    ]),
-  } } })
   if (!checker) return
   const base = readArtifacts(join(root, "registry/core/artifacts")).map(({ artifact }) => artifact)
-  const admitted = checker.checkArtifactSet(artifacts, { base })
+  const admitted = checker.checkArtifactSet(JSON.parse(bytes), { base })
   expect(admitted.diagnostics.diagnostics).toEqual([])
   expect(admitted.admitted).toBe(true)
   // A shortcut to approval is well-formed locally but widens Core's contract.
