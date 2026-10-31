@@ -45,6 +45,7 @@ OPAM_VERSION="2.5.2"
 OPAM_REPOSITORY_COMMIT="45220c31b03bbad5f368a3e01c8e3da44844c5db"
 FSTAR_VERSION="2026.08.16"
 HAX_COMMIT="37ecb8240fc237377f63614622650190a45617ff"
+AENEAS_COMMIT="74a460a2f80ecea481bbdf1a08f881633c3bb097"
 HAX_RUST_TOOLCHAIN="nightly-2025-11-08-x86_64-unknown-linux-gnu"
 OPAM_SWITCH="norn-verification-5.4.1"
 
@@ -79,6 +80,7 @@ fi
 ln -sfn "$fstar_binary" "$bin_root/fstar.exe"
 
 clone_pin "https://github.com/cryspen/hax.git" "$HAX_COMMIT" "$source_root/hax"
+clone_pin "https://github.com/AeneasVerif/aeneas.git" "$AENEAS_COMMIT" "$source_root/aeneas"
 
 export CARGO_HOME="$tool_root/cargo"
 export RUSTUP_HOME="$tool_root/rustup"
@@ -121,7 +123,34 @@ ln -sfn "$CARGO_HOME/bin/driver-hax-frontend-exporter" "$bin_root/driver-hax-fro
 hax_engine="$(command -v hax-engine)"
 ln -sfn "$hax_engine" "$bin_root/hax-engine"
 
-for source in "$source_root/hax"; do
+"$opam_binary" install --yes \
+  logs.0.10.0 \
+  ppx_deriving.6.1.3 \
+  unionFind.20260226 \
+  visitors.20260520 \
+  yojson.3.0.0 \
+  zarith.1.14 \
+  menhir.20260209 \
+  menhirLib.20260209 \
+  re.1.14.0 \
+  easy_logging.0.8.2 \
+  core_unix.v0.17.1 \
+  ocamlgraph.2.2.0 \
+  progress.0.5.0 \
+  domainslib.0.5.2 \
+  odoc.3.2.1 \
+  ppx_deriving_yojson.3.10.0
+
+if [[ ! -x "$source_root/aeneas/charon/bin/charon" ]]; then
+  make -C "$source_root/aeneas" setup-charon
+fi
+test "$(git -C "$source_root/aeneas/charon" rev-parse HEAD)" = a1d989057b50b0429ccd96c5b4c4428b9b218b21
+make -C "$source_root/aeneas/charon" build-dev
+make -C "$source_root/aeneas" build-dev
+ln -sfn "$source_root/aeneas/bin/aeneas" "$bin_root/aeneas"
+ln -sfn "$source_root/aeneas/charon/bin/charon" "$bin_root/charon"
+
+for source in "$source_root/hax" "$source_root/aeneas"; do
   if [[ -n "$(git -C "$source" status --porcelain=v1 --untracked-files=all)" ]]; then
     echo "pinned source tree became dirty while building: $source" >&2
     exit 1

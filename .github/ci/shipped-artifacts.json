@@ -18421,7 +18421,7 @@
     },
     {
       "path": "scripts/bootstrap-rust-extraction-tools.sh",
-      "sha256": "1724c4bd10dfd9e61a48c448468754f17d1a41ac9d53357dd72ff43ae6e8390c",
+      "sha256": "1857ad38eceba4307bf6459546a3fd417f0df0be97594915c49dbec706fe4e6a",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -18493,7 +18493,7 @@
     },
     {
       "path": "scripts/check-rust-extraction-tools.sh",
-      "sha256": "8620931e04a9f71f063bc4eb88ede626770fb5a50e50132046d5f8b709c796df",
+      "sha256": "7da9ec17f5f76d7b3accd19ad95a889f44f33677ed3e71f6753c01ec5580eb4c",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
