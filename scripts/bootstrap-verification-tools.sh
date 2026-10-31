@@ -48,6 +48,8 @@ elif ! "$ELAN_HOME/bin/elan" toolchain list | grep -Fxq "leanprover/lean4:v$LEAN
   "$ELAN_HOME/bin/elan" toolchain install "leanprover/lean4:v$LEAN_VERSION"
 fi
 
+"$ELAN_HOME/bin/elan" toolchain install leanprover/lean4:v4.34.1
+
 for proxy in elan lean lake leanc leanmake; do
   ln -sfn "$ELAN_HOME/bin/$proxy" "$bin_root/$proxy"
 done

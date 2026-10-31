@@ -7,6 +7,7 @@ import copy
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -140,6 +141,9 @@ def expect_coverage_rejection(label: str, mutate: Callable[[dict[str, Any]], Non
 
 def manifest_canaries() -> None:
     subprocess.run(["python3", str(VALIDATOR)], cwd=ROOT, check=True)
+    expect_manifest_rejection(
+        "promoted gate execution order drift", lambda value: value["gates"].reverse()
+    )
 
     with tempfile.TemporaryDirectory() as directory:
         environment = os.environ.copy()
@@ -458,6 +462,51 @@ def central_obligation_closure_canaries() -> None:
         substituted_gates,
         check_central_pack=True,
     )
+
+
+def core_physics_closure_canaries() -> None:
+    """Deleting a norn.core law everywhere it is referenced must still be rejected."""
+    registry_path = ROOT / "verification/core-physics-v1/obligations.json"
+    removed = "INV-CORE-COMMITMENT-COMPLETION"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["obligations"] = [item for item in registry["obligations"] if item["id"] != removed]
+    coverage = json.loads(COVERAGE.read_text(encoding="utf-8"))
+    for subsystem in coverage["subsystems"]:
+        if subsystem["id"] == "core-physics":
+            subsystem["obligations"].remove(removed)
+            subsystem["obligationClaims"] = [
+                claim for claim in subsystem["obligationClaims"] if claim["id"] != removed
+            ]
+    with tempfile.TemporaryDirectory() as directory:
+        candidate_registry = Path(directory) / "obligations.json"
+        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
+        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        message = expect_coverage_validator_rejection(
+            "coordinated core-physics law deletion",
+            coverage_path=candidate_coverage,
+            core_physics_obligations_path=candidate_registry,
+        )
+    if "norn.core law closure" not in message:
+        raise AssertionError(f"core-physics law deletion was rejected for the wrong reason: {message}")
+
+    # Demoting a law below P0 must not let its coverage claim disappear.
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    for item in registry["obligations"]:
+        if item["id"] == removed:
+            item["priority"] = "P1"
+    with tempfile.TemporaryDirectory() as directory:
+        candidate_registry = Path(directory) / "obligations.json"
+        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
+        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        message = expect_coverage_validator_rejection(
+            "core-physics law demotion and coverage removal",
+            coverage_path=candidate_coverage,
+            core_physics_obligations_path=candidate_registry,
+        )
+    if "core-physics coverage must claim exactly" not in message:
+        raise AssertionError(f"core-physics law demotion was rejected for the wrong reason: {message}")
 
 
 def workflow_verdict_canaries(source: str) -> None:
@@ -884,6 +933,32 @@ def ontology_quint_semantic_mutation_canaries() -> None:
             )
 
 
+def selector_gate_order_canaries() -> None:
+    validator = load_module("norn_selector_order_canary", VALIDATOR)
+    gates = json.loads(GATES.read_text(encoding="utf-8"))["gates"]
+    registrations = re.findall(
+        r"^run_gate (fast|full) ([a-z0-9][a-z0-9-]*)\b",
+        validator.PROMOTED_RUNNER.read_text(encoding="utf-8"), re.MULTILINE,
+    )
+    validator.validate_selector_gate_order(registrations, gates)
+    for profile, gate_id in (
+        ("full", "verification-executed-test-selectors"),
+        ("fast", "verification-executed-test-selectors-fast"),
+    ):
+        producer = {"id": "selector-order-canary-producer", "profile": profile,
+                    "evidenceKind": "rust-tests"}
+        baseline = [(profile, producer["id"]), *registrations]
+        validator.validate_selector_gate_order(baseline, [*gates, producer])
+        candidate = [(profile, gate_id)] + [
+            item for item in baseline if item[1] != gate_id
+        ]
+        try:
+            validator.validate_selector_gate_order(candidate, [*gates, producer])
+        except validator.InvalidCoverage:
+            continue
+        raise AssertionError(f"{profile} selector check accepted before its producers")
+
+
 def gate_binding_canaries() -> None:
     writer = load_module("norn_write_verification_result_canary", WRITER)
     result_validator = load_module("norn_validate_result_canary", RESULT_VALIDATOR)
@@ -1196,9 +1271,11 @@ def main() -> int:
         raise SystemExit("usage: negative_canaries.py")
     manifest_canaries()
     central_obligation_closure_canaries()
+    core_physics_closure_canaries()
     workflow_canaries()
     quint_apalache_retry_canaries()
     ontology_quint_semantic_mutation_canaries()
+    selector_gate_order_canaries()
     gate_binding_canaries()
     proof_hole_canaries()
     selector_declaration_canaries()
