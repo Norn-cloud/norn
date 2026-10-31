@@ -9,8 +9,8 @@
     "registry_version": { "const": "norn.verification.obligations.v1" },
     "obligations": {
       "type": "array",
-      "minItems": 40,
-      "maxItems": 40,
+      "minItems": 28,
+      "maxItems": 28,
       "items": { "$ref": "#/$defs/obligation" }
     }
   },
@@ -55,7 +55,7 @@
           "enum": [
             "authority", "quantity-ledger", "accounting", "inventory",
             "authorization", "artifact-governance", "ontology", "localization", "verification-meta",
-            "rules-policy"
+            "rules-policy", "welldb"
           ]
         },
         "priority": { "enum": ["P0", "P1", "P2"] },
@@ -63,12 +63,27 @@
         "statement": { "type": "string", "minLength": 1 },
         "owner": { "type": "string", "minLength": 1 },
         "assumptions": { "type": "array", "items": { "type": "string" } },
-        "sources": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/sourceLink" } },
-        "checkers": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/checker" } },
+        "sources": { "type": "array", "items": { "$ref": "#/$defs/sourceLink" } },
+        "checkers": { "type": "array", "items": { "$ref": "#/$defs/checker" } },
         "counterexamples": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "implementation_bindings": { "type": "array", "items": { "type": "string" } },
-        "status": { "enum": ["candidate", "specified", "modeled", "proved", "implemented", "blocked"] }
-      }
+        "status": { "enum": ["candidate", "specified", "modeled", "proved", "implemented", "blocked", "planned"] }
+      },
+      "allOf": [{
+        "if": { "properties": { "id": { "const": "INV-WELLDB-ORACLE-PARITY" } } },
+        "then": { "properties": {
+          "domain": { "const": "welldb" },
+          "status": { "const": "planned" },
+          "sources": { "maxItems": 0 },
+          "checkers": { "maxItems": 0 }
+        } },
+        "else": { "properties": {
+          "domain": { "not": { "const": "welldb" } },
+          "status": { "not": { "const": "planned" } },
+          "sources": { "minItems": 1 },
+          "checkers": { "minItems": 1 }
+        } }
+      }]
     }
   }
 }

@@ -13,6 +13,10 @@ const PACK_CODE: &str = "ontology_pack.validation.invalid_payload";
 const INSTANCE_CODE: &str = "ontology_instance.validation.invalid_payload";
 const REGISTRY_CODE: &str = "ontology_registry.validation.invalid_payload";
 const PACK_VERSION: &str = "0.1";
+/// Licences reviewed for redistribution: the only ones a pack may vendor or
+/// `import` from.
+const REDISTRIBUTABLE_LICENSES: [&str; 3] = ["MIT", "Apache-2.0", "CC-BY-4.0"];
+const IMPORT_MODES: [&str; 3] = ["import", "map_only", "study_only"];
 
 #[derive(Debug, Clone)]
 struct RegistryTerm {
@@ -453,11 +457,13 @@ pub(crate) fn validate_ontology_pack_payload(
     validate_shapes(pack.get("shapes"), &terms, diagnostics, artifact_id);
 }
 
+/// Validates the source manifest; returns each source id with its import
+/// mode (absent when the mode itself is invalid).
 fn validate_sources(
     value: Option<&JsonValue>,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
-) -> BTreeSet<String> {
+) -> BTreeMap<String, Option<String>> {
     let Some(sources) = non_empty_array(
         value,
         "payload.sources",
@@ -465,9 +471,9 @@ fn validate_sources(
         artifact_id,
         PACK_CODE,
     ) else {
-        return BTreeSet::new();
+        return BTreeMap::new();
     };
-    let mut ids = BTreeSet::new();
+    let mut ids = BTreeMap::new();
 
     for (index, source) in sources.iter().enumerate() {
         let path = format!("payload.sources[{index}]");
@@ -490,6 +496,8 @@ fn validate_sources(
                 "canonicalUrl",
                 "license",
                 "redistribution",
+                "importMode",
+                "importer",
                 "files",
             ],
             &path,
@@ -505,6 +513,15 @@ fn validate_sources(
             artifact_id,
             PACK_CODE,
         );
+        let import_mode = require_literal(
+            source,
+            "importMode",
+            &IMPORT_MODES,
+            format!("{path}.importMode"),
+            diagnostics,
+            artifact_id,
+            PACK_CODE,
+        );
         if let Some(source_id) = source_id {
             if !valid_prefixed_id(&source_id, "source.") {
                 diagnostics.push(diagnostic(
@@ -514,7 +531,7 @@ fn validate_sources(
                     artifact_id,
                 ));
             }
-            if !ids.insert(source_id) {
+            if ids.insert(source_id, import_mode.clone()).is_some() {
                 diagnostics.push(diagnostic(
                     PACK_CODE,
                     "sourceId must be unique within the pack",
@@ -550,9 +567,173 @@ fn validate_sources(
             diagnostics,
             artifact_id,
         );
+        validate_source_use(
+            source,
+            import_mode.as_deref(),
+            license.as_deref(),
+            &path,
+            diagnostics,
+            artifact_id,
+        );
     }
 
     ids
+}
+
+/// The source-manifest rules of an import mode (norn#56): an imported
+/// source names its importer and carries a redistributable licence, and a
+/// source the pack imports or maps from is content-pinned.
+fn validate_source_use(
+    source: &BTreeMap<String, JsonValue>,
+    import_mode: Option<&str>,
+    license: Option<&str>,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    match source.get("importer") {
+        Some(JsonValue::Object(importer)) => {
+            let importer_path = format!("{path}.importer");
+            reject_unknown_fields(
+                importer,
+                &["name", "version"],
+                &importer_path,
+                diagnostics,
+                artifact_id,
+                PACK_CODE,
+            );
+            if let Some(name) = required_string(
+                importer,
+                "name",
+                format!("{importer_path}.name"),
+                diagnostics,
+                artifact_id,
+                PACK_CODE,
+            ) && !valid_dotted_name(&name)
+            {
+                diagnostics.push(diagnostic(
+                    PACK_CODE,
+                    "importer name must be a lowercase dotted identifier",
+                    format!("{importer_path}.name"),
+                    artifact_id,
+                ));
+            }
+            if let Some(version) = required_string(
+                importer,
+                "version",
+                format!("{importer_path}.version"),
+                diagnostics,
+                artifact_id,
+                PACK_CODE,
+            ) && !valid_semver(&version)
+            {
+                diagnostics.push(diagnostic(
+                    PACK_CODE,
+                    "importer version must be a strict semantic version",
+                    format!("{importer_path}.version"),
+                    artifact_id,
+                ));
+            }
+        }
+        Some(_) => diagnostics.push(diagnostic(
+            PACK_CODE,
+            "importer must be an object",
+            format!("{path}.importer"),
+            artifact_id,
+        )),
+        None if import_mode == Some("import") => diagnostics.push(diagnostic(
+            PACK_CODE,
+            "an imported source must name its importer",
+            format!("{path}.importer"),
+            artifact_id,
+        )),
+        None => {}
+    }
+
+    if import_mode == Some("import")
+        && !license.is_some_and(|license| REDISTRIBUTABLE_LICENSES.contains(&license))
+    {
+        diagnostics.push(diagnostic(
+            PACK_CODE,
+            "an imported source's license is not on the reviewed redistribution allowlist; map it instead",
+            format!("{path}.license"),
+            artifact_id,
+        ));
+    }
+
+    if matches!(import_mode, Some("import" | "map_only")) && !source_is_content_pinned(source) {
+        diagnostics.push(diagnostic(
+            PACK_CODE,
+            "a source the pack imports or maps from must be content-pinned: file hashes, or a commit or hash in releaseId",
+            format!("{path}.releaseId"),
+            artifact_id,
+        ));
+    }
+}
+
+/// Two or more dot-separated components, each a lowercase identifier
+/// (`norn.importers.frappe`).
+fn valid_dotted_name(value: &str) -> bool {
+    let mut components = value.split('.');
+    let valid = |component: &str| {
+        component
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase())
+            && !component.ends_with('-')
+            && component.chars().all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+            })
+    };
+    components.clone().count() >= 2 && components.all(valid)
+}
+
+/// A strict SemVer 2.0.0 version: `MAJOR.MINOR.PATCH` without leading
+/// zeroes, with optional pre-release and build identifiers.
+fn valid_semver(value: &str) -> bool {
+    let (rest, build) = match value.split_once('+') {
+        Some((rest, build)) => (rest, Some(build)),
+        None => (value, None),
+    };
+    let (core, pre) = match rest.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (rest, None),
+    };
+    let numeric = |part: &str| {
+        !part.is_empty()
+            && part.chars().all(|character| character.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))
+    };
+    let identifier = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    };
+    let core_parts: Vec<&str> = core.split('.').collect();
+    core_parts.len() == 3
+        && core_parts.iter().all(|part| numeric(part))
+        && pre.is_none_or(|pre| {
+            pre.split('.').all(|part| {
+                identifier(part)
+                    && (!part.chars().all(|character| character.is_ascii_digit()) || numeric(part))
+            })
+        })
+        && build.is_none_or(|build| build.split('.').all(identifier))
+}
+
+/// Whether a source's bytes are fixed: a content hash as (or after `@` in)
+/// the release id, or at least one file hash.
+fn source_is_content_pinned(source: &BTreeMap<String, JsonValue>) -> bool {
+    let release_pinned = string_field(source, "releaseId").is_some_and(|release| {
+        valid_content_hash(release)
+            || release
+                .rsplit_once('@')
+                .is_some_and(|(_, pin)| valid_content_hash(pin))
+    });
+    let file_pinned =
+        matches!(source.get("files"), Some(JsonValue::Array(files)) if !files.is_empty());
+    release_pinned || file_pinned
 }
 
 fn validate_source_files(
@@ -595,7 +776,7 @@ fn validate_source_files(
         ));
     }
     if redistribution == Some("vendored")
-        && !matches!(license, Some("MIT" | "Apache-2.0" | "CC-BY-4.0"))
+        && !license.is_some_and(|license| REDISTRIBUTABLE_LICENSES.contains(&license))
     {
         diagnostics.push(diagnostic(
             PACK_CODE,
@@ -624,14 +805,23 @@ fn validate_source_files(
             artifact_id,
             PACK_CODE,
         );
-        required_string(
+        if let Some(file_path) = required_string(
             file,
             "path",
             format!("{path}.path"),
             diagnostics,
             artifact_id,
             PACK_CODE,
-        );
+        ) && redistribution == Some("reference_only")
+            && !is_absolute_web_iri(&file_path)
+        {
+            diagnostics.push(diagnostic(
+                PACK_CODE,
+                "a reference_only source pins its bytes by absolute HTTPS URL",
+                format!("{path}.path"),
+                artifact_id,
+            ));
+        }
         if let Some(hash) = required_string(
             file,
             "sha256",
@@ -765,7 +955,7 @@ fn validate_parent_cycles(
 
 fn validate_mappings(
     value: Option<&JsonValue>,
-    source_ids: &BTreeSet<String>,
+    source_ids: &BTreeMap<String, Option<String>>,
     terms: &BTreeMap<String, String>,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
@@ -2155,7 +2345,7 @@ fn validate_mapping_identity(
 fn validate_mapping_references(
     mapping: &BTreeMap<String, JsonValue>,
     path: &str,
-    source_ids: &BTreeSet<String>,
+    source_ids: &BTreeMap<String, Option<String>>,
     terms: &BTreeMap<String, String>,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
@@ -2186,15 +2376,22 @@ fn validate_mapping_references(
         artifact_id,
         PACK_CODE,
     );
-    if let Some(source_id) = source_id.as_deref()
-        && !source_ids.contains(source_id)
-    {
-        diagnostics.push(diagnostic(
-            PACK_CODE,
-            format!("sourceId '{source_id}' does not resolve within the pack"),
-            format!("{path}.sourceId"),
-            artifact_id,
-        ));
+    if let Some(source_id) = source_id.as_deref() {
+        match source_ids.get(source_id) {
+            None => diagnostics.push(diagnostic(
+                PACK_CODE,
+                format!("sourceId '{source_id}' does not resolve within the pack"),
+                format!("{path}.sourceId"),
+                artifact_id,
+            )),
+            Some(Some(mode)) if mode == "study_only" => diagnostics.push(diagnostic(
+                PACK_CODE,
+                format!("sourceId '{source_id}' is study_only; a mapping may cite only import or map_only sources"),
+                format!("{path}.sourceId"),
+                artifact_id,
+            )),
+            Some(_) => {}
+        }
     }
     if let Some(iri) = required_string(
         mapping,
@@ -2288,7 +2485,7 @@ fn validate_mapping_review(
 fn validate_mapping_record(
     mapping: &BTreeMap<String, JsonValue>,
     path: &str,
-    source_ids: &BTreeSet<String>,
+    source_ids: &BTreeMap<String, Option<String>>,
     terms: &BTreeMap<String, String>,
     state: &mut MappingValidation,
     diagnostics: &mut Vec<Diagnostic>,

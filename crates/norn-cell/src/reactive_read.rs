@@ -1069,17 +1069,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         for property in &identity.properties {
             let name = property.as_str();
             let column = self.model().column(owner, name)?;
-            if column.table.table != key_table.table
-                || column.column.column.is_none()
-                || column.column.nullable
-            {
+            let Some(physical) = column.column.column.as_deref() else {
+                return Ok((Vec::new(), false));
+            };
+            if column.table.table != key_table.table || column.column.nullable {
                 return Ok((Vec::new(), false));
             }
             let Some(value) = provided.get(name) else {
                 return Ok((Vec::new(), false));
             };
             property_bindings.push(encode(owner, column.column, value)?);
-            columns.push(quote_identifier(name));
+            columns.push(quote_identifier(physical));
         }
 
         let cap = max_rows.min(budget.rows).min(
@@ -1959,7 +1959,7 @@ mod binding_read_tests {
         let reader = store.read();
         for (sql, bindings, index, range) in [
             (
-                "EXPLAIN QUERY PLAN SELECT r.rowid, octet_length(r.\"_id\") + octet_length(r.\"_type\"), octet_length(r.\"email\") FROM \"o:test.Customer\" AS r INDEXED BY \"o:test.Customer/binding-property/email/asc\" WHERE r.\"_world\" = ?1 AND r.\"email\" IS NOT NULL AND (r.\"email\", r.\"_id\") > (?3, ?2) ORDER BY r.\"email\" ASC, r.\"_id\" ASC LIMIT ?4",
+                "EXPLAIN QUERY PLAN SELECT r.rowid, octet_length(r.\"_id\") + octet_length(r.\"_type\"), octet_length(r.\"p:email\") FROM \"o:test.Customer\" AS r INDEXED BY \"o:test.Customer/binding-property/email/asc\" WHERE r.\"_world\" = ?1 AND r.\"p:email\" IS NOT NULL AND (r.\"p:email\", r.\"_id\") > (?3, ?2) ORDER BY r.\"p:email\" ASC, r.\"_id\" ASC LIMIT ?4",
                 vec![
                     SqlValue::from(MAIN_WORLD),
                     SqlValue::from("C-alpha"),
@@ -1967,10 +1967,10 @@ mod binding_read_tests {
                     SqlValue::from(2_i64),
                 ],
                 "binding-property/email/asc",
-                "(email,_id)>",
+                "(p:email,_id)>",
             ),
             (
-                "EXPLAIN QUERY PLAN SELECT r.rowid, octet_length(r.\"_id\") + octet_length(r.\"_type\"), octet_length(r.\"email\") FROM \"o:test.Customer\" AS r INDEXED BY \"o:test.Customer/binding-property/email/desc\" WHERE r.\"_world\" = ?1 AND r.\"email\" = ?3 AND r.\"_id\" > ?2 ORDER BY r.\"_id\" ASC LIMIT ?4",
+                "EXPLAIN QUERY PLAN SELECT r.rowid, octet_length(r.\"_id\") + octet_length(r.\"_type\"), octet_length(r.\"p:email\") FROM \"o:test.Customer\" AS r INDEXED BY \"o:test.Customer/binding-property/email/desc\" WHERE r.\"_world\" = ?1 AND r.\"p:email\" = ?3 AND r.\"_id\" > ?2 ORDER BY r.\"_id\" ASC LIMIT ?4",
                 vec![
                     SqlValue::from(MAIN_WORLD),
                     SqlValue::from("C-alpha"),
@@ -2369,7 +2369,7 @@ mod binding_read_tests {
         let plan = reader
             .conn
             .query(
-                "EXPLAIN QUERY PLAN SELECT k.\"_id\", r.\"_type\" FROM \"o:test.Customer\" AS k INDEXED BY \"o:test.Customer/key:by_email\" JOIN \"o:test.Customer\" AS r ON r.\"_world\" = k.\"_world\" AND r.\"_id\" = k.\"_id\" WHERE k.\"_scope\" = ?1 AND k.\"_world\" = ?2 AND k.\"email\" = ?3 AND r.\"_type\" IN ('test.Customer', 'test.KeyAccount', 'test.Prospect') LIMIT ?4",
+                "EXPLAIN QUERY PLAN SELECT k.\"_id\", r.\"_type\" FROM \"o:test.Customer\" AS k INDEXED BY \"o:test.Customer/key:by_email\" JOIN \"o:test.Customer\" AS r ON r.\"_world\" = k.\"_world\" AND r.\"_id\" = k.\"_id\" WHERE k.\"_scope\" = ?1 AND k.\"_world\" = ?2 AND k.\"p:email\" = ?3 AND r.\"_type\" IN ('test.Customer', 'test.KeyAccount', 'test.Prospect') LIMIT ?4",
                 &[
                     SqlValue::from("org_demo/dev"),
                     SqlValue::from(MAIN_WORLD),
