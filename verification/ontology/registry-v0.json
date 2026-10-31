@@ -12,7 +12,7 @@
       "artifacts": {
         "canonical": {
           "path": "pack.json",
-          "sha256": "6583550e7184a5e513c11a56aef713b53fb891474a78ce7d35fb58aab535577e"
+          "sha256": "b399ccc8899c99bd196f7a5da2d04c8d05dcdbf7d5660bc5bc988381fa8cee34"
         },
         "owl": {
           "path": "ontology.owl.ttl",
@@ -24,7 +24,7 @@
         },
         "projectionContract": {
           "path": "projection-contract.json",
-          "sha256": "311375517fc722a8fc00aa938dda99503914d58786ceb5977ba03664b2457f38"
+          "sha256": "d54c7a4e65fcf7e995cd192ded606dfe716e8d7c61a589b821856bda9535a262"
         },
         "proofObligations": {
           "path": "proof-obligations.json",
