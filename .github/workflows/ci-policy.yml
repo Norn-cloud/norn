@@ -177,10 +177,15 @@ jobs:
           tool: nextest@0.9.150
       - run: bash scripts/ci/core.sh ${{ matrix.phase }}
   # The single required verdict: every planned job ran and passed, and outside
-  # pull requests the plan was the full one.
+  # pull requests the plan was the full one. A cancelled pull request run ends
+  # without it, so the run that superseded it never waits behind a verdict job
+  # in the runner queue. Every other cancelled run still writes failure, and
+  # the merge queue's own run must pass the full plan.
   full:
     needs: [core, plan, test, phase]
-    if: always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
+    if: >-
+      always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' &&
+      !(cancelled() && github.event_name == 'pull_request')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
