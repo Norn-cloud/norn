@@ -1,0 +1,782 @@
+[
+  {
+    "artifactId": "alpha.SalesOrder.entity",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "entity",
+    "lifecycle": "draft",
+    "name": "Alpha sales order",
+    "namespace": "alpha",
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "extends": "commerce.SalesOrder",
+        "lifecycles": [
+          {
+            "initial": [
+              "draft"
+            ],
+            "property": "status",
+            "terminal": [
+              "cancelled"
+            ],
+            "transitions": [
+              {
+                "from": [
+                  "draft"
+                ],
+                "id": "submit",
+                "to": "submitted"
+              },
+              {
+                "from": [
+                  "submitted"
+                ],
+                "id": "approve",
+                "to": "approved"
+              },
+              {
+                "from": [
+                  "draft",
+                  "submitted",
+                  "approved"
+                ],
+                "guards": [
+                  "self.invoice_count == 0"
+                ],
+                "id": "cancel",
+                "to": "cancelled"
+              }
+            ]
+          }
+        ],
+        "name": "alpha.SalesOrder",
+        "properties": [
+          {
+            "default": "draft",
+            "id": "status",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "draft"
+                },
+                {
+                  "value": "submitted"
+                },
+                {
+                  "value": "approved"
+                },
+                {
+                  "value": "cancelled"
+                }
+              ]
+            }
+          },
+          {
+            "default": "0",
+            "id": "invoice_count",
+            "type": {
+              "kind": "integer"
+            }
+          },
+          {
+            "default": "0",
+            "id": "invoiced_total",
+            "type": {
+              "kind": "decimal",
+              "scale": 2
+            }
+          },
+          {
+            "default": "0",
+            "id": "allocated_total",
+            "type": {
+              "kind": "decimal",
+              "scale": 2
+            }
+          },
+          {
+            "computed": "self.invoice_count > 0",
+            "id": "invoiced",
+            "type": {
+              "kind": "boolean"
+            }
+          },
+          {
+            "computed": "self.invoice_count > 0 and self.allocated_total >= self.invoiced_total",
+            "id": "completed",
+            "type": {
+              "kind": "boolean"
+            }
+          },
+          {
+            "computed": "self.invoiced_total - self.allocated_total",
+            "id": "outstanding",
+            "type": {
+              "kind": "decimal",
+              "scale": 2
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/engine-alpha/sales-order.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_alpha"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "alpha.SalesInvoice.entity",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "entity",
+    "lifecycle": "draft",
+    "name": "Invoice fact",
+    "namespace": "alpha",
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "identity": [
+          {
+            "name": "primary",
+            "properties": [
+              "id"
+            ]
+          }
+        ],
+        "links": [
+          {
+            "cardinality": {
+              "from": "many",
+              "required": true,
+              "to": "one"
+            },
+            "id": "order",
+            "target": "alpha.SalesOrder"
+          }
+        ],
+        "name": "alpha.SalesInvoice",
+        "properties": [
+          {
+            "id": "id",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "id": "order_id",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "id": "amount",
+            "type": {
+              "kind": "decimal",
+              "scale": 2
+            }
+          },
+          {
+            "id": "reference",
+            "type": {
+              "kind": "text"
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/engine-alpha/sales-order.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_alpha"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "alpha.PaymentAllocation.entity",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "entity",
+    "lifecycle": "draft",
+    "name": "Payment allocation fact",
+    "namespace": "alpha",
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "identity": [
+          {
+            "name": "primary",
+            "properties": [
+              "id"
+            ]
+          }
+        ],
+        "links": [
+          {
+            "cardinality": {
+              "from": "many",
+              "required": true,
+              "to": "one"
+            },
+            "id": "order",
+            "target": "alpha.SalesOrder"
+          }
+        ],
+        "name": "alpha.PaymentAllocation",
+        "properties": [
+          {
+            "id": "id",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "id": "order_id",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "id": "amount",
+            "type": {
+              "kind": "decimal",
+              "scale": 2
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/engine-alpha/sales-order.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_alpha"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "alpha.order.record_invoice.action",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "action",
+    "lifecycle": "draft",
+    "name": "Record invoice",
+    "namespace": "alpha",
+    "payload": {
+      "actionId": "alpha.order.record_invoice",
+      "createLinks": [
+        {
+          "link": "order",
+          "targetIdField": "order_id",
+          "targetType": "alpha.SalesOrder"
+        }
+      ],
+      "effectProgram": {
+        "entityArtifactId": "alpha.SalesInvoice.entity",
+        "entityArtifactVersion": "0.1.0",
+        "kind": "upsert_input_object",
+        "objectIdField": "id",
+        "objectKind": "alpha.SalesInvoice",
+        "writeMode": {
+          "kind": "create_only"
+        }
+      },
+      "idempotent": true,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "id": {
+            "type": "string"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_id",
+          "amount",
+          "reference"
+        ],
+        "type": "object"
+      },
+      "ledgered": true,
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "preconditions": [
+        "slice.order.status == \"approved\" and input.amount > 0"
+      ],
+      "scopeRequired": [
+        "orgId",
+        "environmentId"
+      ],
+      "slice": [
+        {
+          "key": {
+            "property": {
+              "from": "input",
+              "property": "order_id"
+            }
+          },
+          "name": "order",
+          "objectType": "alpha.SalesOrder"
+        }
+      ],
+      "title": "Record invoice",
+      "writes": [
+        {
+          "change": "created",
+          "entityKind": "alpha.SalesInvoice"
+        }
+      ]
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/engine-alpha/sales-order.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_alpha"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "alpha.order.record_payment.action",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "action",
+    "lifecycle": "draft",
+    "name": "Record payment allocation",
+    "namespace": "alpha",
+    "payload": {
+      "actionId": "alpha.order.record_payment",
+      "createLinks": [
+        {
+          "link": "order",
+          "targetIdField": "order_id",
+          "targetType": "alpha.SalesOrder"
+        }
+      ],
+      "effectProgram": {
+        "entityArtifactId": "alpha.PaymentAllocation.entity",
+        "entityArtifactVersion": "0.1.0",
+        "kind": "upsert_input_object",
+        "objectIdField": "id",
+        "objectKind": "alpha.PaymentAllocation",
+        "writeMode": {
+          "kind": "create_only"
+        }
+      },
+      "idempotent": true,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "id": {
+            "type": "string"
+          },
+          "order_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_id",
+          "amount"
+        ],
+        "type": "object"
+      },
+      "ledgered": true,
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "preconditions": [
+        "slice.order.status == \"approved\" and input.amount > 0"
+      ],
+      "scopeRequired": [
+        "orgId",
+        "environmentId"
+      ],
+      "slice": [
+        {
+          "key": {
+            "property": {
+              "from": "input",
+              "property": "order_id"
+            }
+          },
+          "name": "order",
+          "objectType": "alpha.SalesOrder"
+        }
+      ],
+      "title": "Record payment allocation",
+      "writes": [
+        {
+          "change": "created",
+          "entityKind": "alpha.PaymentAllocation"
+        }
+      ]
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/engine-alpha/sales-order.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_alpha"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "alpha.order.submit.action",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "action",
+    "lifecycle": "draft",
+    "name": "Submit order",
+    "namespace": "alpha",
+    "payload": {
+      "actionId": "alpha.order.submit",
+      "effectProgram": {
+        "entityArtifactId": "alpha.SalesOrder.entity",
+        "entityArtifactVersion": "0.1.0",
+        "kind": "fire_transition",
+        "lifecycle": "status",
+        "objectIdField": "id",
+        "objectKind": "alpha.SalesOrder",
+        "transition": "submit"
+      },
+      "idempotent": false,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ledgered": true,
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "scopeRequired": [
+        "orgId",
+        "environmentId"
+      ],
+      "title": "Submit order",
+      "writes": [
+        {
+          "change": "modified",
+          "entityKind": "alpha.SalesOrder"
+        }
+      ]
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/engine-alpha/sales-order.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_alpha"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "alpha.order.approve.action",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "action",
+    "lifecycle": "draft",
+    "name": "Approve order",
+    "namespace": "alpha",
+    "payload": {
+      "actionId": "alpha.order.approve",
+      "effectProgram": {
+        "entityArtifactId": "alpha.SalesOrder.entity",
+        "entityArtifactVersion": "0.1.0",
+        "kind": "fire_transition",
+        "lifecycle": "status",
+        "objectIdField": "id",
+        "objectKind": "alpha.SalesOrder",
+        "transition": "approve"
+      },
+      "idempotent": false,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ledgered": true,
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "scopeRequired": [
+        "orgId",
+        "environmentId"
+      ],
+      "title": "Approve order",
+      "writes": [
+        {
+          "change": "modified",
+          "entityKind": "alpha.SalesOrder"
+        }
+      ]
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/engine-alpha/sales-order.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_alpha"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "alpha.order.cancel.action",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "action",
+    "lifecycle": "draft",
+    "name": "Cancel order",
+    "namespace": "alpha",
+    "payload": {
+      "actionId": "alpha.order.cancel",
+      "effectProgram": {
+        "entityArtifactId": "alpha.SalesOrder.entity",
+        "entityArtifactVersion": "0.1.0",
+        "kind": "fire_transition",
+        "lifecycle": "status",
+        "objectIdField": "id",
+        "objectKind": "alpha.SalesOrder",
+        "transition": "cancel"
+      },
+      "idempotent": false,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ledgered": true,
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "scopeRequired": [
+        "orgId",
+        "environmentId"
+      ],
+      "title": "Cancel order",
+      "writes": [
+        {
+          "change": "modified",
+          "entityKind": "alpha.SalesOrder"
+        }
+      ]
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/engine-alpha/sales-order.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_alpha"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "alpha.order.access.policy",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "policy",
+    "lifecycle": "draft",
+    "name": "Alpha duty separation",
+    "namespace": "alpha",
+    "payload": {
+      "accessVersion": "0.1",
+      "policyId": "alpha.order.access",
+      "rules": [
+        {
+          "actions": [
+            "alpha.order.submit"
+          ],
+          "allOf": [
+            {
+              "role": {
+                "anyOf": [
+                  "sales"
+                ]
+              }
+            }
+          ],
+          "resourceType": "alpha.SalesOrder",
+          "ruleId": "sales_submit",
+          "scope": {
+            "dimensions": [
+              "org",
+              "environment"
+            ]
+          }
+        },
+        {
+          "actions": [
+            "alpha.order.approve",
+            "alpha.order.cancel"
+          ],
+          "allOf": [
+            {
+              "role": {
+                "anyOf": [
+                  "approver"
+                ]
+              }
+            }
+          ],
+          "resourceType": "alpha.SalesOrder",
+          "ruleId": "approver_decides",
+          "scope": {
+            "dimensions": [
+              "org",
+              "environment"
+            ]
+          }
+        },
+        {
+          "actions": [
+            "alpha.order.record_invoice"
+          ],
+          "allOf": [
+            {
+              "role": {
+                "anyOf": [
+                  "billing"
+                ]
+              }
+            }
+          ],
+          "resourceType": "alpha.SalesInvoice",
+          "ruleId": "billing_invoices",
+          "scope": {
+            "dimensions": [
+              "org",
+              "environment"
+            ]
+          }
+        },
+        {
+          "actions": [
+            "alpha.order.record_payment"
+          ],
+          "allOf": [
+            {
+              "role": {
+                "anyOf": [
+                  "treasury"
+                ]
+              }
+            }
+          ],
+          "resourceType": "alpha.PaymentAllocation",
+          "ruleId": "treasury_allocates",
+          "scope": {
+            "dimensions": [
+              "org",
+              "environment"
+            ]
+          }
+        }
+      ]
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/engine-alpha/sales-order.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_alpha"
+    },
+    "version": "0.1.0"
+  }
+]
