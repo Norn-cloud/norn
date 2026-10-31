@@ -8761,7 +8761,8 @@
           "retrievedAt",
           "canonicalUrl",
           "license",
-          "redistribution"
+          "redistribution",
+          "importMode"
         ],
         "properties": {
           "canonicalUrl": {
@@ -8773,7 +8774,20 @@
             "items": {
               "$ref": "#/components/schemas/NornIrOntologySourceFile"
             },
-            "description": "Required (non-empty) for vendored sources."
+            "description": "Required (non-empty) for vendored sources. A source the pack imports\nor maps from is content-pinned: by these hashes or by a commit or\nhash in `releaseId` (checker rule)."
+          },
+          "importMode": {
+            "type": "string",
+            "description": "How the pack uses the source (norn#56 source manifest).",
+            "enum": [
+              "import",
+              "map_only",
+              "study_only"
+            ]
+          },
+          "importer": {
+            "$ref": "#/components/schemas/NornIrSourceImporter",
+            "description": "The importer that read the source. Required for `import` (checker\nrule); a reviewed hand mapping has none."
           },
           "license": {
             "type": "string"
@@ -8802,7 +8816,7 @@
       },
       "NornIrOntologySourceFile": {
         "type": "object",
-        "description": "A hash-pinned file of a vendored source.",
+        "description": "A hash-pinned file of a source: a repository path for vendored files,\nor the absolute HTTPS URL of the pinned bytes otherwise.",
         "required": [
           "path",
           "sha256"
@@ -11435,6 +11449,34 @@
           "version": {
             "type": "string",
             "description": "The system's version, when the source reports it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSourceImportMode": {
+        "type": "string",
+        "description": "How a pack uses one of its sources.\n\n`import` takes content into the pack's own terms, so its licence must\npermit redistribution. `map_only` only maps Norn terms to the source; no\nsource content enters the pack (the clean-room mode for copyleft and\nAPI-terms sources). `study_only` informs review; no mapping may cite it.",
+        "enum": [
+          "import",
+          "map_only",
+          "study_only"
+        ]
+      },
+      "NornIrSourceImporter": {
+        "type": "object",
+        "description": "The importer that read a source: an id and its strict version.",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "A lowercase dotted identifier (`norn.importers.frappe`)."
+          },
+          "version": {
+            "type": "string",
+            "description": "A strict semantic version."
           }
         },
         "additionalProperties": false
