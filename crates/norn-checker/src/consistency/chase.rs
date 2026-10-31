@@ -254,15 +254,17 @@ fn weakly_acyclic(
     };
     let mut cyclic = BTreeSet::new();
     for (from, to, rule) in special {
-        let reached = reachability(&graph, &[to], Direction::Downstream, limits).map_err(
-            |error| match error {
-                norn_graph::Error::BudgetExceeded(exceeded) => ChaseError::BudgetExceeded {
-                    resource: "steps",
-                    limit: exceeded.limit,
-                },
-                other => ChaseError::Internal(other.to_string()),
-            },
-        )?;
+        let reached =
+            reachability(&graph, &[to], Direction::Downstream, limits).map_err(|error| {
+                if let norn_graph::Error::BudgetExceeded(exceeded) = &error {
+                    ChaseError::BudgetExceeded {
+                        resource: "steps",
+                        limit: exceeded.limit,
+                    }
+                } else {
+                    ChaseError::Internal(error.to_string())
+                }
+            })?;
         if reached.contains(&from) {
             cyclic.insert(rule.to_owned());
         }
@@ -467,7 +469,9 @@ impl State {
                     }
                     let (mut rules, inputs) = self.support(&used);
                     rules.insert(index);
-                    let (from, to) = match (&left, &right) {
+                    // The replaced value is never a constant; between nulls
+                    // the newer one is replaced.
+                    let replace_left = match (&left, &right) {
                         (Value::Const(_), Value::Const(_)) => {
                             let matched = used
                                 .iter()
@@ -482,10 +486,14 @@ impl State {
                                 inputs,
                             }));
                         }
-                        (Value::Null(_), Value::Const(_)) => (left, right),
-                        (Value::Const(_), Value::Null(_)) => (right, left),
-                        (Value::Null(a), Value::Null(b)) if a > b => (left, right),
-                        (Value::Null(_), Value::Null(_)) => (right, left),
+                        (Value::Null(_), Value::Const(_)) => true,
+                        (Value::Const(_), Value::Null(_)) => false,
+                        (Value::Null(a), Value::Null(b)) => a > b,
+                    };
+                    let (from, to) = if replace_left {
+                        (left, right)
+                    } else {
+                        (right, left)
                     };
                     self.substitute(&from, &to, &rules, &inputs)?;
                     continue 'restart;
@@ -606,14 +614,15 @@ fn extend(
             .zip(&record.fact.values)
             .all(|(term, value)| match term {
                 Term::Const(text) => matches!(value, Value::Const(c) if c == text),
-                Term::Var(name) => match binding.get(name) {
-                    Some(existing) => existing == value,
-                    None => {
+                Term::Var(name) => {
+                    if let Some(existing) = binding.get(name) {
+                        existing == value
+                    } else {
                         binding.insert(name.clone(), value.clone());
                         bound.push(name.clone());
                         true
                     }
-                },
+                }
             });
         if unified {
             used.push(index);
