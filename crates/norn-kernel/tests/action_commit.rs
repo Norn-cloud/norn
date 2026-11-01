@@ -4019,3 +4019,115 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
             .exists()
     );
 }
+
+#[test]
+fn protected_properties_refuse_action_input_and_unsealed_output() {
+    let mut types = order_types();
+    types[0]
+        .properties
+        .iter_mut()
+        .find(|property| property.id.as_str() == "so_number")
+        .unwrap()
+        .protected = true;
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let action = upsert_action("commerce.sales_order.create", &json!({"kind":"upsert"}));
+    let action_call = call(&action, "PROTECTED", "protected-action");
+    assert!(
+        matches!(commit_action(&mut cell, &catalog, &action_call, &Allow),
+        Err(ActionRefusal::Decision(error)) if error.to_string().contains("protected"))
+    );
+    let key = FactKey::new(ORDER, "PROTECTED");
+    let output = serde_json::from_value(json!({"facts":[{
+        "op":"create","objectType":ORDER,"key":"PROTECTED","values":{"so_number":"rule-created"}
+    }],"commands":[],"timers":[]}))
+    .unwrap();
+    let empty = FactSlice::new();
+    let refusal =
+        commit_decision(&mut cell, &catalog, &empty, &action_call.turn, &output).unwrap_err();
+    assert_eq!(refusal.code(), "decision.invalid_output");
+    assert!(cell.ledger().is_empty());
+    assert!(!cell.load(&key).unwrap().exists());
+}
+
+#[test]
+fn row_only_cas_checker_and_runtime_admission_agree() {
+    let baseline = owned_series_types(false, false);
+    let mut action = owned_series_action();
+    action.writes.remove(2);
+    for mask in 0..4 {
+        let mut types = baseline.clone();
+        for (index, property) in types[0].properties.iter_mut().enumerate() {
+            property.protected = mask & (1 << index) != 0;
+        }
+        let mut artifacts = Vec::<norn_ir::ArtifactEnvelope>::new();
+        for object in &types {
+            let mut envelope = fixture("ir/commerce-sales-order-submit-invoice.action.json");
+            envelope["artifactId"] = json!(format!("{}.entity", object.name.as_str()));
+            envelope["kind"] = json!("entity");
+            envelope["version"] = json!("0.1.0");
+            envelope["dependencies"] = json!([]);
+            envelope["payload"] = json!({"entityVersion":"2.0", "objectType":object});
+            artifacts.push(serde_json::from_value(envelope).unwrap());
+        }
+        let mut envelope = fixture("ir/commerce-sales-order-submit-invoice.action.json");
+        envelope["payload"] = serde_json::to_value(&action).unwrap();
+        envelope["dependencies"] = json!(types.iter().map(|object| json!({
+            "artifactId":format!("{}.entity", object.name.as_str()), "kind":"entity", "version":"0.1.0", "required":true
+        })).collect::<Vec<_>>());
+        artifacts.push(serde_json::from_value(envelope).unwrap());
+        let diagnostics = norn_checker::action_set::check_action_set(
+            &artifacts,
+            &norn_checker::EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            },
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.message.contains("CAS touches")),
+            "{diagnostics:?}"
+        );
+        let checker_admits = diagnostics.is_empty();
+        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+            .with_types(baseline.clone());
+        commit_action(
+            &mut cell,
+            &TypeCatalog::new(&baseline),
+            &owned_series_call(
+                &action,
+                "cas-seed",
+                "0",
+                &json!({"name":"ORDER-1", "company":"ACME"}),
+                &json!([owned_series_add("row-a")]),
+            ),
+            &Allow,
+        )
+        .unwrap();
+        cell = cell.with_types(types.clone());
+        let ledger_before = cell.ledger().len();
+        let result = commit_action(
+            &mut cell,
+            &TypeCatalog::new(&types),
+            &owned_series_call(
+                &action,
+                "cas-row-only",
+                "1",
+                &json!({}),
+                &json!([{"collection":"lines", "op":"remove", "rowId":"row-a", "expectedVersion":"1"}]),
+            ),
+            &Allow,
+        );
+        assert_eq!(
+            checker_admits,
+            result.is_ok(),
+            "mask={mask}, checker={diagnostics:?}, runtime={result:?}"
+        );
+        if let Err(refusal) = result {
+            assert_eq!(refusal.code(), "decision.invalid_output");
+            assert_eq!(cell.ledger().len(), ledger_before);
+        }
+    }
+}

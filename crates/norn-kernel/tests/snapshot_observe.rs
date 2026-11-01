@@ -1222,3 +1222,56 @@ fn empty_authority_cannot_request_an_unbounded_snapshot_envelope() {
     );
     assert!(cell.observe().unwrap().is_some());
 }
+
+#[test]
+fn observations_cannot_reconcile_a_protected_lifecycle() {
+    let mut object_type = model(&json!([{ "id":"submit", "from":["draft"], "to":"submitted" }]));
+    let status = object_type
+        .properties
+        .iter_mut()
+        .find(|p| p.id.as_str() == "status")
+        .unwrap();
+    status.protected = true;
+    let catalog = TypeCatalog::new([&object_type]);
+    let key = FactKey::new("test.SnapshotOrder", "PROTECTED");
+    let provenance = provenance("protected.source");
+    let mut cell = cell();
+    for (id, amount, observed_state, refused) in [
+        ("initialize", 5, None, false),
+        ("unchanged", 6, Some("draft"), false),
+        ("refuse-change", 7, Some("submitted"), true),
+    ] {
+        let delivery = next_delivery(&mut cell, id);
+        let slice = load_slice(&cell, [key.clone()]).unwrap();
+        let before = cell.load(&key).unwrap();
+        let ledger_len = cell.ledger().len();
+        let lifecycles = observed_state.map(|state| ObservedLifecycleSnapshot {
+            property: PropertyId("status".to_owned()),
+            state: state.to_owned(),
+            provenance: provenance.clone(),
+        });
+        let values = serde_json::from_value(json!({"amount":amount})).unwrap();
+        let result = commit_observed_snapshot(
+            &mut cell,
+            &catalog,
+            &slice,
+            &turn(id, delivery.consumed()),
+            ObservedSnapshot {
+                key: &key,
+                values: &values,
+                lifecycles: lifecycles.as_slice(),
+                provenance: &provenance,
+            },
+        );
+        if refused {
+            assert!(matches!(result, Err(ObservationCommitRefusal::Observation(
+                norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { reason, .. })) if reason.contains("protected lifecycle")));
+            assert_eq!(cell.load(&key).unwrap(), before);
+            assert_eq!(cell.ledger().len(), ledger_len);
+            assert!(cell.observe().unwrap().is_some());
+        } else {
+            result.unwrap();
+            assert_eq!(state(&cell, &key, "amount"), JsonValue::from(amount));
+        }
+    }
+}
