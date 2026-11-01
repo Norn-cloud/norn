@@ -2160,7 +2160,7 @@ export interface components {
         /** @enum {string} */
         NornIrFoldOrderKind: "string" | "integer";
         /** @enum {string} */
-        NornIrFoldRounding: "refuse" | "toward_zero" | "half_even";
+        NornIrFoldRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
         /**
          * @description Why a target member is not mapped.
          * @enum {string}
