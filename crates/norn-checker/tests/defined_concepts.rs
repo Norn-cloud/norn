@@ -149,7 +149,7 @@ fn missing_pins_members_types_and_unbounded_or_impure_predicates_refuse() {
         (
             "/payload/dependencies",
             json!([{"artifactId":"test.Item.entity", "version":"1.0.0",
-            "member":{"kind":"property", "typeName":"test.Item", "propertyId":"absent"}}]),
+            "member":{"kind":"property", "typeName":"test.Item", "property":"absent"}}]),
         ),
         ("/payload/predicate", json!("self.amount")),
         ("/payload/predicate", json!("self.absent > 0")),
@@ -172,7 +172,7 @@ fn missing_pins_members_types_and_unbounded_or_impure_predicates_refuse() {
 }
 proptest::proptest! {
     #[test]
-    fn excessive_resource_bounds_never_admit(extra in 1_u64..1_000_000) {
+    fn excessive_resource_bounds_never_admit(extra in 1_u32..1_000_000) {
         let mut wire = serde_json::to_value(qualified()).expect("wire");
         let ceiling = ResourceLimitProfile::norn_limits_v1().slice.max_records;
         wire["payload"]["bounds"]["slice"]["maxRecords"] = json!(ceiling.saturating_add(extra));
