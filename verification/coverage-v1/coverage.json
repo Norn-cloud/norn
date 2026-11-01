@@ -2384,6 +2384,7 @@
         "tools/norn-ts/src/printer.ts",
         "tools/norn-ts/src/profile.ts",
         "tools/norn-ts/src/parity/stock-reference.ts",
+        "tools/norn-ts/src/parity/stock-trace.ts",
         "tools/norn-ts/src/translation-validation.ts",
         "tools/norn-ts/test/authoring-sdk.test.ts",
         "tools/norn-ts/test/checker.ts",

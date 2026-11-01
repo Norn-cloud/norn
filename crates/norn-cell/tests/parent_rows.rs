@@ -3323,4 +3323,241 @@ mod cp1_stock {
             replayed.read().verify_ledger().expect("replayed chain")
         );
     }
+    #[tokio::test]
+    #[ignore = "requires parseStockTrace validated input and an output path"]
+    async fn post_trace_dump() {
+        let input = std::env::var("NORN_STOCK_TRACE").expect("validated trace path");
+        let output = std::env::var("NORN_STOCK_DUMP").expect("dump path");
+        let traces: Vec<Value> =
+            serde_json::from_slice(&std::fs::read(input).expect("input")).expect("traces");
+        assert!(!traces.is_empty(), "ADAPTER-DECODE");
+        let mut cases = Vec::new();
+        for trace in traces {
+            let mut result = json!({"case":trace["id"],"method":trace["method"],"status":"complete",
+                "reason":null,"initial":{"step":-1,"attempts":[],"stock":[],"gl":[],"documents":[]},"checkpoints":[]});
+            let steps = trace["steps"].as_array().expect("decoded steps");
+            let mut keys = BTreeSet::new();
+            let supported = trace["method"] == "fifo"
+                && steps.iter().all(|s| {
+                    let c = &s["command"];
+                    s["kind"] == "serial"
+                        && c["operation"]["warehouse"] == "a"
+                        && matches!(
+                            c["operation"]["kind"].as_str(),
+                            Some("receipt" | "delivery")
+                        )
+                        && keys.insert(c["requestId"].as_str().expect("request"))
+                });
+            if !supported {
+                result["status"] = json!("unsupported");
+                result["reason"] =
+                    json!("CP1 requires fresh serial FIFO receipt/delivery in warehouse a");
+                cases.push(result);
+                continue;
+            }
+            let (artifacts, definitions) = definitions();
+            let rules = norn_kernel::admit_stock_rules(&artifacts).expect("admit");
+            let catalog = TypeCatalog::new(&definitions).with_stock_rules(&rules);
+            let model = Model::from_definitions(&definitions, &[]).expect("model");
+            let dir = tempfile::tempdir().expect("directory");
+            let mut store = CellStore::open(
+                dir.path().join("live.sqlite"),
+                model.clone(),
+                StoreOptions::default(),
+            )
+            .expect("store");
+            store
+                .bind("scope", "org_demo/dev")
+                .expect("bind before seed");
+            seed(&mut store);
+            let mut stock = Vec::new();
+            let mut gl = Vec::new();
+            let mut documents = Vec::new();
+            let mut configured = false;
+            for step in steps {
+                let c = &step["command"];
+                let op = &c["operation"];
+                let request = c["requestId"].as_str().expect("request");
+                let id = format!("trace-{request}");
+                let receipt = op["kind"] == "receipt";
+                let (ty, child, action) = if receipt {
+                    (
+                        "stock.PurchaseReceipt",
+                        "stock.ReceiptLine",
+                        "stock.receipt.submit",
+                    )
+                } else {
+                    (
+                        "stock.DeliveryNote",
+                        "stock.DeliveryLine",
+                        "stock.delivery.submit",
+                    )
+                };
+                let row = format!("{id}:1");
+                let mut values = json!({"id":row,"line_number":1,
+                    "quantity":serde_json::from_str::<Value>(op["quantity"].as_str().expect("quantity")).expect("decimal")});
+                if receipt {
+                    values["rate"] =
+                        serde_json::from_str(op["rate"].as_str().expect("rate")).expect("decimal");
+                }
+                let manifest =
+                    owned_rows_manifest_key(&FactKey::new(ty, &id), "lines").expect("manifest");
+                store.commit(&CommitBatch {
+                    world:"main".into(),scope:"org_demo/dev".into(),
+                    writes:vec![put(ty,&id,json!({"id":id,"request_id":request,"effective_at":c["effectiveAt"],"status":"draft"})),
+                        put(child,&row,values),put(OWNED_ROWS_TYPE,&manifest.key,json!({"parentType":ty,"parentKey":id,"collectionId":"lines","rowIds":[row]}))],
+                    links:vec![link(ty,&id,"company","stock.Company","c"),
+                        link(ty,&id,if receipt {"supplier"} else {"customer"},"stock.Party","party"),
+                        link(ty,&id,"lines",child,&row),link(child,&row,"voucher",ty,&id),
+                        link(child,&row,"item","stock.Item","i"),
+                        link(child,&row,if receipt {"destination"} else {"source"},"stock.Warehouse","w")],
+                    ..CommitBatch::default()
+                }).expect("draft fixture");
+            }
+            let mut cell: NativeCell =
+                NativeCell::new(store, "org_demo/dev", |c| c.payload.clone()).expect("host");
+            for (index, step) in steps.iter().enumerate() {
+                let c = &step["command"];
+                let request = c["requestId"].as_str().expect("request");
+                let id = format!("trace-{request}");
+                let receipt = c["operation"]["kind"] == "receipt";
+                let (ty, action) = if receipt {
+                    ("stock.PurchaseReceipt", "stock.receipt.submit")
+                } else {
+                    ("stock.DeliveryNote", "stock.delivery.submit")
+                };
+                let call = invoke(&catalog, action, &id, request);
+                let snapshot =
+                    prepare_stock_snapshot(&cell, &catalog, &call, &Reads).expect("snapshot");
+                let partition = &snapshot.partitions[0].witness;
+                if !configured {
+                    cell.commit_quantity(
+                        &QuantityRequest {
+                            version: QUANTITY_CELL_VERSION.into(),
+                            ledger_id: format!("stock/{}", partition.key),
+                            balance_versions: vec![],
+                            operation: QuantityOperation::Define {
+                                account_limit: 3,
+                                pack: stock_quantity_pack("ea").expect("pack"),
+                                unrestricted_accounts: vec!["external-source".into()],
+                            },
+                        },
+                        "configure",
+                    )
+                    .expect("quantity setup");
+                    configured = true;
+                }
+                let before = cell.store().read().dump().expect("before");
+                let (outcome, reason, code) = match commit_action(
+                    &mut cell, &catalog, &call, &Reads,
+                ) {
+                    Ok(ActionOutcome::Committed {
+                        receipt: committed, ..
+                    }) => {
+                        for written in committed.written {
+                            let key = &written.key;
+                            if key.object_type.as_str() == "stock.StockEvent" {
+                                let e = object(&cell, "stock.StockEvent", &key.key);
+                                let p = object(&cell, "stock.Partition", &partition.key);
+                                let signed = |field: &str| {
+                                    let text = serde_json::to_value(&e[field])
+                                        .expect("amount")
+                                        .to_string();
+                                    if receipt || text == "0" {
+                                        text
+                                    } else {
+                                        format!("-{text}")
+                                    }
+                                };
+                                stock.push(json!({"id":key.key,"requestId":request,"line":format!("{request}:1"),"warehouse":"a",
+                                    "quantityDelta":signed("quantity"),"valueDelta":signed("value"),
+                                    "quantity":serde_json::to_value(&p["quantity"]).expect("quantity").to_string(),
+                                    "value":serde_json::to_value(&p["value"]).expect("value").to_string(),
+                                    "incomingRate":null,"valuationRate":null,"fifo":null,"cancelled":false}));
+                            }
+                            if key.object_type.as_str() == "stock.GLLeg" {
+                                let e = object(&cell, "stock.GLLeg", &key.key);
+                                let leg: norn_ir::posting::AccountingLegIr =
+                                    norn_ir::runtime::decode(&e["leg"]).expect("leg");
+                                let amount: i128 = leg.amount_unscaled.parse().expect("cents");
+                                let money = |n: i128| format!("{}.{:02}", n / 100, n % 100);
+                                gl.push(json!({"id":key.key,"requestId":request,
+                                    "account":if leg.account.account_id == "stock" {"stock-a"} else {&leg.account.account_id},
+                                    "currency":leg.unit_id,"debit":money(amount.max(0)),"credit":money((-amount).max(0)),"cancelled":false}));
+                            }
+                        }
+                        ("accepted", None, None)
+                    }
+                    Ok(ActionOutcome::Replayed { .. }) => panic!("fresh request replayed"),
+                    Err(error) => {
+                        assert_eq!(
+                            before,
+                            cell.store().read().dump().expect("refusal"),
+                            "ADAPTER-NO-WRITES"
+                        );
+                        let reason = if error.code() == "stock.insufficient_stock" {
+                            "insufficient-stock".to_owned()
+                        } else {
+                            error.to_string()
+                        };
+                        ("refused", Some(reason), Some(error.code().to_owned()))
+                    }
+                };
+                let status = object(&cell, ty, &id);
+                let status = serde_json::to_value(&status["status"]).expect("status");
+                documents.push(
+                    json!({"requestId":request,"status":if status == "submitted" {1} else {0}}),
+                );
+                result["checkpoints"].as_array_mut().expect("checkpoints").push(json!({"step":index,
+                    "attempts":[{"attempt":0,"requestId":request,"nativeId":id,"outcome":outcome,"reason":reason,"nativeCode":code,"completionOrder":0}],
+                    "stock":stock,"gl":gl,"documents":documents}));
+            }
+            let before = cell.store().read().dump().expect("live state");
+            let head = cell.store().read().verify_ledger().expect("head");
+            let mut exporter =
+                norn_cell::export::Exporter::local(&dir.path().join("export")).expect("exporter");
+            for seq in 1..=cell.store().export_commit_count().expect("count") {
+                exporter
+                    .append(
+                        &cell
+                            .store()
+                            .export_record(seq)
+                            .expect("journal")
+                            .expect("record"),
+                    )
+                    .await
+                    .expect("append");
+            }
+            let replay_path = dir.path().join("replay.sqlite");
+            CellStore::restore_from(
+                &mut exporter,
+                &replay_path,
+                model.clone(),
+                "org_demo/dev",
+                &BTreeMap::from([("scope".into(), "org_demo/dev".into())]),
+                StoreOptions::default(),
+            )
+            .await
+            .expect("restore");
+            let replayed =
+                CellStore::open(&replay_path, model, StoreOptions::default()).expect("replay");
+            assert_eq!(
+                before,
+                replayed.read().dump().expect("replayed state"),
+                "ADAPTER-REPLAY"
+            );
+            assert_eq!(
+                head,
+                replayed.read().verify_ledger().expect("replayed head")
+            );
+            cases.push(result);
+        }
+        let dump = json!({"format":"norn.stock-dump/1","engine":"norn",
+            "versions":{"norn-cell":env!("CARGO_PKG_VERSION")},"cases":cases});
+        std::fs::write(
+            output,
+            serde_json::to_vec_pretty(&dump).expect("encode dump"),
+        )
+        .expect("write dump");
+    }
 }

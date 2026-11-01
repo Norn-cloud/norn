@@ -155,3 +155,24 @@ conformance scenario for this join; surface acceptance is separate.
 POST-STORE-BIND-BEFORE-FIRST-COMMIT pins scope before draft setup so every export record has one identity. POST-CP1-ENGINE: file-backed commit_action receives 2 @ 10 + 3 @ 20 (Dr stock 80 / Cr SRBNB 80), delivers 4 (Dr COGS 60 / Cr stock 60), leaving 1 worth 20; POST-QUANTITY reads the committed quantity.
 POST-OVERDELIVERY refuses 2 with a readable reason and POST-NO-WRITES. POST-RETRY / POST-CONFLICTING-RETRY check identical and changed calls; POST-RETRY-READ-AUTHZ checks current authorization.
 POST-REOPEN preserves state/chain. POST-REAL-REPLAY rebuilds the export through typed restore and compares complete state and ledger head. These are tested execution claims; surface parity is separate.
+
+## Trace adapter conformance (lane c / #215)
+
+- ADAPTER-DECODE: run `bun tools/norn-ts/src/parity/stock-trace.ts input.json validated.json`
+  before the native adapter. This is the exact #221 parser; expectations never select observations.
+- ADAPTER-AUTHORITY: the native `post_trace_dump` conformance runner seeds synthetic
+  masters/drafts as CP1 fixture input, admits the authored definitions and invokes
+  `catalog.stock_action(...).call(...)` through `commit_action` on a durable store.
+  This qualifies the kernel seam, not API/MCP/CLI or master-creation parity.
+- ADAPTER-COVERAGE: only fresh serial FIFO receipt/delivery requests in warehouse a
+  are supported. Other methods, operations, retries and barriers are explicit unsupported
+  cases; none disappear from the dump. Moving average remains unavailable in CP1.
+- ADAPTER-OBSERVATION: initial and per-attempt checkpoints retain committed event/GL
+  identities, numeric document status and exact decimal text. Historical balances are
+  captured from committed partition state; raw legs are retained, FIFO unavailable is null.
+- ADAPTER-REPLAY: typed journal restore must reproduce the full durable dump and ledger
+  head before output is published. Refusals must leave all committed business rows intact.
+- ADAPTER-EVIDENCE: `NORN_STOCK_TRACE=validated.json NORN_STOCK_DUMP=norn.json cargo test
+  --locked -p norn-cell --test parent_rows post_trace_dump -- --ignored` runs the adapter.
+  Compare against the same validated trace through lane g's runner/comparator (#284).
+  Unsupported coverage fails parity; differing observations require reviewed dispositions.
