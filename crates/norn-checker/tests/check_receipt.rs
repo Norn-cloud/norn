@@ -859,7 +859,6 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
                 format: FlowSourceMapFormat::V1,
                 flows: vec![],
             };
-            // WRITER-CLOSURE: every public writer requires the same exact set.
             let writers = [
                 write(&sources, &context, &limits),
                 flow(&sources, &context, &limits, Some(&map)),

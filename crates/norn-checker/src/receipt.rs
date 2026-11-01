@@ -325,9 +325,7 @@ impl ReceiptSources {
         context: &EntityArtifactSetContext<'a>,
     ) -> Result<EntityArtifactSetContext<'a>, ReceiptError> {
         if ArtifactSetRef::of(&[], &self.base)? != ArtifactSetRef::of(&[], context.base)? {
-            return Err(invalid_receipt(
-                "receipt source base does not match checker context",
-            ));
+            return Err(invalid_receipt("receipt base/context mismatch"));
         }
         Ok(EntityArtifactSetContext {
             base: &self.base,
