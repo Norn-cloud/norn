@@ -1107,10 +1107,12 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
     melt.artifact_id = "jewelry.Melt.entity".into();
     melt.namespace = "jewelry".into();
     melt.name = "Melt".into();
+    let contract = serde_json::to_value(interface.payload.to_json_value()).expect("contract");
     melt.payload = ArtifactPayload::from_kind_json(
         &norn_ir::ArtifactKind::Entity,
         serde_json::from_value(json!({"entityVersion":"2.0", "objectType":{
-            "name":"jewelry.Melt", "implements":["core.Conversion"]
+            "name":"jewelry.Melt", "implements":["core.Conversion"],
+            "properties": contract["interface"]["properties"]
         }}))
         .expect("exact payload"),
     )

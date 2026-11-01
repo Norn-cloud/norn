@@ -35,14 +35,20 @@ fn cell() -> Cell {
     .expect("shared core types");
     let property_types: PropertyTypeCatalogRootV2 =
         serde_json::from_value(artifact["payload"].clone()).expect("property types");
+    let interface = core_interface();
+    let mut properties = serde_json::to_value(&interface.properties).expect("required members");
+    properties
+        .as_array_mut()
+        .expect("properties")
+        .push(json!({"id":"batch", "type":{"kind":"text"}}));
     let melt: ObjectTypeDef = serde_json::from_value(json!({
         "name":"jewelry.Melt", "implements":["core.Conversion"],
-        "properties":[{"id":"batch", "type":{"kind":"text"}}]
+        "properties": properties
     }))
-    .expect("Melt only declares its own batch, never a conservation expression");
+    .expect("Melt declares required properties, never a conservation expression");
     MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone())
         .with_types(vec![melt])
-        .with_interfaces(vec![core_interface()])
+        .with_interfaces(vec![interface])
         .with_property_types(property_types.property_types)
 }
 
