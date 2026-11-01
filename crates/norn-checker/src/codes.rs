@@ -2430,6 +2430,16 @@ pub static REGISTRY: &[CodeEntry] = &[
         "import {import} does not resolve: the Norn profile has no importable policy documents; declare value types in EntityIR v2",
     ),
     entry(
+        "rule.validation.ordered_fold_invalid",
+        Tier::T2,
+        "ordered-fold declaration violates the typed, ordered, bounded structural contract",
+    ),
+    entry(
+        "rule.validation.ordered_fold_unsupported",
+        Tier::T2,
+        "ordered-fold execution is unavailable in this semantics profile",
+    ),
+    entry(
         "rule.validation.jdm_unresolved_sub_decision",
         Tier::T2,
         "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",

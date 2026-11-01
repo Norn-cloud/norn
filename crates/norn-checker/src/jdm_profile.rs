@@ -156,6 +156,10 @@ pub mod codes {
     /// A sub-decision that resolves to an artifact that is not a `RuleIR` v2
     /// graph.
     pub const SUB_DECISION_TARGET: &str = "artifact_set.decision.sub_decision_target";
+    /// A fold declaration outside the supported structural fragment.
+    pub const ORDERED_FOLD_INVALID: &str = "rule.validation.ordered_fold_invalid";
+    /// Ordered fold execution is not yet supported by this profile.
+    pub const ORDERED_FOLD_UNSUPPORTED: &str = "rule.validation.ordered_fold_unsupported";
     /// A sub-decision closure deeper or larger than the profile admits.
     pub const SUB_DECISION_BOUND: &str = "artifact_set.decision.sub_decision_bound";
 }
@@ -656,6 +660,9 @@ fn check_node(
                 &format!("{content}.inputField"),
                 sink,
             );
+            if let Some(fold) = &body.ordered_fold {
+                check_ordered_fold(fold, &content, sink);
+            }
             check_sub_decision_key(&body.key, &format!("{content}.key"), dependencies, sink);
         }
         JdmNode::InputNode { .. }
@@ -663,6 +670,72 @@ fn check_node(
         | JdmNode::FunctionNode { .. }
         | JdmNode::CustomNode { .. } => {}
     }
+}
+
+fn check_ordered_fold(fold: &norn_ir::jdm::OrderedFold, content: &str, sink: &mut Sink<'_>) {
+    use norn_expr::schema::Schema;
+    use norn_ir::jdm::FoldOrderKind;
+    let path = format!("{content}.orderedFold");
+    let invalid = |sink: &mut Sink<'_>, reason: &str| {
+        sink.push(codes::ORDERED_FOLD_INVALID, reason, &path);
+    };
+    if fold.semantics_version != "1.0" || fold.arithmetic.scale > 18 {
+        invalid(
+            sink,
+            "ordered folds require semantics 1.0 and an exact scale of 0..18",
+        );
+    }
+    if fold.max_items == 0
+        || fold.max_items > 4096
+        || fold.max_accumulator_bytes == 0
+        || fold.max_accumulator_bytes > 1_048_576
+    {
+        invalid(
+            sink,
+            "fold bounds require 1..4096 items and 1..1048576 accumulator bytes",
+        );
+    }
+    let item = Schema::parse(&JsonValue::Object(fold.item_schema.clone()), &path);
+    let state = Schema::parse(&JsonValue::Object(fold.accumulator_schema.clone()), &path);
+    if !matches!(state, Ok(Schema::Object { .. })) {
+        invalid(sink, "the accumulator must have a closed record schema");
+    }
+    let Ok(Schema::Object {
+        properties,
+        required,
+    }) = item
+    else {
+        invalid(sink, "each item must have a closed record schema");
+        return;
+    };
+    let mut keys = BTreeSet::new();
+    for key in &fold.order {
+        let typed = matches!(
+            (key.kind, properties.get(&key.property)),
+            (FoldOrderKind::String, Some(Schema::String(_)))
+                | (FoldOrderKind::Integer, Some(Schema::Integer))
+        );
+        if !typed || !required.contains(&key.property) || !keys.insert(&key.property) {
+            invalid(
+                sink,
+                "order keys must be distinct required non-null properties of the declared scalar type",
+            );
+        }
+    }
+    if fold.identity.trim().is_empty()
+        || !fold
+            .order
+            .last()
+            .is_some_and(|key| key.property == fold.identity && key.kind == FoldOrderKind::String)
+    {
+        invalid(
+            sink,
+            "the final order key must be the stable string identity",
+        );
+    }
+    check_standard(fold.initial.as_str(), format!("{path}.initial"), sink);
+    sink.push(codes::ORDERED_FOLD_UNSUPPORTED,
+        "ordered-fold execution is unavailable; refusing rather than evaluating a loop with different arithmetic", path);
 }
 
 fn check_standard(source: &str, path: String, sink: &mut Sink<'_>) {

@@ -3629,6 +3629,54 @@ mod tests {
         rule
     }
 
+    #[test]
+    fn ordered_fold_declarations_fail_closed_before_execution_support() {
+        let mut rule = rule_with_sub_decision();
+        let fold = json!({
+            "semanticsVersion": "1.0",
+            "order": [{"property": "position", "kind": "integer"},
+                      {"property": "id", "kind": "string"}],
+            "identity": "id",
+            "itemSchema": {"type": "object", "additionalProperties": false,
+                "properties": {"position": {"type": "integer"}, "id": {"type": "string"}},
+                "required": ["position", "id"]},
+            "accumulatorSchema": {"type": "object", "additionalProperties": false,
+                "properties": {"remaining": {"type": "integer"}}, "required": ["remaining"]},
+            "initial": "{remaining: 7}", "maxItems": 16, "maxAccumulatorBytes": 1024,
+            "arithmetic": {"scale": 0, "rounding": "refuse"}
+        });
+        rule["payload"]["graph"]["nodes"][4]["content"]["orderedFold"] = fold;
+        assert!(has(
+            &findings(rule.clone()),
+            "rule.validation.ordered_fold_unsupported",
+            "payload.graph.nodes[4].content.orderedFold"
+        ));
+        for (member, invalid) in [
+            ("maxItems", json!(0)),
+            ("maxAccumulatorBytes", json!(0)),
+            ("identity", json!("position")),
+            ("semanticsVersion", json!("2.0")),
+            ("order", json!([])),
+        ] {
+            let mut bad = rule.clone();
+            bad["payload"]["graph"]["nodes"][4]["content"]["orderedFold"][member] = invalid;
+            assert!(
+                has(
+                    &findings(bad),
+                    "rule.validation.ordered_fold_invalid",
+                    "payload.graph.nodes[4].content.orderedFold"
+                ),
+                "{member}"
+            );
+        }
+        let encoded = serde_json::to_string(&rule["payload"]).expect("payload serializes");
+        let decoded: norn_ir::RuleRoot = serde_json::from_str(&encoded).expect("typed fold");
+        assert_eq!(
+            serde_json::to_value(decoded).expect("round trip"),
+            rule["payload"]
+        );
+    }
+
     /// Members the pinned zen model lets you omit but rejects as `null`
     /// (`#[serde(default)]` non-`Option` members and string row values):
     /// omitted is valid, explicit `null` is a located decode diagnostic.

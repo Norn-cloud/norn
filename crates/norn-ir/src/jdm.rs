@@ -450,6 +450,15 @@ pub struct JdmSwitchStatement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct JdmSubDecisionContent {
+    /// Bounded ordered application of this existing sub-decision. Execution
+    /// remains refused until the ordered-fold semantics profile is supported.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "OrderedFold")]
+    pub ordered_fold: Option<OrderedFold>,
     /// Key of the referenced decision graph: the `artifactId` of a `RuleIR` v2
     /// rule that the envelope declares as a required `rule` dependency. The
     /// checker resolves it and bounds the sub-decision closure (T3-DEC-1).
@@ -480,4 +489,62 @@ pub struct JdmSubDecisionContent {
 pub struct JdmCustomNodeContent {
     pub kind: String,
     pub config: JsonValue,
+}
+
+/// A deterministic collection derivation through an existing RuleIR helper.
+/// The helper's input is exactly `{accumulator, item, index}` and its output
+/// is the next accumulator. Residuals and provenance are ordinary declared
+/// accumulator fields; the evaluator does not interpret their names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OrderedFold {
+    pub semantics_version: String,
+    /// Required, non-null item properties in lexicographic ascending order.
+    pub order: Vec<FoldOrderKey>,
+    /// The last order key; must be a unique, stable string identity.
+    pub identity: String,
+    /// Closed schema of one input item.
+    pub item_schema: crate::rule::JsonObject,
+    /// Closed schema of the initial and every subsequent accumulator.
+    pub accumulator_schema: crate::rule::JsonObject,
+    /// Exact expression evaluated once against the node input.
+    pub initial: crate::ZenExpression,
+    pub max_items: u32,
+    /// Canonical encoded byte bound, checked initially and after every step.
+    pub max_accumulator_bytes: u32,
+    pub arithmetic: FoldArithmetic,
+}
+
+/// One required scalar property of a fold item. All keys ascend; the final
+/// identity breaks every tie without consulting input enumeration order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FoldOrderKey {
+    pub property: String,
+    pub kind: FoldOrderKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FoldOrderKind {
+    String,
+    Integer,
+}
+
+/// Arithmetic policy is part of declaration/evidence identity. Ordinary ZEN
+/// division and implicit rounding do not implement this contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FoldArithmetic {
+    /// Quantity-ledger-compatible exact scaled integers; at most 18 places.
+    pub scale: u8,
+    pub rounding: FoldRounding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FoldRounding {
+    Refuse,
+    TowardZero,
+    HalfEven,
 }
