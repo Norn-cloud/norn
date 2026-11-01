@@ -234,6 +234,15 @@ pub enum NornCheckReceiptFormat {
     /// `norn-checker/receipt@4`, with inherited-law origins.
     #[serde(rename = "norn-checker/receipt@4")]
     V4,
+    /// Exact-source receipt, mapless.
+    #[serde(rename = "norn-checker/receipt@5")]
+    V5,
+    /// Exact-source receipt with a flow map.
+    #[serde(rename = "norn-checker/receipt@6")]
+    V6,
+    /// Exact-source receipt with inherited-law origins.
+    #[serde(rename = "norn-checker/receipt@7")]
+    V7,
 }
 
 /// Checker name and package version in a receipt.
