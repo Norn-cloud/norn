@@ -222,3 +222,19 @@ rescale against an independent signed-integer reference. Production Kani
 harnesses check all modes for i8 coefficients and scales 0..4, plus invalid u32
 targets and full-width decimal overflow witnesses. Evidence is bounded for Kani
 and sampled for proptest; neither claims arbitrary-precision symbolic execution.
+
+FOLD-AUTHORING: `Norn.orderedFold(step, {items, initial}, policy)` inside a
+plain decision callback compiles to one ordered-fold call with a pinned helper.
+The callback and helper callback never execute during extraction. Policy records
+are closed literal data; item and state schemas derive from the helper's declared
+closed schemas. Existing top-level-const sequencing, dependency pinning, compiler
+budgets, and Rust fold admission still apply. No raw JDM/unsafeZen is required.
+Type mismatches and nonliteral/extra policy inputs refuse compilation; unsupported
+bounds, key kinds or helper contracts refuse Rust admission. This compiler adapter
+adds no independent execution semantics or per-application solver statements.
+
+FOLD-AUTHORING-LINEAGE: typed `array.concat(array)` appends one array without
+flattening its elements, lowering to existing one-level `flatten([left, right])`.
+Both operands must be arrays with compatible item schemas. This permits declared
+allocation lineage to accumulate without a new runtime operator. String/scalar
+concat and additional arguments remain outside this authoring form.

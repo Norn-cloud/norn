@@ -30,7 +30,7 @@ export type LogicalOp = "and" | "or"
 
 export type Expr =
   | { readonly _tag: "Binary"; readonly op: "+" | "-" | "*" | "/" | "%" | "in"; readonly left: Expr; readonly right: Expr }
-  | { readonly _tag: "Call"; readonly fn: "lower" | "upper" | "trim" | "len" | "contains" | "startsWith" | "endsWith" | "dateBefore" | "date" | "timestamp"; readonly args: ReadonlyArray<Expr> }
+  | { readonly _tag: "Call"; readonly fn: "concat" | "lower" | "upper" | "trim" | "len" | "contains" | "startsWith" | "endsWith" | "dateBefore" | "date" | "timestamp"; readonly args: ReadonlyArray<Expr> }
   | { readonly _tag: "Conditional"; readonly condition: Expr; readonly yes: Expr; readonly no: Expr }
   | { readonly _tag: "Coalesce"; readonly value: Expr; readonly fallback: Expr }
   | { readonly _tag: "Unsafe"; readonly text: string; readonly schema: ValueSchema }
@@ -172,6 +172,12 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
     }
     case "Call": {
       const args = expr.args.map((arg) => typeOf(arg, scope))
+      if (expr.fn === "concat") {
+        if (args.length !== 2 || args[0]?.type !== "array" || args[1]?.type !== "array") throw new ExprError("NORN-FLOW-EXPRESSION", "concat expects two arrays")
+        const merged = mergeSchemas(args[0].items, args[1].items)
+        if (typeof merged === "string") throw new ExprError("NORN-FLOW-EXPRESSION", merged)
+        return array(merged)
+      }
       if (expr.fn === "len") {
         if (args.length !== 1 || (args[0]?.type !== "string" && args[0]?.type !== "array")) throw new ExprError("NORN-FLOW-EXPRESSION", "length expects a string or array")
         return integer
@@ -253,7 +259,9 @@ export function render(expr: Expr, scope: Scope): string {
   switch (expr._tag) {
     case "Unsafe": return expr.text
     case "Binary": return `${operand(expr.left, scope)} ${expr.op} ${operand(expr.right, scope)}`
-    case "Call": return expr.fn === "dateBefore"
+    case "Call": return expr.fn === "concat"
+      ? `flatten([${expr.args.map((arg) => render(arg, scope)).join(", ")}])`
+      : expr.fn === "dateBefore"
       ? `date(${render(expr.args[0]!, scope)}) < date(${render(expr.args[1]!, scope)})`
       : `${expr.fn}(${expr.args.map((arg) => render(arg, scope)).join(", ")})`
     case "Conditional": return `${operand(expr.condition, scope)} ? ${operand(expr.yes, scope)} : ${operand(expr.no, scope)}`

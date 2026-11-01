@@ -147,3 +147,24 @@ test("explicitly generic authored packs do not assert vendor parity", () => {
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts).toContainEqual(expect.objectContaining({kind:"mapping",payload:expect.objectContaining({extensions:{"norn.mapping.generic/1.0.0":{parity:"unqualified"}}})}))
 })
+
+test("FOLD-AUTHORING compiles closed step schemas and pins the helper", () => {
+  const fixture = join(TOOL_ROOT, "fixtures/decisions/ordered-fold.source.ts")
+  const source = readFileSync(fixture, "utf8")
+  const result = compile(source)
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  const encoded = JSON.stringify(result.artifacts)
+  expect(encoded).toContain('"semanticsVersion":"1.0"')
+  expect(encoded).toContain('"itemSchema":{"type":"object"')
+  expect(encoded).toContain('"accumulatorSchema":{"type":"object"')
+  expect(encoded).toContain('"artifactId":"example.fold.step.rule"')
+  expect(result.warnings).toEqual([])
+  if (checker) expect(checker.checkArtifactSet(result.artifacts).admitted).toBe(true)
+  for (const invalid of [
+    source.replace('identity: "id"', 'identity: "missing"'),
+    source.replace('rounding: "refuse"', 'rounding: "implicit"'),
+    source.replace('initial: input.slice.initial', 'initial: { total: "wrong", count: 0 }'),
+    source.replace('maxItems: 32', 'extra: true, maxItems: 32'),
+    source.replace('maxItems: 32', 'maxItems: input.slice.initial.count'),
+  ]) expect(compile(invalid).ok).toBe(false)
+}, 60_000)
