@@ -1,5 +1,9 @@
 //! Admission-only jewelry fallback. Run through scripts/demo/run.sh.
-use std::{collections::BTreeSet, error::Error, io::Read as _};
+use std::{
+    collections::BTreeSet,
+    error::Error,
+    io::{Read as _, Write as _},
+};
 
 use norn_checker::obligations::{ApprovedContract, ChallengeError, DefinitionSource};
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};
@@ -70,7 +74,7 @@ fn with_law(types: &[ArtifactEnvelope], law: &LawIR) -> DemoResult<Vec<ArtifactE
         .ok_or("missing authored demo.Melt.entity")?;
     let mut envelope = subject.clone();
     envelope.artifact_id = format!("{}.law", law.id);
-    envelope.name = law.id.clone();
+    envelope.name.clone_from(&law.id);
     envelope.dependencies = vec![ArtifactDependency {
         artifact_id: subject.artifact_id.clone(),
         kind: ArtifactKind::Entity,
@@ -94,6 +98,7 @@ fn source(artifacts: &[ArtifactEnvelope]) -> DemoResult<DefinitionSource> {
 }
 
 fn main() -> DemoResult<()> {
+    let mut stdout = std::io::stdout().lock();
     let mut input = String::new();
     std::io::stdin()
         .take(1_048_577)
@@ -114,15 +119,17 @@ fn main() -> DemoResult<()> {
     if !diagnostics.is_empty() {
         return Err(format!("admission: {diagnostics:?}").into());
     }
-    println!(
+    writeln!(
+        stdout,
         "CURRENT: admitted measurement schema, lifecycle and pointwise law (no runtime claim)"
-    );
-    println!("{}", serde_json::to_string_pretty(&artifacts)?);
-    println!(
+    )?;
+    writeln!(stdout, "{}", serde_json::to_string_pretty(&artifacts)?)?;
+    writeln!(
+        stdout,
         "EN/AR reviewed wording slots for {} (display data, not the pending renderer):",
         law.id
-    );
-    println!("{}", serde_json::to_string_pretty(&wording())?);
+    )?;
+    writeln!(stdout, "{}", serde_json::to_string_pretty(&wording())?)?;
     let exact = source(&artifacts)?;
     let authority = ApprovedContract::approve(
         &exact,
@@ -132,11 +139,16 @@ fn main() -> DemoResult<()> {
         json!({"required":"unknown; no solver result supplied"}),
     )?;
     let challenge = authority.challenge(&exact, &registry)?;
-    println!(
+    writeln!(
+        stdout,
         "Checker-generated obligations {}; no handwritten theorem or proof:",
         challenge.sha256()
-    );
-    println!("{}", serde_json::to_string_pretty(challenge.body())?);
+    )?;
+    writeln!(
+        stdout,
+        "{}",
+        serde_json::to_string_pretty(challenge.body())?
+    )?;
     let mut weakened = law.clone();
     weakened.response = LawResponse::Predicate {
         expression: ZenExpression("true".into()),
@@ -145,7 +157,10 @@ fn main() -> DemoResult<()> {
     if authority.challenge(&edited, &registry).err() != Some(ChallengeError::LawChanged) {
         return Err("protected-law edit did not refuse".into());
     }
-    println!("CURRENT: protected-law edit refused: LawChanged (challenge boundary only)");
+    writeln!(
+        stdout,
+        "CURRENT: protected-law edit refused: LawChanged (challenge boundary only)"
+    )?;
     let mut invalid = law;
     invalid.response = LawResponse::Predicate {
         expression: ZenExpression("self.missing == 1".into()),
@@ -154,6 +169,6 @@ fn main() -> DemoResult<()> {
     if refused.is_empty() {
         return Err("invalid property binding was admitted".into());
     }
-    println!("CURRENT: invalid law diagnostics: {refused:?}");
+    writeln!(stdout, "CURRENT: invalid law diagnostics: {refused:?}")?;
     Ok(())
 }
