@@ -28,7 +28,7 @@ impl<E: SqlEngine> DevHost<E> {
     ) -> Result<Self, Refusal> {
         let admitted = Admitted::from_source(source, &scope)?;
         let (model, input) = installation(admitted, now);
-        let cell = CellStore::provision_definitions(engine, model, input, &scope.key())
+        let cell = CellStore::provision_definitions(engine, model, &input, &scope.key())
             .map_err(Refusal::host)?;
         Ok(Self {
             scope,
