@@ -3646,11 +3646,15 @@ mod tests {
             "arithmetic": {"scale": 0, "rounding": "refuse"}
         });
         rule["payload"]["graph"]["nodes"][4]["content"]["orderedFold"] = fold;
-        assert!(has(
-            &findings(rule.clone()),
-            "rule.validation.ordered_fold_unsupported",
-            "payload.graph.nodes[4].content.orderedFold"
-        ));
+        let actual = findings(rule.clone());
+        assert!(
+            has(
+                &actual,
+                "rule.validation.ordered_fold_unsupported",
+                "payload.graph.nodes[4].content.orderedFold"
+            ),
+            "{actual:?}"
+        );
         for (member, invalid) in [
             ("maxItems", json!(0)),
             ("maxAccumulatorBytes", json!(0)),
