@@ -18,10 +18,10 @@ use norn_ir::{
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-pub const TYPE: &str = "demo.Conversion";
-pub const WORLD: &str = "synthetic-k1";
-pub const CLOCK: u64 = 1_792_972_800_000;
-pub fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
+pub(crate) const TYPE: &str = "demo.Conversion";
+pub(crate) const WORLD: &str = "synthetic-k1";
+pub(crate) const CLOCK: u64 = 1_792_972_800_000;
+pub(crate) fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
     let object: ObjectTypeDef = serde_json::from_value(json!({"name":TYPE,"properties":[
         {"id":"input","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
         {"id":"recovered","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
@@ -96,7 +96,15 @@ pub fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
         max_age_ms: norn_ir::WholeNumber(5_000),
     };
     let plan = admit(&[out, input, ratio], &question, &catalog, 100).expect("admitted question");
-    let context = QueryContext {
+    (
+        CellStore::open_in_memory(model).expect("cell"),
+        plan,
+        context(),
+    )
+}
+
+fn context() -> QueryContext {
+    QueryContext {
         world: WORLD.into(),
         scope: "synthetic".into(),
         population_pin: "all-fixture-conversions".into(),
@@ -120,15 +128,10 @@ pub fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
             )]),
         )]),
         exclusions: BTreeMap::new(),
-    };
-    (
-        CellStore::open_in_memory(model).expect("cell"),
-        plan,
-        context,
-    )
+    }
 }
 
-pub fn put(key: &str, input: i64, recovered: i64, at: &str, metal: &str) -> FactWriteRow {
+pub(crate) fn put(key: &str, input: i64, recovered: i64, at: &str, metal: &str) -> FactWriteRow {
     FactWriteRow::Put {
         object_type: TYPE.into(),
         key: key.into(),
@@ -146,7 +149,7 @@ pub fn put(key: &str, input: i64, recovered: i64, at: &str, metal: &str) -> Fact
         ]),
     }
 }
-pub fn load(store: &mut CellStore) {
+pub(crate) fn load(store: &mut CellStore) {
     let writes = include_str!("../../../../fixtures/demo/scrap-yield-k1.csv")
         .lines()
         .skip(1)
