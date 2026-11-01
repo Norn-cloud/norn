@@ -27,8 +27,11 @@ impl<E: SqlEngine> DevHost<E> {
         now: LogicalTime,
     ) -> Result<Self, Refusal> {
         let admitted = Admitted::from_source(source, &scope)?;
-        CellStore::require_fresh_engine(&engine)
-            .map_err(|error| Refusal::invalid(error.to_string()))?;
+        if !CellStore::engine_is_fresh(&engine).map_err(Refusal::host)? {
+            return Err(Refusal::invalid(
+                "DevHost::new requires a fresh tenant cell",
+            ));
+        }
         let mut cell = CellStore::from_engine(
             engine,
             Model::from_definitions(&[], &[]).map_err(Refusal::host)?,
