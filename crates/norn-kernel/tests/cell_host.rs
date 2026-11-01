@@ -1096,12 +1096,10 @@ fn extension_links_preserve_shape_owner_fences_and_required_roles()
             }],
             ..CellCommit::empty()
         };
+        let checked = check_commit(&missing, &required_model, &ExtensionView(None));
         assert!(
-            matches!(
-                check_commit(&missing, &required_model, &ExtensionView(None)),
-                Err(CommitError::LinkRequired { .. })
-            ),
-            "POST-LINK-REQUIRED: missing on create"
+            matches!(&checked, Err(CommitError::EffectiveValues { reason, .. }) if reason.contains("required link `demo__peer`") && reason.contains("no target")),
+            "POST-LINK-REQUIRED: missing on create: {checked:?}"
         );
         let remove = CellCommit::<(), (), ()> {
             links: vec![LinkWrite {
@@ -1118,7 +1116,7 @@ fn extension_links_preserve_shape_owner_fences_and_required_roles()
                     &required_model,
                     &ExtensionView(Some(ObjectTypeName(source_type.into())))
                 ),
-                Err(CommitError::LinkRequired { .. })
+                Err(CommitError::EffectiveValues { reason, .. }) if reason.contains("required link `demo__peer`") && reason.contains("no target")
             ),
             "POST-LINK-REQUIRED: last target removal"
         );
