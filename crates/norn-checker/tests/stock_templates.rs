@@ -1,4 +1,9 @@
 //! Receipt/delivery template obligations; verification/posting-v1/templates.md.
+#![allow(
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "typed synthetic fixtures and explicit assertions on checker output"
+)]
 
 use norn_checker::quantity_ledger::{
     compile_ledger_pack, evaluate_ledger_template, validate_ledger_pack,
