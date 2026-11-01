@@ -2297,6 +2297,25 @@ export interface components {
             /** @description The widest type an implementing property may have. */
             type: components["schemas"]["NornIrPropertyType"];
         };
+        /** @description Exact Norn1 semantic envelope identity of an interpretation endpoint. */
+        NornIrInterpretationEndpoint: {
+            /** @description Retained artifact, resolved without namespace inference. */
+            artifactId: string;
+            /** @description Receipt-profile semantic content digest. */
+            sha256: string;
+            /** @description Exact artifact version. */
+            version: string;
+        };
+        /**
+         * @description Only the interpretation wire format decodes here.
+         * @enum {string}
+         */
+        NornIrInterpretationFormat: "norn.interpretation/1";
+        /**
+         * @description A law interpretation is neither source evidence nor term correspondence.
+         * @enum {string}
+         */
+        NornIrInterpretationRole: "law_interpretation";
         /** @description One declared invariant of an object type or interface. */
         NornIrInvariant: {
             /**
@@ -2585,6 +2604,23 @@ export interface components {
              *     exactly as stored.
              */
             rule?: components["schemas"]["NornIrIdentityRule"];
+        };
+        /** @description Typed interpretation contract. Admission refuses until conformance exists. */
+        NornIrLawInterpretationIr: {
+            /**
+             * @description Closed format discriminator.
+             * @enum {string}
+             */
+            format: "norn.interpretation/1";
+            /**
+             * @description Explicit semantic role.
+             * @enum {string}
+             */
+            role: "law_interpretation";
+            /** @description Layer whose contract must be preserved. */
+            sourceLayer: components["schemas"]["NornIrInterpretationEndpoint"];
+            /** @description Layer interpreting that contract. */
+            targetLayer: components["schemas"]["NornIrInterpretationEndpoint"];
         };
         /** @description Scoped temporal vocabulary; nested temporal operators have no wire representation. */
         NornIrLawModality: components["schemas"]["NornIrLawModalityOneOf0"] | components["schemas"]["NornIrLawModalityOneOf1"] | components["schemas"]["NornIrLawModalityOneOf2"] | components["schemas"]["NornIrLawModalityOneOf3"];
@@ -3086,17 +3122,19 @@ export interface components {
             reason: "not_in_source" | "defaulted" | "deferred" | "derived_elsewhere";
         };
         /**
-         * @description The payload of a `mapping` artifact: an interface-scoped mapping
-         *     ([`mapping::MappingIr`], T8-MAP-1a).
+         * @description An interface-scoped mapping from one source schema: the payload of a
+         *     `mapping` artifact. The envelope's `artifactId` and `version` identify
+         *     the mapping; its provenance key is `<artifactId>@<version>` (both
+         *     checked so the key is unambiguous). See the module docs.
          */
-        NornIrMappingPayload: {
+        NornIrMappingIr: {
             /**
              * @description Declarative permission-row maps. These emit ordinary upsert actions
              *     for `core.Entitlement`; joins are applied only from a caller-declared
              *     complete snapshot of every `requiredSnapshot` dataset.
              */
             entitlements?: components["schemas"]["NornIrEntitlementMap"][];
-            extensions?: components["schemas"]["NornIrMappingPayloadPropertyExtensions"];
+            extensions?: components["schemas"]["NornIrMappingIrPropertyExtensions"];
             /**
              * @description The format tag.
              * @enum {string}
@@ -3122,9 +3160,14 @@ export interface components {
             source: components["schemas"]["NornIrSourceBinding"];
         };
         /** @description Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected. */
-        NornIrMappingPayloadPropertyExtensions: {
+        NornIrMappingIrPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description The payload of a `mapping` artifact: source-record transforms or a
+         *     separately checked law interpretation ([`mapping::MappingDocument`]).
+         */
+        NornIrMappingPayload: components["schemas"]["NornIrMappingIr"] | components["schemas"]["NornIrLawInterpretationIr"];
         /**
          * @description SKOS-style mapping relations.
          * @enum {string}
