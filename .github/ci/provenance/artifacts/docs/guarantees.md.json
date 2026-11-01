@@ -1,5 +1,5 @@
 {
-  "sha256": "7642de746ca1b33a9ac68cb7c49c9dbdcc72be5068985fb9397fa5258bd0d5df",
+  "sha256": "e08f4ee4a7b0826bb20159f9ded704a31751fa24913f641b2b7a41731e7980b3",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -7,7 +7,18 @@
   "analyzed_sources": [],
   "parents": [
     "scripts/guarantees_page.py",
-    "verification/coverage-v1/coverage.json"
+    "scripts/coverage_manifest.py",
+    "verification/coverage-v1/manifest/index.json",
+    "verification/coverage-v1/manifest/subsystems/artifact-governance.json",
+    "verification/coverage-v1/manifest/subsystems/authorization.json",
+    "verification/coverage-v1/manifest/subsystems/cala-boundary.json",
+    "verification/coverage-v1/manifest/subsystems/core-physics.json",
+    "verification/coverage-v1/manifest/subsystems/kernel-v2.json",
+    "verification/coverage-v1/manifest/subsystems/ontology.json",
+    "verification/coverage-v1/manifest/subsystems/quantity-ledger.json",
+    "verification/coverage-v1/manifest/subsystems/rules-dmn.json",
+    "verification/coverage-v1/manifest/subsystems/transition-authority.json",
+    "verification/coverage-v1/manifest/subsystems/verification-integrity.json"
   ],
   "rights_evidence": [
     {

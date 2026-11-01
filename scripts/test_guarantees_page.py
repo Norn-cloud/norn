@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The Guarantees page drift check bites, and every claim keeps its recorded evidence."""
 
-import json
+import coverage_manifest
 import shutil
 import subprocess
 import sys
@@ -16,7 +16,7 @@ SCRIPT = ROOT / "scripts/guarantees_page.py"
 
 class GuaranteesPageTests(unittest.TestCase):
     def setUp(self):
-        self.registry = json.loads((ROOT / REGISTRY).read_text())
+        self.registry = coverage_manifest.load(ROOT / REGISTRY)
 
     def test_committed_page_is_current(self):
         self.assertEqual((ROOT / PAGE).read_text(), render(self.registry))
@@ -39,13 +39,13 @@ class GuaranteesPageTests(unittest.TestCase):
             root = Path(directory)
             (root / REGISTRY).parent.mkdir(parents=True)
             (root / PAGE).parent.mkdir(parents=True)
-            shutil.copy(ROOT / REGISTRY, root / REGISTRY)
+            shutil.copytree(ROOT / REGISTRY, root / REGISTRY)
             shutil.copy(ROOT / PAGE, root / PAGE)
             ok = subprocess.run([sys.executable, str(SCRIPT), "--check", "--root", str(root)], capture_output=True)
             self.assertEqual(ok.returncode, 0)
-            registry = json.loads((root / REGISTRY).read_text())
+            registry = coverage_manifest.load(root / REGISTRY)
             registry["subsystems"][0]["obligationClaims"][0]["proof"] = "implementation_proved"
-            (root / REGISTRY).write_text(json.dumps(registry))
+            coverage_manifest.write(registry, root / REGISTRY)
             stale = subprocess.run([sys.executable, str(SCRIPT), "--check", "--root", str(root)], capture_output=True, text=True)
             self.assertEqual(stale.returncode, 1)
             self.assertIn("is stale", stale.stderr)
