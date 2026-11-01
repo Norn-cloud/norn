@@ -17,6 +17,8 @@ Reuse `PropertyType`, `PropertyConstraints`, `DecimalLiteral`, `UnitRef`, `Runti
 
 Definition identity is exact artifact/version/digest plus stable member ID. Renaming a label changes presentation only. A same-version edit changes digest and invalidates admission/evidence; it cannot replace an immutable published release.
 
+The initial unit vocabulary is the ordinary pinned `core.units` pack, not a kernel allowlist. Its `core.units.code` enum admits `g`, `mg`, `kg`, `1`, `%`, `[ppth]`, `{each}`, `s`, `min`, `h`, `d` and `wk`. Each unit has a value type containing its fixed code, dimension and positive exact rational factor to gram, unity, each or second. Count remains distinct from dimensionless values. The pack provenance pins UCUM essence 2.2 and its source digest; currencies remain ISO 4217 money. Full UCUM and QUDT admission are deferred to #351. Selecting another unit descriptor refuses; conversion requires an explicit declared expression and rounding site. Catalog membership alone does not establish arithmetic compatibility.
+
 ## Evaluation and enforcement
 
 1. Construction decodes exact numeric tokens without a float round trip; rejects non-finite, range/scale overflow and unknown units. Canonical equality ignores representational trailing zeroes but preserves declared type/unit and original source evidence bytes separately.
@@ -41,6 +43,7 @@ Evidence expected: structural codec/schema checks; runtime-enforced uniqueness/r
 
 - **VAL-ROUNDTRIP:** Given `9007199254740993` and `0.10` exact inputs, when sent through each governed surface and replayed, then numeric identity is unchanged; float coercion refuses.
 - **VAL-ROUND:** Given scale 2 with midpoint-away rounding, when evaluating `1.005` and `-1.005`, then results are `1.01` and `-1.01`; a zero divisor refuses without effects.
+- **VAL-UNIT-CATALOG:** Given the pinned bounded unit catalog, known codes and their exact factor records admit; unknown codes, currencies and substituted dimensions or factors refuse. A gram descriptor cannot contain a kilogram code.
 - **ID-COLLISION:** Given two subtypes sharing a key root, when concurrent creates use the same normalized key, then exactly one commits; another tenant may use its own same key.
 - **ID-RENAME:** Given a posted event linked to object A, when A's label/business key changes and is later tombstoned, then historical links still resolve A; reusing A's identity refuses.
 - **TIME-DST:** Given an ambiguous local timestamp without a pinned disambiguation policy, when admitted, then refuse; an explicit earlier/later choice replays identically.
