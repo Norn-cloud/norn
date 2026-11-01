@@ -5034,7 +5034,7 @@ impl SqlEngine for ProvisionFault {
         let value = self.inner.transaction(|| {
             let value = f()?;
             self.boundary()?;
-            Ok(value)
+            Ok::<T, X>(value)
         })?;
         self.boundary()?;
         Ok(value)
