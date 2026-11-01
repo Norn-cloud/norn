@@ -4417,8 +4417,7 @@ export interface components {
             /** @enum {unknown} */
             valueType?: "text";
         } | {
-            /** Format: double */
-            value?: number;
+            value?: components["schemas"]["NornIrDecimalLiteral"];
             /** @enum {unknown} */
             valueType?: "number";
         } | {

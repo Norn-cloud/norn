@@ -9102,8 +9102,7 @@
         {
           "properties": {
             "value": {
-              "type": "number",
-              "format": "double"
+              "$ref": "#/$defs/DecimalLiteral"
             },
             "valueType": {
               "const": "number"

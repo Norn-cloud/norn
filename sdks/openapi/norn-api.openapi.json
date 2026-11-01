@@ -11150,8 +11150,7 @@
               {
                 "properties": {
                   "value": {
-                    "type": "number",
-                    "format": "double"
+                    "$ref": "#/components/schemas/NornIrDecimalLiteral"
                   },
                   "valueType": {
                     "enum": [
