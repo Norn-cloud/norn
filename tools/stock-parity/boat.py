@@ -3,11 +3,12 @@ import argparse
 import json
 import pathlib
 import subprocess
+from threading import Timer
 import hashlib
 
 
 def boat(*args):
-    return subprocess.check_output(['boat', *args], text=True)
+    return subprocess.check_output(['boat', *args], text=True, timeout=900)
 
 
 def main():
@@ -26,12 +27,17 @@ def main():
         with subprocess.Popen(['boat', 'new', '--json', '--from', args.snapshot, '--type', 'default',
                                '--ttl', '7200', '--no-env', '--no-monitoring', '--fail-fast'],
                               stdout=subprocess.PIPE, text=True) as proc:
-            for line in proc.stdout:
-                event = json.loads(line)
-                if event.get('id'):
-                    vm = event['id']
-            if proc.wait() or not vm:
-                raise RuntimeError('Boat fork failed')
+            deadline = Timer(300, proc.kill)
+            deadline.start()
+            try:
+                for line in proc.stdout:
+                    event = json.loads(line)
+                    if event.get('id'):
+                        vm = event['id']
+                if proc.wait() or not vm:
+                    raise RuntimeError('Boat fork failed or timed out')
+            finally:
+                deadline.cancel()
         for src, dest in ((args.source, 'source.tar'), (args.traces, 'traces.json')):
             boat('scp', str(src), f'{vm}:/home/user/{dest}')
         digest = hashlib.sha256(args.source.read_bytes()).hexdigest()
@@ -58,7 +64,7 @@ python3 run.py /home/user/traces.json /home/user/results.json
     finally:
         if vm:
             boat('delete', vm, '--yes')
-            check = subprocess.run(['boat', 'info', vm, '--json'], capture_output=True, text=True)
+            check = subprocess.run(['boat', 'info', vm, '--json'], capture_output=True, text=True, timeout=60)
             if check.returncode == 0 or not any(t in (check.stdout + check.stderr).lower()
                                                  for t in ('404', 'not_found', 'not found')):
                 raise RuntimeError('VM deletion was not verified')
