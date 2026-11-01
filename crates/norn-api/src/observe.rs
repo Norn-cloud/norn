@@ -1,8 +1,8 @@
 //! OBS-EVIDENCE-1: a trusted adapter supplies data, never business mutation authority.
+use crate::{host::DevHost, refusal::Refusal, scope::CellScope};
 use norn_cell::engine::SqlEngine;
 use norn_ir::RuntimeValue;
 use norn_kernel::Observed;
-use crate::{host::DevHost, refusal::Refusal, scope::CellScope};
 
 impl<E: SqlEngine> DevHost<E> {
     /// Run the trusted adapter's checked submission and enqueue its complete evidence.
@@ -17,10 +17,13 @@ impl<E: SqlEngine> DevHost<E> {
         scope: &CellScope,
         checked: impl FnOnce() -> Result<Observed<RuntimeValue>, Refusal>,
     ) -> Result<bool, Refusal> {
-        self.scope().admit(Some(&scope.org_id), Some(&scope.environment_id))?;
+        self.scope()
+            .admit(Some(&scope.org_id), Some(&scope.environment_id))?;
         let _epoch = self.definition_read()?;
         let observed = checked()?;
         let value = norn_ir::runtime::encode(&observed).map_err(Refusal::host)?;
-        self.cell()?.inject(&observed.id.0, &value).map_err(Refusal::host)
+        self.cell()?
+            .inject(&observed.id.0, &value)
+            .map_err(Refusal::host)
     }
 }
