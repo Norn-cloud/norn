@@ -192,16 +192,6 @@ impl AdmittedStockRule {
     pub const fn action(&self) -> &norn_ir::ActionRoot {
         &self.action
     }
-    /// Admitting artifact identity.
-    #[must_use]
-    pub fn artifact_id(&self) -> &str {
-        &self.artifact_id
-    }
-    /// Admitting artifact version.
-    #[must_use]
-    pub fn version(&self) -> &str {
-        &self.version
-    }
 }
 
 fn stock_decode<T: serde::de::DeserializeOwned>(
@@ -399,20 +389,8 @@ mod stock_tests {
             "POST-SEALED-STOCK absent admitted origin"
         );
         assert!(prepare(&catalog, &decision).is_ok());
-        let mut extensions: Vec<norn_ir::ObjectTypeExtension> = ["a", "b"]
-            .into_iter()
-            .map(|ns| {
-                serde_json::from_value(serde_json::json!({"namespace":ns,"target":"stock.Item"}))
-                    .unwrap()
-            })
-            .collect();
-        let mut properties: Vec<norn_ir::PropertyTypeDef> = ["stock.a", "stock.b"]
-            .into_iter()
-            .map(|name| {
-                serde_json::from_value(serde_json::json!({"name":name,"type":{"kind":"text"}}))
-                    .unwrap()
-            })
-            .collect();
+        let mut extensions: Vec<norn_ir::ObjectTypeExtension> = serde_json::from_value(serde_json::json!([{"namespace":"a","target":"stock.Item"},{"namespace":"b","target":"stock.Item"}])).unwrap();
+        let mut properties: Vec<norn_ir::PropertyTypeDef> = serde_json::from_value(serde_json::json!([{"name":"stock.a","type":{"kind":"text"}},{"name":"stock.b","type":{"kind":"text"}}])).unwrap();
         let before = TypeCatalog::new(&types)
             .with_extensions(&extensions)
             .with_property_types(&properties)

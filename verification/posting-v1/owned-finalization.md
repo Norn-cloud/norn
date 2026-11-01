@@ -127,7 +127,5 @@ POST-QUANTITY-REFUSAL: quantity refusals survive the atomic host/decision/action
 transport with stable code, category and redacted internal messages. No generic
 Post action API is activated; the parked generic posting branch stays parked.
 
-POST-QUANTITY-SNAPSHOT: all quantity reconstruction reads share one SQLite read
-snapshot, including inside an existing transaction; refusal releases its scope.
-POST-CATALOG-ORDER: extension and property-type order does not change the schema
-pin. Conformance reverses both lists and checks the same pin.
+POST-QUANTITY-SNAPSHOT: all quantity reconstruction reads share one adapter-owned SQLite read snapshot, reusing an existing transaction; refusal releases a newly owned snapshot. SQL transaction-control guards remain unchanged.
+POST-CATALOG-ORDER: extension and property-type order does not change the schema pin. Conformance reverses both lists and checks the same pin.
