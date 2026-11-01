@@ -1209,3 +1209,108 @@ fn declared_live_allocation_guards_refuse_changed_cost_or_receipt_identity() {
         }
     }
 }
+
+#[test]
+fn fold_boundaries_refuse_without_a_partial_decision() {
+    let item = closed(&json!({"id":{"type":"string"},"n":{"type":"integer"}}));
+    let state = closed(&json!({"total":{"type":"integer"}}));
+    let rules = fold_rules(
+        &item,
+        &state,
+        &[vec![("total", "accumulator.total + item.n")]],
+    );
+    let initial = json!({"total":0});
+    assert_eq!(
+        folded(&rules, initial.clone(), json!([])).unwrap(),
+        norn_decisions::value_to_runtime(&value(&initial)).unwrap()
+    );
+    for items in [
+        json!([{"id":"a","n":1},{"id":"a","n":2}]),
+        json!([{"id":"é","n":1},{"id":"e\u{301}","n":2}]),
+        json!([{"id":null,"n":1}]),
+        json!([{"n":1}]),
+    ] {
+        assert!(folded(&rules, initial.clone(), items).is_err());
+    }
+    let items = json!([{"id":"a","n":8},{"id":"b","n":8}]);
+    for (max_items, max_bytes) in [(1, 100), (2, 11)] {
+        let mut bad = rules.clone();
+        if let norn_ir::JdmNode::DecisionNode { content, .. } =
+            &mut bad.0.graph.as_mut().unwrap().nodes[1]
+        {
+            let fold = content.ordered_fold.as_mut().unwrap();
+            fold.max_items = max_items;
+            fold.max_accumulator_bytes = max_bytes;
+        }
+        assert!(folded(&bad, initial.clone(), items.clone()).is_err());
+    }
+    for expression in [
+        "index == 0 ? accumulator.total + item.n : null",
+        "index == 0 ? 1 : 1 / 0",
+        "sum([item.n, accumulator.total])",
+    ] {
+        let bad = fold_rules(&item, &state, &[vec![("total", expression)]]);
+        assert!(folded(&bad, initial.clone(), items.clone()).is_err());
+    }
+    let admitted = AdmittedDecision::admit(&rules.0, &rules.1, binding()).unwrap();
+    let slice = value(&json!({"initial":initial,"items":items}));
+    let used = run(
+        &admitted,
+        slice.clone(),
+        event(),
+        EvaluationBudget::new(100_000),
+    )
+    .unwrap()
+    .units_used;
+    assert!(matches!(
+        run(&admitted, slice, event(), EvaluationBudget::new(used - 1)),
+        Err(DecisionError::BudgetExhausted { .. })
+    ));
+    let mut bad = rules;
+    bad.1.get_mut("example.step").unwrap().output_schema =
+        serde_json::from_value(closed(&json!({"other":{"type":"integer"}}))).unwrap();
+    assert!(matches!(
+        AdmittedDecision::admit(&bad.0, &bad.1, binding()),
+        Err(AdmissionError::InvalidSchema { .. })
+    ));
+}
+
+#[test]
+fn fold_order_is_numeric_with_identity_ties_and_independent_of_enumeration() {
+    let item =
+        closed(&json!({"id":{"type":"string"},"rank":{"type":"integer"},"n":{"type":"integer"}}));
+    let state = closed(&json!({"total":{"type":"integer"}}));
+    let mut rules = fold_rules(
+        &item,
+        &state,
+        &[vec![("total", "accumulator.total*10 + item.n")]],
+    );
+    if let norn_ir::JdmNode::DecisionNode { content, .. } =
+        &mut rules.0.graph.as_mut().unwrap().nodes[1]
+    {
+        content.ordered_fold.as_mut().unwrap().order.insert(
+            0,
+            norn_ir::jdm::FoldOrderKey {
+                property: "rank".into(),
+                kind: norn_ir::jdm::FoldOrderKind::Integer,
+            },
+        );
+    }
+    let first = json!({"id":"a","rank":10,"n":1});
+    let second = json!({"id":"b","rank":2,"n":2});
+    for items in [json!([first, second]), json!([second, first])] {
+        assert_eq!(
+            folded(&rules, json!({"total":0}), items).unwrap(),
+            norn_decisions::value_to_runtime(&value(&json!({"total":21}))).unwrap()
+        );
+    }
+    for items in [
+        json!([{"id":"b","rank":2,"n":2},{"id":"a","rank":2,"n":1}]),
+        json!([{"id":"a","rank":2,"n":1},{"id":"b","rank":2,"n":2}]),
+    ] {
+        assert_eq!(
+            folded(&rules, json!({"total":0}), items).unwrap(),
+            norn_decisions::value_to_runtime(&value(&json!({"total":12}))).unwrap()
+        );
+    }
+}
