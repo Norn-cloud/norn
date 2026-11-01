@@ -1,4 +1,4 @@
-import { LosslessNumber, isLosslessNumber, isSafeNumber, parse, stringify } from "lossless-json"
+import { LosslessNumber, isLosslessNumber, parse, stringify } from "lossless-json"
 
 export { isLosslessNumber, type LosslessNumber }
 
@@ -14,8 +14,8 @@ export function asArray(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : []
 }
 
-function parseNumber(text: string): number | LosslessNumber {
-  return isSafeNumber(text) ? Number(text) : new LosslessNumber(text)
+function parseNumber(text: string): LosslessNumber {
+  return new LosslessNumber(text)
 }
 
 // Keep lossless-json's token-aware parser/stringifier at the package boundary.

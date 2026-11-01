@@ -59,7 +59,7 @@ export function text(value: LocaleText | undefined, locale = typeof navigator ==
 
 /** The object type an artifact reference names (`crm.Customer.entity@0.1.0` → `crm.Customer`), if installed. */
 export function objectTypeOf(set: WidgetDefinitionSet, ref: { id: string; version: string }): string | null {
-  const artifact = set.artifacts.find((a) => a.artifactId === ref.id && a.version === ref.version) ?? set.artifacts.find((a) => a.artifactId === ref.id)
+  const artifact = set.artifacts.find((a) => a.artifactId === ref.id && a.version === ref.version)
   if (!artifact || artifact.kind !== "entity") return null
   const objectType = artifact.payload.objectType
   if (isRecord(objectType)) return asString(objectType.name) ?? artifact.artifactId
@@ -70,7 +70,7 @@ export function objectTypeOf(set: WidgetDefinitionSet, ref: { id: string; versio
 
 /** The action id an action artifact reference declares, if installed. */
 export function actionIdOf(set: WidgetDefinitionSet, ref: { id: string; version: string }): string | null {
-  const artifact = set.artifacts.find((a) => a.kind === "action" && a.artifactId === ref.id)
+  const artifact = set.artifacts.find((a) => a.kind === "action" && a.artifactId === ref.id && a.version === ref.version)
   return artifact ? (asString(artifact.payload.actionId) ?? null) : null
 }
 
@@ -111,6 +111,7 @@ function sectionOrder(node: UxNode): number {
 export function pageBindings(page: UxPage, ux: Ux): UxDataBinding[] {
   const ids: string[] = []
   const fields = byId(ux.fields, (field) => field.fieldId)
+  const navigationItems = byId(ux.navigationItems, (item) => item.itemId)
   const addBinding = (id: string | undefined) => {
     if (id && !ids.includes(id)) ids.push(id)
   }
@@ -132,6 +133,11 @@ export function pageBindings(page: UxPage, ux: Ux): UxDataBinding[] {
     if (c.kind === "field") {
       const field = fields.get(c.fieldId)
       if (field) addFieldConditionBindings(field)
+    }
+    if (c.kind === "navigation") {
+      const condition = navigationItems.get(c.itemId)?.visibleWhen
+      addBinding(condition?.inputs.recordBindingId)
+      addBinding(condition?.inputs.selectionBindingId)
     }
     if (c.kind === "child_grid") {
       addBinding(c.dataBindingId)
