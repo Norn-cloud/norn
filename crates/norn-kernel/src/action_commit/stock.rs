@@ -772,7 +772,7 @@ pub(super) fn prepare_stock_commit<H: CellHost + ?Sized>(
     host: &H,
     catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
-    snapshot: StockSnapshot,
+    snapshot: &StockSnapshot,
     slice: &mut FactSlice,
     links: &mut Vec<LinkReadExpectation>,
     output: &norn_ir::DecisionOutput,
@@ -803,7 +803,7 @@ pub(super) fn prepare_stock_commit<H: CellHost + ?Sized>(
         &(&call.action.action_id, call.idempotency_key.as_bytes()),
     )
     .map_err(|_error| invalid("invalid stock posting identity"))?;
-    let mut plan = plan_stock_effects(&snapshot, operation, &posting_id, output.facts.clone())?;
+    let mut plan = plan_stock_effects(snapshot, operation, &posting_id, output.facts.clone())?;
     plan.output.commands.clone_from(&output.commands);
     let mut request = QuantityRequest {
         version: QUANTITY_CELL_VERSION.into(),

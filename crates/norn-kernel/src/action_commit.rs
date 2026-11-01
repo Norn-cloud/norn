@@ -3602,7 +3602,7 @@ where
                 host,
                 catalog,
                 call,
-                snapshot,
+                &snapshot,
                 &mut slice,
                 &mut link_reads,
                 &output,
