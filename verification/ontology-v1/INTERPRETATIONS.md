@@ -127,3 +127,14 @@ whole set. Worker-supplied goals/proof flags cannot supply authority or omit goa
 Named LAYERS/WRITER tests and generated candidate source spellings check challenge
 identity. Kani remains infeasible for full allocated admission and induction
 construction; solver evidence is unknown unless independently checked.
+
+LAW-CONTAINED-PATH-1 retains exact containment paths as `instancePaths` of
+lane E's existing `PackInstanceRef`, separately from definition-member paths.
+The last reference identifies the governed concrete instance; identical law/type
+bindings in different instances remain distinct. Import diamonds retain all
+paths to the same instance. Non-instance scopes use an empty list. Strict
+wire decoding requires the field and exact nested pins; no namespace or
+producer evidence supplies membership. Named LAW-CONTAINED contract/refusal
+tests and generated paths verify round trips. This contract cut leaves
+retained app/pack resolution unsupported. Kani is inapplicable to this
+allocated serde/schema contract; resolver verification follows separately.

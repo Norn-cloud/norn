@@ -359,6 +359,7 @@ fn law_instance(
         attachment: law.scope.root.clone(),
         origin: origin.clone(),
         paths,
+        instance_paths: Vec::new(),
         bindings: BTreeMap::from([("self".to_owned(), subject.clone())]),
     })
 }

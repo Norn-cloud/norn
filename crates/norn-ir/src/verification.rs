@@ -24,6 +24,8 @@ pub struct EffectiveLawInstance {
     pub origin: crate::definition_catalog::MemberRef,
     /// Every inheritance, containment or mapping path; a diamond retains all.
     pub paths: Vec<Vec<crate::definition_catalog::MemberRef>>,
+    /// LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope.
+    pub instance_paths: Vec<Vec<crate::PackInstanceRef>>,
     /// Explicit typed member substitutions; no rewritten child LawIR.
     pub bindings: std::collections::BTreeMap<String, crate::definition_catalog::MemberRef>,
 }

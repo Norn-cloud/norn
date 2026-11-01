@@ -45,7 +45,7 @@ test("LAW-INSTANCE-CONTRACT-1: effective instances retain origins and bindings",
     law: { ...at, artifactId: "toy.law", member: { kind: "law", law: "toy.preserve" } },
     lawDigest: "a".repeat(64), subject: at, subjectDigest: "b".repeat(64),
     attachment: { kind: "pack", id: "toy.layer" }, origin: at,
-    paths: [[at]], bindings: { self: at },
+    paths: [[at]], instancePaths: [], bindings: { self: at },
   }
   const cell: Schemas["NornIrLawRootOneOf2"] = { kind: "cell", id: "cell_demo" }
   const entity: Schemas["NornIrLawRootOneOf3"] = { kind: "entity", id: "toy.Credit" }
