@@ -3337,7 +3337,10 @@ mod cp1_stock {
         let before = cell.store().read().dump().expect("dump");
         let error = commit_action(cell, catalog, sale, &Reads).expect_err("custody sale");
         assert_eq!(error.code(), "stock.custody_sale_refused");
-        assert!(error.to_string().contains("custody"));
+        assert_eq!(
+            error.to_string(),
+            "customer-owned metal cannot be delivered as company stock"
+        );
         assert_eq!(before, cell.store().read().dump().expect("no writes"));
     }
     async fn run(metal: bool, overflow: bool) {

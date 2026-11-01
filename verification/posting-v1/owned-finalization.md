@@ -159,32 +159,12 @@ POST-REOPEN preserves state/chain. POST-REAL-REPLAY rebuilds the export through 
 
 ## Single-partition customer metal (#216, #232, #243, #263)
 
-JEWELRY-CUSTODY-ISOLATION: closed stockPost operations `custodyReceipt` and
-`custodyReturn` require a jewelry.MetalLot and a voucher owner. The linked
-custody_owner must equal that owner. The lot's canonical item identity selects
-its partition; its owner and complete authoritative metadata are pinned in the
-partition's binding hash. Owner/purity reassignment after a first posting
-refuses, including after an empty return. Events and the partition record the
-canonical owner. JEWELRY-NAMED-OWNER: custody requires a non-null named
-party. Company inventory records its canonical company FactKey as owner;
-null is never a published owner. Company receipt/delivery cannot consume a custody lot.
+JEWELRY-CUSTODY-ISOLATION: closed stockPost operations `custodyReceipt` and `custodyReturn` require a jewelry.MetalLot and a voucher owner. The linked custody_owner must equal that owner. The lot's canonical item identity selects its partition; its owner and complete authoritative metadata are pinned in the partition's binding hash. Owner/purity reassignment after a first posting refuses, including after an empty return. Company receipt/delivery cannot consume a custody lot.
 
-JEWELRY-ZERO-COMPANY: custody receipt creates zero-value FIFO layers; return
-consumes those layers. Both use the existing conserved quantity templates and
-sealed commit join, emitting no GL facts. Caller rates cannot confer company
-value on customer metal. No parallel posting adapter is introduced.
+JEWELRY-NAMED-OWNER: custody requires a non-null named party. Events and the partition record that canonical FactKey. Company inventory records its canonical company FactKey as owner; null is never a published owner.
 
-JEWELRY-EXACT-INPUT: the #263 normalization boundary supplies positive integer
-gross_micrograms and purity_numerator in 1..24,000,000. The kernel recomputes
-fine ticks with checked multiplication bounded by runtime Decimal's
-96-bit integer maximum (79,228,162,514,264,337,593,543,950,335) and requires exact agreement
-with fine_ticks. It never rounds or accepts a caller's asserted product.
+JEWELRY-ZERO-COMPANY: custody receipt creates zero-value FIFO layers; return consumes those layers. Both use the existing conserved quantity templates and sealed commit join, emitting no GL facts. Caller rates cannot confer company value on customer metal. No parallel posting adapter is introduced.
 
-JEWELRY-REFUSAL-NOOP: custody sale returns stock.custody_sale_refused with a
-readable reason; invalid purity/product returns stock.purity_refused and
-multiplication overflow returns stock.arithmetic_overflow. Each refuses before
-publication of lifecycle, quantity, events, GL, links or idempotency receipts.
-These correspond to custodyIsolated / custody asset preservation and
-refusedIsNoop / refused_is_noop; runtime correspondence is acceptance evidence,
-not a promotion of the bounded reference proofs to FIFO valuation proofs.
-Refining remains deferred to the shared multi-partition join.
+JEWELRY-EXACT-INPUT: the #263 normalization boundary supplies positive integer gross_micrograms and purity_numerator in 1..24,000,000. The kernel recomputes fine ticks with checked multiplication bounded by runtime Decimal's 96-bit integer maximum (79,228,162,514,264,337,593,543,950,335) and requires exact agreement with fine_ticks. It never rounds or accepts a caller's asserted product. JEWELRY-DECIMAL-BOUNDARY accepts floor(MAX / numerator) and refuses one gross microgram more with stock.arithmetic_overflow, before comparing the asserted product. Fine-mass sums in refining must obey the same bound; refining remains deferred to the shared multi-partition join.
+
+JEWELRY-REFUSAL-NOOP: custody sale returns stock.custody_sale_refused with a readable reason; invalid purity/product returns stock.purity_refused and multiplication overflow returns stock.arithmetic_overflow. Each refuses before publication of lifecycle, quantity, events, GL, links or idempotency receipts. These correspond to custodyIsolated / custody asset preservation and refusedIsNoop / refused_is_noop; runtime correspondence is acceptance evidence, not a promotion of the bounded reference proofs to FIFO valuation proofs.
