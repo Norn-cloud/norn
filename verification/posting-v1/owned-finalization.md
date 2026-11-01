@@ -110,3 +110,8 @@ API/MCP/CLI follows the authorized transport adapters; no mock dispatch qualifie
 POST-QUANTITY-READ: the native host exposes its existing verified, bounded quantity
 state to kernel-derived intents. Unsupported hosts return no snapshot and cannot
 activate posting. Pack matching and balance fencing remain kernel obligations.
+
+POST-HISTORY-CAPACITY: CP1 activation caps each partition at 256 events. Reads
+reserve the full ceiling beside non-event work; planning refuses a candidate
+that would cross it before any publication. Boundary conformance covers 255+1,
+256+1 and exact non-event reserve. No checkpoint or unbounded-history claim.
