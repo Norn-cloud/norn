@@ -3,13 +3,13 @@ use crate::entity_artifacts::{Decoded, decode_v2};
 use crate::entity_lowering::{EntityForm, entity_object_type};
 use crate::receipt::{ArtifactRef, ReceiptError};
 use norn_ir::definition_catalog::{
-    ArtifactKey, CatalogArtifact, CatalogFormat, DefinitionCatalog, DependencyVia, DependsOnRow,
-    LawRow, LifecycleStates, LinkRow, MappingRow, Member, MemberRef, PropertyRow, TransitionRow,
-    TypeKind, TypeRow, WritesRow,
+    ArtifactKey, CatalogArtifact, CatalogFormat, DefinitionCatalog, DependsOnRow, LawRow,
+    LifecycleStates, LinkRow, MappingRow, Member, MemberRef, PropertyRow, TransitionRow, TypeKind,
+    TypeRow, WritesRow,
 };
 use norn_ir::{
-    ArtifactEnvelope, ArtifactPayload, BusinessPackRoot, EntityRoot, Lifecycle, ObjectTypeDef,
-    Property, PropertyType, PropertyTypeName,
+    ArtifactEnvelope, ArtifactPayload, EntityRoot, Lifecycle, ObjectTypeDef, Property,
+    PropertyType, PropertyTypeName,
 };
 use std::collections::BTreeSet;
 /// Why a catalog could not be projected.
@@ -32,7 +32,7 @@ impl std::error::Error for CatalogError {}
 /// Project admitted candidates and installed artifacts into sorted catalog rows.
 ///
 /// Call only after `check_artifact_set` admits the set. This slice projects
-/// entities and dependency edges. See verification/definition-catalog-v1/SPEC.md.
+/// entities. See verification/definition-catalog-v1/SPEC.md.
 ///
 /// # Errors
 /// Returns `CatalogError::Hash` if an artifact semantic hash cannot be computed.
@@ -61,7 +61,6 @@ pub fn project(
     let effective = crate::EffectiveCatalog::from_artifacts_with_registry(&combined, registry);
     for artifact in &all {
         rows.entity(artifact, &effective);
-        rows.depends_on(artifact, &all);
     }
 
     Ok(rows.finish())
@@ -86,17 +85,6 @@ fn at(artifact: &ArtifactEnvelope, member: Member) -> MemberRef {
         version: artifact.version.clone(),
         member,
     }
-}
-
-fn key(artifact: &ArtifactEnvelope) -> ArtifactKey {
-    ArtifactKey {
-        artifact_id: artifact.artifact_id.clone(),
-        version: artifact.version.clone(),
-    }
-}
-
-fn payload_json(artifact: &ArtifactEnvelope) -> serde_json::Value {
-    serde_json::to_value(artifact.payload.to_json_value()).unwrap_or_default()
 }
 
 fn lifecycle_states(property: &Property, lifecycles: &[Lifecycle]) -> Option<LifecycleStates> {
@@ -263,42 +251,6 @@ impl Rows {
             ),
             target: target.to_owned(),
         });
-    }
-
-    fn depends_on(&mut self, artifact: &ArtifactEnvelope, all: &[&ArtifactEnvelope]) {
-        let present = |id: &str, version: &str| {
-            all.iter()
-                .any(|other| other.artifact_id == id && other.version == version)
-        };
-        let mut edge = |id: &str, version: &str, via: DependencyVia| {
-            if present(id, version) {
-                self.depends_on.insert(DependsOnRow {
-                    from: key(artifact),
-                    to: ArtifactKey {
-                        artifact_id: id.to_owned(),
-                        version: version.to_owned(),
-                    },
-                    via,
-                });
-            }
-        };
-        for dependency in &artifact.dependencies {
-            if let Some(version) = &dependency.version {
-                edge(&dependency.artifact_id, version, DependencyVia::Dependency);
-            }
-        }
-        if let ArtifactPayload::BusinessPack(_) = &artifact.payload
-            && let Ok(BusinessPackRoot::Composition(pack)) =
-                serde_json::from_value(payload_json(artifact))
-        {
-            for member in &pack.artifacts {
-                edge(
-                    &member.artifact_id,
-                    &member.version,
-                    DependencyVia::PackMember,
-                );
-            }
-        }
     }
 
     fn finish(self) -> DefinitionCatalog {
