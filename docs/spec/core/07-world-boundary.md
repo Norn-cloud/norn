@@ -14,7 +14,7 @@ Reuse `ConnectorRoot`, `SourceSchemaIr`, `MappingIr`, mapping evidence/gaps, `Fu
 | Outbound intent | operation ID, Function/connector pin, destination, canonical input digest, capability/secret handles, actor/delegation, retry/timeout/provider dedup contract, relevant-state pins, compensation action reference. |
 | Outcome | operation/generation/attempt, state, provider receipt/reference, result/error schema + digest, observed/recorded time, reconciliation evidence, causal original operation; outputs are proposals, never direct writes. |
 
-Functions use canonical `FunctionManifest {abi, function_id, version, input_schema, output_schema, error_schema, implementation, dependency_closure, runtime, platform, capabilities, determinism, bounds, cache, retention, steps}`. WIT/language bindings must agree; opaque scoped secret handles resolve only inside authorized performers, never the pure evaluator.
+Functions use canonical `FunctionManifest {abi, function_id, version, input_schema, output_schema, error_schema, implementation, dependency_closure, runtime, platform, capabilities, determinism, bounds, cache, retention, steps}`. Admission rejects a missing `dependency_closure` and requires its declared digest to equal the digest computed from its entries. WIT/language bindings must agree; opaque scoped secret handles resolve only inside authorized performers, never the pure evaluator.
 
 ## Ingestion versus governed action
 
