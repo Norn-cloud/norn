@@ -49,7 +49,7 @@ if (checker) test("POST-BINDING: unresolved, mistyped and open declarations refu
     ['"operation":"receipt"', '"operation":"transfer"'],
     ['"operation":"receipt"', '"operation":"receipt","templateId":"caller"'],
     ['"stockPost":{', '"stockPost":null,"unused":{'],
-  ]) {
+  ] satisfies ReadonlyArray<readonly [string, string]>) {
     const changed = original.replace(before, after)
     expect(changed).not.toBe(original)
     const result = checker.checkArtifactSet(JSON.parse(changed))
