@@ -70,7 +70,7 @@
         "a transfer that debits one location without crediting another",
         "a transformation output with no recorded consumption"
       ],
-      "status": "specified"
+      "status": "modeled"
     },
     {
       "id": "INV-CORE-ESCROW-NON-NEGATIVE",
@@ -87,7 +87,7 @@
         "two reservations each fit the available stock but together exceed it",
         "releasing more than is held"
       ],
-      "status": "specified"
+      "status": "modeled"
     },
     {
       "id": "INV-CORE-COMMITMENT-COMPLETION",
@@ -104,6 +104,51 @@
         "a promised commitment past its due time that is neither fulfilled nor breached",
         "a cancelled commitment reopened",
         "a commitment row deleted while open"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-CORE-STOCK-VALUATION",
+      "law": "core.law.stock_valuation",
+      "domain": "core-physics",
+      "priority": "P1",
+      "kind": "safety",
+      "statement": "The value of stock issued is computed by the resource's declared valuation method, and inventory value equals value received less value issued under every method. The method is a parameter of the law, not a variant of it.",
+      "parameter": {
+        "property": "core.Resource.valuation_method",
+        "values": [
+          "fifo",
+          "moving_average"
+        ],
+        "setBy": "tenant, as a governed and audited change",
+        "appliesTo": "issues after the change"
+      },
+      "owner": "norn.core physics pack",
+      "assumptions": [
+        "Quantity conservation holds for the resource (INV-CORE-QUANTITY-CONSERVATION).",
+        "Rounding of moving-average unit cost is declared and exact."
+      ],
+      "counterexamples": [
+        "an issue valued by a method other than the declared one",
+        "a method change that revalues past issues",
+        "moving-average rounding that leaves a residual between inventory value and its ledger account"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-CORE-COMMITMENT-CLAIM-DISJOINT",
+      "law": "core.law.commitment_claim_disjoint",
+      "domain": "core-physics",
+      "priority": "P0",
+      "kind": "conformance",
+      "statement": "No type is both a commitment and a claim (Commitment \u2293 Claim = \u2205). A claim arises from a fulfilled or accepted commitment through givesRiseTo, recorded on the claim as arises_from.",
+      "owner": "norn.core physics pack; checker consistency rules",
+      "assumptions": [
+        "Types reach the primitives only through implements and interface extends."
+      ],
+      "counterexamples": [
+        "an order type that implements both core.Commitment and core.Claim",
+        "an invoice modelled as a commitment"
       ],
       "status": "specified"
     }

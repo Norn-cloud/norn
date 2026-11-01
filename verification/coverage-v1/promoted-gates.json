@@ -516,6 +516,10 @@
         {
           "subsystem": "cala-boundary",
           "layer": "runtime"
+        },
+        {
+          "subsystem": "core-physics",
+          "layer": "runtime"
         }
       ],
       "resultArtifacts": [],
