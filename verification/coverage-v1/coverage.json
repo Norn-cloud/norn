@@ -2732,11 +2732,19 @@
         {
           "id": "INV-CORE-QUANTITY-CONSERVATION",
           "runtime": "missing",
-          "model": "missing",
+          "model": "partial",
           "proof": "partial",
           "evidence": {
             "runtime": [],
-            "model": [],
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4",
+                "selectors": [
+                  "invariant:quantityConserved"
+                ]
+              }
+            ],
             "proof": [
               {
                 "artifact": "verification/core-physics-v1/proofs/CoreQuantity.lean",
@@ -2753,11 +2761,19 @@
         {
           "id": "INV-CORE-ESCROW-NON-NEGATIVE",
           "runtime": "missing",
-          "model": "missing",
+          "model": "bounded_model_checked",
           "proof": "reference_proved",
           "evidence": {
             "runtime": [],
-            "model": [],
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4",
+                "selectors": [
+                  "invariant:escrowNonNegative"
+                ]
+              }
+            ],
             "proof": [
               {
                 "artifact": "verification/core-physics-v1/proofs/CoreQuantity.lean",
@@ -2775,11 +2791,22 @@
         {
           "id": "INV-CORE-COMMITMENT-COMPLETION",
           "runtime": "missing",
-          "model": "missing",
+          "model": "bounded_model_checked",
           "proof": "reference_proved",
           "evidence": {
             "runtime": [],
-            "model": [],
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4",
+                "selectors": [
+                  "invariant:neverDropped",
+                  "invariant:terminalAbsorbing",
+                  "invariant:endsByDue",
+                  "invariant:deadlineBreach"
+                ]
+              }
+            ],
             "proof": [
               {
                 "artifact": "verification/core-physics-v1/proofs/CoreQuantity.lean",
@@ -2809,16 +2836,20 @@
       },
       "model": {
         "status": "partial",
-        "bound": "Apalache depth 4 over four journal slots of two legs, accounts 0..3, two units and amounts -2..2, with post, reverse and refused amend or delete steps",
+        "bound": "Apalache depth 4 over four journal slots of two legs, accounts 0..3, two units and amounts -2..2, with post, reverse and refused amend or delete steps; and depth 4 over one resource in two locations with quantities 1..2 and holds, plus two commitments due at times 1 and 2 under a clock that advances to 3",
         "artifacts": [
-          "verification/core-physics-v1/models/core-value-ledger.qnt"
+          "verification/core-physics-v1/models/core-value-ledger.qnt",
+          "verification/core-physics-v1/models/core-quantity-commitment.qnt"
         ],
         "commands": [
           "quint typecheck verification/core-physics-v1/models/core-value-ledger.qnt",
-          "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4"
+          "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+          "quint typecheck verification/core-physics-v1/models/core-quantity-commitment.qnt",
+          "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": [
+          "target/verification-results/core-quantity-commitment-quint.json",
           "target/verification-results/core-value-ledger-quint.json"
         ]
       },
@@ -2844,7 +2875,8 @@
       "sourceFiles": [
         "verification/core-physics-v1/models/core-value-ledger.qnt",
         "verification/core-physics-v1/proofs/CoreValueLedger.lean",
-        "verification/core-physics-v1/proofs/CoreQuantity.lean"
+        "verification/core-physics-v1/proofs/CoreQuantity.lean",
+        "verification/core-physics-v1/models/core-quantity-commitment.qnt"
       ]
     }
   ]
