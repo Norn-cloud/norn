@@ -226,6 +226,7 @@
     "fixtures/ir/synthetic-contact.source_schema.json",
     "fixtures/ir/synthetic-rows.mapping.json",
     "fixtures/projections/sqlite/entity-v2-object-types.sql",
+    "registry/core/artifacts/core.units.json",
     "registry/core/src/units.rs",
     "registry/packs/canon/artifacts/norn.ontology-pack.canon.json",
     "registry/packs/canon/canon.pack.ts",

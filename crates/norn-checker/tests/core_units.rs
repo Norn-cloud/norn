@@ -100,6 +100,7 @@ proptest! {
         record.as_object_mut().expect("record").insert("numerator".to_owned(), numerator.into());
         record.as_object_mut().expect("record").insert("denominator".to_owned(), candidate.into());
         prop_assert_eq!(constraint.check_runtime_value(&record).is_ok(), candidate == denominator);
+        record.as_object_mut().expect("record").insert("denominator".to_owned(), denominator.into());
         record.as_object_mut().expect("record").insert("dimension".to_owned(), RuntimeValue::from("currency"));
         prop_assert!(constraint.check_runtime_value(&record).is_err());
     }
