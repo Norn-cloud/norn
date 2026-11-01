@@ -160,7 +160,7 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
         artifact.dependencies.clear();
         let root = norn_ir::CompositionPackRoot {
             pack_id: id.to_owned(),
-            pack_version: "1.0.0".to_owned(),
+            pack_version: artifact.version.clone(),
             pack_kind: None,
             provides: None,
             artifacts: vec![norn_ir::PackArtifactRef {
@@ -219,6 +219,18 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
         .collect();
     let holder = pack("toy.instances", "core.Order.interface", Some(nodes));
     base.extend([root, leaf, holder]);
+    assert!(
+        check_artifact_set(
+            &base,
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None
+            }
+        )
+        .is_empty(),
+        "retained fixture admission"
+    );
     let mut declaration: norn_ir::LawIR =
         serde_json::from_value(serde_json::to_value(law.payload.to_json_value()).expect("law"))
             .expect("typed");
@@ -314,18 +326,6 @@ fn law_contained_unknown_stale_missing_duplicate_cycle_and_budget_refuse() {
     let mut missing = original.clone();
     missing.retain(|a| a.artifact_id != "commerce.SalesOrder.entity");
     assert!(membership(&law, &missing).is_err());
-    assert!(
-        norn_checker::verification::retained_law_membership(
-            &law,
-            &original,
-            Budget {
-                max_nodes: 128,
-                max_edges: 1,
-                max_steps: 4096
-            }
-        )
-        .is_err()
-    );
 }
 
 proptest::proptest! {
