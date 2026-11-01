@@ -36,4 +36,4 @@ No FRET or timed-liveness claim: deadline breach needs a future clock-aware requ
 - Eight requirements cover seven physics categories; history prohibition and
   compensation are separate. Activation predicates are row-specific typed data.
   Inputs are bounded partition/dimension/currency data: authoring conformance,
-  not admitted aggregate proofs. Terminal history is state, not a deadline trigger.
+  not admitted aggregate proofs. Terminal history is state; posted facts stay immutable.

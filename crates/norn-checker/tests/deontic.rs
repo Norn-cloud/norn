@@ -376,15 +376,14 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
     use norn_expr::{EntityDefinitions, EnvOptions, Type, ZenTypeEnv};
     use norn_ir::requirement_display::{RequirementLocale as L, RequirementView};
     use std::collections::BTreeMap;
-    // Corpus inputs are already partitioned by the scope's dimension/currency.
-    // This tests authoring/display, not aggregate-law admission or preservation.
+    // Bounded, partitioned authoring inputs; not aggregate-law admission or preservation.
     let corpus = include_str!("../../../docs/platform/structured-physics.tsv");
     assert_eq!(corpus.lines().count(), 8);
     let mut fields = BTreeMap::new();
     for name in "external loss available held funded".split_whitespace() {
         fields.insert(name.into(), Type::Number);
     }
-    for name in "committed ledgerCommitted proposed wasTerminal terminal custodyChanged ownershipTransfer correctionRequested correctionCommitted consumed produced recorded open custodyRecorded edited deleted linked inverse"
+    for name in "committed ledgerCommitted proposed wasTerminal terminal custodyChanged ownershipTransfer correctionCommitted consumed produced recorded open custodyRecorded edited deleted linked inverse"
         .split_whitespace()
     {
         fields.insert(name.into(), Type::Bool);
@@ -401,6 +400,7 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
         .expect("typed corpus inputs");
     for row in corpus.lines() {
         let (mut r, [expression, en, ar, condition]) = physics_requirement(row);
+        assert!(r.norm.law.id != "core.history" || condition == "true");
         norn_checker::deontic::check_requirement(&r, &env).expect("closed corpus");
         let mut ids = Vec::new();
         for locale in [L::En, L::Ar] {
