@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -133,6 +134,7 @@ def main() -> None:
         document["challengeDigest"] = challenge_digest
         document["inputDigest"] = digest({"inputs": pins, "challenge": challenge_digest})
         document["generatedObligations"] = challenge_rows(challenge)
+    os.set_blocking(sys.stdout.fileno(), True)
     print(json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2))
 
 
