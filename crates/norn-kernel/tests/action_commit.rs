@@ -4021,7 +4021,7 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
 }
 
 #[test]
-fn protected_properties_refuse_action_input_and_accept_rule_output() {
+fn protected_properties_refuse_action_input_and_unsealed_output() {
     let mut types = order_types();
     types[0]
         .properties
@@ -4043,14 +4043,87 @@ fn protected_properties_refuse_action_input_and_accept_rule_output() {
     }],"commands":[],"timers":[]}))
     .unwrap();
     let empty = FactSlice::new();
-    commit_decision(&mut cell, &catalog, &empty, &action_call.turn, &output).unwrap();
-    let output = serde_json::from_value(json!({"facts":[{
-        "op":"set","objectType":ORDER,"key":"PROTECTED","property":"so_number","value":"rule-updated"
-    }],"commands":[],"timers":[]})).unwrap();
-    let slice = norn_kernel::load_slice(&cell, [key.clone()]).unwrap();
-    let mut rule_turn = action_call.turn.clone();
-    rule_turn.id = "protected-rule-update".to_owned();
-    commit_decision(&mut cell, &catalog, &slice, &rule_turn, &output).unwrap();
-    let values = cell.load(&key).unwrap().values.unwrap();
-    assert_eq!(values["so_number"].as_str(), Some("rule-updated"));
+    let refusal =
+        commit_decision(&mut cell, &catalog, &empty, &action_call.turn, &output).unwrap_err();
+    assert_eq!(refusal.code(), "decision.invalid_output");
+    assert!(cell.ledger().is_empty());
+    assert!(!cell.load(&key).unwrap().exists());
+}
+
+#[test]
+fn row_only_cas_checker_and_runtime_admission_agree() {
+    let baseline = owned_series_types(false, false);
+    let action = owned_series_action();
+    for mask in 0..4 {
+        let mut types = baseline.clone();
+        for (index, property) in types[0].properties.iter_mut().enumerate() {
+            property.protected = mask & (1 << index) != 0;
+        }
+        let mut artifacts = Vec::<norn_ir::ArtifactEnvelope>::new();
+        for object in &types {
+            let mut envelope = fixture("ir/commerce-sales-order-submit-invoice.action.json");
+            envelope["artifactId"] = json!(format!("{}.entity", object.name.as_str()));
+            envelope["kind"] = json!("entity");
+            envelope["version"] = json!("0.1.0");
+            envelope["dependencies"] = json!([]);
+            envelope["payload"] = json!({"entityVersion":"2.0", "objectType":object});
+            artifacts.push(serde_json::from_value(envelope).unwrap());
+        }
+        let mut envelope = fixture("ir/commerce-sales-order-submit-invoice.action.json");
+        envelope["payload"] = serde_json::to_value(&action).unwrap();
+        artifacts.push(serde_json::from_value(envelope).unwrap());
+        let diagnostics = norn_checker::action_set::check_action_set(
+            &artifacts,
+            &norn_checker::EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            },
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.message.contains("CAS touches")),
+            "{diagnostics:?}"
+        );
+        let checker_admits = diagnostics.is_empty();
+        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+            .with_types(baseline.clone());
+        commit_action(
+            &mut cell,
+            &TypeCatalog::new(&baseline),
+            &owned_series_call(
+                &action,
+                "cas-seed",
+                "0",
+                &json!({"name":"ORDER-1", "company":"ACME"}),
+                &json!([owned_series_add("row-a")]),
+            ),
+            &Allow,
+        )
+        .unwrap();
+        cell = cell.with_types(types.clone());
+        let ledger_before = cell.ledger().len();
+        let result = commit_action(
+            &mut cell,
+            &TypeCatalog::new(&types),
+            &owned_series_call(
+                &action,
+                "cas-row-only",
+                "1",
+                &json!({}),
+                &json!([{"collection":"lines", "op":"remove", "rowId":"row-a", "expectedVersion":"1"}]),
+            ),
+            &Allow,
+        );
+        assert_eq!(
+            checker_admits,
+            result.is_ok(),
+            "mask={mask}, checker={diagnostics:?}, runtime={result:?}"
+        );
+        if let Err(refusal) = result {
+            assert_eq!(refusal.code(), "decision.invalid_output");
+            assert_eq!(cell.ledger().len(), ledger_before);
+        }
+    }
 }
