@@ -2,8 +2,8 @@
 use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
 use norn_expr::{EvaluationBudget, Expression, Value};
 use norn_ir::{
-    ArtifactEnvelope, DataQualityOutcome, DataQualitySeverity, LawIR,
-    LawModality, LawResponse, LawRoot, LawSeverity, ObjectTypeName,
+    ArtifactEnvelope, DataQualityOutcome, DataQualitySeverity, LawIR, LawModality, LawResponse,
+    LawRoot, LawSeverity, ObjectTypeName,
 };
 use serde::{Deserialize, de::IntoDeserializer};
 
@@ -46,8 +46,6 @@ pub struct LawFailure {
     pub severity: DataQualitySeverity,
     /// Declared explanation.
     pub message: String,
-    /// Runtime evidence for the violation.
-    pub outcome: DataQualityOutcome,
 }
 fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvaluationError> {
     let decoded: Result<LawIR, serde::de::value::Error> =
@@ -142,14 +140,13 @@ pub fn evaluate(
                 })
             }
         };
-        if let Err(outcome) = result {
+        if result.is_err() {
             failures.push(LawFailure {
                 severity: match law.severity {
                     LawSeverity::Error => DataQualitySeverity::Error,
                     LawSeverity::Warning => DataQualitySeverity::Warning,
                 },
                 message: format!("{}: {}", law.id, law.rationale),
-                outcome,
             });
         }
     }
@@ -183,7 +180,11 @@ fn boolean(
         }),
         Ok(result) => match result.value() {
             Value::Bool(value) => Ok(*value),
-            other @ (Value::Null | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => Err(DataQualityOutcome::NonBoolean {
+            other @ (Value::Null
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_)
+            | Value::Object(_)) => Err(DataQualityOutcome::NonBoolean {
                 actual: format!("{other:?}"),
             }),
         },

@@ -3053,38 +3053,35 @@ fn direct_amount_law() -> norn_ir::ArtifactEnvelope {
     serde_json::from_value(law.clone()).expect("direct law")
 }
 
-#[test]
-fn law_commit_direct_violation_refuses_without_business_writes() {
-    let laws = vec![direct_amount_law()];
-    let key = FactKey::new(ITEM, "direct-law");
-    let values = object(json!({"item_id":"direct-law", "amount":101, "status":"draft"}));
-    let mut native = cell().with_governing_laws(laws);
-    let refusal = native
-        .commit(CellCommit {
-            writes: vec![FactWrite {
-                key,
-                expected: FactVersion::ABSENT,
-                mutation: FactMutation::Put {
-                    values,
-                },
-            }],
-            ..CellCommit::empty()
-        })
-        .expect_err("law refuses");
-    assert_eq!(refusal.code(), "core.laws.violated");
-    assert!(native.ledger().is_empty());
-}
-
 norn_testkit::proptest::proptest! {
     #[test]
-    fn law_supported_direct_evaluation_matches_generated_bounds(amount in 1i64..200) {
+    fn law_commit_direct_positive_and_refusal_cases_are_atomic(amount in 1i64..200) {
         use norn_testkit::proptest::prelude::*;
-        let laws = [direct_amount_law()];
-        let (types, interfaces) = definitions();
-        let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
-        let mut budget = EvaluationBudget::default().units();
-        let failures = norn_kernel::governing_laws::evaluate(&catalog, &FactKey::new(ITEM, "bounded"), &object(json!({"amount":amount})), &mut budget).expect("evaluate");
-        prop_assert_eq!(failures.is_empty(), amount <= 100);
-        prop_assert!(budget < EvaluationBudget::default().units());
+        for amount in [100, 101, amount] {
+            let laws = [direct_amount_law()];
+            let (types, interfaces) = definitions();
+            let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
+            let key = FactKey::new(ITEM, "bounded");
+            let values = object(json!({"item_id":"bounded", "amount":amount, "status":"draft"}));
+            let mut budget = EvaluationBudget::default().units();
+            let failures = norn_kernel::governing_laws::evaluate(
+                &catalog, &key, &values, &mut budget,
+            ).expect("evaluate");
+            prop_assert_eq!(failures.is_empty(), amount <= 100);
+            prop_assert!(budget < EvaluationBudget::default().units());
+            let mut native = cell().with_governing_laws(laws.into());
+            let result = native.commit(CellCommit {
+                writes: vec![FactWrite {
+                    key, expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put { values },
+                }],
+                ..CellCommit::empty()
+            });
+            prop_assert_eq!(result.is_ok(), amount <= 100);
+            if let Err(refusal) = result {
+                prop_assert_eq!(refusal.code(), "core.laws.violated");
+                prop_assert!(native.ledger().is_empty());
+            }
+        }
     }
 }
