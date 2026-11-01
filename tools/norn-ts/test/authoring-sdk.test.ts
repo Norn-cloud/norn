@@ -175,6 +175,9 @@ test("FOLD-AUTHORING compiles closed step schemas and pins the helper", () => {
 
 test("FOLD-OPERANDS refuses structural extra fields through const aliases", () => {
   const source = readFileSync(join(TOOL_ROOT, "fixtures/decisions/ordered-fold.source.ts"), "utf8")
+  const literalItem = source.replace('id: Schema.String, amount:', 'id: Schema.Literal("row"), amount:').replace("items: input.slice.items", 'items: [{ id: "row", amount: 1 }]')
+  expect(compile(literalItem).ok).toBe(true)
+  expect(compile(literalItem.replace('id: "row"', 'id: "other"')).ok).toBe(false)
   const wideItems = source.replace("items: Schema.Array(Item)", "items: Schema.Array(Schema.Struct({ id: Schema.String, amount: Schema.Finite, source: Schema.String }))")
   const wideState = source.replace("initial: State", "initial: Schema.Struct({ total: Schema.Finite, count: Schema.Int, ids: Schema.Array(Schema.String), segments: Schema.Array(Schema.Array(Schema.Finite)), source: Schema.String })")
   const alias = (text: string) => text.replace("const state = Norn.orderedFold", "const rows = input.slice.items; const seed = input.slice.initial; const state = Norn.orderedFold").replace("items: input.slice.items, initial: input.slice.initial", "items: rows, initial: seed")

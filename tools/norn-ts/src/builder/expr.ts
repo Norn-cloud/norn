@@ -297,6 +297,7 @@ export function conforms(expr: Expr, expected: ValueSchema, scope: Scope): boole
     return (value.type === "null" || acceptsSchema(expected, nonnull)) && conforms(expr.fallback, expected, scope)
   }
   const target = Array.isArray(expected.type) ? { ...expected, type: expected.type[0] } as ValueSchema : expected
+  if (expr._tag === "Literal" && typeof expr.value === "string" && target.type === "string") return target.enum === undefined || target.enum.includes(expr.value)
   if (expr._tag === "List" && target.type === "array") return expr.items.every(item => conforms(item, target.items, scope))
   if (expr._tag === "Record" && target.type === "object") {
     return (target.required ?? []).every(k => expr.fields.some(([name]) => name === k))
