@@ -226,7 +226,7 @@ impl RetainedLayers {
             {
                 return Err(ChallengeError::NotAdmitted);
             }
-            crate::verify_admission_receipt_sources(
+            crate::receipt::verify_admission_receipt_sources(
                 layer.receipt,
                 layer.receipt_sha256,
                 &layer.source.receipt_sources,
