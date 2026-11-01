@@ -594,11 +594,31 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
     /// Quantity state joins the same atomic commit as ordinary writes.
     pub(crate) fn apply_quantity(
         &self,
-    ) -> Result<Option<norn_kernel::quantity::QuantityResult>, CellError> {
+    ) -> Result<Option<crate::store::QuantityBatch<norn_kernel::quantity::QuantityResult>>, CellError>
+    {
         self.batch
             .quantity
             .as_ref()
-            .map(|request| crate::quantity::apply(self.conn, self.batch, request, self.commit_seq))
+            .map(|requests| {
+                let plans = requests
+                    .iter()
+                    .map(|request| crate::quantity::plan(self.conn, self.batch, request))
+                    .collect::<Result<Vec<_>, _>>()?;
+                requests
+                    .iter()
+                    .zip(plans)
+                    .map(|(request, plan)| {
+                        crate::quantity::apply(
+                            self.conn,
+                            self.batch,
+                            request,
+                            self.commit_seq,
+                            plan,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(crate::store::QuantityBatch)
+            })
             .transpose()
     }
 
