@@ -7,7 +7,34 @@ use super::{
     host_failure, integer_equals, load_action_fact, owned_manifest_key,
     prepare_action_input_for_call, read_manifest_ids, record_action_link_read,
 };
-use crate::stock_posting::StockPostLine;
+use crate::stock_fifo::{FifoError, FifoLayer, FifoMovement, replay_fifo};
+use crate::stock_posting::{
+    StockPostBindings, StockPostError, StockPostLine, StockPostOperation, StockPostPlan,
+    lower_stock_posting,
+};
+
+/// Activation ceiling; complete history always fits beside bounded master/line work.
+pub const MAX_STOCK_HISTORY_EVENTS: usize = 256;
+
+fn history_capacity<X>(
+    prior: usize,
+    added: usize,
+    non_event: u32,
+    records: u32,
+) -> Result<(), ActionRefusal<X>> {
+    if prior
+        .checked_add(added)
+        .is_none_or(|count| count > MAX_STOCK_HISTORY_EVENTS)
+        || u64::from(non_event)
+            .saturating_add(u64::try_from(MAX_STOCK_HISTORY_EVENTS).unwrap_or(u64::MAX))
+            > u64::from(records)
+    {
+        return Err(invalid(
+            "stock history capacity exceeded; posting activation refused",
+        ));
+    }
+    Ok(())
+}
 
 /// One master-selected partition, with lines in owned-manifest order.
 #[derive(Debug)]
@@ -18,6 +45,14 @@ pub struct StockPartitionInput {
     pub accounts: [String; 3],
     /// Quantity and acquisition cost read from owned lines, in millionths.
     pub lines: Vec<StockPostLine>,
+    /// Fenced partition identity, including an absent first-post witness.
+    pub witness: FactKey,
+    /// Prior movements in dense partition order.
+    pub history: Vec<FifoMovement>,
+    /// Master-selected closed runtime bindings.
+    pub bindings: StockPostBindings,
+    /// Immutable posting configuration/UOM pin checked against prior history.
+    pub binding_pin: String,
 }
 
 /// Read-only proposal inputs. These values grant no write authority.
@@ -48,7 +83,7 @@ struct Reader<'a, 'model, 'call, H: CellHost + ?Sized> {
 }
 
 impl<H: CellHost + ?Sized> Reader<'_, '_, '_, H> {
-    fn fact(&mut self, key: &FactKey) -> Result<JsonObject, ActionRefusal<H::Error>> {
+    fn state(&mut self, key: &FactKey) -> Result<super::FactState, ActionRefusal<H::Error>> {
         let c = &self.context;
         let state = load_action_fact(
             c.host,
@@ -67,7 +102,11 @@ impl<H: CellHost + ?Sized> Reader<'_, '_, '_, H> {
             &mut self.types,
             false,
         )?;
-        state.values.ok_or(ActionRefusal::TargetNotFound)
+        Ok(state)
+    }
+
+    fn fact(&mut self, key: &FactKey) -> Result<JsonObject, ActionRefusal<H::Error>> {
+        self.state(key)?.values.ok_or(ActionRefusal::TargetNotFound)
     }
 
     fn targets(
@@ -96,6 +135,53 @@ impl<H: CellHost + ?Sized> Reader<'_, '_, '_, H> {
             .collect();
         record_action_link_read(&mut self.snapshot.links, key, link, targets)?;
         Ok(keys)
+    }
+
+    fn history(
+        &mut self,
+        partition: &FactKey,
+        binding_pin: &str,
+    ) -> Result<Vec<FifoMovement>, ActionRefusal<H::Error>> {
+        let witness = self.state(partition)?;
+        if let Some(values) = &witness.values
+            && text::<H::Error>(values, "binding_pin")? != binding_pin
+        {
+            return Err(invalid("stock binding changed after first posting"));
+        }
+        history_capacity(0, 0, self.meter.records(), self.limits.max_records)?;
+        let keys = self.targets(partition, "events")?;
+        let count = keys.len();
+        history_capacity(count, 0, self.meter.records(), self.limits.max_records)?;
+        if witness
+            .values
+            .as_ref()
+            .is_some_and(|v| text::<H::Error>(v, "id").ok().as_ref() != Some(&partition.key))
+        {
+            return Err(invalid("partition witness identity mismatch"));
+        }
+        if !integer_equals(
+            witness.values.as_ref().and_then(|v| v.get("event_count")),
+            count,
+        ) && (witness.exists() || count != 0)
+        {
+            return Err(invalid("partition event count mismatch"));
+        }
+        let mut events = BTreeMap::new();
+        for key in keys {
+            let values = self.fact(&key)?;
+            let (ordinal, movement) = history_event(partition, &key, &values)?;
+            if events.insert(ordinal, movement).is_some() {
+                return Err(invalid("duplicate partition ordinal"));
+            }
+        }
+        if events
+            .keys()
+            .copied()
+            .ne(0..u64::try_from(count).unwrap_or(u64::MAX))
+        {
+            return Err(invalid("partition event order is not dense"));
+        }
+        Ok(events.into_values().collect())
     }
 
     fn path(
@@ -291,13 +377,33 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
             reader.account(&key, &binding.accounts.srbnb)?,
             reader.account(&key, &binding.accounts.cogs)?,
         ];
-        let masters = [company.clone(), item, warehouse];
+        let uom = text::<H::Error>(&reader.fact(&item)?, "uom")?;
+        let masters = [company.clone(), item, warehouse].map(|key| model.canonical(&key));
+        let witness =
+            partition_key(&masters).map_err(|_encoding| invalid("invalid partition identity"))?;
+        let company_values = reader.fact(&company)?;
+        let bindings = runtime_bindings(&company_values, &accounts, call)?;
+        let binding_pin = norn_ir::canonical::domain_hash_hex(
+            b"norn.stock-bindings/1\0",
+            &(
+                &bindings.templates,
+                &bindings.accounts,
+                &bindings.currency,
+                &bindings.layer,
+                uom,
+            ),
+        )
+        .map_err(|_encoding| invalid("invalid stock binding pin"))?;
         let partition = partitions
             .entry(masters.clone())
             .or_insert(StockPartitionInput {
                 masters,
                 accounts,
                 lines: vec![],
+                witness,
+                history: vec![],
+                bindings,
+                binding_pin,
             });
         partition.lines.push(StockPostLine {
             id: id.clone(),
@@ -308,13 +414,261 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
             },
         });
     }
+    for partition in partitions.values_mut() {
+        partition.history = reader.history(&partition.witness, &partition.binding_pin)?;
+    }
     reader.snapshot.partitions = partitions.into_values().collect();
     Ok(reader.snapshot)
 }
 
+fn partition_key(
+    masters: &[FactKey; 3],
+) -> Result<FactKey, norn_ir::canonical::CanonicalJsonError> {
+    norn_ir::canonical::domain_hash_hex(b"norn.stock-partition/1\0", masters)
+        .map(|id| FactKey::new("stock.Partition", id))
+}
+
+fn natural<X>(values: &JsonObject, property: &str) -> Result<u64, ActionRefusal<X>> {
+    let Some(JsonValue::Number(value)) = values.get(property) else {
+        return Err(invalid(format!("missing integer {property}")));
+    };
+    value
+        .canonical()
+        .parse()
+        .map_err(|_parse| invalid(format!("invalid integer {property}")))
+}
+
+fn history_event<X>(
+    partition: &FactKey,
+    key: &FactKey,
+    values: &JsonObject,
+) -> Result<(u64, FifoMovement), ActionRefusal<X>> {
+    if key.object_type.as_str() != "stock.StockEvent"
+        || text::<X>(values, "partition_id")? != partition.key
+        || text::<X>(values, "id")? != key.key
+    {
+        return Err(invalid("stock history identity differs from partition"));
+    }
+    let quantity = millionths(values, "quantity")?;
+    let value = millionths(values, "value")?;
+    let movement = match text::<X>(values, "operation")?.as_str() {
+        "receipt" => FifoMovement::Receipt(FifoLayer {
+            receipt: key.key.clone(),
+            quantity,
+            value,
+        }),
+        "delivery" => FifoMovement::Delivery(quantity),
+        _ => return Err(invalid("invalid stock history movement")),
+    };
+    Ok((natural(values, "ordinal")?, movement))
+}
+
+fn runtime_bindings<X>(
+    company: &JsonObject,
+    accounts: &[String; 3],
+    call: &ActionCall<'_>,
+) -> Result<StockPostBindings, ActionRefusal<X>> {
+    let account = |id: &String| -> Result<_, ActionRefusal<X>> {
+        Ok(norn_ir::posting::AccountingAccountRef {
+            scope_key: call
+                .scope
+                .get("orgId")
+                .cloned()
+                .ok_or_else(|| invalid("missing organization"))?,
+            book_id: text(company, "book_id")?,
+            graph_id: text(company, "graph_id")?,
+            graph_version: natural(company, "graph_version")?,
+            account_id: id.clone(),
+        })
+    };
+    let [stock, srbnb, cogs] = accounts;
+    Ok(StockPostBindings {
+        accounts: [account(stock)?, account(srbnb)?, account(cogs)?],
+        templates: ["receipt".into(), "delivery".into()],
+        currency: text(company, "currency")?,
+        layer: "posted".into(),
+    })
+}
+
+/// Lower the authorized snapshot; refusals disclose only authorized identities.
+///
+/// # Errors
+/// Returns typed valuation refusals without writes.
+pub fn plan_stock_partition<X>(
+    partition: &StockPartitionInput,
+    operation: StockPostOperation,
+    posting_id: &str,
+) -> Result<StockPostPlan, ActionRefusal<X>> {
+    history_capacity(
+        partition.history.len(),
+        partition.lines.len(),
+        0,
+        ResourceLimitProfile::norn_limits_v1().slice.max_records,
+    )?;
+    lower_stock_posting(
+        &partition.bindings,
+        operation,
+        posting_id,
+        &partition.history,
+        &partition.lines,
+    )
+    .map_err(|error| {
+        if error == StockPostError::Fifo(FifoError::InsufficientStock) {
+            let requested = partition
+                .lines
+                .iter()
+                .try_fold(0_u128, |sum, line| sum.checked_add(line.quantity));
+            let available = replay_fifo(&partition.history).ok().and_then(|layers| {
+                layers
+                    .iter()
+                    .try_fold(0_u128, |sum, layer| sum.checked_add(layer.quantity))
+            });
+            if let (Some(requested), Some(available)) = (requested, available) {
+                let [_, item, warehouse] = &partition.masters;
+                return ActionRefusal::InsufficientStock {
+                    item: item.key.clone(),
+                    warehouse: warehouse.key.clone(),
+                    requested: display_quantity(requested),
+                    available: display_quantity(available),
+                };
+            }
+        }
+        ActionRefusal::StockPosting(error)
+    })
+}
+
+fn display_quantity(value: u128) -> String {
+    let whole = value.checked_div(1_000_000).unwrap_or(0);
+    let fraction = value.checked_rem(1_000_000).unwrap_or(0);
+    if fraction == 0 {
+        whole.to_string()
+    } else {
+        format!("{whole}.{fraction:06}")
+            .trim_end_matches('0')
+            .to_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{JsonObject, JsonValue, millionths};
+    #![allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        clippy::too_many_lines,
+        reason = "conformance fixture assembly"
+    )]
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn post_partition_refusal_names_authoritative_stock() {
+        let accounts =
+            ["stock", "srbnb", "cogs"].map(|id| norn_ir::posting::AccountingAccountRef {
+                scope_key: "demo".into(),
+                book_id: "book".into(),
+                graph_id: "graph".into(),
+                graph_version: 1,
+                account_id: id.into(),
+            });
+        let mut partition = StockPartitionInput {
+            masters: [
+                FactKey::new("stock.Company", "c"),
+                FactKey::new("stock.Item", "i"),
+                FactKey::new("stock.Warehouse", "w"),
+            ],
+            accounts: ["stock".into(), "srbnb".into(), "cogs".into()],
+            witness: FactKey::new("stock.Partition", "p"),
+            binding_pin: "pin".into(),
+            history: vec![FifoMovement::Receipt(FifoLayer {
+                receipt: "prior".into(),
+                quantity: 5_000_000,
+                value: 50_000_000,
+            })],
+            lines: vec![StockPostLine {
+                id: "line".into(),
+                quantity: 6_250_000,
+                unit_cost: None,
+            }],
+            bindings: StockPostBindings {
+                templates: ["receipt".into(), "delivery".into()],
+                accounts,
+                currency: "USD".into(),
+                layer: "posted".into(),
+            },
+        };
+        let error = plan_stock_partition::<std::convert::Infallible>(
+            &partition,
+            StockPostOperation::Delivery,
+            "dn",
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "stock.insufficient_stock");
+        assert_eq!(
+            error.to_string(),
+            "insufficient stock for item i in warehouse w: requested 6.25, available 5"
+        );
+        partition.history = (0..255)
+            .map(|i| {
+                FifoMovement::Receipt(FifoLayer {
+                    receipt: i.to_string(),
+                    quantity: 1_000_000,
+                    value: 1_000_000,
+                })
+            })
+            .collect();
+        partition.lines[0].quantity = 1_000_000;
+        assert!(
+            plan_stock_partition::<std::convert::Infallible>(
+                &partition,
+                StockPostOperation::Delivery,
+                "last"
+            )
+            .is_ok(),
+            "POST-HISTORY-CAPACITY 255 + 1"
+        );
+        partition.history.push(FifoMovement::Delivery(1_000_000));
+        assert!(
+            matches!(
+                plan_stock_partition::<std::convert::Infallible>(
+                    &partition,
+                    StockPostOperation::Delivery,
+                    "over"
+                ),
+                Err(ActionRefusal::SliceUnavailable { .. })
+            ),
+            "POST-HISTORY-CAPACITY 256 + 1"
+        );
+        let records = ResourceLimitProfile::norn_limits_v1().slice.max_records;
+        let room = records.saturating_sub(u32::try_from(MAX_STOCK_HISTORY_EVENTS).unwrap());
+        assert!(history_capacity::<std::convert::Infallible>(256, 0, room, records).is_ok());
+        assert!(
+            history_capacity::<std::convert::Infallible>(256, 0, room.saturating_add(1), records)
+                .is_err()
+        );
+    }
+    #[test]
+    fn post_history_identity_and_exact_shape() {
+        let partition = FactKey::new("stock.Partition", "p");
+        let event = FactKey::new("stock.StockEvent", "e");
+        let values: JsonObject = serde_json::from_value(json!({"id":"e", "partition_id":"p", "ordinal":0, "operation":"receipt", "quantity":5, "value":50})).unwrap();
+        assert_eq!(
+            history_event::<std::convert::Infallible>(&partition, &event, &values).unwrap(),
+            (
+                0,
+                FifoMovement::Receipt(FifoLayer {
+                    receipt: "e".into(),
+                    quantity: 5_000_000,
+                    value: 50_000_000
+                })
+            )
+        );
+        for field in ["id", "partition_id", "ordinal", "operation", "quantity"] {
+            let mut malformed = values.clone();
+            malformed.insert(field.into(), JsonValue::String("invalid".into()));
+            assert!(
+                history_event::<std::convert::Infallible>(&partition, &event, &malformed).is_err()
+            );
+        }
+    }
     use norn_ir::Decimal;
     #[test]
     fn post_value_exact_millionths() -> Result<(), norn_ir::RuntimeValueError> {

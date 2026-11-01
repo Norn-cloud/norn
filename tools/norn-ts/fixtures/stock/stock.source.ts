@@ -155,7 +155,7 @@ export const StockEvent = Norn.type({
 })
 export const StockPartition = Norn.type({
   name: "stock.Partition", title: "Stock partition witness", version: "0.1.0",
-  properties: Schema.Struct({ id: Schema.String, event_count: Schema.Int }),
+  properties: Schema.Struct({ id: Schema.String, event_count: Schema.Int, binding_pin: Schema.String }),
   identity: [{ name: "primary", properties: ["id"] }],
   links: [{ id: "events", target: StockEvent, cardinality: { to: "many", from: "one" } }],
 })
