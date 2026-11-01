@@ -1657,7 +1657,7 @@ where
         let mut accepted = stored
             .acceptance
             .commit(commit.writes, commit.events, commit.effects)
-            .map_err(|_| CommitError::ObservationAuthorization)?;
+            .map_err(|_conflict| CommitError::ObservationAuthorization)?;
         accepted.reads.extend(commit.reads);
         accepted.links = commit.links;
         accepted.link_reads = commit.link_reads;
