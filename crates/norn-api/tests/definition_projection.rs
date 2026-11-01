@@ -7,20 +7,21 @@ use norn_checker::{
 use norn_ir::{LayoutSidecar, ResourceLimitProfile, RuntimeValue};
 use std::collections::BTreeSet;
 
-fn checked(number: &str, reverse_keys: bool) -> Admitted {
+fn checked(number: &str, reverse_keys: bool) -> Result<Admitted, Box<dyn std::error::Error>> {
     let text = format!(
         r#"{{"irVersion":"0.1","artifactId":"test.setting","kind":"setting","namespace":"test","name":"Setting","version":"0.1.0","lifecycle":"draft","scope":{{"orgId":"org_demo","environmentId":"dev"}},"dependencies":[],"provenance":{{"source":"authoring_sdk"}},"payload":{{"settingVersion":"0.1","settingKey":"test.value","valueType":"number","value":{number},"effectiveFrom":"2026-01-01T00:00:00Z","review":{{"state":"approved","reviewedBy":"reviewer","reviewedAt":"2026-01-01T00:00:00Z","reason":"synthetic"}},"scopeRequired":["orgId","environmentId"]}}}}"#
     );
-    let mut source = RuntimeValue::from_json_text(&text).unwrap();
+    let mut source = RuntimeValue::from_json_text(&text)?;
     if reverse_keys {
         let reordered = text.replacen(
             "\"irVersion\":\"0.1\",\"artifactId\":\"test.setting\"",
             "\"artifactId\":\"test.setting\",\"irVersion\":\"0.1\"",
             1,
         );
-        source = RuntimeValue::from_json_text(&reordered).unwrap();
+        source = RuntimeValue::from_json_text(&reordered)?;
     }
-    let prepared = prepare_artifact_source(source).unwrap();
+    let prepared =
+        prepare_artifact_source(source).map_err(|diagnostics| format!("{diagnostics:?}"))?;
     let artifacts: Vec<norn_ir::ArtifactEnvelope> = vec![prepared.artifact];
     let registry = BTreeSet::new();
     let context = EntityArtifactSetContext {
@@ -32,24 +33,20 @@ fn checked(number: &str, reverse_keys: bool) -> Admitted {
         &artifacts,
         &context,
         &ResourceLimitProfile::norn_limits_v1(),
-    )
-    .unwrap();
+    )?;
     assert!(result.receipt.admitted, "{:?}", result.diagnostics);
-    Admitted {
+    Ok(Admitted {
         artifacts,
         canonical_set: String::from_utf8(
-            RuntimeValue::Array(vec![prepared.source])
-                .canonical_json()
-                .unwrap(),
-        )
-        .unwrap(),
+            RuntimeValue::Array(vec![prepared.source]).canonical_json()?,
+        )?,
         registry: vec![],
-        receipt: serde_json::from_slice(&result.receipt.canonical_json().unwrap()).unwrap(),
-        receipt_sha256: result.receipt.content_sha256().unwrap(),
+        receipt: serde_json::from_slice(&result.receipt.canonical_json()?)?,
+        receipt_sha256: result.receipt.content_sha256()?,
         diagnostics: diagnostics_to_json(&result.diagnostics),
         layout: LayoutSidecar::default(),
         layout_diagnostics: vec![],
-    }
+    })
 }
 
 #[test]
@@ -60,7 +57,7 @@ fn host_exact_literals_survive_definition_projection() {
         "79228162514264337593543950335",
         "0.0000000000000000000000000001",
     ] {
-        let admitted = checked(number, false);
+        let admitted = checked(number, false).unwrap();
         let response = defs_response(&admitted, 7, 3).unwrap();
         assert_eq!(
             response.artifacts.first().unwrap().get(),
@@ -80,9 +77,9 @@ fn host_exact_literals_survive_definition_projection() {
 
 #[test]
 fn host_receipt_keeps_checker_identity_and_binds_semantic_changes() {
-    let first = checked("25", false);
-    let reordered = checked("25", true);
-    let changed = checked("26", false);
+    let first = checked("25", false).unwrap();
+    let reordered = checked("25", true).unwrap();
+    let changed = checked("26", false).unwrap();
     assert_eq!(first.receipt_sha256, reordered.receipt_sha256);
     assert_ne!(first.receipt_sha256, changed.receipt_sha256);
     let mut malformed = first.clone();
@@ -101,7 +98,7 @@ fn host_receipt_keeps_checker_identity_and_binds_semantic_changes() {
 
 #[test]
 fn host_definition_wire_keeps_empty_collections_and_revision_names() {
-    let mut admitted = checked("25", false);
+    let mut admitted = checked("25", false).unwrap();
     admitted.canonical_set = "[]".into();
     admitted.artifacts.clear();
     let registry = BTreeSet::new();
