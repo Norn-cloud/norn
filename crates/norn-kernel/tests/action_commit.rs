@@ -4027,23 +4027,40 @@ fn protected_subtype_cannot_be_deleted_through_ancestor() {
         { "name": "test.Counter", "extends": "test.Base", "properties": [
             { "id": "total", "type": { "kind": "integer" }, "protected": true }
         ] }
-    ])).unwrap();
+    ]))
+    .unwrap();
     let catalog = TypeCatalog::new(&types);
     let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
         .with_types(types.clone());
     let concrete = FactKey::new("test.Counter", "one");
-    cell.commit(CellCommit { writes: vec![FactWrite {
-        key: concrete.clone(), expected: FactVersion::ABSENT,
-        mutation: FactMutation::Put { values: serde_json::from_value(json!({"total": 2})).unwrap() },
-    }], ..CellCommit::empty() }).unwrap();
+    cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: concrete.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(json!({"total": 2})).unwrap(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .unwrap();
     let alias = FactKey::new("test.Base", "one");
     let before = cell.load(&concrete).unwrap();
     let ledger = cell.ledger().len();
     let slice = FactSlice::from([(alias.clone(), cell.load(&alias).unwrap())]);
-    let turn = DecisionTurn { id: "delete-alias".into(), now: LogicalTime::from_millis(1), world: World::Main, consumes: None };
-    let output = norn_ir::DecisionOutput { facts: vec![norn_ir::FactChange::Delete {
-        object_type: alias.object_type.clone(), key: alias.key.clone(),
-    }], ..Default::default() };
+    let turn = DecisionTurn {
+        id: "delete-alias".into(),
+        now: LogicalTime::from_millis(1),
+        world: World::Main,
+        consumes: None,
+    };
+    let output = norn_ir::DecisionOutput {
+        facts: vec![norn_ir::FactChange::Delete {
+            object_type: alias.object_type.clone(),
+            key: alias.key.clone(),
+        }],
+        ..Default::default()
+    };
     let error = commit_decision(&mut cell, &catalog, &slice, &turn, &output).unwrap_err();
     assert_eq!(error.code(), "decision.invalid_output");
     assert_eq!(cell.load(&concrete).unwrap(), before);
