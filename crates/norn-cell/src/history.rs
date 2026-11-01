@@ -84,7 +84,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .governing_laws(object_type)
     }
 
-    pub(crate) fn retained_definition_model(&self, definitions_version: u64) -> Result<Model, CellError> {
+    pub(crate) fn retained_definition_model(
+        &self,
+        definitions_version: u64,
+    ) -> Result<Model, CellError> {
         let installed = self
             .installed_definitions(Some(definitions_version))?
             .ok_or_else(unproven_event)?;
