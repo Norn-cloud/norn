@@ -121,18 +121,28 @@ test("D9–D10: live reads preserve exact numeric source and fail closed", async
 test("D11–D12: badges and posting bindings reflect supplied declarations only", () => {
   const protectedEntity: DefinitionEntry = { ...entity, definition: { kind: "entity", dependencies: [], payload: { entityVersion: "2.0", objectType: {
     name: "demo.Counter", properties: [
-      { id: "count", type: { kind: "integer" }, protected: true },
+      Object.assign({ id: "count", type: { kind: "integer" as const } }, { protected: true }),
       { id: "total", type: { kind: "integer" }, computed: "self.count + 1" },
     ],
-  } } } } as DefinitionEntry
-  const posting = { ...action, definition: { ...action.definition, kind: "action", dependencies: [], payload: {
-    ...action.definition?.payload, stockPost: { operation: "receive", partition: { companyField: "company" }, accounts: { inventory: "Stock", clearing: "Clearing" } },
-  } } }
+  } } } } satisfies DefinitionEntry
+  if (action.definition?.kind !== "action") throw new Error("Action fixture missing")
+  const posting: DefinitionEntry = { ...action, definition: { ...action.definition, payload: Object.assign({}, action.definition.payload, {
+    stockPost: { operation: "receive", partition: { companyField: "company" }, accounts: { inventory: "Stock", clearing: "Clearing" } },
+  }) } }
   const html = renderDefinitionsDocument({ entries: [protectedEntity] })
   expect(html).toContain('class="badge">Rule-owned')
   expect(html).toContain('class="badge">Derived')
   // The stock binding is an admitted forward-compatible payload extension.
-  const bound = renderDefinitionsDocument({ entries: [posting as DefinitionEntry] })
+  const bound = renderDefinitionsDocument({ entries: [posting] })
   for (const label of ["Declared stock posting", "receive", "partition", "companyField", "accounts", "Clearing"]) expect(bound).toContain(label)
   expect(renderDefinitionsDocument({ entries: [action] })).not.toContain("Declared stock posting")
 })
+
+
+for (const body of ['{"admitted":false,"artifacts":[]}', '{"admitted":true}', 'not json', '{"admitted":true,"artifacts":[{}]}']) {
+  test(`D9: malformed or unadmitted document refuses: ${body}`, async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response(body) })
+    try { await expect(readDefinitions(server.url.href, "token")).rejects.toThrow() }
+    finally { server.stop(true) }
+  })
+}

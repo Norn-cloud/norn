@@ -232,7 +232,7 @@ export async function readDefinitions(endpoint: string, token: string): Promise<
     const value: unknown = JSON.parse(raw)
     if (typeof value !== "object" || value === null || !("artifactId" in value) || typeof value.artifactId !== "string"
       || !("name" in value) || typeof value.name !== "string" || !("version" in value) || typeof value.version !== "string"
-      || !("kind" in value) || typeof value.kind !== "string" || !("payload" in value) || typeof value.payload !== "object" || value.payload === null
+      || !("kind" in value) || typeof value.kind !== "string" || !["entity", "relation", "action", "rule", "derived", "law", "policy", "mapping", "business_pack", "connector", "customization", "widget"].includes(value.kind) || !("payload" in value) || typeof value.payload !== "object" || value.payload === null
       || !("dependencies" in value) || !Array.isArray(value.dependencies)) throw new Error("Invalid admitted artifact envelope")
     // Payload conformance belongs to server admission; this boundary checks the transport envelope.
     const artifact = value as Artifact
