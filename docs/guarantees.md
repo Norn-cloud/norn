@@ -6,26 +6,26 @@ What Norn claims about its kernel and runtime, and how strongly each claim is ba
 
 > **Claim policy:** Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.
 
-**30 obligations** across **9 subsystems**. The headline is the strongest layer the registry records; the three layer columns show each status as recorded.
+**36 obligations** across **10 subsystems**. The headline is the strongest layer the registry records; the three layer columns show each status as recorded.
 
 | Headline evidence | Obligations |
 | --- | ---: |
 | proved (implementation) | 1 |
-| proved (reference model) | 7 |
+| proved (reference model) | 10 |
 | bounded-checked (exhaustive) | 1 |
 | bounded-checked (model) | 9 |
 | tested | 6 |
 | partial | 2 |
 | deferred | 3 |
-| no evidence | 1 |
+| no evidence | 4 |
 
 ## `transition-authority`
 
-*Limitations:* A general expected-owner-version compare-and-swap path exists in the retained in-memory store, but legacy unversioned callers remain and no transport TransitionEnvelope routes custom state effects through it. The authority model is bounded to one owner and transition identity, abstracts persistence as one atomic assignment, and omits crashes, replication, multi-owner coordination, and liveness. The closed-action model bounds artifact versions to 1..3 and validation outcomes to Boolean predicates; it does not model arbitrary JSON schema or ontology semantics. The Verus function is not linked to the retained store implementation by extraction or a proved refinement. The closed custom ActionIR subset currently contains only upsert_input_object; it is evidence for the authority pattern, not a general verified action language. Only the final representation-free hard-invariant ownership Boolean predicate has extracted production correspondence. Descriptor parsing, enum mapping, artifact activation/lookup, store-path completeness, and atomic persistence remain outside that proof. No normalized durable production profile is retained in this workspace.
+*Limitations:* A general expected-owner-version compare-and-swap path exists in the retained in-memory store, but legacy unversioned callers remain and no transport TransitionEnvelope routes custom state effects through it. The authority model is bounded to one owner and transition identity, abstracts persistence as one atomic assignment, and omits crashes, replication, multi-owner coordination, and liveness. The closed-action model bounds artifact versions to 1..3 and validation outcomes to Boolean predicates; it does not model arbitrary JSON schema or ontology semantics. The Verus function is not linked to the retained store implementation by extraction or a proved refinement. The closed custom ActionIR subset currently contains only upsert_input_object; it is evidence for the authority pattern, not a general verified action language. Only the final representation-free hard-invariant ownership Boolean predicate has extracted production correspondence. Descriptor parsing, enum mapping, artifact activation/lookup, store-path completeness, and atomic persistence remain outside that proof. No normalized durable production profile is retained in this workspace. Kernel L1 adds a single-object mathematical reference and a checked-successor correspondence fragment only. VersionProof does not prove stale-CAS admission, durable persistence, or whole-kernel refinement; no evidence status is promoted by its enrollment.
 
 | Obligation | Headline | Runtime | Model | Proof | Evidence artifacts |
 | --- | --- | --- | --- | --- | --- |
-| `INV-AUTH-ATOMIC-COMMIT` | bounded-checked (model) | missing | bounded_model_checked | partial | `verification/stripmine-2026-08-22/models/authority-commit.qnt`<br>`verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean` |
+| `INV-AUTH-ATOMIC-COMMIT` | bounded-checked (model) | missing | bounded_model_checked | partial | `verification/stripmine-2026-08-22/models/authority-commit.qnt`<br>`verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean`<br>`verification/kernel-l1/Reference.lean`<br>`verification/kernel-l1/VersionProof.lean` |
 | `INV-AUTH-STALE-REJECT` | proved (reference model) | missing | bounded_model_checked | reference_proved | `verification/stripmine-2026-08-22/models/authority-commit.qnt`<br>`verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean` |
 | `INV-AUTH-IDEMPOTENT-RESULT` | proved (reference model) | missing | bounded_model_checked | reference_proved | `verification/stripmine-2026-08-22/models/authority-commit.qnt`<br>`verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean` |
 | `INV-AUTH-CLOSED-CUSTOM-EFFECT` | bounded-checked (model) | missing | bounded_model_checked | partial | `verification/stripmine-2026-08-22/models/closed-action-effect.qnt`<br>`verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean` |
@@ -34,12 +34,12 @@ What Norn claims about its kernel and runtime, and how strongly each claim is ba
 
 <details><summary>What is not covered</summary>
 
-- `INV-AUTH-ATOMIC-COMMIT`: Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in #2764 (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, #2583), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted.
+- `INV-AUTH-ATOMIC-COMMIT`: Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in #2764 (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, #2583), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted. The L1 reference checks single-object atomic updates, and its extracted successor theorem covers only the version increment/overflow fragment; no whole-transition correspondence is claimed.
 - `INV-AUTH-STALE-REJECT`: The retained InMemory store exercises a general owner-version compare-and-swap envelope, stale-writer rejection, no-partial-effect behavior, and stable replay receipts. The canonical Turso adapter's persistence-failure rollback and reopen tests were removed in #2764 (not currently covered). Legacy callers still use the unversioned compatibility method, Postgres parity and a transport TransitionEnvelope remain open, and the Verus reference has no extracted correspondence proof. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.
 - `INV-AUTH-IDEMPOTENT-RESULT`: Lean proves exact replay is state-preserving, conflicting replay rejects, and a stored receipt blocks a second abstract commit. Retained InMemory receipts bind both the semantic input hash and a canonical authority-effect digest; request-local correlation IDs are normalized out while deterministic action/ledger IDs make lost-reply reconstruction stable. Turso-persisted receipt and reopen evidence was removed in #2764 (not currently covered). The correspondence is not machine-proved, pre-v3 receipts fail closed on replay, and legacy unversioned callers remain. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.
 - `INV-AUTH-CLOSED-CUSTOM-EFFECT`: The retained IR validator admits a closed upsert_input_object declaration and rejects unknown payload/schema fields, open object schemas, and contradictory idempotent/ledgered declarations. Quint and Lean check independent bounded/reference semantics for exact active-definition pins, schema/ontology guards, one effect/event, stale/no-op behavior, and stable replay. No HTTP executor or custom ActionIR runtime is retained. Relation effects, deletes, field templates, arithmetic, domain-specific invariant programs, task-result coupling, extraction/refinement, and arbitrary custom ActionIR remain open.
 - `INV-AUTH-HARD-INVARIANT-OWNERSHIP`: Rust rejects open or unsupported EntityIR mutationAuthority descriptors and noncanonical semantic objectKind identities containing whitespace, control characters, or wildcards. Both the versioned ActionIR path and the legacy generic store path reject domain-owned objects before publication. Every legacy mutation is checked against the scoped Active semantic owner before fresh publication or idempotent-result return, including unpinned, unresolved-pinned, and resolved Draft, Proposed, or historical aliases; a resolved pin must additionally match its exact declared objectKind and admit the generic source. The legacy runtime independently revalidates canonical object-kind syntax. Governed catalog transition checks prevent owner/objectKind changes, duplicate semantic owners, or untyped retirement, and the typed authority/source mapping is exhaustively tested across all 36 current pairs. Quint checks generic/domain separation and Lean proves independent reference semantics, but descriptor parsing, active-artifact lookup, whole-store write-path completeness, storage atomicity, and domain-internal invariants are not implementation-proved. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.
-- `INV-AUTH-DOMAIN-ADMISSION-PREDICATE`: Two pinned extraction lanes start from the exact production norn_ir::entity_mutation_authority_admits symbol: hax emits F* and Aeneas/Charon emits Lean, and both prove the complete representation-free Boolean truth table used by EntityMutationAuthority::admits. The Aeneas theorem reports no axioms and the gate checks four negative canaries, but the translator/compiler/prover toolchains remain trusted. This claim excludes descriptor parsing, enum-to-Boolean mapping, active-artifact lookup, call-site completeness, persistence, and every domain engine's internal invariants. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.
+- `INV-AUTH-DOMAIN-ADMISSION-PREDICATE`: Two pinned extraction lanes start from the exact production norn_ir::entity_mutation_authority_admits symbol: hax emits F* and Aeneas/Charon emits Lean, and both prove the complete representation-free Boolean truth table used by EntityMutationAuthority::admits. The Aeneas theorem reports no axioms and the gate checks four negative canaries, but the translator/compiler/prover toolchains remain trusted. This claim excludes descriptor parsing, enum-to-Boolean mapping, active-artifact lookup, call-site completeness, persistence, and every domain engine's internal invariants. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.
 
 </details>
 
@@ -184,6 +184,30 @@ What Norn claims about its kernel and runtime, and how strongly each claim is ba
 - `KERNEL-V2-COMMIT`: Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.
 - `KERNEL-V2-QUANTITY`: Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.
 - `KERNEL-V2-PROJECTION`: Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.
+
+</details>
+
+## `core-physics`
+
+*Limitations:* The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel. Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops. Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack.
+
+| Obligation | Headline | Runtime | Model | Proof | Evidence artifacts |
+| --- | --- | --- | --- | --- | --- |
+| `INV-CORE-VALUE-CONSERVATION` | proved (reference model) | tested | bounded_model_checked | reference_proved | `crates/norn-kernel/tests/accounting_commit.rs`<br>`verification/core-physics-v1/models/core-value-ledger.qnt`<br>`verification/core-physics-v1/proofs/CoreValueLedger.lean` |
+| `INV-CORE-POSTED-IMMUTABLE` | proved (reference model) | tested | bounded_model_checked | reference_proved | `crates/norn-kernel/tests/accounting_commit.rs`<br>`verification/core-physics-v1/models/core-value-ledger.qnt`<br>`verification/core-physics-v1/proofs/CoreValueLedger.lean` |
+| `INV-CORE-LINKED-REVERSAL` | proved (reference model) | missing | bounded_model_checked | reference_proved | `verification/core-physics-v1/models/core-value-ledger.qnt`<br>`verification/core-physics-v1/proofs/CoreValueLedger.lean` |
+| `INV-CORE-QUANTITY-CONSERVATION` | no evidence | missing | missing | missing | none |
+| `INV-CORE-ESCROW-NON-NEGATIVE` | no evidence | missing | missing | missing | none |
+| `INV-CORE-COMMITMENT-COMPLETION` | no evidence | missing | missing | missing | none |
+
+<details><summary>What is not covered</summary>
+
+- `INV-CORE-VALUE-CONSERVATION`: The kernel commit check refuses a posting group that does not net to zero in each unit, for every type that declares an accounting leg (tested; the cited tests use one balance layer, so cross-layer cancellation is enforced by the check but not separately tested). The Lean reference proves the admission check exact and the law inherited by every workflow of post and reverse steps; it is not a refinement proof of the Rust check, i128 arithmetic or storage.
+- `INV-CORE-POSTED-IMMUTABLE`: The kernel refuses updates and deletes of committed accounting legs, including through an unmarked ancestor type (tested). The reference model has no edit or delete operation; the theorems show every admitted step only prepends. Types without an accounting-leg declaration are not covered.
+- `INV-CORE-LINKED-REVERSAL`: The public kernel has no linked journal reversal yet; quantity-ledger reversals are covered by INV-QL-APPEND-REVERSAL. The model and reference proof cover the pack law only.
+- `INV-CORE-QUANTITY-CONSERVATION`: Specified only; the kernel quantity ledger enforces partition conservation (INV-QL-CONSERVATION). Core-pack model and proof are pending.
+- `INV-CORE-ESCROW-NON-NEGATIVE`: Specified only; the kernel quantity ledger refuses spending held or absent quantity. Core-pack model and proof are pending.
+- `INV-CORE-COMMITMENT-COMPLETION`: Specified only; no runtime enforcement, model or proof yet.
 
 </details>
 
