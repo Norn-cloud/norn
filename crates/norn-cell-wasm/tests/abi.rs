@@ -206,7 +206,7 @@ fn plan_lists_keys_writes_and_effects_in_order() {
         ]
     });
     let plan = parse(&decode_commit_json(&commit.to_string(), &model()).expect("plan"));
-    assert_eq!(plan["format"], json!("norn-cell-abi/plan@4"));
+    assert_eq!(plan["format"], json!("norn-cell-abi/plan@5"));
     assert_eq!(
         plan["consumes"],
         json!({ "kind": "timer", "id": "t1", "incarnation": 3 })
@@ -296,13 +296,15 @@ fn verdicts_follow_the_kernel_check_order() {
             "consumed": { "observation": { "id": "o1" } },
             "written": [{ "key": key(0), "version": 2 }],
             "linked": [],
+            "persistence": verdict["persistence"],
+            "rawCommit": stale,
             "events": []
         })
     );
 }
 
 #[test]
-fn referenced_defaults_are_evaluated_and_included_in_the_storage_plan() {
+fn referenced_defaults_are_evaluated_and_included_in_the_verdict() {
     for default in [-1, 1] {
         let model = json!({
             "objectTypes": [{
@@ -333,12 +335,22 @@ fn referenced_defaults_are_evaluated_and_included_in_the_storage_plan() {
                 .as_str()
                 .expect("planned values text"),
         );
-        assert_eq!(values, json!({"amount": default}));
+        assert_eq!(values, json!({}));
         let verdict = parse(
             &check_commit_json(&commit, &view(0, false, &[(0, None)], &[]), &model)
                 .expect("defaulted commit verdict"),
         );
         assert_eq!(verdict["accepted"], json!(default >= 0));
+        if default >= 0 {
+            assert_eq!(
+                parse(
+                    verdict["persistence"]["writes"][0]["values"]
+                        .as_str()
+                        .expect("values")
+                ),
+                json!({"amount": default})
+            );
+        }
 
         let token = "0.123456789012345678901234567890123456789";
         let opaque = commit.replace(
@@ -354,7 +366,7 @@ fn referenced_defaults_are_evaluated_and_included_in_the_storage_plan() {
             values.contains(token),
             "adding defaults must retain submitted number tokens"
         );
-        assert!(values.contains(&format!("\"amount\":{default}")));
+        assert!(!values.contains("amount"));
     }
 }
 
@@ -391,7 +403,7 @@ fn numeric_strings_are_checked_as_the_numbers_in_the_storage_plan() {
                     .as_str()
                     .expect("planned values"),
             );
-            assert_eq!(values, json!({"amount": amount}));
+            assert_eq!(values, json!({"amount": amount.to_string()}));
             let verdict = parse(
                 &check_commit_json(&commit, &view(0, false, &[(0, None)], &[]), &model)
                     .expect("numeric verdict"),
@@ -408,7 +420,7 @@ fn numeric_strings_are_checked_as_the_numbers_in_the_storage_plan() {
 }
 
 #[test]
-fn narrowed_subtype_keeps_the_inherited_default_in_the_storage_plan() {
+fn narrowed_subtype_keeps_the_inherited_default_in_the_verdict() {
     let model = json!({"objectTypes": [{
         "name": "abi.Order",
         "properties": [{
@@ -430,12 +442,20 @@ fn narrowed_subtype_keeps_the_inherited_default_in_the_storage_plan() {
     let plan = parse(&decode_commit_json(&commit, &model).expect("inherited default plan"));
     assert_eq!(
         parse(plan["writes"][0]["values"].as_str().expect("values")),
-        json!({"status": "draft"})
+        json!({})
     );
     let verdict = parse(
         &check_commit_json(&commit, &view(0, false, &[(0, None)], &[]), &model).expect("verdict"),
     );
     assert_eq!(verdict["accepted"], json!(true));
+    assert_eq!(
+        parse(
+            verdict["persistence"]["writes"][0]["values"]
+                .as_str()
+                .expect("values")
+        ),
+        json!({"status":"draft"})
+    );
 }
 
 #[test]
@@ -593,9 +613,9 @@ fn observations_need_provenance_and_inputs_must_be_one_value() {
 #[test]
 fn version_names_the_abi() {
     let version = parse(&version_json());
-    assert_eq!(version["abi"], json!("norn-cell-abi/4"));
-    assert_eq!(version["planFormat"], json!("norn-cell-abi/plan@4"));
-    assert_eq!(version["verdictFormat"], json!("norn-cell-abi/verdict@4"));
+    assert_eq!(version["abi"], json!("norn-cell-abi/5"));
+    assert_eq!(version["planFormat"], json!("norn-cell-abi/plan@5"));
+    assert_eq!(version["verdictFormat"], json!("norn-cell-abi/verdict@5"));
     assert_eq!(version["maxSafeInteger"], json!(MAX_SAFE_INTEGER));
 }
 
@@ -638,7 +658,7 @@ fn link_read_plan_and_exact_stale_snapshots_are_checked() {
     let commit = link_read_commit(&expected_targets);
 
     let plan = parse(&decode_commit_json(&commit, &model()).expect("plan"));
-    assert_eq!(plan["format"], json!("norn-cell-abi/plan@4"));
+    assert_eq!(plan["format"], json!("norn-cell-abi/plan@5"));
     assert_eq!(plan["objects"], json!([]));
     assert_eq!(
         plan["linkReads"],
@@ -1131,4 +1151,117 @@ fn declared_link_values_reach_native_admission_through_base_alias() {
             assert_eq!(verdict["refusal"]["code"], code);
         }
     }
+}
+
+fn persist_rows(state: &mut std::collections::BTreeMap<String, Value>, payload: &Value) {
+    for (rows, identity) in [("writes", "object"), ("links", "link")] {
+        for row in payload[rows].as_array().expect("persistence rows") {
+            state.insert(format!("{rows}:{}", row[identity]), row.clone());
+        }
+    }
+}
+
+#[test]
+fn authoritative_verdict_persistence_conforms_to_replay() {
+    let mut types = serde_json::to_value(law_object_types()).expect("model");
+    types[0]["properties"] = json!([
+        {"id":"label","type":{"kind":"text"},"default":"draft"},
+        {"id":"when","type":{"kind":"timestamp","timezone":"offset"}}
+    ]);
+    for (index, default) in [(0, "base"), (1, "child")] {
+        types[index]["links"] = json!([{
+            "id":"rel","target":"law.Thing","cardinality":{"to":"many","from":"many"},
+            "properties":[
+                {"id":"label","type":{"kind":"text"},"default":default},
+                {"id":"when","type":{"kind":"timestamp","timezone":"offset"}}
+            ]
+        }]);
+    }
+    let model = types.to_string();
+    let commit = format!(
+        r#"{{ "consumes":null,"reads":[],"writes":[{{"key":{},"expected":0,
+        "mutation":{{"put":{{"values":{{"when":"2026-10-31T02:00:00+02:00","opaque":1e100}}}}}}}}],
+        "links":[{{"key":{},"expected":0,"mutation":{{"add":{{"values":{{"when":"2026-10-31T02:00:00+02:00","opaque":1e100}}}}}}}}],
+        "events":[],"effects":[] }}"#,
+        key(2),
+        link_key(0, "rel", 1)
+    );
+    let preliminary = parse(&decode_commit_json(&commit, &model).expect("plan"));
+    for (concrete, label) in [("law.Thing", "base"), ("law.Child", "child")] {
+        let view = view(
+            0,
+            false,
+            &[(0, None), (1, Some(concrete)), (1, Some("law.Thing"))],
+            &[0],
+        );
+        let verdict = parse(&check_commit_json(&commit, &view, &model).expect("verdict"));
+        assert_eq!(verdict["accepted"], true, "{verdict}");
+        let payload = &verdict["persistence"];
+        for (rows, expected_label) in [("writes", "draft"), ("links", label)] {
+            let values = parse(payload[rows][0]["values"].as_str().expect("stored values"));
+            assert_eq!(
+                values,
+                json!({"label":expected_label,"when":"2026-10-31T00:00:00Z"})
+            );
+            assert_eq!(payload[rows][0]["version"], 1);
+            assert_ne!(payload[rows][0]["values"], preliminary[rows][0]["values"]);
+        }
+        let entry = parse(verdict["entry"].as_str().expect("entry"));
+        assert_eq!(entry["rawCommit"], commit);
+        assert_eq!(entry["persistence"], *payload);
+        let mut stored = std::collections::BTreeMap::new();
+        persist_rows(&mut stored, payload);
+        let mut replayed = std::collections::BTreeMap::new();
+        persist_rows(&mut replayed, &entry["persistence"]);
+        assert_eq!(stored, replayed);
+
+        let deletion = json!({"consumes":null,"reads":[],"writes":[
+            {"key":key(2),"expected":1,"mutation":"delete"}],
+            "links":[{"key":link_key(0,"rel",1),"expected":1,"mutation":"remove"}],
+            "events":[],"effects":[]})
+        .to_string();
+        let deletion_view = super_view_for_deletion(concrete);
+        let verdict =
+            parse(&check_commit_json(&deletion, &deletion_view, &model).expect("delete verdict"));
+        assert_eq!(verdict["accepted"], true, "{verdict}");
+        for rows in ["writes", "links"] {
+            assert_eq!(verdict["persistence"][rows][0]["values"], Value::Null);
+            assert_eq!(verdict["persistence"][rows][0]["version"], 2);
+        }
+        persist_rows(&mut stored, &verdict["persistence"]);
+        let entry = parse(verdict["entry"].as_str().expect("entry"));
+        persist_rows(&mut replayed, &entry["persistence"]);
+        assert_eq!(stored, replayed);
+    }
+    let refused = parse(
+        &check_commit_json(
+            &commit.replace("\"when\":\"2026-10-31T02:00:00+02:00\"", "\"when\":1e100"),
+            &view(
+                0,
+                false,
+                &[(0, None), (1, Some("law.Child")), (1, Some("law.Thing"))],
+                &[0],
+            ),
+            &model,
+        )
+        .expect("refusal"),
+    );
+    assert_eq!(
+        refused["refusal"]["code"],
+        "commit.unrepresentable_property"
+    );
+    assert!(refused.get("persistence").is_none());
+}
+
+fn super_view_for_deletion(concrete: &str) -> String {
+    view(
+        1,
+        false,
+        &[
+            (1, Some("law.Thing")),
+            (1, Some(concrete)),
+            (1, Some("law.Thing")),
+        ],
+        &[1],
+    )
 }

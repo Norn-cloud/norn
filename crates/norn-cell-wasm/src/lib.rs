@@ -16,7 +16,7 @@
 //!   interfaces) and
 //!   the state the shim read inside its transaction, and returns the verdict:
 //!   the refusal, or the new ledger position, the written versions, the
-//!   receipt, and the ledger entry.
+//!   authoritative persistence rows, receipt, and the ledger entry.
 //! - [`resolve_key_json`] gives the canonical identity of an object or link
 //!   and `is_a` under the model, for the shim's reads.
 //! - [`decode_observed_json`] and [`validate_input_json`] check the other two
@@ -25,10 +25,9 @@
 //!
 //! # Exact payloads (T3-NUM-1, #2770)
 //!
-//! Ledger events, command payloads, timer payloads, and kernel inputs are
-//! **opaque JSON text** at this boundary. Fact values retain opaque members
-//! while declared numeric properties and defaults use the kernel's canonical
-//! stored values for both the storage plan and invariant admission. Payloads are carried as
+//! Raw requests, ledger events, command/timer payloads and kernel inputs are
+//! **opaque JSON text**. Accepted persistence rows contain only the kernel's
+//! effective declared fields; raw requests remain evidence. Payloads are carried as
 //! [`RawValue`]s — the exact source bytes, validated as JSON but never
 //! converted to `f64` — and returned to the shim as JSON *strings*, so a
 //! `JSON.parse` of a plan or verdict never touches a payload number. Integers
@@ -44,7 +43,6 @@
 //! integer) is an [`AbiError`] (a thrown `Error`); a refused commit is a
 //! verdict, never an error.
 
-use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -67,13 +65,13 @@ pub mod wasm;
 
 /// The ABI version [`version_json`] reports. A change to a function's
 /// arguments or to a document's fields is a new version.
-pub const ABI_VERSION: &str = "norn-cell-abi/4";
+pub const ABI_VERSION: &str = "norn-cell-abi/5";
 
 /// Format tag of the [`decode_commit_json`] document.
-pub const PLAN_FORMAT: &str = "norn-cell-abi/plan@4";
+pub const PLAN_FORMAT: &str = "norn-cell-abi/plan@5";
 
 /// Format tag of the [`check_commit_json`] document.
-pub const VERDICT_FORMAT: &str = "norn-cell-abi/verdict@4";
+pub const VERDICT_FORMAT: &str = "norn-cell-abi/verdict@5";
 
 /// The largest integer a JavaScript number represents exactly (2^53 − 1).
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
@@ -347,48 +345,6 @@ impl WireCommit {
 }
 
 impl ObjectText {
-    /// Build the kernel's canonical stored numeric values and defaults while
-    /// retaining opaque payloads as raw JSON, including numbers outside the
-    /// runtime decimal range on unconstrained properties.
-    fn effective_values_text(
-        &self,
-        catalog: &TypeCatalog<'_>,
-        object_type: &ObjectTypeName,
-    ) -> Result<Cow<'_, str>, AbiError> {
-        let mut raw: BTreeMap<String, Box<RawValue>> =
-            serde_json::from_str(self.0.get()).map_err(invalid("commit"))?;
-        let submitted = raw
-            .iter()
-            .map(|(name, value)| {
-                let value = if catalog.is_numeric_property(object_type, name) {
-                    RuntimeValue::from_json_text(value.get()).map_err(invalid("commit"))?
-                } else {
-                    RuntimeValue::Null
-                };
-                Ok((name.clone(), value))
-            })
-            .collect::<Result<JsonObject, AbiError>>()?;
-        let effective = catalog
-            .effective_object_values(object_type, &submitted)
-            .map_err(invalid("model"))?;
-        let mut changed = false;
-        for (name, value) in effective {
-            if !raw.contains_key(&name) || catalog.is_numeric_property(object_type, &name) {
-                let text = String::from_utf8(value.canonical_json().map_err(invalid("model"))?)
-                    .map_err(invalid("model"))?;
-                if raw.get(&name).is_none_or(|original| original.get() != text) {
-                    raw.insert(name, RawValue::from_string(text).map_err(invalid("model"))?);
-                    changed = true;
-                }
-            }
-        }
-        if changed {
-            to_text(&raw).map(Cow::Owned)
-        } else {
-            Ok(Cow::Borrowed(self.0.get()))
-        }
-    }
-
     /// Decode only declared stored fields; never parse opaque numeric payloads.
     fn project(&self, declared: &BTreeSet<&str>) -> Result<JsonObject, AbiError> {
         let raw: BTreeMap<String, Box<RawValue>> =
@@ -466,7 +422,7 @@ struct PlanWrite<'a> {
     /// The type the object is written as (its concrete type after a put).
     object_type: &'a str,
     /// The exact property-values text; `None` for a delete.
-    values: Option<Cow<'a, str>>,
+    values: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -576,7 +532,7 @@ fn plan_effect(effect: &WireEffect) -> Result<PlanEffect<'_>, AbiError> {
 /// cell's model (an `ObjectTypeDef` array or an object containing
 /// `objectTypes`, `interfaces`, and optional `propertyTypes`).
 ///
-/// Result: `{format: "norn-cell-abi/plan@4", consumes, objects, writes,
+/// Result: `{format: "norn-cell-abi/plan@5", consumes, objects, writes,
 /// links, linkReads, effects}` where
 ///
 /// - `consumes` is `null` or `{kind: "timer", id, incarnation}`,
@@ -586,9 +542,9 @@ fn plan_effect(effect: &WireEffect) -> Result<PlanEffect<'_>, AbiError> {
 ///   answers each;
 /// - `writes` is `{object, objectType, values}` per object write: the
 ///   canonical object, the type it is written as, and the exact
-///   property-values text or `null` for a delete;
+///   preliminary request text or `null` for a delete; never persist these values;
 /// - `links` is `{link, values}` per link write: the canonical `LinkKey` and
-///   the exact link-values text or `null` for a remove;
+///   preliminary link-values text or `null` for a remove; never persist these values;
 /// - `linkReads` is `{source, link, maxRecords, maxCanonicalBytes}` per
 ///   complete adjacency read, with canonical source keys and the slice
 ///   profile bounds the shim enforces while reading its transaction;
@@ -636,9 +592,7 @@ pub fn decode_commit_json(commit: &str, model: &str) -> Result<String, AbiError>
                     object: model.canonical(&write.key),
                     object_type: write.key.object_type.as_str(),
                     values: match &write.mutation {
-                        WireMutation::Put { values } => {
-                            Some(values.effective_values_text(&catalog, &write.key.object_type)?)
-                        }
+                        WireMutation::Put { values } => Some(values.0.get()),
                         WireMutation::Delete => None,
                     },
                 })
@@ -857,6 +811,9 @@ struct Entry<'a> {
     consumed: Option<&'a Consumed>,
     written: &'a [WrittenVersion],
     linked: &'a [WrittenLinkVersion],
+    persistence: &'a Value,
+    #[serde(rename = "rawCommit")]
+    raw_commit: &'a str,
     events: &'a [Box<RawValue>],
 }
 
@@ -1186,6 +1143,59 @@ fn checked_link_read_targets(
     Ok(checked)
 }
 
+fn stored_values_text(values: JsonObject) -> Result<String, AbiError> {
+    let bytes = RuntimeValue::Object(values)
+        .canonical_json()
+        .map_err(invalid("model"))?;
+    String::from_utf8(bytes).map_err(invalid("model"))
+}
+
+fn persistence(
+    admission: &CellCommit<(), (), ()>,
+    model: CommitModel<'_, '_>,
+    catalog: &TypeCatalog<'_>,
+    lookup: &ViewLookup,
+    written: &[WrittenVersion],
+    linked: &[WrittenLinkVersion],
+) -> Result<Value, AbiError> {
+    let writes = admission
+        .writes
+        .iter()
+        .zip(written)
+        .map(|(write, version)| {
+            let values = match &write.mutation {
+                FactMutation::Put { values } => Some(stored_values_text(
+                    catalog
+                        .effective_object_values(&write.key.object_type, values)
+                        .map_err(invalid("model"))?,
+                )?),
+                FactMutation::Delete => None,
+            };
+            Ok(json!({"object": model.canonical(&write.key),
+            "objectType": write.key.object_type, "version": version.version.0,
+            "values": values}))
+        })
+        .collect::<Result<Vec<_>, AbiError>>()?;
+    let links = admission
+        .links
+        .iter()
+        .zip(linked)
+        .map(|(write, version)| {
+            let values = match &write.mutation {
+                LinkMutation::Add { values } => Some(stored_values_text(
+                    model
+                        .effective_link_values(admission, lookup, &write.key, values)
+                        .map_err(invalid("model"))?,
+                )?),
+                LinkMutation::Remove => None,
+            };
+            Ok(json!({"link": model.canonical_link(&write.key),
+            "version": version.version.0, "values": values}))
+        })
+        .collect::<Result<Vec<_>, AbiError>>()?;
+    Ok(json!({"writes": writes, "links": links}))
+}
+
 /// Runs the kernel's admission check on a commit against what the shim read
 /// and the cell's model.
 ///
@@ -1212,13 +1222,17 @@ fn checked_link_read_targets(
 /// materializing data; implicit object/adjacency reads share a byte budget,
 /// and presence exclusions include the source key in their byte budget.
 ///
-/// Result, refused: `{format: "norn-cell-abi/verdict@4", accepted: false,
+/// Result, refused: `{format: "norn-cell-abi/verdict@5", accepted: false,
 /// refusal}` with [`refusal_value`]'s document. Accepted: `{format,
 /// accepted: true, seq, written: [{version}], linked: [{version}], receipt,
-/// entry}` where `seq` is the commit's ledger position, `written` / `linked`
+/// persistence, entry}` where `seq` is the commit's ledger position, `written` / `linked`
 /// the new version of each object / link write in order, `receipt` the
 /// `CommitReceipt` text and `entry` the ledger-entry text `{seq, consumed,
-/// written, linked, events}` (events as their exact bytes).
+/// written, linked, persistence, rawCommit, events}`. Only `persistence`
+/// supplies stored values, including defaults and canonical temporal values
+/// under the concrete source contract. The host atomically stores these rows
+/// and replays the identical entry payload; `rawCommit` is exact opaque request
+/// evidence, never a source of state. See README invariants ABI-PERSIST-1–4.
 ///
 /// # Errors
 ///
@@ -1272,11 +1286,14 @@ pub fn check_commit_json(commit: &str, view: &str, model: &str) -> Result<String
         written: &written,
         linked: &linked,
     })?;
+    let persistence = persistence(&admission, model, &catalog, &lookup, &written, &linked)?;
     let entry = to_text(&Entry {
         seq,
         consumed: wire.consumes.as_ref(),
         written: &written,
         linked: &linked,
+        persistence: &persistence,
+        raw_commit: commit,
         events: &wire.events,
     })?;
     to_text(&json!({
@@ -1285,6 +1302,7 @@ pub fn check_commit_json(commit: &str, view: &str, model: &str) -> Result<String
         "seq": seq.0,
         "written": versions,
         "linked": link_rows,
+        "persistence": persistence,
         "receipt": receipt,
         "entry": entry,
     }))

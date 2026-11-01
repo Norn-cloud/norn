@@ -13,12 +13,12 @@ Every argument and result is JSON text. Invalid *input* throws an `Error`
 
 | JavaScript | Rust | Result |
 |---|---|---|
-| `decodeCommit(commitJson, modelJson)` | `decode_commit_json` | `{format: "norn-cell-abi/plan@4", consumes, objects, writes, links, linkReads, effects}` — the consumed delivery, every canonical object the check reads, each write `{object, objectType, values}` (canonical object, type written as, exact values text), each link write `{link, values}` (canonical link), each bounded outgoing adjacency read `{source, link, maxRecords, maxCanonicalBytes}`, and each enqueue with its exact `Command`/`Timer` text |
-| `checkCommit(commitJson, viewJson, modelJson)` | `check_commit_json` | `{format: "norn-cell-abi/verdict@4", accepted: false, refusal}` or `{…, accepted: true, seq, written, linked, receipt, entry}` |
+| `decodeCommit(commitJson, modelJson)` | `decode_commit_json` | `{format: "norn-cell-abi/plan@5", consumes, objects, writes, links, linkReads, effects}` — the consumed delivery, every canonical object the check reads, each write `{object, objectType, values}` (canonical object, type written as, exact values text), each link write `{link, values}` (canonical link), each bounded outgoing adjacency read `{source, link, maxRecords, maxCanonicalBytes}`, and each enqueue with its exact `Command`/`Timer` text |
+| `checkCommit(commitJson, viewJson, modelJson)` | `check_commit_json` | `{format: "norn-cell-abi/verdict@5", accepted: false, refusal}` or `{…, accepted: true, seq, written, linked, persistence, receipt, entry}` |
 | `resolveKey(requestJson, modelJson)` | `resolve_key_json` | `{canonical, isA}` for `{key, concrete}`, `{canonicalLink}` for `{link}` |
 | `decodeObserved(observedJson)` | `decode_observed_json` | `{id}` |
 | `validateInput(inputJson)` | `validate_input_json` | nothing; throws unless the text is one JSON value |
-| `version()` | `version_json` | `{abi: "norn-cell-abi/4", crateVersion, planFormat, verdictFormat, maxSafeInteger}` |
+| `version()` | `version_json` | `{abi: "norn-cell-abi/5", crateVersion, planFormat, verdictFormat, maxSafeInteger}` |
 
 `modelJson` accepts the legacy `ObjectTypeDef` array for models without
 interfaces, or `{ "objectTypes": [...], "interfaces": [...], "propertyTypes": [...] }`
@@ -75,11 +75,40 @@ the model argument, canonical keys, and the kernel's `commit.link_target`,
 `commit.link_cardinality`, and `commit.type_mismatch` refusals. ABI v4 adds
 complete bounded link-read snapshots so the kernel can compare the current
 adjacency set and every target link version inside the host transaction. Its
-`verdict@4` format adds the link-read refusal fields: `sourceKey`, a `link`
+`verdict@5` format adds the link-read refusal fields: `sourceKey`, a `link`
 name string, and `actual`/`max` for bounded reads. The new refusal codes are
 `commit.link_read_conflict`, `commit.unsupported_link_read`,
 `commit.link_read_too_large`, `commit.duplicate_link_read`, and
 `commit.invalid_link_read`. Link mutation refusals retain a full key in `link`.
+
+## Persistence invariants
+
+- **ABI-PERSIST-1 (verdict authority):** only an accepted verdict's
+  `persistence.writes` and `persistence.links` supply stored state. Preliminary
+  decode values are request evidence, never storage values. Each accepted row
+  includes its canonical identity, version, type (for facts), and canonical
+  declared-field values as JSON text; `null` denotes deletion/removal.
+- **ABI-PERSIST-2 (concrete contract):** link values use the source's concrete
+  type after the commit, including a live subtype addressed through a base key.
+  Fact and link defaults and temporal normalization use the same kernel
+  effective-value functions as admission.
+- **ABI-PERSIST-3 (replay):** the ledger entry includes the identical
+  `persistence` payload. Applying it in ledger order reproduces stored state
+  without decoding the request or consulting a newer model.
+- **ABI-PERSIST-4 (opaque evidence):** the entry's `rawCommit` string preserves
+  the complete original request bytes, including undeclared fields and number
+  tokens outside the runtime range. Evidence never supplies stored fields.
+  Unrepresentable declared fields refuse with `commit.unrepresentable_property`.
+
+`tests/abi.rs::authoritative_verdict_persistence_conforms_to_replay` is sampled
+conformance evidence for these invariants, covering distinct concrete-source
+views, defaults, temporal normalization, opaque bytes and deletion. It uses a
+minimal storage fold over the returned rows; the production shim is not in
+this export, so this is not evidence of a deployed host implementation.
+Hosts must apply the verdict rows, ledger entry and delivery/effects atomically
+inside the same transaction that supplied the view. A refused verdict exposes
+no persistence payload. Never use preliminary `decodeCommit` values to write
+state or re-derive values from `rawCommit` during replay.
 
 ## Exact payloads (T3-NUM-1, #2770)
 
