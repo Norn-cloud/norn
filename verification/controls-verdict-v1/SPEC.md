@@ -4,50 +4,44 @@ Controls describe ordered sensitive action sequences on the enclosing object
  type. They confer no runtime authority. Safety quantifies over singleton roles,
  after an unrestricted reachable prefix; availability is a separate judgment.
 
-The adapter supplies a complete overapproximation of effective actions and grants.
-Missing references, opaque effects, unsupported inheritance or exhausted budgets
-produce unknown, never a successful check. No edge or grant may be silently dropped.
+The checker supplies a complete overapproximation of actions and role grants.
+It does not interpret kernel admission, effects, command bounds or policy scope.
+Missing references, unsupported policies or exhausted budgets produce unknown;
+no edge or grant may be silently dropped.
 
-| Finite search evidence | Concrete interpretation | Safety | Availability |
-| --- | --- | --- | --- |
-| separated | either | proven | unknown |
-| unreachable in complete overapproximation | either | proven | unreachable |
-| nonempty violating trace | yes | refuted | witnessed |
-| possible violating trace | no | unknown | unknown |
-| missing trace, invalid graph, exhausted search | either | unknown | unknown |
+| Finite search evidence | Model safety | Checker witness status |
+| --- | --- | --- |
+| separated | proven | unknown |
+| unreachable in complete overapproximation | proven | unknown |
+| nonempty violating model trace | refuted | unknown |
+| missing trace, invalid graph, exhausted search | unknown | unknown |
 
 Named invariants:
 
-- **No promotion:** invalid, exhausted and possible counterexamples remain unknown.
-- **Concrete witness:** witnessed requires an inspectable nonempty concrete trace.
-- **Kernel correspondence:** every reported witness replays through kernel action
-  admission and commit to the witnessed state. A refused step makes the collision
-  unknown, never witnessed or refuted.
+- **Candidate only:** checker availability is always unknown, including unreachable
+  models. Its trace is at most a candidate, never evidence of runtime execution.
+- **Model refutation:** refuted means a violating finite-model trace, not a claim
+  that kernel admission or execution accepts that trace.
+- **No promotion:** invalid and exhausted checks remain unknown. The checker
+  contains no mirrored kernel-admission or authorization rules.
 - **Nonvacuity:** proven separation never implies witnessed availability.
-- **Refusal:** any refuted verdict produces an error and refuses installation.
-- **Required witness:** requireWitness refuses admission unless availability is witnessed.
+- **Refusal:** a refuted model verdict produces an error and refuses installation.
+- **Required witness:** requireWitness refuses checker admission because a candidate
+  alone cannot satisfy a runtime availability requirement.
 - **Projection:** CheckedArtifactSet.controls carries each declaration's verdict in
   deterministic object type / declaration order; registry consumers preserve it verbatim.
 - **Closure:** inherited controls cannot disappear through a subtype or an overlay.
+- **Kernel promotion:** only a kernel-side replay using its own admission and commit
+  can promote a candidate to witnessed. Every step must commit successfully with
+  the candidate's action and role, in order, against the supplied definition and state.
+  Promotion is evidence for that replay context, never a reusable authority grant.
+- **Refused candidate:** any admission or commit refusal leaves availability unknown;
+  partial replay never establishes a witness.
 
+Conformance scenarios: effect-free actions, over-budget action IDs and restrictive
+policy scopes all remain candidate-only in the checker. Kernel replay must refuse
+invalid commands and unauthorized scopes without promoting availability.
 The evidence truth table is exhaustively exercised by controls module tests.
-Adapter conformance tests must exercise refusal, unknown, closure and witness
-requirements through artifact-set admission, rather than reconstructing this table.
+Adapter tests cover candidate-only status, refusal, unknown, closure and required
+witnesses through artifact-set admission. Kernel promotion has its own replay tests.
 Evidence is finite model evidence, never a temporal proof or a live-runtime claim.
-## Action-order adapter
-The alpha adapter retains every action as a self edge, forgetting state, guards and cross-object effects.
-This complete overapproximation preserves singleton-role separation.
-Role conjuncts intersect; permit rules union. Resource restrictions and non-role conjuncts are erased.
-Generic or unbounded role grants, unsupported policies and undecodable inputs yield unknown.
-Concrete witnesses use only `upsert_input_object` in unrestricted upsert mode,
-on an existing object whose sole property is mutable text `id`. Every step takes
-the closed text-id schema and concrete input `{id: "witness"}` and preserves that same object state.
-The object has no identity constraints, inheritance, links, invariants, lifecycle,
-interfaces or owned collections. Actions require only org scope, have empty output
-schemas and no guards, derivations, slices, commands, quantity effects or link creation.
-Effect-free actions, create-only upserts, mismatched targets and all other effects
-remain abstract. Kernel correspondence tests execute every reported trace step
-through `commit_action` on a schema-backed host and check the committed state;
-refused effects and guarded steps must remain unknown.
-Other collisions remain unknown; required witnesses then fail admission.
-Inherited controls are checked on every subtype against the full pool, including candidate grant additions.

@@ -40,9 +40,9 @@ pub struct SensitivePath {
 pub enum ControlStatus {
     /// Separation holds over the complete overapproximation.
     Proven,
-    /// A concrete violating model trace is established.
+    /// A violating finite-model trace is established; runtime acceptance is unclaimed.
     Refuted,
-    /// The check is incomplete or only a possible trace was found.
+    /// The model check is incomplete or has no usable trace.
     Unknown,
 }
 
@@ -50,7 +50,7 @@ pub enum ControlStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Reachability {
-    /// A concrete path has been witnessed.
+    /// The kernel admitted and committed every candidate step in its replay context.
     Witnessed,
     /// Only abstract reachability, or incomplete checking.
     Unknown,
@@ -69,9 +69,10 @@ pub struct ControlVerdict {
     pub actions: Vec<String>,
     /// Safety result; not a Lean or runtime-compliance claim.
     pub verdict: ControlStatus,
-    /// Independent availability evidence.
+    /// Independent availability evidence; always unknown in checker output.
     pub reachability: Reachability,
-    /// Possible counterexample steps, including the unrestricted prefix.
+    /// Candidate counterexample steps, including the unrestricted prefix.
+    /// These are model evidence only until kernel admission and commit replay them.
     pub trace: Vec<String>,
     /// Evidence scope or reason the check remains unresolved.
     pub explanation: String,

@@ -1,21 +1,18 @@
-//! Evidence projection for definition-owned finite duty controls.
+//! Finite model evidence; candidate traces carry no runtime availability claim.
 use crate::duties::DutyCheck;
 use norn_ir::entity_v2::controls::{ControlStatus, Reachability};
 
-/// Project finite graph evidence without strengthening an abstraction.
-/// `concrete` means every graph edge and grant has a concrete interpretation.
+/// Project model safety evidence. Only kernel replay can establish availability.
 #[must_use]
-pub fn evidence(check: &DutyCheck, concrete: bool) -> (ControlStatus, Reachability) {
-    match check {
-        DutyCheck::Separated { .. } => (ControlStatus::Proven, Reachability::Unknown),
-        DutyCheck::Unreachable => (ControlStatus::Proven, Reachability::Unreachable),
-        DutyCheck::Counterexample { trace, .. } if concrete && !trace.is_empty() => {
-            (ControlStatus::Refuted, Reachability::Witnessed)
-        }
+pub fn evidence(check: &DutyCheck) -> (ControlStatus, Reachability) {
+    let verdict = match check {
+        DutyCheck::Separated { .. } | DutyCheck::Unreachable => ControlStatus::Proven,
+        DutyCheck::Counterexample { trace, .. } if !trace.is_empty() => ControlStatus::Refuted,
         DutyCheck::Counterexample { .. } | DutyCheck::Invalid | DutyCheck::Exhausted => {
-            (ControlStatus::Unknown, Reachability::Unknown)
+            ControlStatus::Unknown
         }
-    }
+    };
+    (verdict, Reachability::Unknown)
 }
 
 #[cfg(test)]
@@ -26,58 +23,56 @@ mod tests {
     #[test]
     fn incomplete_evidence_is_never_promoted() {
         for check in [DutyCheck::Invalid, DutyCheck::Exhausted] {
-            for concrete in [false, true] {
-                assert_eq!(
-                    evidence(&check, concrete),
-                    (ControlStatus::Unknown, Reachability::Unknown)
-                );
-            }
+            assert_eq!(
+                evidence(&check),
+                (ControlStatus::Unknown, Reachability::Unknown)
+            );
         }
     }
 
     #[test]
-    fn witnessed_requires_a_concrete_nonempty_trace() {
-        for concrete in [false, true] {
-            for present in [false, true] {
-                let trace = if present {
-                    vec![DutyStep {
-                        edge: DutyEdge {
-                            action: "approve".into(),
-                            from: 0,
-                            to: 1,
-                        },
-                        role: "reviewer".into(),
-                    }]
-                } else {
-                    vec![]
-                };
-                let check = DutyCheck::Counterexample {
+    fn model_counterexamples_are_candidates_only() {
+        for present in [false, true] {
+            let trace = if present {
+                vec![DutyStep {
+                    edge: DutyEdge {
+                        action: "approve".into(),
+                        from: 0,
+                        to: 1,
+                    },
                     role: "reviewer".into(),
-                    trace,
-                    sensitive_start: 0,
-                };
-                assert_eq!(
-                    evidence(&check, concrete),
-                    if concrete && present {
-                        (ControlStatus::Refuted, Reachability::Witnessed)
+                }]
+            } else {
+                vec![]
+            };
+            let check = DutyCheck::Counterexample {
+                role: "reviewer".into(),
+                trace,
+                sensitive_start: 0,
+            };
+            assert_eq!(
+                evidence(&check),
+                (
+                    if present {
+                        ControlStatus::Refuted
                     } else {
-                        (ControlStatus::Unknown, Reachability::Unknown)
-                    }
-                );
-            }
+                        ControlStatus::Unknown
+                    },
+                    Reachability::Unknown
+                )
+            );
         }
     }
 
     #[test]
     fn safe_overapproximation_does_not_claim_availability() {
-        for concrete in [false, true] {
+        for check in [
+            DutyCheck::Separated { roles_checked: 2 },
+            DutyCheck::Unreachable,
+        ] {
             assert_eq!(
-                evidence(&DutyCheck::Separated { roles_checked: 2 }, concrete),
+                evidence(&check),
                 (ControlStatus::Proven, Reachability::Unknown)
-            );
-            assert_eq!(
-                evidence(&DutyCheck::Unreachable, concrete),
-                (ControlStatus::Proven, Reachability::Unreachable)
             );
         }
     }
