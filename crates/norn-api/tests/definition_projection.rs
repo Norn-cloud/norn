@@ -25,7 +25,7 @@ fn checked(number: &str, reverse_keys: bool) -> Result<Admitted, Box<dyn std::er
     let artifacts: Vec<norn_ir::ArtifactEnvelope> = vec![prepared.artifact];
     let registry = BTreeSet::new();
     let result = norn_checker::receipt::check_artifact_sources_with_receipt(
-        &[prepared.source.clone()],
+        std::slice::from_ref(&prepared.source),
         &[],
         &registry,
         None,
