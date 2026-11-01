@@ -47,7 +47,7 @@ pub fn check_mapping_artifacts(
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for artifact in artifacts {
-        if artifact.kind == ArtifactKind::Mapping
+        if artifact.kind() == ArtifactKind::Mapping
             && matches!(
                 serde_json::to_value(artifact.payload.to_json_value())
                     .and_then(serde_json::from_value::<MappingDocument>),
