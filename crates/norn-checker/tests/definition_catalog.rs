@@ -78,13 +78,6 @@ fn an_action_effect_is_an_authored_write_of_the_pinned_transition() {
     assert!(catalog.contains(&catalog.writes[0].target));
 }
 
-fn entity(id: &str, payload: &Value) -> ArtifactEnvelope {
-    envelope(json!({
-        "irVersion": "0.1", "artifactId": id, "kind": "entity", "namespace": "shop",
-        "name": id, "version": "1.0.0", "lifecycle": "draft", "scope": {},
-        "dependencies": [], "provenance": { "source": "system" }, "payload": payload
-    }))
-}
 #[test]
 fn entity_projection_preserves_identity_declarations_and_order() {
     let artifact: ArtifactEnvelope = serde_json::from_str(include_str!(
