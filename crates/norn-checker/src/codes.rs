@@ -470,6 +470,18 @@ pub static REGISTRY: &[CodeEntry] = &[
         "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
         "0.2.0",
     ),
+    introduced(
+        "core.compute.ambiguous_grain",
+        Tier::T3,
+        "Query requires an explicit unambiguous identity grain.",
+        "0.2.0",
+    ),
+    introduced(
+        "core.compute.unsupported_engine",
+        Tier::T3,
+        "Query semantics are unsupported by the selected compute profile.",
+        "0.2.0",
+    ),
     entry(
         "customization.validation.invalid_payload",
         Tier::T2,
@@ -1533,18 +1545,6 @@ pub static REGISTRY: &[CodeEntry] = &[
         "mapping.vendor.invalid_contract",
         Tier::T2,
         "vendor-qualified mapping has an invalid sparse source contract: {detail}",
-    ),
-    introduced(
-        "core.compute.ambiguous_grain",
-        Tier::T3,
-        "Query requires an explicit unambiguous identity grain.",
-        "0.2.0",
-    ),
-    introduced(
-        "core.compute.unsupported_engine",
-        Tier::T3,
-        "Query semantics are unsupported by the selected compute profile.",
-        "0.2.0",
     ),
     introduced(
         "metric.validation.complexity_limit",
