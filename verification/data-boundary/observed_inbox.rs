@@ -50,7 +50,10 @@ fn dataplane_submission_enters_the_cell_only_through_observed_inbox() {
                 .map_err(Refusal::host)?,
         })
     };
-    let stream = ObservationStream {connector_instance:"erp-demo/a", partition:"measurements"};
+    let stream = ObservationStream {
+        connector_instance: "erp-demo/a",
+        partition: "measurements",
+    };
     let called = std::cell::Cell::new(false);
     let other = CellScope {
         org_id: "other_org".into(),
@@ -86,12 +89,35 @@ fn dataplane_submission_enters_the_cell_only_through_observed_inbox() {
         )))
         .is_err()
     );
-    assert!(host.observe_submission(&scope, ObservationStream {connector_instance:"erp-demo/b", ..stream}, checked).expect("other connector"), "independent connector");
-    assert!(host.observe_submission(&scope, ObservationStream {partition:"other-partition", ..stream}, checked).expect("other partition"), "independent partition");
+    assert!(
+        host.observe_submission(
+            &scope,
+            ObservationStream {
+                connector_instance: "erp-demo/b",
+                ..stream
+            },
+            checked
+        )
+        .expect("other connector"),
+        "independent connector"
+    );
+    assert!(
+        host.observe_submission(
+            &scope,
+            ObservationStream {
+                partition: "other-partition",
+                ..stream
+            },
+            checked
+        )
+        .expect("other partition"),
+        "independent partition"
+    );
     let store = read();
     let pending = store.read().pending_observations().expect("inbox");
     assert_eq!(pending.len(), 3);
-    let ids: std::collections::BTreeSet<_> = pending.iter().map(|entry| &entry.observation_id).collect();
+    let ids: std::collections::BTreeSet<_> =
+        pending.iter().map(|entry| &entry.observation_id).collect();
     assert_eq!(ids.len(), 3);
     assert_ne!(pending[0].observation_id, raw.observation_id());
     let observed: Observed<RuntimeValue> =

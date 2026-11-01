@@ -13,9 +13,15 @@ pub struct ObservationStream<'a> {
     pub partition: &'a str,
 }
 
-fn inbox_id(stream: ObservationStream<'_>, event: &str) -> Result<String, norn_ir::canonical::CanonicalJsonError> {
-    norn_ir::canonical::domain_hash_hex(b"norn.observation.inbox.v1\0", &(stream.connector_instance, stream.partition, event))
-        .map(|digest| format!("source-observation:{digest}"))
+fn inbox_id(
+    stream: ObservationStream<'_>,
+    event: &str,
+) -> Result<String, norn_ir::canonical::CanonicalJsonError> {
+    norn_ir::canonical::domain_hash_hex(
+        b"norn.observation.inbox.v1\0",
+        &(stream.connector_instance, stream.partition, event),
+    )
+    .map(|digest| format!("source-observation:{digest}"))
 }
 
 impl<E: SqlEngine> DevHost<E> {
@@ -35,7 +41,9 @@ impl<E: SqlEngine> DevHost<E> {
         self.scope()
             .admit(Some(&scope.org_id), Some(&scope.environment_id))?;
         if stream.connector_instance.trim().is_empty() || stream.partition.trim().is_empty() {
-            return Err(Refusal::invalid("connector instance and partition must be nonblank"));
+            return Err(Refusal::invalid(
+                "connector instance and partition must be nonblank",
+            ));
         }
         let _epoch = self.definition_read()?;
         let mut observed = checked()?;
