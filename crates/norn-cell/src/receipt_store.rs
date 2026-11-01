@@ -463,14 +463,11 @@ pub(crate) fn claim<S: SqlEngine>(
     stored: &StoredReceipt,
 ) -> Result<(), CellError> {
     let current = reader.next_commit_seq()?;
-    let consumed = reader.conn.query_optional("SELECT consumed_commit_seq FROM _norn_function_receipt WHERE reference=?1 AND scope=?2", params![reference.0, scope], |row| row.get::<Option<i64>>(0))?.ok_or_else(|| refused("unknown"))?.is_some();
-    if !crate::receipt_fence::usable(consumed, stored.frontier, current) {
+    let (retained, consumed) = reader.conn.query_optional("SELECT body, consumed_commit_seq FROM _norn_function_receipt WHERE reference=?1 AND scope=?2", params![reference.0, scope], |row| Ok((row.get::<String>(0)?, row.get::<Option<i64>>(1)?)))?.ok_or_else(|| refused("unknown"))?;
+    let body = serde_json::to_string(stored).map_err(CellError::Json)?;
+    if retained != body || !crate::receipt_fence::usable(consumed.is_some(), stored.frontier, current) {
         return Err(refused("replayed_or_stale"));
     }
-    let body = serde_json::to_string(stored).map_err(CellError::Json)?;
-    let changed = reader.conn.execute("UPDATE _norn_function_receipt SET consumed_commit_seq=?1 WHERE reference=?2 AND scope=?3 AND body=?4 AND consumed_commit_seq IS NULL", params![i64::try_from(current).map_err(|_| refused("frontier"))?, reference.0, scope, body])?;
-    if changed != 1 {
-        return Err(refused("claim"));
-    }
+    reader.conn.execute("UPDATE _norn_function_receipt SET consumed_commit_seq=?1 WHERE reference=?2 AND scope=?3 AND body=?4 AND consumed_commit_seq IS NULL", params![i64::try_from(current).map_err(|_| refused("frontier"))?, reference.0, scope, body])?;
     Ok(())
 }
