@@ -18,3 +18,10 @@ Evidence is execution/conformance, not a formal implementation proof.
 
 POST-GROUP-SNAPSHOT: prepare all plans from the same verified pre-write state.
 Multiple first definitions must not inspect another plan's unreceipted writes.
+
+The core proposal is a `CellCommit`, an ordered slice of `QuantityRequest`
+partition postings and one retry identity. `CellHost::commit_action_quantity`
+and native `commit_with_partition_postings` use the existing guarded commit.
+The primitive interprets no application fields, account purpose or valuation.
+RuleIR-derived authority/effect composition remains the separate A4/A5 bridge;
+unsupported owned-row/quantity combinations still refuse.
