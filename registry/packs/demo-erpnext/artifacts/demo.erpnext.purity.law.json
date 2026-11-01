@@ -1,0 +1,53 @@
+{
+  "artifactId": "demo.erpnext.purity.law",
+  "dependencies": [
+    {
+      "artifactId": "demo.erpnext.StockEntryMeasurement.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "Measurement purity is within zero and one",
+  "namespace": "demo",
+  "payload": {
+    "id": "demo.erpnext.purity_in_range",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "demo.erpnext.controls",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/demo-erpnext/measurements.ts"
+    },
+    "rationale": "Measurement purity must be within zero and one.",
+    "response": {
+      "expression": "self.purity >= 0 and self.purity <= 1",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "demo.erpnext.StockEntryMeasurement"
+      ],
+      "root": {
+        "id": "demo.erpnext.StockEntryMeasurement",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "demo.erpnext.StockEntryMeasurement"
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "registry/packs/demo-erpnext/measurements.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_demo"
+  },
+  "version": "0.1.0"
+}
