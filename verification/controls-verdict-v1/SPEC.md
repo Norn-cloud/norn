@@ -41,7 +41,7 @@ Role conjuncts intersect; permit rules union. Resource restrictions and non-role
 Generic or unbounded role grants, unsupported policies and undecodable inputs yield unknown.
 Concrete witnesses use only `upsert_input_object` in unrestricted upsert mode,
 on an existing object whose sole property is mutable text `id`. Every step takes
-the closed input `{id: "witness"}` and preserves that same object state.
+the closed text-id schema and concrete input `{id: "witness"}` and preserves that same object state.
 The object has no identity constraints, inheritance, links, invariants, lifecycle,
 interfaces or owned collections. Actions require only org scope, have empty output
 schemas and no guards, derivations, slices, commands, quantity effects or link creation.

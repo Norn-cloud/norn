@@ -4052,8 +4052,8 @@ fn controls_witnesses_correspond_to_kernel_admission_and_commit() {
         );
         let actions: Vec<ActionRoot> = ["demo.approve", "demo.pay"].into_iter().map(|id| {
             serde_json::from_value(json!({
-                "actionId":id, "scopeRequired":["orgId"], "idempotent":true, "ledgered":false,
-                "inputSchema":{"type":"object", "properties":{"id":{"type":"string", "enum":["witness"]}}, "required":["id"], "additionalProperties":false},
+                "actionId":id, "scopeRequired":["orgId"], "idempotent":true, "ledgered":false, "writes":[{"entityKind":"demo.Order", "change":"created"}, {"entityKind":"demo.Order", "change":"modified"}],
+                "inputSchema":{"type":"object", "properties":{"id":{"type":"string"}}, "required":["id"], "additionalProperties":false},
                 "outputSchema":{"type":"object", "properties":{}, "required":[], "additionalProperties":false},
                 "effectProgram":{"kind":"upsert_input_object", "objectIdField":"id", "objectKind":"demo.Order", "entityArtifactId":"demo.Order", "entityArtifactVersion":"0.1.0"}
             })).unwrap()
