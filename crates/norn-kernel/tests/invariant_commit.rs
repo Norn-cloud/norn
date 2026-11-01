@@ -49,7 +49,9 @@ fn obs_evidence_unbound_law_pin_cannot_claim_verified_classification() {
         version: "sha256:definition-v1".into(),
     };
     assert_eq!(
-        catalog.classify_data_quality_rule(&pin).expect("classification"),
+        catalog
+            .classify_data_quality_rule(&pin)
+            .expect("classification"),
         norn_kernel::DataQualityRuleClassification::Unverified,
     );
 }
@@ -2819,7 +2821,7 @@ fn observed_snapshot_commits_versioned_finding_with_deterministic_provenance() {
         invariant_id: InvariantId("named_item".to_owned()),
         version: match &fact.rule_ref {
             DataQualityRuleRef::Invariant { version, .. } => version.clone(),
-            DataQualityRuleRef::Builtin { .. } => unreachable!(),
+            DataQualityRuleRef::Builtin { .. } | DataQualityRuleRef::Law { .. } => unreachable!(),
         },
     };
     assert_eq!(
@@ -2835,7 +2837,7 @@ fn observed_snapshot_commits_versioned_finding_with_deterministic_provenance() {
                 invariant_id: InvariantId("other_invariant".to_owned()),
                 version: match &fact.rule_ref {
                     DataQualityRuleRef::Invariant { version, .. } => version.clone(),
-                    DataQualityRuleRef::Builtin { .. } => unreachable!(),
+                    DataQualityRuleRef::Builtin { .. } | DataQualityRuleRef::Law { .. } => unreachable!(),
                 },
             })
             .expect("wrong invariant id resolves as unverified"),

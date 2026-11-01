@@ -28,13 +28,17 @@ fn invariant_rule(version: &str) -> DataQualityRuleRef {
 #[test]
 fn obs_evidence_law_pin_round_trips_and_refuses_unknown_members() {
     let law = DataQualityRuleRef::Law {
-        artifact_id: "demo.purity.law".into(), law_id: "purity_in_range".into(),
+        artifact_id: "demo.purity.law".into(),
+        law_id: "purity_in_range".into(),
         version: "sha256:definition-v1".into(),
     };
     let value = serde_json::to_value(&law).expect("law pin encodes");
     assert_eq!(value["kind"], "law");
     assert_eq!(value["lawId"], "purity_in_range");
-    assert_eq!(serde_json::from_value::<DataQualityRuleRef>(value.clone()).expect("law pin decodes"), law);
+    assert_eq!(
+        serde_json::from_value::<DataQualityRuleRef>(value.clone()).expect("law pin decodes"),
+        law
+    );
     let mut unknown = value;
     unknown["proved"] = true.into();
     assert!(serde_json::from_value::<DataQualityRuleRef>(unknown).is_err());
