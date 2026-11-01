@@ -306,6 +306,7 @@ pub fn stock_quantity_pack(
 /// Typed CP1 output definitions; the activated rule requires these exact schemas.
 /// They provide execution enforcement, not inherited-law proof receipts.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "closed typed output schema")]
 pub fn stock_output_types() -> Vec<norn_ir::ObjectTypeDef> {
     use norn_ir::{ObjectTypeDef, ObjectTypeName, Property, PropertyId, PropertyType, WholeNumber};
     let text = PropertyType::Text { format: None };
@@ -320,7 +321,7 @@ pub fn stock_output_types() -> Vec<norn_ir::ObjectTypeDef> {
         id: PropertyId(id.into()),
         description: None,
         property_type,
-        constraints: Default::default(),
+        constraints: norn_ir::PropertyConstraints::default(),
         default: None,
         markings: Vec::new(),
         computed: None,
@@ -329,7 +330,7 @@ pub fn stock_output_types() -> Vec<norn_ir::ObjectTypeDef> {
         immutable,
         name: ObjectTypeName(name.into()),
         description: None,
-        status: Default::default(),
+        status: norn_ir::ResourceStatus::default(),
         extends: None,
         implements: Vec::new(),
         properties,
