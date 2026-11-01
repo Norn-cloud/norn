@@ -2732,38 +2732,94 @@
         {
           "id": "INV-CORE-QUANTITY-CONSERVATION",
           "runtime": "missing",
-          "model": "missing",
-          "proof": "missing",
+          "model": "partial",
+          "proof": "partial",
           "evidence": {
             "runtime": [],
-            "model": [],
-            "proof": []
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "selectors": [
+                  "invariant:quantityConserved"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "selectors": [
+                  "theorem:received_eq_issued_add_onHand",
+                  "theorem:move_conserves"
+                ]
+              }
+            ]
           },
-          "residual": "Specified only; the kernel quantity ledger enforces partition conservation (INV-QL-CONSERVATION). Core-pack model and proof are pending."
+          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is enrolled separately."
         },
         {
           "id": "INV-CORE-ESCROW-NON-NEGATIVE",
           "runtime": "missing",
-          "model": "missing",
-          "proof": "missing",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
           "evidence": {
             "runtime": [],
-            "model": [],
-            "proof": []
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "selectors": [
+                  "invariant:escrowNonNegative"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "selectors": [
+                  "theorem:qstep_valid",
+                  "theorem:qexec_valid",
+                  "theorem:valid_available_non_negative"
+                ]
+              }
+            ]
           },
-          "residual": "Specified only; the kernel quantity ledger refuses spending held or absent quantity. Core-pack model and proof are pending."
+          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is enrolled separately."
         },
         {
           "id": "INV-CORE-COMMITMENT-COMPLETION",
           "runtime": "missing",
-          "model": "missing",
-          "proof": "missing",
+          "model": "bounded_model_checked",
+          "proof": "reference_proved",
           "evidence": {
             "runtime": [],
-            "model": [],
-            "proof": []
+            "model": [
+              {
+                "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "selectors": [
+                  "invariant:neverDropped",
+                  "invariant:terminalAbsorbing",
+                  "invariant:endsByDue"
+                ]
+              }
+            ],
+            "proof": [
+              {
+                "artifact": "verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean",
+                "selectors": [
+                  "theorem:terminal_absorbing",
+                  "theorem:cstep_rank",
+                  "theorem:deadline_terminates",
+                  "theorem:bstep_never_drops"
+                ]
+              }
+            ]
           },
-          "residual": "Specified only; no runtime enforcement, model or proof yet."
+          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is enrolled separately."
         }
       ],
       "runtime": {
@@ -2813,7 +2869,7 @@
       "limitations": [
         "The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel.",
         "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops.",
-        "Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack."
+        "Quantity and escrow references cover one resource and balance partition. Transformation coupling and refinement of Rust execution remain unproved; commitment completion assumes deadline-event delivery."
       ],
       "sourceFiles": [
         "verification/core-physics-v1/models/core-value-ledger.qnt",
