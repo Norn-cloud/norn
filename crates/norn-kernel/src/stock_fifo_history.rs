@@ -32,7 +32,7 @@ impl Valuation for FifoState {
                     .allocations
                     .iter()
                     .try_fold(StockAmount::default(), |total, layer| {
-                        Ok(StockAmount {
+                        Ok::<StockAmount, StockHistoryError>(StockAmount {
                             quantity: total
                                 .quantity
                                 .checked_add(layer.quantity)
