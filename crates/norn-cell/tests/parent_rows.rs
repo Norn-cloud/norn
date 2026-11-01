@@ -3028,23 +3028,29 @@ mod cp1_stock {
                         mutation_authority: None,
                         extensions: None,
                     })
-                    .unwrap(),
+                    .expect("typed custody fixture"),
                 )
-                .unwrap(),
+                .expect("typed custody fixture"),
             );
             artifacts.push(envelope);
             for artifact in &mut artifacts {
                 match &mut artifact.payload {
                     ArtifactPayload::Entity(payload) => {
                         let mut ty: ObjectTypeDef = serde_json::from_value(
-                            serde_json::to_value(payload.object_type.as_value().unwrap()).unwrap(),
+                            serde_json::to_value(
+                                payload
+                                    .object_type
+                                    .as_value()
+                                    .expect("typed custody fixture"),
+                            )
+                            .expect("typed custody fixture"),
                         )
-                        .unwrap();
+                        .expect("typed custody fixture");
                         if ["stock.ReceiptLine", "stock.DeliveryLine"].contains(&ty.name.as_str()) {
                             ty.links
                                 .iter_mut()
                                 .find(|l| l.id.as_str() == "item")
-                                .unwrap()
+                                .expect("typed custody fixture")
                                 .target = "jewelry.MetalLot".into();
                         }
                         if ["stock.PurchaseReceipt", "stock.DeliveryNote"]
@@ -3061,14 +3067,15 @@ mod cp1_stock {
                                     mutation_authority: None,
                                     extensions: None,
                                 })
-                                .unwrap(),
+                                .expect("typed custody fixture"),
                             )
-                            .unwrap(),
+                            .expect("typed custody fixture"),
                         );
                     }
                     ArtifactPayload::Action(payload) => {
                         let mut action: norn_ir::ActionRoot =
-                            serde_json::from_value(payload.to_json_value()).unwrap();
+                            serde_json::from_value(payload.to_json_value())
+                                .expect("typed custody fixture");
                         if let Some(post) = &mut action.stock_post {
                             post.operation = match post.operation {
                                 norn_ir::ActionStockOperation::Receipt => {
@@ -3078,7 +3085,10 @@ mod cp1_stock {
                             };
                         }
                         artifact.payload = ArtifactPayload::Action(
-                            serde_json::from_value(serde_json::to_value(action).unwrap()).unwrap(),
+                            serde_json::from_value(
+                                serde_json::to_value(action).expect("typed custody fixture"),
+                            )
+                            .expect("typed custody fixture"),
                         );
                     }
                     _ => {}
@@ -3217,7 +3227,7 @@ mod cp1_stock {
                 {
                     if object_type == "stock.Item" {
                         *object_type = "jewelry.MetalLot".into();
-                        values.extend(serde_json::from_value::<JsonObject>(json!({"ownership":"custody","metal":"Au","gross_micrograms":8,"purity_numerator":18000000,"fine_ticks":144000000})).unwrap());
+                        values.extend(serde_json::from_value::<JsonObject>(json!({"ownership":"custody","metal":"Au","gross_micrograms":8,"purity_numerator":18000000,"fine_ticks":144000000})).expect("typed custody fixture"));
                     }
                 }
             }

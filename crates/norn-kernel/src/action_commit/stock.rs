@@ -206,7 +206,14 @@ impl<H: CellHost + ?Sized> Reader<'_, '_, '_, H> {
             key = target.clone();
             self.fact(&key)?;
         }
-        Ok(key)
+        let model = crate::CommitModel::new(self.context.catalog);
+        let canonical = model.canonical(&key);
+        self.snapshot
+            .facts
+            .keys()
+            .find(|candidate| model.canonical(candidate) == canonical)
+            .cloned()
+            .ok_or_else(|| invalid("missing concrete master snapshot"))
     }
 
     fn account(
