@@ -4,7 +4,7 @@ use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{CellCommit, CellHost, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent, Observed, TypeCatalog, World, load_slice};
 use norn_kernel::snapshot_observe::{ObservedSnapshot, prepare_observed_snapshot};
 
-impl<E: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, E> {
+impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
     /// Recompute a retained bundle and atomically consume its mapped observations.
     /// The inbox identity selects evidence; no caller supplies facts or authority.
     ///
