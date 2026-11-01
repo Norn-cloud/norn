@@ -72,6 +72,34 @@ fn map_roles_and_pins_decode_strictly() {
 }
 
 #[test]
+fn map_roles_schema_requires_each_closed_forms_own_contract() {
+    let schema = serde_json::to_value(norn_ir::artifact_payload_schema(&ArtifactKind::Mapping))
+        .expect("mapping schema");
+    assert_eq!(
+        schema["oneOf"],
+        json!([
+            {"$ref": "#/$defs/MappingIr"}, {"$ref": "#/$defs/LawInterpretationIr"}
+        ])
+    );
+    for (form, required) in [
+        ("MappingIr", vec!["format", "source", "interfaces", "maps"]),
+        (
+            "LawInterpretationIr",
+            vec!["format", "role", "sourceLayer", "targetLayer"],
+        ),
+    ] {
+        assert_eq!(schema["$defs"][form]["required"], json!(required));
+        assert_eq!(schema["$defs"][form]["additionalProperties"], false);
+    }
+    for (form, format) in [
+        ("MappingFormat", "norn.mapping/1"),
+        ("InterpretationFormat", "norn.interpretation/1"),
+    ] {
+        assert_eq!(schema["$defs"][form]["enum"], json!([format]));
+    }
+}
+
+#[test]
 fn mapping_entitlements_and_identity_bindings_roundtrip_through_envelope_root() {
     let wire = json!({
         "irVersion": "0.1",
