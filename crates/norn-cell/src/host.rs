@@ -135,6 +135,11 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         &self.store
     }
 
+    /// Trusted host access for definition installation and fixture provisioning.
+    pub const fn store_mut(&mut self) -> &mut CellStore<S> {
+        &mut self.store
+    }
+
     /// Atomically append host-owned events under a durable idempotency key.
     ///
     /// This boundary intentionally accepts events only: it cannot write

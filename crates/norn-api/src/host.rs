@@ -9,11 +9,19 @@ use norn_kernel::LogicalTime;
 use crate::{defs::Admitted, refusal::Refusal, scope::CellScope};
 
 /// One tenant's admitted definitions and cell, shared by transport adapters.
+pub(crate) type ActionCell<E> = norn_cell::SqliteCell<
+    norn_kernel::FactEvent,
+    norn_ir::RuntimeObject,
+    norn_ir::RuntimeObject,
+    E,
+>;
+
+/// Shared tenant host.
 pub struct DevHost<E: SqlEngine> {
     scope: CellScope,
     pub(crate) authorizer: Box<dyn crate::authz::Authorizer>,
     definitions: RwLock<()>,
-    cell: Mutex<CellStore<E>>,
+    cell: Mutex<ActionCell<E>>,
 }
 
 impl<E: SqlEngine> DevHost<E> {
@@ -32,10 +40,12 @@ impl<E: SqlEngine> DevHost<E> {
         let cell = CellStore::provision_definitions(engine, model, &input, &scope.key())
             .map_err(Refusal::host)?;
         Ok(Self {
-            scope,
+            scope: scope.clone(),
             authorizer: Box::new(crate::authz::DenyAll),
             definitions: RwLock::new(()),
-            cell: Mutex::new(cell),
+            cell: Mutex::new(
+                ActionCell::new(cell, scope.key(), |c| c.payload.clone()).map_err(Refusal::host)?,
+            ),
         })
     }
 
@@ -52,7 +62,7 @@ impl<E: SqlEngine> DevHost<E> {
         let admitted = Admitted::from_source(source, &self.scope)?;
         let _epoch = self.definitions.write().map_err(Refusal::host)?;
         install(
-            &mut *self.cell()?,
+            self.cell()?.store_mut(),
             admitted,
             Some(expected_version),
             &self.scope,
@@ -81,7 +91,7 @@ impl<E: SqlEngine> DevHost<E> {
         self.definitions.read().map_err(Refusal::host)
     }
 
-    pub(crate) fn cell(&self) -> Result<MutexGuard<'_, CellStore<E>>, Refusal> {
+    pub(crate) fn cell(&self) -> Result<MutexGuard<'_, ActionCell<E>>, Refusal> {
         self.cell.lock().map_err(Refusal::host)
     }
 }
@@ -146,6 +156,7 @@ mod tests {
         let read = || {
             host.cell()
                 .expect("cell")
+                .store()
                 .read()
                 .installed_definitions(None)
                 .expect("read")
@@ -433,3 +444,4 @@ mod defs_read {
         );
     }
 }
+

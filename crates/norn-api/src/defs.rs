@@ -100,6 +100,12 @@ impl Admitted {
             target.properties.extend(extension.properties);
             target.links.extend(extension.links);
         }
+        for internal in action_system_types() {
+            if objects.iter().any(|ty| ty.name == internal.name) {
+                return Err(refused("reserved kernel object type"));
+            }
+            objects.push(internal);
+        }
         Ok(Self {
             diagnostics: norn_checker::diagnostics_to_json(&checked.diagnostics),
             layout: String::from_utf8(
@@ -122,4 +128,76 @@ impl Admitted {
             receipt_sha256: checked.receipt.content_sha256().map_err(refused)?,
         })
     }
+}
+
+fn action_system_types() -> Vec<norn_ir::ObjectTypeDef> {
+    use norn_ir::{ObjectTypeDef, ObjectTypeName, Property, PropertyId, PropertyType};
+    let text = PropertyType::Text { format: None };
+    let json = PropertyType::JsonExt { schema: None };
+    let mut types = Vec::new();
+    for (name, fields) in [
+        (
+            norn_kernel::ACTION_CALL_TYPE,
+            vec![
+                ("actionId", text.clone()),
+                ("actionArtifactId", text.clone()),
+                ("actionVersion", text.clone()),
+                ("effectKind", text.clone()),
+                ("object", json.clone()),
+                ("input", json.clone()),
+                ("effectiveInput", json.clone()),
+                ("derivedValues", json.clone()),
+                ("preconditionOutcomes", json.clone()),
+                ("actor", text.clone()),
+                ("turn", text.clone()),
+                ("transition", text.clone()),
+                ("from", text.clone()),
+                ("to", text.clone()),
+                ("rowOperations", json.clone()),
+            ],
+        ),
+        (
+            norn_kernel::OWNED_ROWS_TYPE,
+            vec![
+                ("parentType", text.clone()),
+                ("parentKey", text.clone()),
+                ("collectionId", text),
+                ("rowIds", json),
+            ],
+        ),
+    ] {
+        types.push(ObjectTypeDef {
+            name: ObjectTypeName(name.into()),
+            description: None,
+            status: norn_ir::ResourceStatus::default(),
+            extends: None,
+            implements: vec![],
+            properties: fields
+                .into_iter()
+                .map(|(id, property_type)| Property {
+                    id: PropertyId(id.into()),
+                    description: None,
+                    property_type,
+                    constraints: norn_ir::PropertyConstraints {
+                        nullable: true,
+                        ..Default::default()
+                    },
+                    default: None,
+                    markings: vec![],
+                    computed: None,
+                    protected: true,
+                })
+                .collect(),
+            links: vec![],
+            owned_collections: vec![],
+            identity: vec![],
+            invariants: vec![],
+            lifecycles: vec![],
+            markings: vec![],
+            accounting_leg: None,
+            immutable: false,
+            controls: None,
+        });
+    }
+    types
 }
