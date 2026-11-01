@@ -2755,9 +2755,9 @@
         },
         {
           "id": "INV-CORE-QUANTITY-CONSERVATION",
-          "runtime": "tested",
-          "model": "bounded_model_checked",
-          "proof": "reference_proved",
+          "runtime": "partial",
+          "model": "partial",
+          "proof": "partial",
           "evidence": {
             "runtime": [
               {
