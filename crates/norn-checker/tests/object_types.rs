@@ -162,6 +162,27 @@ fn every_code_has_a_negative_case() {
     }));
     let cases = [
         (
+            "object_type.validation.protected_owned_row_field",
+            "/0/ownedCollections/0/rowIdProperty",
+            serde_json::json!([
+                {
+                    "name": "test.Order",
+                    "links": [{ "id": "lines", "target": "test.Line",
+                        "cardinality": { "to": "many", "from": "one" } }],
+                    "ownedCollections": [{ "id": "lines", "childType": "test.Line",
+                        "rowIdProperty": "row_id", "orderingKey": "idx",
+                        "cascadeOnParentDelete": true, "maxRows": 20 }]
+                },
+                {
+                    "name": "test.Line",
+                    "properties": [
+                        { "id": "row_id", "type": { "kind": "text" }, "protected": true },
+                        { "id": "idx", "type": { "kind": "integer" } }
+                    ]
+                }
+            ]),
+        ),
+        (
             codes::INVALID_NAME,
             "/0/name",
             serde_json::json!([{ "name": "test.thing" }]),
