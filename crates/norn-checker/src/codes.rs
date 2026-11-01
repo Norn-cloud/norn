@@ -471,9 +471,39 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     introduced(
+        "core.composition.duplicate_instance",
+        Tier::T3,
+        "instance ID must be unique in the retained scoped graph",
+        "0.2.0",
+    ),
+    introduced(
+        "core.composition.instance_cycle",
+        Tier::T3,
+        "instance imports and containment must be acyclic",
+        "0.2.0",
+    ),
+    introduced(
         "core.composition.mapping_gap",
         Tier::T3,
         "interpretation must cover the retained source contract exactly with unique compatible target members",
+        "0.2.0",
+    ),
+    introduced(
+        "core.composition.unresolved_pin",
+        Tier::T3,
+        "instance reference must resolve to an exact scoped pack pin",
+        "0.2.0",
+    ),
+    introduced(
+        "core.compute.ambiguous_grain",
+        Tier::T3,
+        "Query requires an explicit unambiguous identity grain.",
+        "0.2.0",
+    ),
+    introduced(
+        "core.compute.unsupported_engine",
+        Tier::T3,
+        "Query semantics are unsupported by the selected compute profile.",
         "0.2.0",
     ),
     entry(
@@ -1336,18 +1366,6 @@ pub static REGISTRY: &[CodeEntry] = &[
         "lifecycle.validation.widens_transition",
         Tier::T3,
         "transition {id} is not a transition of the inherited lifecycle; a subtype may only drop transitions",
-    ),
-    introduced(
-        "mapping.interpretation.invalid_endpoint",
-        Tier::T3,
-        "interpretation endpoint {artifactId} requires one retained business pack, an exact required dependency and matching version/content identity",
-        "0.2.0",
-    ),
-    introduced(
-        "mapping.interpretation.unsupported",
-        Tier::T3,
-        "law interpretations require member conformance and preservation obligations",
-        "0.2.0",
     ),
     entry(
         "mapping.model.expression_type",

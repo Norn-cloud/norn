@@ -17,6 +17,17 @@ Reuse `BusinessPackRoot`, `CompositionPackRoot {pack_id, pack_version, artifacts
 
 Source-record mappings and term correspondence stay distinct from law interpretation. Multiple interpretation artifacts from one layer are valid; do not add a singleton mapping slot or infer endpoints from namespaces. Extend `ArtifactPayload` strict roots, schemas and SDK, not only `mapping.rs`.
 
+### Shared structural instance contract (PACK-PIN-1)
+
+`CompositionPackRoot.instances` declares the single shared instance model:
+`PackInstanceRef {instanceId, pack: InterpretationEndpoint}` and
+`PackInstance {instanceId, scope: ScopeRef, pack: InterpretationEndpoint, imports: BTreeMap<alias, PackInstanceRef>, instances: Vec<PackInstanceRef>}`.
+`InterpretationEndpoint {artifactId, version, sha256}` pins the exact Norn1 semantic envelope; law interpretations reuse that same type.
+IDs are opaque and unique within each scope of the retained candidate/base graph. Renaming labels or upgrading a pack does not change instance identity.
+Imports and contained-instance references resolve in the declaring instance's exact scope, with matching pack pins; there is no implicit global instance or namespace lookup.
+Duplicate IDs refuse with `core.composition.duplicate_instance`; missing, inaccessible or mismatched pins refuse with `core.composition.unresolved_pin`; import/containment cycles refuse with `core.composition.instance_cycle`.
+This cut checks structure only. Generic type/unit substitution, B2 law instantiation and B3 retained authority remain unqualified and grant no executable authority here.
+
 ## Semantics
 
 The stable app ID is the root composition-pack instance’s `instance_id`, resolved through its exact retained pin and explicit imports/instances closure; `LawRoot::App(id)` has no separate app→pack binding and refuses unresolved IDs.
