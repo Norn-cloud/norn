@@ -357,6 +357,7 @@
     "scripts/verify-promoted-subsystems.sh",
     "scripts/write-verification-result.py",
     "tools/norn-ts/fixtures/decisions/ordered-fold.source.ts",
+    "tools/norn-ts/fixtures/jewelry/cp3-folds.source.ts",
     "tools/norn-ts/fixtures/stock/stock.source.ts",
     "tools/norn-ts/fixtures/translation-validation/markings.source.ts",
     "tools/norn-ts/src/builder/access.ts",

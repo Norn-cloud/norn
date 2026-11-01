@@ -238,3 +238,30 @@ flattening its elements, lowering to existing one-level `flatten([left, right])`
 Both operands must be arrays with compatible item schemas. This permits declared
 allocation lineage to accumulate without a new runtime operator. String/scalar
 concat and additional arguments remain outside this authoring form.
+
+## CP3 allocation declarations
+
+FOLD-CP3 / JEWEL-SELL / JEWEL-SCRAP / JEWEL-FUND / JEWEL-MELT:
+`tools/norn-ts/fixtures/jewelry/cp3-folds.source.ts` specializes the existing
+stock Holding (core.Resource) and declares normalization, original-cost allocation
+and funded conversion helpers. One pure plan applies them in order: sell,
+normalize the separate scrap exchange, fund WIP from retained and newly received
+holdings, then allocate output, explicit loss and non-fine byproduct. Quantities
+are grams, purity per-mille, values USD; exact scale-6 refuse arithmetic is declared.
+Source IDs and residual allocations remain data. Initial accumulators derive
+from declared zeroes and prior fold results, not caller-supplied partial state.
+
+The compiled TypeScript declarations execute in the generic Rust evaluator:
+20 g sale costs 200 and retains 80/800; 25 g at 800 per-mille contributes 20/180;
+funding is 100 fine g, 105 gross g and 980; output 99.2/972.16 plus loss 0.8/7.84
+and non-fine byproduct 5/0 exhausts all three balances. Reordered output enumeration
+produces the same plan. Loss ratio 0.008 exceeds 0.005; exactly 0.005 does not.
+
+These are pure allocation fixtures. `complete` and `needs_approval` are derived
+data for the admitted action/law bridge, not authorization or approval evidence.
+Missing loss or invalid purity cannot qualify a complete plan; unit/currency
+mismatches and unsupported exact arithmetic refuse evaluation. There are no fact
+or timer effects. The integrator still owns two independent assays, pinned scope,
+settings/approval versions, complete partition fences, actual reservations,
+balanced economic effects and atomic posting. No full CP3 runtime or application
+proof claim follows from allocation conformance alone.

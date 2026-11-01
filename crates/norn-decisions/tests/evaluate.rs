@@ -1622,3 +1622,56 @@ fn typed_authoring_ordered_fold_executes_the_declared_helper() {
         assert_eq!(result.output.commands[0], norn_decisions::value_to_runtime(&expected).unwrap());
     }
 }
+
+#[test]
+fn cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations() {
+    let rules = support::compiled_rules("tools/norn-ts/fixtures/jewelry/cp3-folds.source.ts");
+    let helpers = rules.iter().filter(|(_, r)| r.contract == Some(norn_ir::RuleContractV2::SubDecision)).map(|(id, r)| (id.clone(), r.clone())).collect();
+    let admitted = AdmittedDecision::admit(&rules["jewelry.fold.plan.rule"], &helpers, binding()).unwrap();
+    let input = json!({
+        "opening":{"resource_code":"a","quantity":100,"gross":100,"value":1000,"unit":"g","currency":"USD"},
+        "scrap":{"resource_code":"b","gross":25,"purity":800,"value":180,"unit":"g","currency":"USD"},
+        "sell_quantity":20,"sale_price":300,"threshold":0.005,
+        "products":[
+            {"resource_code":"a-output","gross":99.2,"purity":1000,"kind":"output","unit":"g","currency":"USD"},
+            {"resource_code":"b-loss","gross":0.8,"purity":1000,"kind":"loss","unit":"g","currency":"USD"},
+            {"resource_code":"c-byproduct","gross":5,"purity":0,"kind":"byproduct","unit":"g","currency":"USD"}
+        ]
+    });
+    let evaluate = |input: &Json| run(&admitted, value(input), event(), EvaluationBudget::new(2_000_000));
+    let result = evaluate(&input).unwrap();
+    assert!(result.output.facts.is_empty() && result.output.timers.is_empty());
+    let plan = norn_ir::RuntimeValue::Object(result.output.commands[0].clone());
+    for (path, expected) in [
+        ("/complete", "true"), ("/needs_approval", "true"), ("/sale_price", "300"),
+        ("/sale/fine", "20"), ("/sale/value", "200"), ("/sale/residual", "80"), ("/sale/residual_value", "800"),
+        ("/receipt/fine", "20"), ("/receipt/gross", "25"), ("/receipt/value", "180"),
+        ("/funding/fine", "100"), ("/funding/gross", "105"), ("/funding/value", "980"),
+        ("/funding/residual", "0"), ("/funding/residual_value", "0"),
+        ("/melt/remaining_fine", "0"), ("/melt/remaining_gross", "0"), ("/melt/remaining_value", "0"),
+        ("/melt/allocations/0/value", "972.16"), ("/melt/allocations/1/value", "7.84"), ("/melt/allocations/2/value", "0"),
+        ("/melt/loss", "0.8"),
+    ] {
+        assert_eq!(plan.pointer(path), Some(&norn_ir::RuntimeValue::from_json_text(expected).unwrap()), "{path}");
+    }
+    let mut reordered = input.clone();
+    reordered["products"].as_array_mut().unwrap().reverse();
+    assert_eq!(evaluate(&reordered).unwrap().output, result.output);
+    let mut boundary = input.clone();
+    boundary["products"][0]["gross"] = json!(99.5);
+    boundary["products"][1]["gross"] = json!(0.5);
+    let command = &evaluate(&boundary).unwrap().output.commands[0];
+    assert_eq!(command["needs_approval"].as_bool(), Some(false));
+    assert_eq!(command["complete"].as_bool(), Some(true));
+    let mut missing_loss = input.clone();
+    missing_loss["products"].as_array_mut().unwrap().remove(1);
+    assert_eq!(evaluate(&missing_loss).unwrap().output.commands[0]["complete"].as_bool(), Some(false));
+    let mut bad_unit = input.clone();
+    bad_unit["opening"]["unit"] = json!("kg");
+    assert!(evaluate(&bad_unit).is_err());
+    let mut bad_purity = input.clone();
+    bad_purity["scrap"]["purity"] = json!(1100);
+    if let Ok(result) = evaluate(&bad_purity) {
+        assert_eq!(result.output.commands[0]["complete"].as_bool(), Some(false));
+    }
+}
