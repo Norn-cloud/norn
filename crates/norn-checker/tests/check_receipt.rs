@@ -1155,14 +1155,8 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
                 Err(norn_checker::ReceiptError::InvalidStoredReceipt { detail })
                     if detail == "receipt artifact-set identity does not match the persisted definitions"
             ));
-            let candidates = artifacts
-                .iter()
-                .map(|v| norn_ir::runtime::decode(v).expect("receipt fixture"))
-                .collect::<Vec<ArtifactEnvelope>>();
-            let installed = base
-                .iter()
-                .map(|v| norn_ir::runtime::decode(v).expect("receipt fixture"))
-                .collect::<Vec<ArtifactEnvelope>>();
+            let candidates = decoded_sources(artifacts);
+            let installed = decoded_sources(base);
             let context = EntityArtifactSetContext {
                 registry: &BTreeSet::new(),
                 base: &installed,
@@ -1225,4 +1219,8 @@ proptest::proptest! {
         proptest::prop_assert_ne!(exact_receipt(&first, &[]).artifact_set, exact_receipt(&second, &[]).artifact_set);
         proptest::prop_assert_ne!(exact_receipt(&[], &first).artifact_set, exact_receipt(&[], &second).artifact_set);
     }
+}
+
+fn decoded_sources(sources: &[norn_ir::RuntimeValue]) -> Vec<ArtifactEnvelope> {
+    sources.iter().map(|source| norn_ir::runtime::decode(source).expect("receipt fixture")).collect()
 }

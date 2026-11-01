@@ -991,9 +991,9 @@ fn public_induction_goals_bind_exact_law_and_transition_commitments() {
         challenge(&documents)
     };
     let left = make("len('é') == 2");
-    // Keep the accepted law-edit case and add NFC-equivalent source whose
-    // literal spelling changes evaluation and the actual transition commitment.
-    for expression in ["len('é') == 3", "len('e\u{301}') == 2"] {
+    // Compare admitted NFC literals; decomposed expressions are refused by
+    // the admission scenarios above.
+    for expression in ["len('é') == 3", "len('ø') == 2"] {
         let right = make(expression);
         let statement = |challenge: &Challenge, table: &str, key: &str, value: &Value| {
             challenge.body()[table]
