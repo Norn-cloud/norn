@@ -39,7 +39,7 @@ fn add_inline_layout(artifact: &mut Value) {
         .expect("rule node")
         .insert(
             "description".to_owned(),
-            Value::String("editor-only cafe\u{301} description".to_owned()),
+            Value::String("editor-only café description".to_owned()),
         );
     graph["edges"]
         .as_array_mut()
@@ -70,7 +70,7 @@ fn inline_editor_layout_is_admitted_by_json_and_typed_single_artifact_entries() 
         serde_json::from_value(raw.clone()).expect("retained envelope");
     assert_eq!(
         serde_json::to_value(&retained).expect("retained JSON")["payload"]["graph"]["nodes"][0]["description"],
-        json!("editor-only cafe\u{301} description")
+        json!("editor-only café description")
     );
     let clean: ArtifactEnvelope = serde_json::from_value(valid_rule()).expect("clean envelope");
     assert_eq!(
@@ -167,10 +167,10 @@ fn fixture_sources(
 
 fn unicode_rule_sources() -> (Value, Value) {
     let mut semantic = valid_rule();
-    semantic["artifactId"] = json!("test.cafe\u{301}");
-    semantic["payload"]["inputSchema"]["properties"]["cafe\u{301}"] = json!({"type":"string"});
+    semantic["artifactId"] = json!("test.café");
+    semantic["payload"]["inputSchema"]["properties"]["café"] = json!({"type":"string"});
     semantic["payload"]["graph"]["nodes"][4]["content"]["expressions"][0]["value"] =
-        json!("short ? ['cafe\u{301}'] : []");
+        json!("short ? ['café'] : []");
     let mut raw = semantic.clone();
     add_inline_layout(&mut raw);
     for edge in semantic["payload"]["graph"]["edges"]
@@ -337,39 +337,7 @@ fn receipt_shape_refuses_unknown_formats_and_malformed_law_origins() {
 }
 
 #[test]
-fn source_hash_order_is_independent_of_unicode_spelling() {
-    let (_, semantic) = unicode_rule_sources();
-    let first = norn_ir::runtime::encode(&semantic).expect("source");
-    let composed = norn_ir::RuntimeValue::from_json_text(first.canonical_json().expect("Norn1"))
-        .expect("canonical source");
-    let mut other = semantic;
-    other["artifactId"] = json!("test.cafz");
-    other["payload"]["ruleId"] = json!("test.rule.z");
-    let other = norn_ir::runtime::encode(&other).expect("other source");
-    let receipt = |source| {
-        let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
-            &[source, other.clone()],
-            &[],
-            &BTreeSet::new(),
-            None,
-            &ResourceLimitProfile::norn_limits_v1(),
-            None,
-        )
-        .expect("receipt");
-        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
-        checked.receipt
-    };
-    let decomposed = receipt(first);
-    let composed = receipt(composed);
-    assert_eq!(decomposed.artifact_set, composed.artifact_set);
-    assert_eq!(
-        decomposed.content_sha256().expect("hash"),
-        composed.content_sha256().expect("hash")
-    );
-}
-
-#[test]
-fn verbatim_execution_requires_more_than_the_norn1_artifact_hash() {
+fn admitted_text_nfc_closes_semantic_identity_gap() {
     let mut hashes = Vec::new();
     let mut results = Vec::new();
     for literal in ["é", "e\u{301}"] {
@@ -379,6 +347,7 @@ fn verbatim_execution_requires_more_than_the_norn1_artifact_hash() {
         document["payload"]["graph"]["nodes"][4]["content"]["expressions"][1]["value"] =
             json!(expression);
         let source = norn_ir::runtime::encode(&document).expect("source");
+        hashes.push(source.canonical_json().expect("Norn1 hash input"));
         let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
             &[source],
             &[],
@@ -386,14 +355,17 @@ fn verbatim_execution_requires_more_than_the_norn1_artifact_hash() {
             None,
             &ResourceLimitProfile::norn_limits_v1(),
             None,
-        )
-        .expect("receipt");
-        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
-        eprintln!(
-            "semantic-identity witness {literal:?}: receipt {}",
-            checked.receipt.content_sha256().expect("receipt hash")
         );
-        hashes.push(checked.receipt.artifact_set.artifacts[0].sha256.clone());
+        if literal == "é" {
+            assert!(checked.expect("NFC receipt").receipt.admitted);
+        } else {
+            assert!(
+                checked
+                    .expect_err("non-NFC refused")
+                    .to_string()
+                    .contains("definition.text.not_nfc")
+            );
+        }
         results.push(
             norn_expr::Expression::compile(&expression)
                 .expect("expression")
@@ -414,4 +386,30 @@ fn verbatim_execution_requires_more_than_the_norn1_artifact_hash() {
         results,
         vec![norn_expr::Value::from(2), norn_expr::Value::from(3)]
     );
+}
+
+#[test]
+fn definition_text_nfc_paths() {
+    for (field, value, pointer) in [
+        ("artifactId", json!("e\u{301}"), "/artifactId"),
+        ("title", json!("e\u{301}"), "/title"),
+        (
+            "payload",
+            json!({"e\u{301}/~": true}),
+            "/payload/e\u{301}~1~0",
+        ),
+        (
+            "payload",
+            json!({"items": ["e\u{301}"]}),
+            "/payload/items/0",
+        ),
+    ] {
+        let mut document = valid_rule();
+        document[field] = value;
+        let source = norn_ir::runtime::encode(&document).expect("source");
+        let diagnostics =
+            norn_checker::prepare_artifact_source(source).expect_err("non-NFC refused");
+        assert_eq!(diagnostics[0].code.as_str(), "definition.text.not_nfc");
+        assert_eq!(diagnostics[0].span.as_ref().expect("span").pointer, pointer);
+    }
 }
