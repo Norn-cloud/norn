@@ -197,6 +197,8 @@ pub mod codes {
     /// An owned collection does not match its many/from-one link, exact child
     /// type, stable text id, ordering integer, or platform row bound.
     pub const INVALID_OWNED_COLLECTION: &str = "object_type.validation.invalid_owned_collection";
+    /// PROTECTED-DEFAULT: an owned child's effective default is a non-rule creation write.
+    pub const PROTECTED_DEFAULT: &str = "core.graph.protected_default";
     /// A kernel-owned row identity or ordering field cannot require rule-only writes.
     pub const PROTECTED_OWNED_ROW_FIELD: &str = "object_type.validation.protected_owned_row_field";
 

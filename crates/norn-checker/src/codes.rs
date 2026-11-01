@@ -470,6 +470,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
         "0.2.0",
     ),
+    introduced(
+        "core.graph.protected_default",
+        Tier::T3,
+        "owned child property {property} of {child} has a protected default; move the value into the authoritative rule's creation effect, or drop the protection",
+        "0.2.0",
+    ),
     entry(
         "customization.validation.invalid_payload",
         Tier::T2,
