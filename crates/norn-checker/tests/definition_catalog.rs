@@ -11,7 +11,8 @@ use norn_checker::definition_catalog::project;
 use norn_checker::resolve_artifact_set;
 use norn_ir::ArtifactEnvelope;
 use norn_ir::definition_catalog::{
-    DefinitionCatalog, LawBinding, MapRule, Member, MemberRef, WriteVia,
+    ArtifactKey, DefinitionCatalog, DependencyVia, DependsOnRow, LawBinding, MapRule, Member,
+    MemberRef, TypeKind, WriteVia,
 };
 use norn_ir::mapping::GapReason;
 use serde_json::{Value, json};
@@ -60,6 +61,76 @@ fn invoice_transition() -> MemberRef {
         lifecycle: "status".to_owned(),
         transition: "invoice".to_owned(),
     })
+}
+
+#[test]
+fn types_properties_links_and_transitions_bind_their_declaring_artifact() {
+    let catalog = catalog(&[sales_order()], &[]);
+
+    let artifact = catalog
+        .artifact("commerce.SalesOrder.entity", "0.1.0")
+        .expect("the artifact is pinned");
+    assert!(artifact.candidate);
+    assert_eq!(artifact.sha256.len(), 64);
+    assert!(artifact.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()));
+
+    let order_type = &catalog.types[0];
+    assert_eq!(
+        order_type.at,
+        order_member(Member::Type {
+            type_name: "commerce.SalesOrder".to_owned()
+        })
+    );
+    assert_eq!(order_type.kind, TypeKind::ObjectType);
+    assert_eq!(order_type.implements, ["core.Order"]);
+
+    let status = catalog
+        .properties
+        .iter()
+        .find(|row| row.at.member.id() == "property:commerce.SalesOrder#status")
+        .expect("status is a property row");
+    let machine = status.lifecycle.as_ref().expect("status owns a lifecycle");
+    assert_eq!(
+        machine.states,
+        [
+            "draft",
+            "submitted",
+            "on_hold",
+            "approved",
+            "invoiced",
+            "completed",
+            "cancelled"
+        ]
+    );
+    assert_eq!(machine.initial, ["draft"]);
+    assert!(!status.computed);
+    assert!(catalog.contains(&order_member(Member::State {
+        type_name: "commerce.SalesOrder".to_owned(),
+        lifecycle: "status".to_owned(),
+        state: "invoiced".to_owned(),
+    })));
+    assert!(!catalog.contains(&order_member(Member::State {
+        type_name: "commerce.SalesOrder".to_owned(),
+        lifecycle: "status".to_owned(),
+        state: "shipped".to_owned(),
+    })));
+
+    let invoice = catalog
+        .transitions
+        .iter()
+        .find(|row| row.at == invoice_transition())
+        .expect("invoice is a transition row");
+    assert_eq!(invoice.from, ["approved"]);
+    assert_eq!(invoice.to, "invoiced");
+    assert_eq!(catalog.transitions.len(), 7);
+
+    assert!(
+        catalog
+            .links
+            .iter()
+            .any(|row| row.at.member.id() == "link:commerce.SalesOrder#lines"
+                && row.target == "commerce.SalesOrderLine")
+    );
 }
 
 #[test]
@@ -115,6 +186,39 @@ fn a_decide_graph_writes_only_the_declared_members_its_schema_admits() {
             ),
         ]
     );
+}
+
+#[test]
+fn dependencies_resolve_to_exact_versions_including_the_base() {
+    let mut action = read_json("fixtures/ir/commerce-sales-order-submit-invoice.action.json");
+    action["dependencies"] = json!([{
+        "artifactId": "commerce.SalesOrder.entity",
+        "kind": "entity",
+        "version": "0.1.0",
+        "required": true
+    }]);
+    let catalog = catalog(&[envelope(action)], &[sales_order()]);
+
+    assert_eq!(
+        catalog.depends_on,
+        [DependsOnRow {
+            from: ArtifactKey {
+                artifact_id: "commerce.sales_order.submit_invoice.action".to_owned(),
+                version: "0.1.0".to_owned(),
+            },
+            to: ArtifactKey {
+                artifact_id: "commerce.SalesOrder.entity".to_owned(),
+                version: "0.1.0".to_owned(),
+            },
+            via: DependencyVia::Dependency,
+        }]
+    );
+    let base = catalog
+        .artifact("commerce.SalesOrder.entity", "0.1.0")
+        .expect("the referenced base artifact is pinned");
+    assert!(!base.candidate);
+    // Base definitions are projected too, so rules can reach them.
+    assert!(catalog.contains(&invoice_transition()));
 }
 
 #[test]
@@ -235,12 +339,68 @@ fn laws_bind_their_subject_and_response() {
     );
 }
 
+#[test]
+fn the_projection_is_deterministic_and_order_independent() {
+    let forward = catalog(&[sales_order(), submit_invoice()], &[]);
+    let reverse = catalog(&[submit_invoice(), sales_order()], &[]);
+    assert_eq!(forward, reverse);
+    let bytes = serde_json::to_string(&forward).expect("catalog serializes");
+    assert!(bytes.starts_with(r#"{"format":"norn.catalog/1","#));
+    let round_trip: DefinitionCatalog = serde_json::from_str(&bytes).expect("catalog decodes");
+    assert_eq!(round_trip, forward);
+}
+
 fn entity(id: &str, payload: &Value) -> ArtifactEnvelope {
     envelope(json!({
         "irVersion": "0.1", "artifactId": id, "kind": "entity", "namespace": "shop",
         "name": id, "version": "1.0.0", "lifecycle": "draft", "scope": {},
         "dependencies": [], "provenance": { "source": "system" }, "payload": payload
     }))
+}
+
+fn toy_mapping(maps: &Value) -> ArtifactEnvelope {
+    envelope(json!({
+        "irVersion": "0.1", "artifactId": "shop.orders.mapping", "kind": "mapping",
+        "namespace": "shop", "name": "orders", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "format": "norn.mapping/1",
+            "source": { "schemaId": "shop.source", "version": "1.0.0", "sha256": "a".repeat(64) },
+            "interfaces": ["shop.Order.entity"],
+            "maps": maps
+        }
+    }))
+}
+
+#[test]
+fn extension_members_bind_to_the_extension_that_declares_them() {
+    let order = entity(
+        "shop.Order.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.Order", "properties": [{ "id": "id", "type": { "kind": "text" } }]
+        }}),
+    );
+    let extension = entity(
+        "acme.Order.extension",
+        &json!({ "entityVersion": "2.0", "objectTypeExtension": {
+            "namespace": "acme", "target": "shop.Order",
+            "properties": [{ "id": "acme_tier", "type": { "kind": "text" } }]
+        }}),
+    );
+    let mapping = toy_mapping(&json!([{
+        "id": "order", "source": { "dataset": "orders" },
+        "target": { "entity": "shop.Order.entity", "interface": "shop.Order.entity" },
+        "subject": "input.id", "sourceRecord": "input.id",
+        "properties": [{ "property": "acme_tier", "value": "input.tier" }]
+    }]));
+    let catalog = catalog(&[order, extension, mapping], &[]);
+    let tier = catalog
+        .mappings
+        .iter()
+        .find(|row| row.rule == MapRule::Property {})
+        .expect("the extension property is mapped");
+    assert_eq!(tier.target.artifact_id, "acme.Order.extension");
+    assert!(catalog.contains(&tier.target));
 }
 #[test]
 fn entity_projection_preserves_identity_declarations_and_order() {
