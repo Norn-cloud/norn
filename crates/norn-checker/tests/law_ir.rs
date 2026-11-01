@@ -442,6 +442,43 @@ fn law_weaken_candidate_containment_cannot_replace_retained_membership() {
 }
 
 #[test]
+fn law_contained_global_subtype_outside_retained_scope_is_excluded() {
+    let (law, mut base) = membership_case();
+    let mut outside = base
+        .iter()
+        .find(|a| a.artifact_id == "commerce.SalesOrder.entity")
+        .expect("order")
+        .clone();
+    let mut root: norn_ir::EntityRootV2 = serde_json::from_value(
+        serde_json::to_value(outside.payload.to_json_value()).expect("wire"),
+    )
+    .expect("entity");
+    root.object_type.extends = Some(root.object_type.name.clone());
+    root.object_type.name = norn_ir::ObjectTypeName("outside.Order".to_owned());
+    root.object_type.implements.clear();
+    root.object_type.properties.clear();
+    root.object_type.links.clear();
+    root.object_type.identity.clear();
+    root.object_type.lifecycles.clear();
+    root.object_type.invariants.clear();
+    root.object_type.owned_collections.clear();
+    outside.artifact_id = "outside.Order.entity".to_owned();
+    outside.namespace = "outside".to_owned();
+    outside.payload = ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Entity,
+        serde_json::from_value(serde_json::to_value(root).expect("entity")).expect("tree"),
+    )
+    .expect("payload");
+    base.push(outside);
+    let instances = projected(&law, &base);
+    assert_eq!(instances.len(), 1);
+    assert_eq!(
+        instances[0].subject.artifact_id,
+        "commerce.SalesOrder.entity"
+    );
+}
+
+#[test]
 fn law_contained_instances_keep_origins_and_import_diamonds() {
     let (law, base) = membership_case();
     let instances = projected(&law, &base);

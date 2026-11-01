@@ -182,3 +182,6 @@ Kani remains infeasible for the allocated receipt/serde/hash pipeline.
 App/pack law roots resolve during private approval construction. Exact retained
 base and protected-law digests carry that checked fact into edge proposals; an
 unresolved root cannot obtain approval or edit/reuse a previous approval.
+The global type catalog may contain implementors from other apps. Scoped
+projection selects its intersection with retained membership; an outside subtype
+is excluded, while any unresolved explicitly declared member refuses.
