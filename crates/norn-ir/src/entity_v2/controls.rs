@@ -77,7 +77,7 @@ pub struct ControlVerdict {
     pub explanation: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ControlVerdictWire {
     object_type: ObjectTypeName,
