@@ -108,7 +108,7 @@ fn installation(
     )
 }
 
-#[cfg(all(test, feature = "native"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[allow(
     clippy::expect_used,
     missing_docs,
