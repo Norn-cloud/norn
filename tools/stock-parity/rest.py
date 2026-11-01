@@ -7,6 +7,18 @@ import urllib.request
 from decimal import Decimal
 
 
+def encode(value):
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError('Non-finite REST number')
+        return format(value, 'f')
+    if isinstance(value, dict):
+        return '{' + ','.join(json.dumps(k) + ':' + encode(v) for k, v in value.items()) + '}'
+    if isinstance(value, list):
+        return '[' + ','.join(encode(v) for v in value) + ']'
+    return json.dumps(value, allow_nan=False)
+
+
 class NativeError(Exception):
     def __init__(self, status, code):
         super().__init__(f'{status}: {code}')
@@ -21,7 +33,7 @@ class API:
         self.call('POST', '/api/method/login', {'usr': 'Administrator', 'pwd': password})
 
     def call(self, method, path, body=None):
-        data = None if body is None else json.dumps(body, default=str).encode()
+        data = None if body is None else encode(body).encode()
         req = urllib.request.Request(self.url + path, data=data, method=method,
                                      headers={'Content-Type': 'application/json', 'Host': 'parity.localhost'})
         try:
@@ -62,7 +74,7 @@ class API:
 
     def submit(self, doc):
         # JSON decimal strings preserve the exact values accepted at the REST boundary.
-        return self.call('POST', '/api/method/frappe.client.submit', {'doc': json.dumps(doc, default=str)})
+        return self.call('POST', '/api/method/frappe.client.submit', {'doc': doc})
 
     def cancel(self, doctype, name):
         return self.call('POST', '/api/method/frappe.client.cancel', {'doctype': doctype, 'name': name})
