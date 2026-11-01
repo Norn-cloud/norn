@@ -1,9 +1,11 @@
 //! Read-only catalog projection from admitted definitions.
 use crate::action_set::{Admission, AdmittedType};
-use crate::entity_artifacts::{Decoded, decode_v2};
+use crate::entity_artifacts::{Decoded, Layer, decode_v2};
 use crate::entity_lowering::{EntityForm, entity_object_type};
 use crate::lifecycle_writes::{FactSchema, fact_decisions};
-use crate::receipt::{ArtifactRef, ReceiptError};
+use crate::receipt::ArtifactRef;
+/// Failure to compute a projected artifact's semantic identity.
+pub use crate::receipt::ReceiptError as CatalogError;
 use norn_ir::definition_catalog::{
     ArtifactKey, CatalogArtifact, CatalogFormat, DefinitionCatalog, DependencyVia, DependsOnRow,
     LawBinding, LawRow, LifecycleStates, LinkRow, MapRule, MappingRow, Member, MemberRef,
@@ -13,52 +15,40 @@ use norn_ir::mapping::MappingIr;
 use norn_ir::{
     ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactKind, ArtifactPayload,
     BusinessPackRoot, EntityRoot, FactChangeOp, LawIR, LawResponse, Lifecycle, ObjectTypeDef,
-    Property, PropertyType, PropertyTypeName,
+    Property, PropertyType, PropertyTypeDef, PropertyTypeName,
 };
 use std::collections::BTreeSet;
-/// Why a catalog could not be projected.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CatalogError {
-    /// An artifact's semantic hash could not be computed.
-    Hash(ReceiptError),
-}
-
-impl std::fmt::Display for CatalogError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Hash(error) => write!(formatter, "artifact hash: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for CatalogError {}
-
 /// Project admitted candidates and installed artifacts into sorted catalog rows.
 ///
 /// Call only after `check_artifact_set` admits the set. This slice projects
 /// entities and dependency edges, action writes, decide-graph writes, mappings and laws. See verification/definition-catalog-v1/SPEC.md.
 ///
 /// # Errors
-/// Returns `CatalogError::Hash` if an artifact semantic hash cannot be computed.
+/// Returns `CatalogError` if an artifact semantic hash cannot be computed.
 pub fn project(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
     registry: &BTreeSet<PropertyTypeName>,
 ) -> Result<DefinitionCatalog, CatalogError> {
     let all: Vec<&ArtifactEnvelope> = artifacts.iter().chain(base).collect();
-    let mut rows = Rows::default();
-    for (artifact, candidate) in artifacts
-        .iter()
-        .map(|a| (a, true))
-        .chain(base.iter().map(|a| (a, false)))
-    {
-        let reference = ArtifactRef::of(artifact).map_err(CatalogError::Hash)?;
+    let mut layer = Layer::default();
+    for (index, artifact) in base.iter().chain(artifacts).enumerate() {
+        if let Decoded::Root(root) = decode_v2(artifact) {
+            layer.push(index, *root);
+        }
+    }
+    let mut rows = Rows {
+        property_types: layer.catalog.into_iter().map(|(_, def)| def).collect(),
+        ..Rows::default()
+    };
+    for (index, artifact) in all.iter().enumerate() {
+        let reference = ArtifactRef::of(artifact)?;
         rows.artifacts.insert(CatalogArtifact {
             artifact_id: reference.artifact_id,
             version: reference.version,
             kind: artifact.kind(),
             sha256: reference.sha256,
-            candidate,
+            candidate: index < artifacts.len(),
         });
     }
     let combined: Vec<_> = all.iter().map(|artifact| (*artifact).clone()).collect();
@@ -124,6 +114,7 @@ impl PinnedType {
 
 #[derive(Default)]
 struct Rows {
+    property_types: Vec<PropertyTypeDef>,
     artifacts: BTreeSet<CatalogArtifact>,
     types: BTreeSet<TypeRow>,
     properties: BTreeSet<PropertyRow>,
@@ -155,18 +146,8 @@ fn payload_json(artifact: &ArtifactEnvelope) -> serde_json::Value {
     serde_json::to_value(artifact.payload.to_json_value()).unwrap_or_default()
 }
 
-fn lifecycle_states(property: &Property, lifecycles: &[Lifecycle]) -> Option<LifecycleStates> {
-    let lifecycle = lifecycles
-        .iter()
-        .find(|lifecycle| lifecycle.property == property.id)?;
-    let PropertyType::Enum { values } = &property.property_type else {
-        return None;
-    };
-    Some(LifecycleStates {
-        states: values.iter().map(|value| value.value.clone()).collect(),
-        initial: lifecycle.initial.clone(),
-        terminal: lifecycle.terminal.clone(),
-    })
+fn type_member(type_name: String) -> Member {
+    Member::Type { type_name }
 }
 
 fn property_member(type_name: &str, property: &str) -> Member {
@@ -209,6 +190,25 @@ fn member_of(key: &ArtifactKey, member: Member) -> MemberRef {
 }
 
 impl Rows {
+    /// GRAPH-META-1: lifecycle metadata follows admission's local enum resolution.
+    fn lifecycle(&self, property: &Property, lifecycles: &[Lifecycle]) -> Option<LifecycleStates> {
+        let lifecycle = lifecycles
+            .iter()
+            .find(|lifecycle| lifecycle.property == property.id)?;
+        let PropertyType::Enum { values } = crate::property_types::resolved_property_type(
+            &property.property_type,
+            &self.property_types,
+        )?
+        else {
+            return None;
+        };
+        Some(LifecycleStates {
+            states: values.iter().map(|value| value.value.clone()).collect(),
+            initial: lifecycle.initial.clone(),
+            terminal: lifecycle.terminal.clone(),
+        })
+    }
+
     fn entity(&mut self, artifact: &ArtifactEnvelope, effective: &crate::EffectiveCatalog) {
         let decoded = decode_v2(artifact);
         if let (Decoded::NotV2, ArtifactPayload::Entity(payload)) = (&decoded, &artifact.payload)
@@ -224,31 +224,22 @@ impl Rows {
         match *root {
             EntityRoot::V2(root) => self.object_type(artifact, &root.object_type, effective),
             EntityRoot::V2Interface(root) => {
-                let name = root.interface.name.as_str().to_owned();
+                let def = root.interface;
+                let name = def.name.as_str().to_owned();
                 self.types.insert(TypeRow {
-                    at: at(
-                        artifact,
-                        Member::Type {
-                            type_name: name.clone(),
-                        },
-                    ),
+                    at: at(artifact, type_member(name.clone())),
                     kind: TypeKind::Interface,
-                    extends: root
-                        .interface
-                        .extends
-                        .iter()
-                        .map(|n| n.as_str().to_owned())
-                        .collect(),
+                    extends: def.extends.iter().map(|n| n.0.clone()).collect(),
                     implements: Vec::new(),
                 });
-                for property in &root.interface.properties {
+                for property in &def.properties {
                     self.properties.insert(PropertyRow {
                         at: at(artifact, property_member(&name, property.id.as_str())),
                         computed: false,
                         lifecycle: None,
                     });
                 }
-                for link in &root.interface.links {
+                for link in &def.links {
                     self.link(artifact, &name, link.id.as_str(), link.target.as_str());
                 }
             }
@@ -274,19 +265,10 @@ impl Rows {
     ) {
         let name = def.name.as_str().to_owned();
         self.types.insert(TypeRow {
-            at: at(
-                artifact,
-                Member::Type {
-                    type_name: name.clone(),
-                },
-            ),
+            at: at(artifact, type_member(name.clone())),
             kind: TypeKind::ObjectType,
-            extends: def.extends.iter().map(|n| n.as_str().to_owned()).collect(),
-            implements: def
-                .implements
-                .iter()
-                .map(|n| n.as_str().to_owned())
-                .collect(),
+            extends: def.extends.iter().map(|n| n.0.clone()).collect(),
+            implements: def.implements.iter().map(|n| n.0.clone()).collect(),
         });
         for property in &def.properties {
             self.property(artifact, &name, property, &def.lifecycles);
@@ -299,7 +281,7 @@ impl Rows {
                 .properties
                 .iter()
                 .find(|p| p.id == lifecycle.property)
-                .and_then(|p| lifecycle_states(p, &def.lifecycles))
+                .and_then(|p| self.lifecycle(p, &def.lifecycles))
                 .map(|s| s.states)
                 .or_else(|| {
                     effective
@@ -347,7 +329,7 @@ impl Rows {
         self.properties.insert(PropertyRow {
             at: at(artifact, property_member(type_name, property.id.as_str())),
             computed: property.computed.is_some(),
-            lifecycle: lifecycle_states(property, lifecycles),
+            lifecycle: self.lifecycle(property, lifecycles),
         });
     }
 
