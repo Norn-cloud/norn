@@ -1906,10 +1906,10 @@ impl<E: SqlEngine> CellStore<E> {
     pub fn provision_definitions(
         conn: E,
         model: Model,
-        input: InstalledDefinitionInput,
+        input: &InstalledDefinitionInput,
         scope: &str,
     ) -> Result<Self, CellError> {
-        let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), &input))?;
+        let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
         let store = Self::unverified(conn, model);
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
@@ -1919,7 +1919,7 @@ impl<E: SqlEngine> CellStore<E> {
         };
         let installation = DefinitionInstallContext {
             candidate_model: &store.model,
-            input: &input,
+            input,
             expected_version: Some(0),
         };
         store

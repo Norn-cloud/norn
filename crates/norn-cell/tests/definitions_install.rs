@@ -4995,6 +4995,17 @@ fn adding_an_interface_parent_scans_existing_rows_before_activating_its_invarian
 }
 
 // HOST-PROVISION-ATOMIC: every SQL boundary, transaction commit and lost reply.
+fn provision_engine(path: &Path) -> NativeEngine {
+    NativeEngine::open(
+        path,
+        StoreOptions {
+            cache_pages: Some(1),
+            ..StoreOptions::default()
+        },
+    )
+    .expect("file engine with page spills")
+}
+
 struct ProvisionFault {
     inner: NativeEngine,
     step: std::rc::Rc<std::cell::Cell<usize>>,
@@ -5004,7 +5015,7 @@ struct ProvisionFault {
 
 impl ProvisionFault {
     fn boundary(&self) -> Result<(), CellError> {
-        let step = self.step.get() + 1;
+        let step = self.step.get().saturating_add(1);
         self.step.set(step);
         if step == self.fail {
             if self.crash {
@@ -5034,7 +5045,7 @@ impl SqlEngine for ProvisionFault {
         let value = self.inner.transaction(|| {
             let value = f()?;
             self.boundary()?;
-            Ok(value)
+            Ok::<T, X>(value)
         })?;
         self.boundary()?;
         Ok(value)
@@ -5050,7 +5061,15 @@ fn provision_input() -> InstalledDefinitionInput {
         readmission: None,
         diff: json!({}),
         installed_at: 1,
-        layout: Some("{}".to_owned()),
+        layout: Some(
+            String::from_utf8(
+                norn_ir::runtime::encode(&norn_ir::LayoutSidecar::default())
+                    .expect("layout")
+                    .canonical_json()
+                    .expect("canonical layout"),
+            )
+            .expect("UTF-8 layout"),
+        ),
     }
 }
 
@@ -5064,13 +5083,13 @@ fn host_provision_atomic_crash_child() {
         .parse()
         .expect("number");
     let engine = ProvisionFault {
-        inner: NativeEngine::open(Path::new(&path), StoreOptions::default()).expect("open"),
+        inner: provision_engine(Path::new(&path)),
         step: std::rc::Rc::new(std::cell::Cell::new(0)),
         fail,
         crash: true,
     };
     let _store =
-        CellStore::provision_definitions(engine, model(false), provision_input(), "demo/dev")
+        CellStore::provision_definitions(engine, model(false), &provision_input(), "demo/dev")
             .expect("provision");
     panic!("crash boundary was not reached");
 }
@@ -5083,9 +5102,9 @@ fn host_provision_atomic_at_every_storage_boundary() {
         fail: usize::MAX,
         crash: false,
     };
-    let counter = engine.step.clone();
+    let counter = std::rc::Rc::clone(&engine.step);
     let _store =
-        CellStore::provision_definitions(engine, model(false), provision_input(), "demo/dev")
+        CellStore::provision_definitions(engine, model(false), &provision_input(), "demo/dev")
             .expect("provision");
     // Count only the public provisioning path, including its commit/lost-reply boundary.
     let steps = counter.get();
@@ -5104,7 +5123,7 @@ fn host_provision_atomic_at_every_storage_boundary() {
                 assert_eq!(output.status.code(), Some(73), "step {fail}");
             } else {
                 let engine = ProvisionFault {
-                    inner: NativeEngine::open(&path, StoreOptions::default()).expect("open"),
+                    inner: provision_engine(&path),
                     step: std::rc::Rc::new(std::cell::Cell::new(0)),
                     fail,
                     crash: false,
@@ -5113,13 +5132,13 @@ fn host_provision_atomic_at_every_storage_boundary() {
                     CellStore::provision_definitions(
                         engine,
                         model(false),
-                        provision_input(),
+                        &provision_input(),
                         "demo/dev"
                     )
                     .is_err()
                 );
             }
-            let engine = NativeEngine::open(&path, StoreOptions::default()).expect("reopen");
+            let engine = provision_engine(&path);
             assert_eq!(
                 CellStore::engine_is_fresh(&engine).expect("fresh"),
                 fail < steps,
@@ -5128,7 +5147,7 @@ fn host_provision_atomic_at_every_storage_boundary() {
             let store = CellStore::provision_definitions(
                 engine,
                 model(false),
-                provision_input(),
+                &provision_input(),
                 "demo/dev",
             )
             .expect("retry");
@@ -5144,22 +5163,21 @@ fn host_provision_atomic_at_every_storage_boundary() {
             );
             drop(store);
             for change in 0..3 {
-                let engine =
-                    NativeEngine::open(&path, StoreOptions::default()).expect("reopen conflict");
+                let engine = provision_engine(&path);
                 let mut input = provision_input();
                 if change == 0 {
                     input.canonical_set = "[{}]".to_owned();
                 }
                 let scope = if change == 1 { "other/dev" } else { "demo/dev" };
                 assert!(
-                    CellStore::provision_definitions(engine, model(change == 2), input, scope)
+                    CellStore::provision_definitions(engine, model(change == 2), &input, scope)
                         .is_err()
                 );
             }
             let store = CellStore::provision_definitions(
-                NativeEngine::open(&path, StoreOptions::default()).expect("reopen retry"),
+                provision_engine(&path),
                 model(false),
-                provision_input(),
+                &provision_input(),
                 "demo/dev",
             )
             .expect("unchanged retry");
