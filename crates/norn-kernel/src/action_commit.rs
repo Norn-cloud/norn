@@ -1044,7 +1044,6 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    let action = call.action;
     let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
     else {
         return Err(ActionRefusal::InvalidInput {
@@ -1075,10 +1074,10 @@ where
     check_kind(catalog, &object_type, object_kind)?;
     let record_key = FactKey::new(
         ACTION_CALL_TYPE,
-        format!("{}/{}", action.action_id, call.idempotency_key),
+        format!("{}/{}", call.action.action_id, call.idempotency_key),
     );
     let mut record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
-    let stock_snapshot = if action.stock_post.is_some() {
+    let stock_snapshot = if call.action.stock_post.is_some() {
         record.effect_kind = Some(
             catalog
                 .checked_stock_rule::<H::Error>(call)?
@@ -1107,14 +1106,13 @@ where
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
-        action,
+        call.action,
         &preparation.effective_input,
         &slice.values,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
     )?;
-    let mut record = record;
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
