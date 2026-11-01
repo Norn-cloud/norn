@@ -9,7 +9,6 @@ const CATALOG: &str = concat!("core", ".", "units");
 const CODES: &str = concat!("core", ".", "units", ".", "code");
 const MISMATCH: &str = "core.values.unit_mismatch";
 
-/// VAL-UNIT-1: each unit-bearing declaration requires one visible, exact pin.
 pub(crate) fn check(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for artifact in candidates {

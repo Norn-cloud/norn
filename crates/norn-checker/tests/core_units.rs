@@ -17,6 +17,8 @@ use norn_ir::{
 };
 use proptest::prelude::*;
 
+const MISMATCH: &str = "core.values.unit_mismatch";
+
 fn catalog() -> Vec<PropertyTypeDef> {
     let pack = units::pack().expect("typed unit pack");
     pack.validate().expect("ordinary entity admission");
@@ -118,7 +120,7 @@ proptest! {
         let expected = ucum && units::UNITS.iter().any(|unit| unit.0 == code);
         prop_assert_eq!(findings.is_empty(), expected);
         if !expected {
-            prop_assert!(findings.iter().any(|d| d.code == "core.values.unit_mismatch" && d.span.as_ref().is_some_and(|s| s.pointer == "/payload/propertyTypes/0/type/members/0/type/unit")));
+            prop_assert!(findings.iter().any(|d| d.code == MISMATCH && d.span.as_ref().is_some_and(|s| s.pointer == "/payload/propertyTypes/0/type/members/0/type/unit")));
         }
     }
 }
@@ -181,13 +183,13 @@ fn val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins() {
         assert!(
             unit_findings(&artifact, &[])
                 .iter()
-                .any(|d| d.code == "core.values.unit_mismatch")
+                .any(|d| d.code == MISMATCH)
         );
         artifact.dependencies.clear();
         assert!(
             unit_findings(&artifact, &base)
                 .iter()
-                .any(|d| d.code == "core.values.unit_mismatch")
+                .any(|d| d.code == MISMATCH)
         );
     }
     for variant in 0..5 {
@@ -203,7 +205,7 @@ fn val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins() {
                 let mut hidden = base.clone();
                 hidden.first_mut().expect("catalog").scope.org_id = Some("other".to_owned());
                 let findings = unit_findings(&artifact, &hidden);
-                let refused = findings.iter().any(|d| d.code == "core.values.unit_mismatch");
+                let refused = findings.iter().any(|d| d.code == MISMATCH);
                 assert!(refused);
                 continue;
             }
@@ -211,7 +213,7 @@ fn val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins() {
         assert!(
             unit_findings(&artifact, &base)
                 .iter()
-                .any(|d| d.code == "core.values.unit_mismatch")
+                .any(|d| d.code == MISMATCH)
         );
     }
 }
@@ -235,10 +237,9 @@ fn val_unit_link_properties_refuse_unknown_units() {
         let artifact = serde_json::from_value(artifact).expect("typed envelope");
         let pointer = format!("/payload/{root}/links/0/properties/0/type/unit");
         assert!(
-            unit_findings(&artifact, &[])
-                .iter()
-                .any(|d| d.code == "core.values.unit_mismatch"
-                    && d.span.as_ref().is_some_and(|s| s.pointer == pointer))
+            unit_findings(&artifact, &[]).iter().any(
+                |d| d.code == MISMATCH && d.span.as_ref().is_some_and(|s| s.pointer == pointer)
+            )
         );
     }
 }
