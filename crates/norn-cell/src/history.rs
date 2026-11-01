@@ -84,7 +84,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .governing_laws(object_type)
     }
 
-    pub(crate) fn retained_definition_model(&self, definitions_version: u64) -> Result<Model, CellError> {
+    pub(crate) fn retained_definition_model(
+        &self,
+        definitions_version: u64,
+    ) -> Result<Model, CellError> {
         let installed = self
             .installed_definitions(Some(definitions_version))?
             .ok_or_else(unproven_event)?;
@@ -258,6 +261,45 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 Some(record) => crate::reactive::BudgetedRead::Found(record),
                 None => crate::reactive::BudgetedRead::Missing,
             },
+        )
+    }
+
+    /// Read a pinned incarnation only if its authenticated emitting receipt was
+    /// recorded by `known_as_of` (inclusive, in the cell's logical clock).
+    /// Enforces ASOF-KNOWLEDGE-1 for pinned historical inputs.
+    /// This checks knowledge availability, not effective-time selection or
+    /// latest-version membership. Authorization remains the host's responsibility.
+    ///
+    /// # Errors
+    /// [`CellError::TemporalLeakage`] for later knowledge; missing/corrupt proof
+    /// or engine failure. Budget exhaustion returns no historical values.
+    pub fn object_at_version_known_at_with_budget(
+        &self,
+        world: &str,
+        fact: &norn_kernel::FactKey,
+        version: u64,
+        known_as_of: norn_kernel::LogicalTime,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<crate::reactive::BudgetedRead, CellError> {
+        let Some(receipt) = self.receipt_for_fact_version_with_budget(
+            world,
+            fact.object_type.as_str(),
+            &fact.key,
+            version,
+            budget,
+        )?
+        else {
+            return Ok(crate::reactive::BudgetedRead::Exhausted);
+        };
+        if receipt.body.logical_time > known_as_of.as_millis() {
+            return Err(CellError::TemporalLeakage);
+        }
+        self.object_at_version_with_budget(
+            world,
+            fact.object_type.as_str(),
+            &fact.key,
+            version,
+            budget,
         )
     }
 

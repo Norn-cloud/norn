@@ -46,6 +46,11 @@ receipt pins the definition version for historical re-evaluation; current laws
 cannot substitute for that snapshot. A law pin is classified as `Integrity` or `Quality` only
 when it resolves to the supported direct-law contract.
 
+For CP2 the trusted public DevHost adapter checks dataplane submissions, delivers
+them only through the Observed inbox, and leaves source mapping to norn-cell;
+there is no norn-cell dependency on norn-dataplane, and the inbox key binds
+trusted connector instance, partition and source event identity as a canonical tuple.
+
 ## Ingestion versus governed action
 
 [Owner] Imported events already happened. Validate their framing/provenance; durably capture representable source observations and advance the cursor atomically with capture. Mapping/law violations produce **findings + quarantine**, not a refused source fact. Quarantined rows retain raw evidence and stay out of authoritative aggregates unless an explicit observed-data question includes them with quality labels. Invalid transport/authentication is still a boundary failure; it is not a business-law refusal of an external occurrence.

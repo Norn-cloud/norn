@@ -23,12 +23,20 @@ pub enum CellError {
     /// OBS-EVIDENCE-1: retained evidence disagrees with cell-owned recomputation.
     #[error("core.boundary.bundle_mismatch")]
     MappingBundleMismatch,
+    /// Observation quality evaluation could not complete.
+    #[error("quality evaluation: {0}")]
+    QualityEvaluation(String),
     /// CP2 cannot resolve an applicable inherited/effective law without B2.
     #[error("core.laws.unsupported_semantics: law {law_id} scope unsupported until B2")]
     UnsupportedLawScope {
         /// Retained law whose complete scope cannot yet be resolved.
         law_id: String,
     },
+
+    /// A historical input was recorded after the requested knowledge cutoff.
+    #[error("core.world.temporal_leakage")]
+    TemporalLeakage,
+
     /// Missing or mismatched independent historical value proof.
     #[error("historical value proof refused: {0}")]
     HistoricalValueUnproven(String),
