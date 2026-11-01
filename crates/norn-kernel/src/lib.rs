@@ -70,6 +70,8 @@ pub mod refusal;
 pub mod result_reconciliation;
 pub mod snapshot_observe;
 pub mod stock_average;
+pub mod stock_fifo;
+pub mod stock_fifo_history;
 pub mod stock_history;
 mod version_check;
 // Hosts and the dependency-bounded reference harness share the input codec
