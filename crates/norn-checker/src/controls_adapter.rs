@@ -5,7 +5,7 @@ use crate::{Diagnostic, DiagnosticCode};
 use norn_ir::access::{AccessCondition, PolicyRoot};
 use norn_ir::{
     ActionRoot, ArtifactEnvelope, ArtifactPayload, ControlStatus, ControlVerdict,
-    DiagnosticRemediation, DiagnosticSeverity, ObjectTypeDef, Reachability,
+    DiagnosticRemediation, DiagnosticSeverity, Reachability,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -73,9 +73,8 @@ pub fn check_controls(
                             .as_ref()
                             .zip(policies.as_ref())
                             .and_then(|(actions, policies)| {
-                                project(object, actions, policies).map(|(graph, concrete)| {
-                                    evaluate_path(&graph, &path.actions, concrete)
-                                })
+                                project(actions, policies)
+                                    .map(|graph| evaluate_path(&graph, &path.actions))
                             })
                     } else {
                         None
@@ -104,7 +103,7 @@ pub fn check_controls(
                     }
                     verdicts.push(ControlVerdict {
                         object_type: name.clone(), actions: path.actions.clone(), verdict, reachability, trace,
-                        explanation: "Singleton-role finite action-order overapproximation; data, guards and cross-object effects may erase concrete witnesses".into(),
+                        explanation: "Singleton-role finite action-order overapproximation; trace is a candidate only; kernel replay owns availability".into(),
                     });
                 }
             }
@@ -117,11 +116,7 @@ pub fn check_controls(
     (verdicts, findings)
 }
 
-fn project(
-    object: &ObjectTypeDef,
-    actions: &[ActionRoot],
-    policies: &[PolicyRoot],
-) -> Option<(DutyGraph, bool)> {
+fn project(actions: &[ActionRoot], policies: &[PolicyRoot]) -> Option<DutyGraph> {
     let mut grants: BTreeMap<String, BTreeSet<String>> = actions
         .iter()
         .map(|a| (a.action_id.clone(), BTreeSet::new()))
@@ -129,13 +124,6 @@ fn project(
     if grants.len() != actions.len() {
         return None;
     }
-    let mut shape = serde_json::to_value(object).ok()?;
-    shape.as_object_mut()?.remove("controls");
-    shape.as_object_mut()?.remove("description");
-    let mut concrete = shape
-        == serde_json::json!({
-            "name": object.name, "properties": [{"id":"id", "type":{"kind":"text"}}]
-        });
     for policy in policies {
         let PolicyRoot::Access(policy) = policy else {
             return None;
@@ -152,12 +140,9 @@ fn project(
                         || next.clone(),
                         |prior| prior.intersection(&next).cloned().collect(),
                     ));
-                } else {
-                    concrete = false;
                 }
             }
             let roles = roles?;
-            concrete &= rule.resource_type == object.name;
             for action in &rule.actions {
                 if let Some(granted) = grants.get_mut(action) {
                     granted.extend(roles.clone());
@@ -165,68 +150,24 @@ fn project(
             }
         }
     }
-    for action in actions {
-        concrete &= matches!(&action.effect_program,
-            Some(norn_ir::ActionEffectProgram::UpsertInputObject {
-                object_id_field, object_kind, write_mode: norn_ir::UpsertWriteMode::Upsert, ..
-            }) if object_id_field == "id" && object_kind == object.name.as_str())
-            && action.scope_required == ["orgId"]
-            && action.writes.iter().all(|write| {
-                write.entity_kind == object.name.as_str()
-                    && matches!(
-                        write.change,
-                        norn_ir::action::WriteChange::Created
-                            | norn_ir::action::WriteChange::Modified
-                    )
+    Some(DutyGraph {
+        states: vec!["existing_object".into()],
+        initial: BTreeSet::from([0]),
+        edges: actions
+            .iter()
+            .map(|a| DutyEdge {
+                action: a.action_id.clone(),
+                from: 0,
+                to: 0,
             })
-            && action
-                .writes
-                .iter()
-                .any(|write| write.change == norn_ir::action::WriteChange::Created)
-            && action.preconditions.is_empty()
-            && action.slice.is_empty()
-            && action.derive.is_empty()
-            && action.commands.is_empty()
-            && action.quantity_effect.is_none()
-            && action.create_links.is_empty()
-            && serde_json::to_value(&action.input_schema).ok()
-                == Some(
-                    serde_json::json!({"type":"object", "properties":{"id":{"type":"string"}}, "required":["id"], "additionalProperties":false}),
-                )
-            && empty_schema(&action.output_schema);
-    }
-    Some((
-        DutyGraph {
-            states: vec!["existing_object".into()],
-            initial: BTreeSet::from([0]),
-            edges: actions
-                .iter()
-                .map(|a| DutyEdge {
-                    action: a.action_id.clone(),
-                    from: 0,
-                    to: 0,
-                })
-                .collect(),
-            grants,
-        },
-        concrete,
-    ))
+            .collect(),
+        grants,
+    })
 }
 
-fn empty_schema(schema: &norn_ir::rule::JsonObject) -> bool {
-    serde_json::to_value(schema).ok()
-        == Some(serde_json::json!({
-            "type": "object", "properties": {}, "required": [], "additionalProperties": false
-        }))
-}
-
-fn evaluate_path(
-    graph: &DutyGraph,
-    path: &[String],
-    concrete: bool,
-) -> (ControlStatus, Reachability, Vec<String>) {
+fn evaluate_path(graph: &DutyGraph, path: &[String]) -> (ControlStatus, Reachability, Vec<String>) {
     let check = check_duties(graph, path, 100_000);
-    let (verdict, reachability) = crate::controls::evidence(&check, concrete);
+    let (verdict, reachability) = crate::controls::evidence(&check);
     let trace = match check {
         crate::duties::DutyCheck::Counterexample { trace, .. } => trace
             .into_iter()
