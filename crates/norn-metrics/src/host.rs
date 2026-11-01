@@ -178,9 +178,11 @@ pub fn manifest() -> Result<FunctionManifest, CanonicalJsonError> {
         runtime: RuntimeIdentity {
             id: env!("CARGO_PKG_NAME").into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            digest: norn_ir::canonical::domain_hash_hex(b"norn.metrics.runtime-build.v1\0",
-                &(&implementation, env!("NORN_NATIVE_RUNTIME_BUILD")))
-                .map(|hex| Digest::from_hex(&hex))?,
+            digest: norn_ir::canonical::domain_hash_hex(
+                b"norn.metrics.runtime-build.v1\0",
+                &(&implementation, env!("NORN_NATIVE_RUNTIME_BUILD")),
+            )
+            .map(|hex| Digest::from_hex(&hex))?,
         },
         platform: Platform {
             os: std::env::consts::OS.into(),
@@ -213,7 +215,10 @@ mod tests {
     #[test]
     fn host_manifest_is_admitted_and_refuses_a_changed_source_locator() {
         let mut declaration = manifest().expect("manifest");
-        assert_ne!(declaration.runtime.digest, declaration.implementation.digest);
+        assert_ne!(
+            declaration.runtime.digest,
+            declaration.implementation.digest
+        );
         norn_checker::function::admit_function_manifest(&declaration).expect("admitted");
         declaration.implementation.locator = Some("norn-metrics/mutable".into());
         assert!(norn_checker::function::admit_function_manifest(&declaration).is_err());
