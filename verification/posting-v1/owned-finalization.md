@@ -94,3 +94,15 @@ protection, quantity configuration, accounting admission and atomic publication.
 POST-HISTORY-FENCE / POST-CANONICAL-PARTITION: canonical master tuple selects the partition; authorized fact (including ABSENT), complete adjacency and event facts are fenced. Identity, count and dense ordinals agree. POST-RUNTIME-BINDINGS: master book/graph/version/currency/accounts/UOM are pinned; configuration changes refuse.
 CP1 templates are receipt/delivery, layer posted; plans grant no commit authority.
 `post_history_identity_and_exact_shape` and `post_partition_refusal_names_authoritative_stock` check decoding and typed refusal. Full host fence conformance follows in the testkit cut; no writer is activated.
+
+## Declared stock rule authority
+
+POST-SEALED-STOCK: checker admission lowers each stockPost to
+`<action_id>#stockPost`, operation `stock.post/1`, pinned to the complete
+admitting definition digest and effective catalog. Scope, action identity,
+artifact/version and schema must match before activation. Only kernel evaluation
+may mint its RuleDecision; callers cannot assert a stock origin. P1's wire
+binding is unchanged. Missing, forged or unpinned origins refuse without writes.
+This expand cut registers and validates authority; evaluation/atomic commit follows.
+CP1-engine uses durable commit_action and store replay. CP1-surface through
+API/MCP/CLI follows the authorized transport adapters; no mock dispatch qualifies.
