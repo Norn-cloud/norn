@@ -7033,7 +7033,6 @@ fn inferred_matches_schema(
         (InferredType::Enum(values), Schema::String(Some(allowed))) => Err(format!(
             "{path} produces string values {values:?} outside ActionIR values {allowed:?}"
         )),
-        (InferredType::String, Schema::Decimal(_)) => Ok(()),
         (InferredType::Const(text), decimal @ Schema::Decimal(_)) => decimal
             .decode_action_input(norn_ir::RuntimeValue::String(text.clone()), path)
             .map(|_value| ())
@@ -7056,6 +7055,7 @@ fn inferred_matches_schema(
             Schema::String(None),
         )
         | (InferredType::Bool, Schema::Boolean)
+        | (InferredType::String, Schema::Decimal(_))
         | (_, Schema::Json) => Ok(()),
         (InferredType::Number, Schema::Integer | Schema::Number)
             if matches!(schema, Schema::Number)
