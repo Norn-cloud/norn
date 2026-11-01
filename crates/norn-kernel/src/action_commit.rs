@@ -908,6 +908,7 @@ where
 {
     let action = call.action;
     if action.stock_post.is_some() {
+        catalog.checked_stock_rule::<H::Error>(call)?;
         return Err(ActionRefusal::UnsupportedEffect {
             action_id: action.action_id.clone(),
         });

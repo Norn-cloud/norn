@@ -1604,6 +1604,16 @@ where
         )
     }
 
+    fn load_quantity(
+        &self,
+        request: &norn_ir::quantity_ledger::QuantityRequest,
+    ) -> Result<Option<norn_kernel::quantity::QuantityState>, CellError> {
+        self.store
+            .read()
+            .quantity_state(MAIN_WORLD, request)
+            .map(Some)
+    }
+
     fn commit_action_quantity(
         &mut self,
         commit: CellCommit<E, C, I>,

@@ -95,7 +95,26 @@ POST-HISTORY-FENCE / POST-CANONICAL-PARTITION: canonical master tuple selects th
 CP1 templates are receipt/delivery, layer posted; plans grant no commit authority.
 `post_history_identity_and_exact_shape` and `post_partition_refusal_names_authoritative_stock` check decoding and typed refusal. Full host fence conformance follows in the testkit cut; no writer is activated.
 
+## Declared stock rule authority
+
+POST-SEALED-STOCK: checker admission lowers each stockPost to
+`<action_id>#stockPost`, operation `stock.post/1`, pinned to the complete
+admitting definition digest and effective catalog. Scope, action identity,
+artifact/version and schema must match before activation. Only kernel evaluation
+may mint its RuleDecision; callers cannot assert a stock origin. P1's wire
+binding is unchanged. Missing, forged or unpinned origins refuse without writes.
+This expand cut registers and validates authority; evaluation/atomic commit follows.
+CP1-engine uses durable commit_action and store replay. CP1-surface through
+API/MCP/CLI follows the authorized transport adapters; no mock dispatch qualifies.
+
+POST-QUANTITY-READ: the native host exposes its existing verified, bounded quantity
+state to kernel-derived intents. Unsupported hosts return no snapshot and cannot
+activate posting. Pack matching and balance fencing remain kernel obligations.
+
 POST-HISTORY-CAPACITY: CP1 activation caps each partition at 256 events. Reads
 reserve the full ceiling beside non-event work; planning refuses a candidate
 that would cross it before any publication. Boundary conformance covers 255+1,
 256+1 and exact non-event reserve. No checkpoint or unbounded-history claim.
+
+POST-QUANTITY-SNAPSHOT: all quantity reconstruction reads share one adapter-owned SQLite read snapshot, reusing an existing transaction; refusal releases a newly owned snapshot. SQL transaction-control guards remain unchanged.
+POST-CATALOG-ORDER: extension and property-type order does not change the schema pin. Conformance reverses both lists and checks the same pin.

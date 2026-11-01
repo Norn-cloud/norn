@@ -1010,6 +1010,18 @@ pub trait CellHost {
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>>;
 
+    /// Read verified quantity inputs for a kernel-derived action intent.
+    /// Admitted pack bounds apply; unsupported hosts return no snapshot.
+    ///
+    /// # Errors
+    /// A host read or quantity-integrity failure.
+    fn load_quantity(
+        &self,
+        _request: &norn_ir::quantity_ledger::QuantityRequest,
+    ) -> Result<Option<crate::quantity::QuantityState>, Self::Error> {
+        Ok(None)
+    }
+
     /// Atomically commit an authorized business action and its checked quantity
     /// intent. Unsupported hosts fail closed without publishing business writes.
     ///

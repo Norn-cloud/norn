@@ -126,6 +126,6 @@ pub use refusal::{INTERNAL_MESSAGE, NOT_FOUND_MESSAGE, Refusable, Refusal, Refus
 mod action_quantity;
 
 pub use rule_authority::{
-    AdmittedRule, RuleAdmissionError, RuleDecision, commit_rule_decision, evaluate_rule,
-    prepare_rule_decision,
+    AdmittedRule, AdmittedStockRule, RuleAdmissionError, RuleDecision, admit_stock_rules,
+    commit_rule_decision, evaluate_rule, prepare_rule_decision,
 };

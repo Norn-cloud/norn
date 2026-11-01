@@ -76,6 +76,7 @@ use crate::observations::{LogicalTime, World};
 pub struct TypeCatalog<'a> {
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     pub(crate) rules: BTreeMap<&'a str, &'a crate::AdmittedRule>,
+    pub(crate) stock_rules: BTreeMap<&'a str, &'a crate::AdmittedStockRule>,
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
     extensions: Vec<&'a ObjectTypeExtension>,
     property_types: Option<&'a [PropertyTypeDef]>,
@@ -112,6 +113,7 @@ impl<'a> TypeCatalog<'a> {
                 .map(|object_type| (object_type.name.as_str(), object_type))
                 .collect(),
             rules: BTreeMap::new(),
+            stock_rules: BTreeMap::new(),
             interfaces: BTreeMap::new(),
             extensions: Vec::new(),
             property_types: None,
@@ -128,6 +130,39 @@ impl<'a> TypeCatalog<'a> {
                 .map(|rule| (rule.decision().rule_id(), rule)),
         );
         self
+    }
+
+    pub(crate) fn stock_schema_pin(
+        &self,
+    ) -> Result<String, norn_ir::canonical::CanonicalJsonError> {
+        let types: BTreeMap<_, _> = self
+            .types
+            .iter()
+            .filter(|(name, ty)| {
+                !matches!(**name, crate::ACTION_CALL_TYPE | crate::OWNED_ROWS_TYPE)
+                    || ty.extends.is_some()
+                    || !ty.implements.is_empty()
+                    || !ty.links.is_empty()
+                    || !ty.owned_collections.is_empty()
+            })
+            .collect();
+        let mut extensions = self
+            .extensions
+            .iter()
+            .map(|extension| norn_ir::canonical::canonical_json_of(*extension))
+            .collect::<Result<Vec<_>, _>>()?;
+        extensions.sort();
+        let mut properties = self
+            .property_types
+            .unwrap_or(&[])
+            .iter()
+            .map(norn_ir::canonical::canonical_json_of)
+            .collect::<Result<Vec<_>, _>>()?;
+        properties.sort();
+        norn_ir::canonical::domain_hash_hex(
+            b"norn.stock-schema/1\0",
+            &(types, &self.interfaces, extensions, properties),
+        )
     }
 
     /// The same catalog with the admitted interfaces implemented by its
