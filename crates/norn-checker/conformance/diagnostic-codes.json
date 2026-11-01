@@ -457,6 +457,20 @@
       "tier": "T3"
     },
     {
+      "code": "core.graph.role_conflict",
+      "message": "inherited concept roles disagree",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.graph.role_mismatch",
+      "message": "declared concept role contradicts an inherited role",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",

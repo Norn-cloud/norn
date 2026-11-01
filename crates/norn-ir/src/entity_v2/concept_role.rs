@@ -41,11 +41,9 @@ impl ConceptRole {
             }
             parent = Some(*role);
         }
-        if let (Some(local), Some(parent)) = (declared, parent)
-            && local != parent
-        {
-            return Err(RoleConflict::Declared);
+        match (declared, parent) {
+            (Some(local), Some(parent)) if local != parent => Err(RoleConflict::Declared),
+            _ => Ok(declared.or(parent).unwrap_or(Self::Thing)),
         }
-        Ok(declared.or(parent).unwrap_or(Self::Thing))
     }
 }

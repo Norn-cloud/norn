@@ -885,6 +885,11 @@ export interface components {
         NornIrCompositionPackRootPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description Semantic role of an ordinary concept, independent of lifecycle presence.
+         * @enum {string}
+         */
+        NornIrConceptRole: "thing" | "happening";
         /** @description How the connector authenticates to its source. Secrets are references only. */
         NornIrConnectorAuth: components["schemas"]["NornIrConnectorAuthOneOf0"] | components["schemas"]["NornIrConnectorAuthOneOf1"] | components["schemas"]["NornIrConnectorAuthOneOf2"];
         NornIrConnectorAuthOneOf0: {
@@ -2242,6 +2247,11 @@ export interface components {
             name: string;
             /** @description Required properties, in presentation order. Omitted when empty. */
             properties?: components["schemas"]["NornIrInterfaceProperty"][];
+            /**
+             * @description Declared concept role; omission inherits, then defaults to `thing`.
+             * @enum {string}
+             */
+            role?: "thing" | "happening";
             /** @description The definition's resource status. Omitted means `active`. */
             status?: components["schemas"]["NornIrResourceStatus2"];
         };
@@ -3390,6 +3400,11 @@ export interface components {
              *     narrowing overrides of inherited ones (same id). Omitted when empty.
              */
             properties?: components["schemas"]["NornIrProperty"][];
+            /**
+             * @description Declared concept role; omission inherits, then defaults to `thing`.
+             * @enum {string}
+             */
+            role?: "thing" | "happening";
             /**
              * @description The definition's resource status. Omitted means `active` (the
              *     canonical form omits it).

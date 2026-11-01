@@ -2260,6 +2260,18 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrConceptRole": {
+        "type": "string",
+        "description": "Semantic role of an ordinary concept, independent of lifecycle presence.",
+        "enum": [
+          "thing",
+          "happening"
+        ],
+        "x-enumDescriptions": [
+          "A persistent thing.",
+          "A concept that occurs, runs or terminates in time."
+        ]
+      },
       "NornIrConnectorAuth": {
         "oneOf": [
           {
@@ -5846,6 +5858,18 @@
             },
             "description": "Required properties, in presentation order. Omitted when empty."
           },
+          "role": {
+            "type": "string",
+            "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+            "enum": [
+              "thing",
+              "happening"
+            ],
+            "x-enumDescriptions": [
+              "A persistent thing.",
+              "A concept that occurs, runs or terminates in time."
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/NornIrResourceStatus2",
             "description": "The definition's resource status. Omitted means `active`."
@@ -8540,6 +8564,18 @@
               "$ref": "#/components/schemas/NornIrProperty"
             },
             "description": "Declared properties, in presentation order: new properties, and\nnarrowing overrides of inherited ones (same id). Omitted when empty."
+          },
+          "role": {
+            "type": "string",
+            "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+            "enum": [
+              "thing",
+              "happening"
+            ],
+            "x-enumDescriptions": [
+              "A persistent thing.",
+              "A concept that occurs, runs or terminates in time."
+            ]
           },
           "status": {
             "$ref": "#/components/schemas/NornIrResourceStatus",
