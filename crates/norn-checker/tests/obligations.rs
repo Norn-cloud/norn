@@ -7,6 +7,7 @@
 use norn_checker::obligations::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
 use norn_checker::verification::LawWriter;
 use serde_json::{Value, json};
+use sha2::Digest;
 use std::collections::BTreeSet;
 
 fn pool() -> Vec<Value> {
@@ -914,13 +915,12 @@ proptest::proptest! {
         let mut layers = retained_fixture();
         match mutation {
             0 => layers[index].receipt.clear(),
-            1 => { layers.swap(0, 1 + index % 2); }
+            1 => { layers.swap(0, if index == 0 { 1 } else { 2 }); }
             2 => { layers[index].receipt_sha256 = "0".repeat(64); }
             3 => {
                 let mut receipt: Value = serde_json::from_str(&layers[index].receipt).expect("receipt");
                 receipt["admitted"] = json!(false);
                 let bytes = norn_canonical::canonical_json_of(&receipt).expect("canonical");
-                use sha2::Digest;
                 layers[index].receipt_sha256 = format!("{:x}", sha2::Sha256::digest(&bytes));
                 layers[index].receipt = String::from_utf8(bytes).expect("UTF-8");
             }
