@@ -69,7 +69,7 @@ impl<S: SqlEngine> StateView for ReceiptView<'_, '_, S> {
 }
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
-    /// Reconcile an authenticated performer completion and retain its receipt.
+    /// RECEIPT-STORE-AUTH-1: reconcile and retain an authenticated performer completion.
     /// The actual dispatched payload, recorded result and command state are
     /// loaded from this cell. This records evidence, never business effects.
     ///
