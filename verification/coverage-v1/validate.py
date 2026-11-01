@@ -456,6 +456,13 @@ echo "$plan"''',
          "with": {"path": "~/.bun/install/cache",
                   "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}"}},
     ]
+    cleanup = {"name": "Reclaim runner disk space",
+               "if": "${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",
+               "run": """df -h
+sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+sudo docker image prune -af
+df -h
+"""}
     nextest = {"uses": "taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32",
                "with": {"tool": "nextest@0.9.150"}}
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
@@ -474,6 +481,8 @@ echo "$plan"''',
             preparation.append(nextest)
         if name == "phase":
             preparation[4]["with"]["shared-key"] = "cargo-${{ (matrix.phase == 'guards' || matrix.phase == 'integration') && matrix.phase || 'registry' }}"
+        if name != "plan":
+            preparation.insert(0, cleanup)
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
@@ -483,7 +492,7 @@ echo "$plan"''',
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == 1,
+        require(len([step for step in job_steps if "run" in step]) == (1 if name == "plan" else 2),
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
