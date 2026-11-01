@@ -4219,7 +4219,7 @@ mod link_candidate_index_tests {
             crate::Model::from_definitions(&[], &[]).expect("model"),
         )
         .expect("store");
-        let request = serde_json::from_value(serde_json::json!({"version":"norn.quantity.commit/2","ledgerId":"stock","balanceVersions":[],"operation":{"kind":"post","postingId":"x","templateId":"missing","parameters":[]}})).expect("request");
+        let request = serde_json::from_value(serde_json::json!({"version":"norn.quantity.commit/2","ledgerId":"stock","balanceVersions":[],"operation":{"kind":"post","posting_id":"x","template_id":"missing","parameters":[]}})).expect("request");
         let read = || store.read().quantity_state("main", &request);
         assert!(matches!(
             read(),
