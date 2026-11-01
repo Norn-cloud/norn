@@ -31,6 +31,19 @@ refuse; an optional dependency cannot confer authority. MAP-MULTI checks two
 independently identified edges without a singleton layer field. Successful pin
 checks still leave admission unsupported pending member and law conformance.
 
+MAP-MEMBER-CONTRACT-1 retains an explicit `members` list through strict roots,
+schemas and the SDK. Each source/target uses the existing exact `MemberRef`,
+including lifecycle property/transition IDs and independent event link roles.
+Optional transforms use the existing expression language; declaring one is not
+proof or permission. Required coverage, relation targets/cardinality and
+dimension/unit/scale come from pinned definitions, never candidate assertions.
+The positive EVENT-MULTI contract test retains two distinct role bindings;
+missing member identities, unknown keys and null transforms refuse decoding.
+A proptest checks generated member lists survive the payload-root round trip.
+This contract cut adds no pure bounded engine function suitable for Kani;
+serde/schema code operates on unbounded allocated inputs. Admission still
+refuses all interpretations pending the conformance and obligation cuts.
+
 Remaining B1 conformance scenarios: MAP-MEMBERS (source-derived
 totality), MAP-UNITS (dimension/unit/scale), EVENT-MULTI (event identity and
 distinct object links). Missing required members, unsupported transforms or

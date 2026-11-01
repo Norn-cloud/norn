@@ -1372,6 +1372,7 @@ define_payload_root!(
             role => "role" as mapping::InterpretationRole,
             source_layer => "sourceLayer" as mapping::InterpretationEndpoint,
             target_layer => "targetLayer" as mapping::InterpretationEndpoint,
+            members => "members" as Vec<mapping::MemberInterpretation>,
             entitlements => "entitlements" as Vec<mapping::EntitlementMap>,
             identity_bindings => "identityBindings" as Vec<mapping::IdentityBinding>
         }

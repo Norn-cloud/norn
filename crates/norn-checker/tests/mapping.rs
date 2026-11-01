@@ -86,6 +86,7 @@ fn pinned_interpretation() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
         role: InterpretationRole::LawInterpretation,
         source_layer: endpoint(base.first().expect("source")),
         target_layer: endpoint(base.get(1).expect("target")),
+        members: Vec::new(),
     };
     let mut artifact = envelope(
         "toy.capacity_credit",
@@ -229,6 +230,7 @@ fn map_roles_unqualified_interpretations_refuse_admission_and_record_compilation
         role: InterpretationRole::LawInterpretation,
         source_layer: endpoint("toy.capacity"),
         target_layer: endpoint("toy.credit"),
+        members: Vec::new(),
     };
     let artifact = envelope(
         "toy.capacity_credit",

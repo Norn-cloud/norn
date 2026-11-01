@@ -7,6 +7,7 @@ test("MAP-ROLES: generated interpretations require exact endpoints and a distinc
   const interpretation: Schemas["NornIrLawInterpretationIr"] = {
     format: "norn.interpretation/1", role: "law_interpretation",
     sourceLayer: endpoint, targetLayer: { ...endpoint, artifactId: "toy.credit" },
+    members: [],
   }
   // @ts-expect-error Source records cannot stand in for a law interpretation.
   const wrongRole: typeof interpretation.role = "source_record"

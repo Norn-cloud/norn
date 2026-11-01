@@ -114,6 +114,28 @@ pub struct LawInterpretationIr {
     pub source_layer: InterpretationEndpoint,
     /// Layer interpreting that contract.
     pub target_layer: InterpretationEndpoint,
+    /// MAP-MEMBER-CONTRACT-1: retain every explicit member binding.
+    /// Required coverage and unit/link contracts come from pinned definitions.
+    pub members: Vec<MemberInterpretation>,
+}
+
+/// One interpretation between exact catalog members, never a coverage claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemberInterpretation {
+    /// Source type, property, link, lifecycle state or transition identity.
+    pub source: crate::definition_catalog::MemberRef,
+    /// Corresponding target identity, resolved within the pinned target layer.
+    pub target: crate::definition_catalog::MemberRef,
+    /// Absent means identity. Expressions require checked conformance;
+    /// declaring one does not establish preservation.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "ZenExpression")]
+    pub transform: Option<ZenExpression>,
 }
 
 /// An interface-scoped mapping from one source schema: the payload of a
