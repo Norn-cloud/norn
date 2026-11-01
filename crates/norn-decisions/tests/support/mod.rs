@@ -223,36 +223,9 @@ pub(crate) fn check_fixture(path: &Path, failures: &mut Vec<String>) -> usize {
     cases.len()
 }
 
-/// Extract real typed authoring syntax; executable callbacks never run in JS.
-pub(crate) fn compiled_rules(source: &str) -> BTreeMap<String, RuleRoot> {
-    let compiled = std::process::Command::new("bun")
-        .current_dir(repo_root())
-        .args([
-            "tools/norn-ts/src/cli.ts",
-            "compile",
-            source,
-            "--org",
-            "org_demo",
-            "--env",
-            "dev",
-        ])
-        .output()
-        .expect("typed authoring compiler is available");
-    assert!(
-        compiled.status.success(),
-        "{}\n{}",
-        String::from_utf8_lossy(&compiled.stdout),
-        String::from_utf8_lossy(&compiled.stderr)
-    );
-    let artifacts: Vec<Json> = serde_json::from_slice(&compiled.stdout).unwrap();
-    artifacts
-        .iter()
-        .filter(|a| a["kind"] == "rule")
-        .map(|a| {
-            (
-                a["artifactId"].as_str().unwrap().to_owned(),
-                rule(&a["payload"]),
-            )
-        })
-        .collect()
+/// Compiler-generated RuleIR; the authoring tests check source/golden drift.
+pub(crate) fn generated_rules(fixture: &str) -> BTreeMap<String, RuleRoot> {
+    let artifacts = read_json(&repo_root().join(fixture));
+    artifacts.as_array().unwrap().iter().filter(|a| a["kind"] == "rule")
+        .map(|a| (a["artifactId"].as_str().unwrap().to_owned(), rule(&a["payload"]))).collect()
 }

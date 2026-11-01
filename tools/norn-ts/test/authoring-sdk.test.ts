@@ -159,6 +159,10 @@ test("FOLD-AUTHORING compiles closed step schemas and pins the helper", () => {
   expect(encoded).toContain('"accumulatorSchema":')
   expect(encoded).toContain('"artifactId":"example.fold.step.rule"')
   expect(result.warnings).toEqual([])
+  const pack = compilePack(fixture, { scope, root, modules: [fixture] })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  const golden = JSON.parse(readFileSync(join(root, "crates/norn-decisions/tests/fixtures/typed-ordered-fold.json"), "utf8"))
+  expect(pack.artifacts).toEqual(golden)
   if (checker) expect(checker.checkArtifactSet(result.artifacts).admitted).toBe(true)
   for (const invalid of [
     source.replace('identity: "id"', 'identity: "missing"'),

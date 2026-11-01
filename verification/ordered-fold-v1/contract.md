@@ -239,6 +239,10 @@ Both operands must be arrays with compatible item schemas. This permits declared
 allocation lineage to accumulate without a new runtime operator. String/scalar
 concat and additional arguments remain outside this authoring form.
 
+FOLD-AUTHORING-CORRESPONDENCE: Rust conformance consumes compiler-generated
+RuleIR goldens; TypeScript tests compare those goldens with fresh extraction.
+The evaluator tests never spawn a compiler or acquire a process capability.
+
 ## CP3 allocation declarations
 
 FOLD-CP3 / JEWEL-SELL / JEWEL-SCRAP / JEWEL-FUND / JEWEL-MELT:
@@ -265,3 +269,4 @@ or timer effects. The integrator still owns two independent assays, pinned scope
 settings/approval versions, complete partition fences, actual reservations,
 balanced economic effects and atomic posting. No full CP3 runtime or application
 proof claim follows from allocation conformance alone.
+||||||| e838c223b

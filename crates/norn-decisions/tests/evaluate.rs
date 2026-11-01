@@ -1611,7 +1611,7 @@ proptest::proptest! {
 
 #[test]
 fn typed_authoring_ordered_fold_executes_the_declared_helper() {
-    let rules = support::compiled_rules("tools/norn-ts/fixtures/decisions/ordered-fold.source.ts");
+    let rules = support::generated_rules("crates/norn-decisions/tests/fixtures/typed-ordered-fold.json");
     let declared = rules["example.fold.total.rule"].clone();
     let helpers = BTreeMap::from([(
         "example.fold.step.rule".into(),
@@ -1642,7 +1642,7 @@ fn typed_authoring_ordered_fold_executes_the_declared_helper() {
 
 #[test]
 fn cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations() {
-    let rules = support::compiled_rules("tools/norn-ts/fixtures/jewelry/cp3-folds.source.ts");
+    let rules = support::generated_rules("crates/norn-decisions/tests/fixtures/jewelry-folds.json");
     let helpers = rules.iter().filter(|(_, r)| r.contract == Some(norn_ir::RuleContractV2::SubDecision)).map(|(id, r)| (id.clone(), r.clone())).collect();
     let admitted = AdmittedDecision::admit(&rules["jewelry.fold.plan.rule"], &helpers, binding()).unwrap();
     let input = json!({
