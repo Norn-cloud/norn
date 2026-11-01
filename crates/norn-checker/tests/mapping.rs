@@ -375,6 +375,24 @@ fn compiled_with_two_event_roles() -> CompiledMapping {
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(32))]
     #[test]
+    fn map_units_generated_scales_require_exact_preservation(scale in 0u64..=28) {
+        let (mut document, mut base) = complete_member_interpretation();
+        let index = distinct_target_contract(&mut document, &mut base);
+        let target = base.get_mut(index).expect("target");
+        let mut root: norn_ir::EntityRootV2 = serde_json::from_value(
+            serde_json::to_value(target.payload.to_json_value()).expect("wire"),
+        ).expect("root");
+        let p = root.object_type.properties.iter_mut().find(|p| p.id.as_str() == "total_amount").expect("amount");
+        let norn_ir::PropertyType::Decimal { scale: declared, .. } = &mut p.property_type else { panic!("decimal"); };
+        *declared = norn_ir::members::WholeNumber(scale);
+        target.payload = norn_ir::ArtifactPayload::from_kind_json(&norn_ir::ArtifactKind::Entity,
+            serde_json::from_value(serde_json::to_value(root).expect("wire")).expect("tree"),
+        ).expect("entity");
+        let gap = member_findings(&document, &base).iter().any(|f| f.code == "core.composition.mapping_gap");
+        proptest::prop_assert_eq!(gap, scale != 6);
+    }
+
+    #[test]
     fn event_multi_generated_object_keys_keep_event_identity_and_both_roles(suffix in "[A-Z0-9]{1,10}") {
         let event = format!("EVENT-{suffix}");
         let party = format!("PARTY-{suffix}");
