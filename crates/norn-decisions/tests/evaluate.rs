@@ -897,7 +897,10 @@ fn fifo_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
                 "taken == item.quantity ? item.value : taken * item.value / item.quantity",
             )],
             vec![
-                ("demand", "accumulator.demand - taken"),
+                (
+                    "demand",
+                    "item.quantity > 0 and item.value >= 0 and accumulator.demand >= 0 ? accumulator.demand - taken : null",
+                ),
                 ("value", "accumulator.value + cost"),
                 (
                     "layers",
@@ -921,7 +924,7 @@ fn fifo_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
     if let norn_ir::JdmNode::ExpressionNode { content, .. } =
         &mut rules.0.graph.as_mut().unwrap().nodes[2]
     {
-        content.expressions[1].value=norn_ir::ZenExpression("slice.expected == null or result.allocations == slice.expected ? [{actionId:'result',state:result}] : null".into());
+        content.expressions[1].value=norn_ir::ZenExpression("slice.initial.demand > 0 and result.demand == 0 and (slice.expected == null or result.allocations == slice.expected) ? [{actionId:'result',state:result}] : null".into());
     }
     rules
 }
