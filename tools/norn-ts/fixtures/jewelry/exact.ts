@@ -16,6 +16,9 @@ export function purity(input: { readonly karat?: string; readonly fineness?: str
   if ((input.karat !== undefined && karat === undefined) ||
       (input.fineness !== undefined && fineness === undefined)) return { ok: false, code: "purity_unrepresentable" }
   const fromFineness = fineness === undefined ? undefined : fineness * 24n
+  if ([karat, fromFineness].some(value => value !== undefined && (value <= 0n || value > PURITY_DENOMINATOR))) {
+    return { ok: false, code: "purity_unrepresentable" }
+  }
   if (karat !== undefined && fromFineness !== undefined && karat !== fromFineness) return { ok: false, code: "purity_conflict" }
   const value = karat ?? fromFineness
   if (value === undefined || value <= 0n || value > PURITY_DENOMINATOR) return { ok: false, code: "purity_unrepresentable" }

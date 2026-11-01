@@ -3,11 +3,14 @@
 Dependency: stock definitions #227; model references #232 and #243. Evidence in
 this unit is structural admission and exact input normalization, not posting.
 
+- `sourceProvenance`: compiled stock and jewelry artifacts each retain the path
+  of their own authored root module.
 - `exactPurity`: six-place karat or three-place parts-per-thousand fineness
   maps exactly to a numerator over 24,000,000; no binary floating point.
 - `exactPurityRefusal`: missing, nonpositive, out-of-range, malformed or excess
   precision inputs refuse with `purity_unrepresentable`; disagreeing valid
-  representations refuse with `purity_conflict`.
+  representations refuse with `purity_conflict`. Each supplied representation must
+  be valid before conflict detection, including when the other is valid.
 - `checkedFineMass`: positive integer micrograms times the numerator is at most
   2^96-1 (runtime Decimal’s largest integer). Refuse with `fine_mass_overflow` before multiplication; malformed or
   nonpositive gross input refuses with `invalid_gross_mass`.

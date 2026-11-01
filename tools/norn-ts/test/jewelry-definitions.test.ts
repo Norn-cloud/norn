@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { join } from "node:path"
+import { join, relative } from "node:path"
 import { compileDefinitionFiles } from "../src/compiler/definitions.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { canonicalJson } from "../src/canonical.ts"
@@ -7,7 +7,7 @@ import { checker, CHECKER_PKG_ENV } from "./checker.ts"
 import { fineMass, purity, MAX_FINE_TICKS } from "../fixtures/jewelry/exact.ts"
 
 const files = ["stock/stock.source.ts", "jewelry/jewelry.source.ts"].map(path => join(TOOL_ROOT, "fixtures", path))
-const options = { sourcePath: "tools/norn-ts/fixtures/jewelry/jewelry.source.ts", scope: { orgId: "org_demo", environmentId: "dev" } }
+const options = (path: string) => ({ sourcePath: `tools/norn-ts/${relative(TOOL_ROOT, path)}`, scope: { orgId: "org_demo", environmentId: "dev" } })
 function compile() {
   return compileDefinitionFiles(files, options).flatMap(result => {
     if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
@@ -20,6 +20,8 @@ test("jewelry specializes the stock masters and voucher lifecycle deterministica
   expect(canonicalJson(artifacts)).toBe(canonicalJson(compile()))
   expect(artifacts).toHaveLength(25)
   const find = (id: string) => artifacts.find(value => value && typeof value === "object" && "artifactId" in value && value.artifactId === id)
+  expect(find("stock.Item.entity")).toMatchObject({ provenance: { sourcePath: "tools/norn-ts/fixtures/stock/stock.source.ts" } })
+  expect(find("jewelry.MetalLot.entity")).toMatchObject({ provenance: { sourcePath: "tools/norn-ts/fixtures/jewelry/jewelry.source.ts" } })
   expect(find("jewelry.MetalLot.entity")).toMatchObject({ payload: { objectType: { extends: "stock.Item" } } })
   for (const kind of ["CustodyReceipt", "CustodyReturn", "Refining"]) {
     expect(find(`jewelry.${kind}.entity`)).toMatchObject({ payload: { objectType: { extends: "stock.Voucher" } } })
@@ -44,6 +46,10 @@ test("exactPurity: equivalent karat and parts-per-thousand inputs share fine tic
 test("exactPurityRefusal: excess precision, invalid ranges and conflicts never round", () => {
   for (const input of [{}, { karat: "18.0000001" }, { fineness: "750.0001" }, { karat: "25" },
     { fineness: "1000.001" }, { karat: "0" }, { karat: "-1" }, { karat: "1e1" }, { karat: " 18" }]) {
+    expect(purity(input)).toEqual({ ok: false, code: "purity_unrepresentable" })
+  }
+  for (const input of [{ karat: "25", fineness: "750" }, { karat: "18", fineness: "1001" },
+    { karat: "0", fineness: "750" }, { karat: "18", fineness: "0" }]) {
     expect(purity(input)).toEqual({ ok: false, code: "purity_unrepresentable" })
   }
   expect(purity({ karat: "18", fineness: "749.999" })).toEqual({ ok: false, code: "purity_conflict" })
