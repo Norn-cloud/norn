@@ -95,6 +95,12 @@ class Contract(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.report([d])
 
+    def test_gl_dispositions_are_per_request_account(self):
+        leg = self.n['cases'][0]['checkpoints'][0]['gl'][0]
+        leg['debit'] = '21'
+        self.n['cases'][0]['checkpoints'][0]['gl'].append(dict(leg, account='cogs'))
+        self.assertEqual(self.report()['counts']['untriaged'], 2)
+
     def test_public_report_omits_untrusted_labels(self):
         for d in (self.n, self.e):
             d['cases'][0]['case'] = 'private-host.example'

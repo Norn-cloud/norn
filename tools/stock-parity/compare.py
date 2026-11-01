@@ -127,9 +127,6 @@ def compare(norn, erpnext, dispositions):
             if step >= 0:
                 for i, engine in enumerate(('norn', 'erpnext')):
                     views[i]['refusalPreserved'] = refusal_unchanged(checkpoints[i][step-1], pair[i])
-                if not all(v['refusalPreserved'] for v in views):
-                    views[0]['refusalPreservedExpected'] = True
-                    views[1]['refusalPreservedExpected'] = True
             def sanitized(value):
                 if isinstance(value, str):
                     return alias('symbol', value)
@@ -137,20 +134,31 @@ def compare(norn, erpnext, dispositions):
                     return [sanitized(v) for v in value]
                 return value
             entry['observations'] = [{k: sanitized(v) for k, v in view.items()} for view in views]
-            for field in sorted(set(views[0]) | set(views[1])):
-                a, b = views[0].get(field), views[1].get(field)
-                if a == b and (field != 'refusalPreserved' or a is True):
-                    continue
-                digest = fingerprint(name, cases[0]['method'], step, field, a, b)
-                d = decisions.get(digest)
-                bucket = d['bucket'] if d else 'untriaged'
-                entry['differences'].append(dict(fingerprint=digest, field=field, bucket=bucket))
-                if d:
-                    used.add(digest)
-                    entry['differences'][-1]['evidence'] = {k: d[k] for k in ('bucket', 'reviewer', 'review', 'decision', 'decisionRecord',
-                        'issue', 'reproduction', 'receipt', 'invariant') if k in d}
-                counts[{'norn-bug': 'openNornBugs', 'erpnext-bug': 'openErpnextBugs',
-                        'intentional-difference': 'intentionallyDifferent', 'untriaged': 'untriaged'}[bucket]] += 1
+            for category in sorted(set(views[0]) | set(views[1])):
+                a, b = views[0].get(category), views[1].get(category)
+                def groups(rows):
+                    result = defaultdict(list)
+                    width = {'stock': 4, 'gl': 4, 'documents': 1, 'outcomes': 2}[category]
+                    for row in rows:
+                        key = hashlib.sha256(json.dumps(row[:width]).encode()).hexdigest()
+                        result[key].append(row)
+                    return result
+                left, right = (groups(a), groups(b)) if isinstance(a, list) else ({'': a}, {'': b})
+                for key in sorted(set(left) | set(right)):
+                    field, a, b = category + (':' + key if key else ''), left.get(key), right.get(key)
+                    if a == b and (category != 'refusalPreserved' or a is True):
+                        continue
+                    digest = fingerprint(name, cases[0]['method'], step, field, a, b)
+                    d = decisions.get(digest)
+                    bucket = d['bucket'] if d else 'untriaged'
+                    entry['differences'].append(dict(fingerprint=digest, field=field, bucket=bucket,
+                        norn=sanitized(a), erpnext=sanitized(b)))
+                    if d:
+                        used.add(digest)
+                        entry['differences'][-1]['evidence'] = {k: d[k] for k in ('bucket', 'reviewer', 'review', 'decision', 'decisionRecord',
+                            'issue', 'reproduction', 'receipt', 'invariant') if k in d}
+                    counts[{'norn-bug': 'openNornBugs', 'erpnext-bug': 'openErpnextBugs',
+                            'intentional-difference': 'intentionallyDifferent', 'untriaged': 'untriaged'}[bucket]] += 1
             entry['status'] = ('matched' if not entry['differences'] else
                                'intentionally different' if all(d['bucket'] == 'intentional-difference'
                                for d in entry['differences']) else 'divergent')
