@@ -161,3 +161,24 @@ unit must qualify a fresh fork with the final configuration and lifecycle budget
   Retrieval is bounded to 60 seconds and skipped when creation never reached
   execution, so an allocated creation stall still starts cleanup immediately.
   `test_failed_acceptance_keeps_dump_before_deletion` is its correspondence.
+
+## CP2 audience report contract
+
+- **REPORT-SIDES:** each available checkpoint presents active quantity and value
+  per warehouse as sums of uncancelled ledger deltas, plus value/quantity rate
+  (undefined at zero quantity; repeating rates remain exact fractions). Historical
+  row balances are not summed. Both engines appear side by side.
+- **REPORT-GROSS:** display every raw GL leg, grouped by aliased account, request,
+  currency and cancellation flag. Sort debit/credit pairs within each group; a
+  missing leg is shown as unavailable, never netted against another leg.
+- **REPORT-REASON:** show bucket, differing field, value-bound fingerprint and
+  reviewed evidence/decision where supplied. Unsupported snapshots show no
+  invented stock or GL. Case coverage remains visible even for a matched prefix.
+- **REPORT-GATE-STABLE:** presentation adds sanitized `balances` to report JSON;
+  dump inputs, difference fingerprints, dispositions, counts and pass/fail are
+  unchanged. Summary preserves count units rather than calling them all cases.
+
+`test_report_sides_and_cancelled_history` and
+`test_report_unavailable_and_disposition_reason` correspond to these items.
+A report from synthetic Norn data must be labelled as a stub by its publisher;
+only a real dump from the Norn driver qualifies cross-engine parity.

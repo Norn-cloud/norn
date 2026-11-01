@@ -112,6 +112,43 @@ class Contract(unittest.TestCase):
             for d in report['cases'][0]['checkpoints'][1]['differences']]
         self.assertEqual(self.report(dispositions)['counts']['openNornBugs'], 1)
 
+    def test_report_sides_and_cancelled_history(self):
+        for d in (self.n, self.e):
+            cp = d['cases'][0]['checkpoints'][0]
+            historical = dict(cp['stock'][0], id='cancelled-history', cancelled=True,
+                              quantityDelta='99', valueDelta='999', quantity='999', value='999')
+            cp['stock'].append(historical)
+            cp['stock'].append(dict(cp['stock'][0], id='delivery', requestId='delivery',
+                                    quantityDelta='-3', valueDelta='-6', quantity='7', value='14'))
+            cp['gl'].append(dict(cp['gl'][0], id='reversal', debit='0', credit='20', cancelled=True))
+        report = self.report()
+        self.assertTrue(report['passed'])
+        text = markdown(report)
+        self.assertIn('| warehouse-1 | 7.000000 | 7.000000 | 14.000000 | 14.000000 | 2 | 2 |', text)
+        self.assertIn('| account-1 | request-1 | currency-1 | True | 1 | 0.00 | 0.00 | 20.00 | 20.00 |', text)
+        self.assertIn('Bucket: matched.', text)
+        self.assertIn('| matched | 2 |', text)
+        self.assertNotIn('999', text)
+
+    def test_report_unavailable_and_disposition_reason(self):
+        self.e['cases'][0]['checkpoints'][0]['status'] = 'unsupported'
+        text = markdown(self.report())
+        self.assertIn('Bucket: unsupported.', text)
+        self.assertNotIn('warehouse-1', text)
+        self.e['cases'][0]['checkpoints'][0].pop('status')
+        self.n['cases'][0]['checkpoints'][0]['stock'][0]['valueDelta'] = '21'
+        diff = self.report()['cases'][0]['checkpoints'][1]['differences'][0]
+        evidence = 'https://github.com/Norn-cloud/norn/issues/214'
+        disposition = dict(fingerprint=diff['fingerprint'], bucket='intentional-difference',
+                           decision=DECISIONS[0], decisionRecord=evidence, reviewer='reviewer', review=evidence)
+        report = self.report([disposition])
+        self.assertTrue(report['passed'])
+        text = markdown(report)
+        self.assertIn('Bucket: intentional-difference.', text)
+        self.assertIn('Reason: original-cost-returns.', text)
+        self.assertIn(f'[review]({evidence})', text)
+        self.assertIn('21.000000 | 20.000000 | 2.1 | 2', text)
+
     def test_public_report_omits_untrusted_labels(self):
         for d in (self.n, self.e):
             d['cases'][0]['case'] = 'private-host.example'
