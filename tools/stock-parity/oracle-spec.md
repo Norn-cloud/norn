@@ -121,3 +121,16 @@ remain later units; this witness alone never claims full moving-average parity.
   incomplete evidence, never a pass. A bounded continuation on the same owned
   VM must first confirm native ERPNext installation before replay. Bootstrap
   budget qualification remains necessary for unattended lifecycle batches.
+
+- **CP2-fresh-transfer-master:** provision Material Transfer through the public
+  Stock Entry Type resource; a fresh site otherwise refuses transfer with
+  LinkValidationError. No native document/schema export is used.
+- **CP2-repost-service:** enable and start the native scheduler as well as its
+  queue worker. Pin scheduler interval/tick to 10 seconds on this disposable
+  site, within the existing 60-second checkpoint bound. The first live cancel
+  exposed queued valuations that a worker alone could not dispatch. Native
+  repost computation is never replaced by a harness callback. See the official
+  [background jobs documentation](https://docs.frappe.io/framework/user/en/api/background_jobs).
+- **CP2-budget:** lifecycle controller execution is bounded to 1800 seconds,
+  with a 1860-second CLI subprocess bound; smoke remains 600/660 seconds.
+  Creation remains bounded to 300 seconds; all paths retain owned-VM cleanup.

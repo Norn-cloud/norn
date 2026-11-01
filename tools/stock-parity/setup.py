@@ -30,6 +30,7 @@ def provision(api, trace):
     ensure(api, 'Price List', 'Parity Selling', price_list_name='Parity Selling',
            currency='USD', selling=1, enabled=1)
     ensure(api, 'Warehouse Type', 'Transit', name='Transit')
+    ensure(api, 'Stock Entry Type', 'Material Transfer', name='Material Transfer', purpose='Material Transfer')
     api.create('Company', company_name=company, abbr=suffix, default_currency='USD',
                country='United States', chart_of_accounts='Standard', enable_perpetual_inventory=1)
     accounts = list(api.rows('Account', {'company': company}, ['name', 'account_type', 'is_group', 'root_type']))

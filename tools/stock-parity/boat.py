@@ -7,8 +7,8 @@ from threading import Timer
 import hashlib
 
 
-def boat(*args):
-    return subprocess.check_output(['boat', *args], text=True, timeout=900)
+def boat(*args, timeout=900):
+    return subprocess.check_output(['boat', *args], text=True, timeout=timeout)
 
 
 def main():
@@ -60,7 +60,9 @@ python3 run.py /home/user/traces.json /home/user/results.json
 python3 CHECKER /home/user/results.json
 '''.replace('DIGEST', digest).replace('CHECKER', {'smoke': 'check_smoke.py',
             'lifecycle': 'lifecycle.py'}[args.acceptance])
-        result = json.loads(boat('exec', vm, '--json', '--timeout', '600', '--', 'bash', '-lc', command))
+        seconds = 1800 if args.acceptance == 'lifecycle' else 600
+        result = json.loads(boat('exec', vm, '--json', '--timeout', str(seconds), '--', 'bash', '-lc', command,
+                                 timeout=seconds + 60))
         if not result.get('success'):
             raise RuntimeError('Oracle batch incomplete; inspect disposable VM logs before cleanup')
         boat('scp', f'{vm}:/home/user/results.json', str(args.output))

@@ -36,11 +36,14 @@ bench set-config -g db_host db
 bench set-config -gp db_port 3306
 bench set-config -g redis_cache redis://cache:6379
 bench set-config -g redis_queue redis://queue:6379
+bench set-config -gp scheduler_interval 10
+bench set-config -gp scheduler_tick_interval 10
 bench new-site parity.localhost --no-mariadb-socket --mariadb-root-password "$PARITY_PASSWORD" --admin-password "$PARITY_PASSWORD" --db-password "$PARITY_PASSWORD" --install-app erpnext
 bench use parity.localhost
 bench --site parity.localhost set-config mute_emails 1
 bench --site parity.localhost set-config host_name http://parity.localhost:8000
 bench --site parity.localhost set-config --parse throttle_user_limit 10000
+bench --site parity.localhost enable-scheduler
 bench version --format json
 ' > setup.log 2>&1
 dc exec -T web bash -lc 'cd /home/frappe/frappe-bench; bench version --format json' > versions.json
@@ -52,3 +55,4 @@ assert all(versions[a]['version'].startswith('16.') for a in ('frappe', 'erpnext
 PY
 dc exec -d web bash -lc 'cd /home/frappe/frappe-bench; bench serve --port 8000 > /tmp/parity-web.log 2>&1'
 dc exec -d web bash -lc 'cd /home/frappe/frappe-bench; bench worker --queue short,default,long > /tmp/parity-worker.log 2>&1'
+dc exec -d web bash -lc 'cd /home/frappe/frappe-bench; bench schedule > /tmp/parity-scheduler.log 2>&1'
