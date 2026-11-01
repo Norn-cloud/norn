@@ -691,7 +691,9 @@ impl<'a> Checker<'a, '_> {
             .collect::<Vec<_>>();
         let mut checked = BTreeSet::new();
         for (owner, index, collection) in collections {
-            if !checked.insert(&collection.child_type) { continue; }
+            if !checked.insert(&collection.child_type) {
+                continue;
+            }
             let table = self.table(&collection.child_type);
             for (property_id, property) in table.iter() {
                 if property.default.is_some() && self.protected(&collection.child_type, property_id)
