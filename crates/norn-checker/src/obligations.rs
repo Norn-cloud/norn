@@ -63,8 +63,8 @@ pub struct DefinitionSource {
     artifacts: Vec<ArtifactEnvelope>,
     base: Vec<ArtifactEnvelope>,
     exact_digest: String,
-    receipt_sources: crate::receipt::ReceiptSources,
-    base_sources: crate::receipt::ReceiptSources,
+    receipt_sources: Vec<norn_ir::RuntimeValue>,
+    base_sources: Vec<norn_ir::RuntimeValue>,
 }
 
 impl DefinitionSource {
@@ -99,14 +99,14 @@ impl DefinitionSource {
             .map_err(|_error| ChallengeError::LossyInput)?;
         let exact_base = norn_ir::RuntimeValue::from_json_text(base)
             .map_err(|_error| ChallengeError::LossyInput)?;
-        let candidates = exact_candidates
+        let receipt_sources = exact_candidates
             .as_array()
-            .ok_or(ChallengeError::LossyInput)?;
-        let installed = exact_base.as_array().ok_or(ChallengeError::LossyInput)?;
-        let receipt_sources = crate::receipt::ReceiptSources::new(candidates, installed)
-            .map_err(|_error| ChallengeError::LossyInput)?;
-        let base_sources = crate::receipt::ReceiptSources::new(installed, &[])
-            .map_err(|_error| ChallengeError::LossyInput)?;
+            .ok_or(ChallengeError::LossyInput)?
+            .clone();
+        let base_sources = exact_base
+            .as_array()
+            .ok_or(ChallengeError::LossyInput)?
+            .clone();
         let artifacts = decode(artifacts)?;
         let base = decode(base)?;
         // Qualify inputs before ordinary admission can construct diagnostics or
@@ -489,7 +489,8 @@ fn admit(
             ..*context
         };
         let checked = check_artifact_set_with_receipt(
-            &source.base_sources,
+            &crate::receipt::ReceiptSources::new(&source.base_sources, &[])
+                .map_err(|_error| ChallengeError::NotAdmitted)?,
             &full_context,
             &ResourceLimitProfile::norn_limits_v1(),
         )
@@ -515,7 +516,8 @@ fn admit(
         }
     }
     let checked = check_artifact_set_with_receipt(
-        &source.receipt_sources,
+        &crate::receipt::ReceiptSources::new(&source.receipt_sources, &source.base_sources)
+            .map_err(|_error| ChallengeError::NotAdmitted)?,
         context,
         &ResourceLimitProfile::norn_limits_v1(),
     )

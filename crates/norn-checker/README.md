@@ -23,6 +23,7 @@ Retained definition receipts are verified against their recorded checker/profile
 RECEIPT-EXACT: receipt identity is injective over exact canonical source (assuming SHA-256 collision resistance).
 WRITER-CLOSURE: every writer requires `ReceiptSources`, constructed only from retained exact runtime sources,
 including the installed base. The convenience source writer uses the same constructor.
+CHALLENGE-PHASE: protected ingress retains verbatim sources; Norn1 collisions still refuse at admission.
 Typed verification refuses @5–@7; historical @1–@4 readers and hash-only reconstruction remain.
 RETAINED-IDENTITY: rechecks compare exact semantic identity before reusing an attested profile;
 a changed install uses current admission. CONTEXT-BASE: a different checker base is refused.
