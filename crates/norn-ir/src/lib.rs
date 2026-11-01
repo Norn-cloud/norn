@@ -1343,8 +1343,8 @@ define_payload_root!(
 );
 
 define_payload_root!(
-    /// The payload of a `mapping` artifact: an interface-scoped mapping
-    /// ([`mapping::MappingIr`], T8-MAP-1a).
+    /// The payload of a `mapping` artifact: source-record transforms or a
+    /// separately checked law interpretation ([`mapping::MappingDocument`]).
     #[schemars(with = "mapping::MappingDocument")]
     MappingPayload {
         required {

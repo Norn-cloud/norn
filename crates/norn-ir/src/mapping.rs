@@ -55,6 +55,7 @@ pub enum MappingFormat {
 /// Closed mapping-family documents; term correspondences remain link packs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
+#[schemars(transform = crate::members::one_of_forms)]
 pub enum MappingDocument {
     /// Source records produce ordinary entity facts, never inherited laws.
     SourceRecord(MappingIr),
