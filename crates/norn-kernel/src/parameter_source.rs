@@ -26,7 +26,7 @@ fn project(record: &Record) -> Result<(SettingRoot, ScopeRef), ParameterError> {
     let Some(RuntimeValue::Number(value)) = values.get("value") else {
         return Err(ParameterError::Invalid);
     };
-    let state = match required("reviewState")?.as_str() {
+    let state = match required("review_state")?.as_str() {
         "draft" => SettingReviewState::Draft,
         "proposed" => SettingReviewState::Proposed,
         "approved" => SettingReviewState::Approved,
@@ -38,10 +38,10 @@ fn project(record: &Record) -> Result<(SettingRoot, ScopeRef), ParameterError> {
     Ok((
         SettingRoot {
             setting_version: IrVersion01::V0_1,
-            setting_key: required("settingKey")?,
+            setting_key: required("setting_key")?,
             value: SettingValue::Number(DecimalLiteral(value.canonical())),
-            effective_from: required("effectiveFrom")?,
-            effective_to: text(values, "effectiveTo")?,
+            effective_from: required("effective_from")?,
+            effective_to: text(values, "effective_to")?,
             supersedes: None,
             review: SettingReview {
                 state,
@@ -54,11 +54,11 @@ fn project(record: &Record) -> Result<(SettingRoot, ScopeRef), ParameterError> {
             extensions: None,
         },
         ScopeRef {
-            org_id: text(values, "orgId")?,
-            tenant_id: text(values, "tenantId")?,
-            workspace_id: text(values, "workspaceId")?,
-            environment_id: text(values, "environmentId")?,
-            business_unit_id: text(values, "businessUnitId")?,
+            org_id: text(values, "org_id")?,
+            tenant_id: text(values, "tenant_id")?,
+            workspace_id: text(values, "workspace_id")?,
+            environment_id: text(values, "environment_id")?,
+            business_unit_id: text(values, "business_unit_id")?,
         },
     ))
 }
@@ -102,7 +102,7 @@ mod tests {
     use super::*;
 
     fn record() -> Record {
-        let values = RuntimeValue::from_json_text(r#"{"settingKey":"tax","value":0.1000000000000000000000000001,"effectiveFrom":"2026-01-01T00:00:00Z","effectiveTo":null,"reviewState":"approved","orgId":null,"tenantId":null,"workspaceId":null,"environmentId":null,"businessUnitId":null}"#).expect("exact").as_object().expect("object").clone();
+        let values = RuntimeValue::from_json_text(r#"{"setting_key":"tax","value":0.1000000000000000000000000001,"effective_from":"2026-01-01T00:00:00Z","effective_to":null,"review_state":"approved","org_id":null,"tenant_id":null,"workspace_id":null,"environment_id":null,"business_unit_id":null}"#).expect("exact").as_object().expect("object").clone();
         (
             FactKey::new("test.Parameter", "rate"),
             FactState {
@@ -142,7 +142,7 @@ mod tests {
             records.first().expect("source").0
         );
         let mut invalid = records.first().expect("source").clone();
-        invalid.1.values.as_mut().expect("values").remove("orgId");
+        invalid.1.values.as_mut().expect("values").remove("org_id");
         assert!(matches!(project(&invalid), Err(ParameterError::Invalid)));
     }
     proptest::proptest! {
