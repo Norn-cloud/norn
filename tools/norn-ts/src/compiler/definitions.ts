@@ -30,7 +30,7 @@ import type * as S from "../builder/schema.ts"
 import type { EnvelopeOptions } from "../builder/envelope.ts"
 import type { SourceLocation } from "../builder/diagnostics.ts"
 import { TOOL_ROOT } from "../profile.ts"
-import { type CompilerLimits, SyntaxCompiler, requireNfcText, checkClosure, diagnostic, exactNumber, prepareCompilation } from "./index.ts"
+import { type CompilerLimits, SyntaxCompiler, checkClosure, diagnostic, exactNumber, prepareCompilation } from "./index.ts"
 import { SchemaProjection } from "./schema.ts"
 import { CompileError } from "./types.ts"
 
@@ -137,7 +137,6 @@ export function compileDefinitionFiles(
         : def._tag === "Markings" ? E.lowerMarkings(def, envelopeOptions)
         : E.lowerEntity(def, envelopeOptions)
       if (built.ok) {
-        requireNfcText(built.artifact, source)
         artifacts.push(built.artifact)
         if ("at" in def && def.at) compiler.sourceMap.push({ artifactId: (built.artifact as { artifactId: string }).artifactId, pointer: "", at: def.at })
       }

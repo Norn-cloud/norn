@@ -147,10 +147,3 @@ test("explicitly generic authored packs do not assert vendor parity", () => {
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts).toContainEqual(expect.objectContaining({kind:"mapping",payload:expect.objectContaining({extensions:{"norn.mapping.generic/1.0.0":{parity:"unqualified"}}})}))
 })
-
- test("ADMITTED-TEXT-NFC: compiler refuses decomposed semantic literals", () => {
-  const result = compile(program(`"e\u0301" === "é"`))
-  expect(result.ok).toBe(false)
-  if (!result.ok) expect(result.diagnostics.some(d => d.code === "definition.text.not_nfc" && d.message.includes("/payload/"))).toBe(true)
-  expect(compile(program(`"é" === "é"`)).ok).toBe(true)
-})

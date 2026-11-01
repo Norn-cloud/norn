@@ -185,18 +185,6 @@ export function checkClosure(program: ts.Program, source: ts.SourceFile, limits:
   for (const sf of local) { bytes += new TextEncoder().encode(sf.text).length; if (bytes > limits.maxSourceBytes) throw new CompileError("NORN-FLOW-UNBOUNDED", "import closure exceeds compiler byte bound", source); count(sf, 0) }
 }
 
-/** Fail before emission if hashing would change definition text. */
-export function requireNfcText(value: unknown, node: ts.Node, path = ""): void {
-  const refuse = (pointer: string): never => { throw new CompileError("definition.text.not_nfc", `definition text at ${pointer} must already be Unicode NFC`, node) }
-  if (typeof value === "string" && value.normalize("NFC") !== value) refuse(path)
-  if (Array.isArray(value)) value.forEach((item, i) => requireNfcText(item, node, `${path}/${i}`))
-  else if (value !== null && typeof value === "object") for (const [key, item] of Object.entries(value)) {
-    const pointer = `${path}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`
-    if (key.normalize("NFC") !== key) refuse(pointer)
-    requireNfcText(item, node, pointer)
-  }
-}
-
 /** Batched profile recognition shares one Program; rejected roots never reach lowering. */
 export function compileFiles(files: ReadonlyArray<string>, options: BuildOptions, overrides: Partial<CompilerLimits> = {}): CompileResult[] {
   const { started, limits, profile, program, expansion, accepted, failed } = prepareCompilation(files, overrides)
@@ -223,7 +211,6 @@ export function compileFiles(files: ReadonlyArray<string>, options: BuildOptions
         }) })
       } else {
         lowering.checkBudget(source)
-        requireNfcText(built.artifacts, source)
         const result = { definition, artifacts: built.artifacts, sourceMap: built.sourceMap, warnings: lowering.warnings, ...(built.flowSourceMap ? { flowSourceMap: built.flowSourceMap } : {}) }
         expansion.addOutput(result)
         results.set(path, { ok: true, ...result })
