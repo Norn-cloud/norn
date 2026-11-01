@@ -1037,7 +1037,7 @@ proptest::proptest! {
         let (definitions, question, catalog) = keyed_compute_fixture();
         let plan = admit(&definitions, &question, &catalog, 100).expect("plan");
         let row = std::collections::BTreeMap::from([
-            ("weight".into(), norn_ir::RuntimeValue::from(amount)),
+            ("weight".into(), norn_ir::RuntimeValue::from(i64::from(amount))),
             ("observed_at".into(), norn_ir::RuntimeValue::from(format!("2026-10-{day}T12:00:00Z"))),
         ]);
         let actual = project(&plan, &row).expect("project").expect("included");
