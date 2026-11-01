@@ -926,7 +926,7 @@ fn project_value_type(
             );
             None
         }
-        PropertyType::Ref { .. } => {
+        PropertyType::Ref { .. } | PropertyType::DecimalBinding { .. } => {
             add_loss(
                 losses,
                 subject.to_owned(),

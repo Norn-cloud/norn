@@ -1424,7 +1424,9 @@ fn check_default(
         // `json-ext` is opaque: its schema is not interpreted, and `null` is
         // rejected at decode. `resolve_type` never ends on a `ref`.
         PropertyType::Record { .. } => check_record_default(at, value, resolved, out),
-        PropertyType::JsonExt { .. } | PropertyType::Ref { .. } => {}
+        PropertyType::JsonExt { .. }
+        | PropertyType::DecimalBinding { .. }
+        | PropertyType::Ref { .. } => {}
     }
 }
 
@@ -1584,6 +1586,7 @@ fn check_numeric_default(
         | PropertyType::Enum { .. }
         | PropertyType::Record { .. }
         | PropertyType::JsonExt { .. }
+        | PropertyType::DecimalBinding { .. }
         | PropertyType::Ref { .. } => return,
     }
     for constraints in sets {
