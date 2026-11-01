@@ -5626,6 +5626,8 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_eq!(&bundle.raw, &raw.input);
         norn_testkit::proptest::prop_assert_eq!(bundle.records.len(), 1);
         store.read().recheck_mapping_bundle(&bundle).expect("cell recomputation");
+        let mut unknown_pin = bundle.clone(); unknown_pin.definitions_version = u64::MAX;
+        norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_bundle(&unknown_pin), Err(CellError::MappingBundleMismatch)), "unretained definition pin refuses stably");
         let mut altered = bundle; altered.records.clear();
         norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_bundle(&altered), Err(CellError::MappingBundleMismatch)), "derived output refuses");
         let mut changed = input; changed.partition.push('x');
