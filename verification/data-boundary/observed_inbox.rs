@@ -86,8 +86,8 @@ fn dataplane_submission_enters_the_cell_only_through_observed_inbox() {
         )))
         .is_err()
     );
-    assert!(host.observe_submission(&scope, ObservationStream {connector_instance:"erp-demo/b", ..stream}, checked).expect("other connector"));
-    assert!(host.observe_submission(&scope, ObservationStream {partition:"other-partition", ..stream}, checked).expect("other partition"));
+    assert!(host.observe_submission(&scope, ObservationStream {connector_instance:"erp-demo/b", ..stream}, checked).expect("other connector"), "independent connector");
+    assert!(host.observe_submission(&scope, ObservationStream {partition:"other-partition", ..stream}, checked).expect("other partition"), "independent partition");
     let store = read();
     let pending = store.read().pending_observations().expect("inbox");
     assert_eq!(pending.len(), 3);
@@ -121,7 +121,7 @@ norn_testkit::proptest::proptest! {
         let stream = ObservationStream {connector_instance:&connector, partition:&partition};
         norn_testkit::proptest::prop_assert!(host.observe_submission(&scope, stream, checked).expect("capture"));
         norn_testkit::proptest::prop_assert!(!host.observe_submission(&scope, stream, checked).expect("replay"));
-        norn_testkit::proptest::prop_assert!(host.observe_submission(&scope, ObservationStream {connector_instance:&format!("x{connector}"), ..stream}, checked).expect("other connector"));
-        norn_testkit::proptest::prop_assert!(host.observe_submission(&scope, ObservationStream {partition:&format!("x{partition}"), ..stream}, checked).expect("other partition"));
+        norn_testkit::proptest::prop_assert!(host.observe_submission(&scope, ObservationStream {connector_instance:&format!("x{connector}"), ..stream}, checked).expect("other connector"), "independent connector");
+        norn_testkit::proptest::prop_assert!(host.observe_submission(&scope, ObservationStream {partition:&format!("x{partition}"), ..stream}, checked).expect("other partition"), "independent partition");
     }
 }
