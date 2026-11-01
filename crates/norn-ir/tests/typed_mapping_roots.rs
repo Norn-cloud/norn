@@ -93,7 +93,7 @@ fn map_roles_schema_requires_each_closed_forms_own_contract() {
         ("MappingFormat", "norn.mapping/1"),
         ("InterpretationFormat", "norn.interpretation/1"),
     ] {
-        assert_eq!(schema["$defs"][form]["enum"], json!([format]));
+        assert_eq!(schema["$defs"][form]["oneOf"][0]["const"], format);
     }
 }
 
