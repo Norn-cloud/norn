@@ -473,7 +473,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "computed", "protected", "immutable", "controls", "lifecycles", "markings", "propertyMarkings"])
+    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "computed", "protected", "immutable", "controls", "lifecycles", "ownedCollections", "markings", "propertyMarkings"])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()
@@ -521,6 +521,12 @@ class DefinitionCompiler {
       }),
       implements: implementsNode ? this.list(implementsNode).map((x) => this.typeName(x, INTERFACES)) : [],
       links: linksNode ? this.list(linksNode).map((x) => this.link(x)) : [],
+      ...(members.has("ownedCollections") ? { ownedCollections: this.list(this.member(members, "ownedCollections", call)).map((entry) => {
+        const c = this.closedRecord(entry, ["id", "childType", "rowIdProperty", "orderingKey", "cascadeOnParentDelete", "maxRows"], ["id", "childType", "rowIdProperty", "orderingKey", "cascadeOnParentDelete", "maxRows"])
+        const maxRows = this.json(c.get("maxRows")!)
+        if (typeof maxRows !== "number" || !Number.isSafeInteger(maxRows)) throw new CompileError("NORN-FLOW-LITERAL", "maxRows is an integer", entry)
+        return { id: this.string(c.get("id")!), childType: this.string(c.get("childType")!), rowIdProperty: this.string(c.get("rowIdProperty")!), orderingKey: this.string(c.get("orderingKey")!), cascadeOnParentDelete: this.boolean(c.get("cascadeOnParentDelete")!), maxRows }
+      }) } : {}),
       identity: identityNode ? this.list(identityNode).map((x) => this.key(x)) : [],
       lifecycles: lifecyclesNode ? this.list(lifecyclesNode).map((x) => this.lifecycle(x)) : [],
       at: this.at(call),
@@ -568,7 +574,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "writes", "effect", "compensation"])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "stockPost", "commands", "writes", "effect", "compensation"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -601,6 +607,7 @@ class DefinitionCompiler {
       }) : [],
       preconditions: members.has("preconditions") ? this.list(need("preconditions")).map((e, index) => this.zenAt(e, this.string(need("id")) + ".action", `/payload/preconditions/${index}`, "")) : [],
       commands: members.has("commands") ? this.list(need("commands")).map((c) => this.command(c)) : [],
+      ...(members.has("stockPost") ? { stockPost: this.stockPost(need("stockPost")) } : {}),
       createLinks: members.has("createLinks") ? this.list(need("createLinks")).map((entry) => {
         const m = this.closedRecord(entry, ["link", "targetType", "targetIdField"], ["link", "targetType", "targetIdField"])
         return { link: this.string(m.get("link")!), targetType: this.typeName(m.get("targetType")!, OBJECT_TYPES), targetIdField: this.string(m.get("targetIdField")!) }
@@ -617,6 +624,15 @@ class DefinitionCompiler {
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       at: this.at(call),
     })
+  }
+
+  private stockPost(input: ts.Expression): A.StockPost {
+    const m = this.closedRecord(input, ["operation", "collection", "partition", "accounts"], ["operation", "collection", "partition", "accounts"])
+    const operation = this.string(m.get("operation")!)
+    if (operation !== "receipt" && operation !== "delivery") throw new CompileError("NORN-FLOW-LITERAL", "stockPost operation is receipt or delivery", input)
+    const p = this.closedRecord(m.get("partition")!, ["item", "warehouse"], ["item", "warehouse"])
+    const a = this.closedRecord(m.get("accounts")!, ["stock", "srbnb", "cogs"], ["stock", "srbnb", "cogs"])
+    return { operation, collection: this.string(m.get("collection")!), partition: { item: this.strings(p.get("item")!), warehouse: this.strings(p.get("warehouse")!) }, accounts: { stock: this.strings(a.get("stock")!), srbnb: this.strings(a.get("srbnb")!), cogs: this.strings(a.get("cogs")!) } }
   }
 
   private zenAt(input: ts.Expression, artifactId: string, pointer: string, root = "input"): string {

@@ -904,6 +904,9 @@
             "$ref": "#/$defs/SliceDeclaration"
           }
         },
+        "stockPost": {
+          "$ref": "#/$defs/ActionStockPost"
+        },
         "title": {
           "type": "string"
         },
@@ -1034,6 +1037,50 @@
       "required": [
         "field",
         "scale"
+      ]
+    },
+    "ActionStockOperation": {
+      "description": "Supported stock operations; templates are selected by the kernel.",
+      "oneOf": [
+        {
+          "description": "Receive at the owned line's acquisition cost.",
+          "type": "string",
+          "const": "receipt"
+        },
+        {
+          "description": "Deliver at the authoritative stock cost.",
+          "type": "string",
+          "const": "delivery"
+        }
+      ]
+    },
+    "ActionStockPost": {
+      "description": "Receipt/delivery declaration; paths start at an owned voucher line.",
+      "type": "object",
+      "properties": {
+        "accounts": {
+          "description": "Link paths ending in text account identities on admitted masters.",
+          "$ref": "#/$defs/StockAccountPaths"
+        },
+        "collection": {
+          "description": "Authoritative owned collection, never a caller-provided line list.",
+          "type": "string"
+        },
+        "operation": {
+          "description": "The closed stock operation.",
+          "$ref": "#/$defs/ActionStockOperation"
+        },
+        "partition": {
+          "description": "Link paths selecting the item and warehouse masters.",
+          "$ref": "#/$defs/StockPartitionPaths"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "collection",
+        "partition",
+        "accounts"
       ]
     },
     "ActionUiEffects": {
@@ -9825,6 +9872,64 @@
         "observedAt",
         "adapter",
         "rawMetadata"
+      ]
+    },
+    "StockAccountPaths": {
+      "description": "Account identities selected through master links, with no template override.",
+      "type": "object",
+      "properties": {
+        "cogs": {
+          "description": "Cost of goods sold account on the company.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "srbnb": {
+          "description": "Stock received but not billed account on the company.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stock": {
+          "description": "Stock asset account on the warehouse.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "stock",
+        "srbnb",
+        "cogs"
+      ]
+    },
+    "StockPartitionPaths": {
+      "description": "Partition masters, resolved from each owned line.",
+      "type": "object",
+      "properties": {
+        "item": {
+          "description": "Required to-one links to the item.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warehouse": {
+          "description": "Required to-one links to the warehouse.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "warehouse"
       ]
     },
     "TemporalScope": {

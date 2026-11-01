@@ -70,6 +70,9 @@ use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope
 use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::{SeriesCandidate, prepare_candidate, scope_from_values, type_series};
 
+/// Read-only stock posting preparation.
+pub mod stock;
+
 /// The object type of the kernel's idempotency records of action calls.
 ///
 /// A schema-backed host must register this internal type in its model before
@@ -443,6 +446,15 @@ impl ActionCallRecord {
             && self.object == other.object
             && self.input == other.input
             && self.actor == other.actor
+            && (!(self
+                .effect_kind
+                .as_deref()
+                .is_some_and(|k| k.starts_with("stock.post/1:"))
+                || other
+                    .effect_kind
+                    .as_deref()
+                    .is_some_and(|k| k.starts_with("stock.post/1:")))
+                || self.effect_kind == other.effect_kind)
     }
 
     fn binds_same_generated_call(
@@ -680,6 +692,23 @@ pub enum ActionRefusal<X> {
         /// The safe refusal detail.
         reason: String,
     },
+    /// An authorized delivery exceeds the master-selected partition's stock.
+    #[error(
+        "insufficient stock for item {item} in warehouse {warehouse}: requested {requested}, available {available}"
+    )]
+    InsufficientStock {
+        /// Item identity.
+        item: String,
+        /// Warehouse identity.
+        warehouse: String,
+        /// Exact requested quantity in display units.
+        requested: String,
+        /// Exact available quantity in display units.
+        available: String,
+    },
+    /// Pure stock plan preparation refused.
+    #[error(transparent)]
+    StockPosting(crate::stock_posting::StockPostError),
     /// A visible, required single-object slice entry does not exist.
     #[error("required action slice entry {entry:?} is missing")]
     SliceObjectMissing {
@@ -759,6 +788,8 @@ impl<X> ActionRefusal<X> {
             Self::KindMismatch { .. } => "artifact_set.action.effect_kind_mismatch",
             Self::IdempotencyConflict { .. } => "action.idempotency_conflict",
             Self::WriteModeFailed { .. } => "action.write_mode_failed",
+            Self::InsufficientStock { .. } => "stock.insufficient_stock",
+            Self::StockPosting(_) => "stock.posting_refused",
             Self::Decision(refusal) => refusal.code(),
         }
     }
@@ -889,7 +920,10 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
-    if (action.quantity_effect.is_some() || !action.create_links.is_empty())
+    if action.stock_post.is_some() {
+        catalog.checked_stock_rule::<H::Error>(call)?;
+    }
+    if !action.create_links.is_empty()
         && matches!(
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
@@ -1005,7 +1039,6 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    let action = call.action;
     let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
     else {
         return Err(ActionRefusal::InvalidInput {
@@ -1036,9 +1069,21 @@ where
     check_kind(catalog, &object_type, object_kind)?;
     let record_key = FactKey::new(
         ACTION_CALL_TYPE,
-        format!("{}/{}", action.action_id, call.idempotency_key),
+        format!("{}/{}", call.action.action_id, call.idempotency_key),
     );
-    let record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
+    let mut record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
+    let stock_snapshot = if call.action.stock_post.is_some() {
+        record.effect_kind = Some(
+            catalog
+                .checked_stock_rule::<H::Error>(call)?
+                .receipt_binding(&call.scope)?,
+        );
+        Some(stock::prepare_stock_snapshot(
+            host, catalog, call, authorizer,
+        )?)
+    } else {
+        None
+    };
     let recorded = host.load(&record_key).map_err(host_failure)?;
     if let Some(outcome) = replay(&recorded, &record, &call.idempotency_key)? {
         return Ok(outcome);
@@ -1056,14 +1101,13 @@ where
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
-        action,
+        call.action,
         &preparation.effective_input,
         &slice.values,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
     )?;
-    let mut record = record;
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
@@ -1092,6 +1136,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            stock_snapshot,
         },
         EnvelopePolicy { limits, meter },
     )
@@ -1366,6 +1411,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            stock_snapshot: None,
         },
         EnvelopePolicy { limits, meter },
     )
@@ -3024,7 +3070,9 @@ where
             })
         })?;
     }
-    let proof = OwnedRowsCommitProof::new(&commit, limits.max_events);
+    let quantity =
+        super::action_quantity::prepare_quantity_action(call, &preparation.effective_input)?;
+    let proof = OwnedRowsCommitProof::new(&commit, limits.max_events, quantity);
     match host.commit_owned_rows(commit, proof) {
         Ok(receipt) => {
             if let Some(meter) = meter {
@@ -3250,6 +3298,7 @@ where
             record_key: record_key.clone(),
             recorded,
             record,
+            stock_snapshot: None,
             series_candidate: Some(candidate),
             remaining_fuel: preparation.remaining_fuel,
         };
@@ -3410,6 +3459,7 @@ struct Pending {
     recorded: FactState,
     record: ActionCallRecord,
     series_candidate: Option<SeriesCandidate>,
+    stock_snapshot: Option<stock::StockSnapshot>,
 }
 
 /// Per-decision limits and, when present, the shared aggregate turn meter.
@@ -3513,14 +3563,15 @@ where
         effective_input,
         mut remaining_fuel,
         target,
-        slice,
+        mut slice,
         reference_only,
-        link_reads,
+        mut link_reads,
         precondition_reads,
         record_key,
         recorded,
         record,
         series_candidate,
+        stock_snapshot,
     } = pending;
     let generated_key = series_candidate.is_some();
     let additional_events = usize::from(generated_key);
@@ -3546,8 +3597,30 @@ where
         commands,
         timers: Vec::new(),
     };
-    let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
-    let mut created_links = Vec::new();
+    let stock = stock_snapshot
+        .map(|snapshot| {
+            stock::prepare_stock_commit(
+                host,
+                catalog,
+                call,
+                &snapshot,
+                &mut slice,
+                &mut link_reads,
+                &output,
+                limits,
+            )
+        })
+        .transpose()?;
+    let (mut prepared, mut created_links, stock_quantity) = if let Some(stock) = stock {
+        (stock.0, stock.1, Some(stock.2))
+    } else {
+        (
+            prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?,
+            Vec::new(),
+            None,
+        )
+    };
+    counts.events = prepared.events.len();
     for binding in &call.action.create_links {
         let target_id = effective_input
             .get(&binding.target_id_field)
@@ -3631,16 +3704,10 @@ where
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
-    let result = if let Some(request) = quantity {
-        let identity = norn_ir::canonical::canonical_json_of(&(
-            "action.quantity/1",
-            &call.action.action_id,
-            &call.idempotency_key,
-        ))
-        .map_err(|_encoding_error| ActionRefusal::InvalidInput {
-            field: "idempotencyKey".to_owned(),
-        })?;
-        let key = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&identity);
+    let result = if let Some(quantity) = stock_quantity {
+        let proof = OwnedRowsCommitProof::new(&commit, limits.max_events, Some(quantity));
+        host.commit_owned_rows(commit, proof)
+    } else if let Some((request, key)) = quantity {
         if let Some(proof) = reference_reads {
             host.commit_action_references(commit, proof, Some((&request, &key)))
         } else {
@@ -3663,6 +3730,7 @@ where
         )),
         Err(error) => action_commit_conflict(
             host,
+            catalog,
             call,
             authorizer,
             error,
@@ -3954,6 +4022,7 @@ struct ActionReplayState<'a> {
 
 fn action_commit_conflict<H: CellHost + ?Sized>(
     host: &H,
+    catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     authorizer: &dyn ActionAuthorizer,
     error: CommitError<H::Error>,
@@ -3988,6 +4057,9 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
             // The winner may have changed authorization-relevant
             // values. A replay must use current authorization too.
             authorize_target(host, call, effective_input, authorizer, &record.object)?;
+            if call.action.stock_post.is_some() {
+                stock::prepare_stock_snapshot(host, catalog, call, authorizer)?;
+            }
             return Ok(outcome);
         }
     }
@@ -4031,6 +4103,7 @@ fn precondition_read_refusal<X>(
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::Quantity(_)
         | CommitError::Host(_) => None,
     };
     let stale_link = match error {
@@ -4063,6 +4136,7 @@ fn precondition_read_refusal<X>(
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::Quantity(_)
         | CommitError::Host(_) => None,
     };
     if let Some(key) = stale_fact {
@@ -4181,6 +4255,7 @@ where
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::Quantity(_)
         | CommitError::Host(_)) => return DecisionRefusal::from_commit(error),
     };
     let refusal = DecisionRefusal::InvariantViolation {

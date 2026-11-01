@@ -3,7 +3,7 @@ import { Norn } from "@norn/authoring"
 
 export const Company = Norn.type({
   name: "stock.Company", title: "Company", version: "0.1.0",
-  properties: Schema.Struct({ id: Schema.String, name: Schema.String, currency: Schema.Literal("USD"), book_id: Schema.String }),
+  properties: Schema.Struct({ id: Schema.String, name: Schema.String, currency: Schema.Literal("USD"), book_id: Schema.String, graph_id: Schema.String, graph_version: Schema.Int, srbnb_account: Schema.String, cogs_account: Schema.String }),
   identity: [{ name: "primary", properties: ["id"] }],
 })
 export const Warehouse = Norn.type({
@@ -28,7 +28,7 @@ export const Party = Norn.type({
 
 export const Voucher = Norn.type({
   name: "stock.Voucher", title: "Stock voucher", version: "0.1.0",
-  description: "Structural lifecycle only. Submit/cancel actions require declared atomic stock and GL posting laws.",
+  description: "Stock voucher lifecycle. Submit requires closed atomic stock and GL preparation.",
   properties: Schema.Struct({
     id: Schema.String, request_id: Schema.String, effective_at: Norn.timestamp("utc"),
     status: Schema.Literals(["draft", "submitted", "cancelled"]),
@@ -49,12 +49,16 @@ export const Voucher = Norn.type({
 export const PurchaseReceipt = Norn.type({
   name: "stock.PurchaseReceipt", title: "Purchase Receipt", version: "0.1.0", extends: Voucher,
   properties: Schema.Struct({}),
-  links: [{ id: "supplier", target: Party, cardinality: { to: "one", from: "many", required: true } }],
+  ownedCollections: [{ id: "lines", childType: "stock.ReceiptLine", rowIdProperty: "id", orderingKey: "line_number", cascadeOnParentDelete: true, maxRows: 100 }],
+  links: [
+    { id: "lines", target: "stock.ReceiptLine", cardinality: { to: "many", from: "one" } },{ id: "supplier", target: Party, cardinality: { to: "one", from: "many", required: true } }],
 })
 export const DeliveryNote = Norn.type({
   name: "stock.DeliveryNote", title: "Delivery Note", version: "0.1.0", extends: Voucher,
   properties: Schema.Struct({}),
-  links: [{ id: "customer", target: Party, cardinality: { to: "one", from: "many", required: true } }],
+  ownedCollections: [{ id: "lines", childType: "stock.DeliveryLine", rowIdProperty: "id", orderingKey: "line_number", cascadeOnParentDelete: true, maxRows: 100 }],
+  links: [
+    { id: "lines", target: "stock.DeliveryLine", cardinality: { to: "many", from: "one" } },{ id: "customer", target: Party, cardinality: { to: "one", from: "many", required: true } }],
 })
 export const StockEntry = Norn.type({
   name: "stock.StockEntry", title: "Stock Entry (transfer)", version: "0.1.0", extends: Voucher,
@@ -117,4 +121,41 @@ export const ReconciliationLine = Norn.type({
     { id: "voucher", target: StockReconciliation, cardinality: { to: "one", from: "many", required: true } },
     { id: "warehouse", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
   ],
+})
+
+export const PurchaseReceiptSubmit = Norn.action({
+  id: "stock.receipt.submit", title: "Submit receipt", version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  input: Schema.Struct({ id: Schema.String }), output: Schema.Struct({}),
+  effect: { kind: "fire_transition", type: PurchaseReceipt, objectIdField: "id", lifecycle: "status", transition: "submit" },
+  writes: [{ type: PurchaseReceipt, change: "modified" }],
+  stockPost: { operation: "receipt", collection: "lines",
+    partition: { item: ["item"], warehouse: ["destination"] },
+    accounts: { stock: ["destination", "stock_account"], srbnb: ["destination", "company", "srbnb_account"], cogs: ["destination", "company", "cogs_account"] },
+  },
+})
+
+export const DeliveryNoteSubmit = Norn.action({
+  id: "stock.delivery.submit", title: "Submit delivery", version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  input: Schema.Struct({ id: Schema.String }), output: Schema.Struct({}),
+  effect: { kind: "fire_transition", type: DeliveryNote, objectIdField: "id", lifecycle: "status", transition: "submit" },
+  writes: [{ type: DeliveryNote, change: "modified" }],
+  stockPost: { operation: "delivery", collection: "lines",
+    partition: { item: ["item"], warehouse: ["source"] },
+    accounts: { stock: ["source", "stock_account"], srbnb: ["source", "company", "srbnb_account"], cogs: ["source", "company", "cogs_account"] },
+  },
+})
+
+export const StockEvent = Norn.type({
+  name: "stock.StockEvent", title: "Stock event", version: "0.1.0",
+  properties: Schema.Struct({ id: Schema.String, partition_id: Schema.String, ordinal: Schema.Int,
+    operation: Schema.Literals(["receipt", "delivery"]), quantity: Norn.decimal(6), value: Norn.decimal(6) }),
+  identity: [{ name: "primary", properties: ["id"] }],
+})
+export const StockPartition = Norn.type({
+  name: "stock.Partition", title: "Stock partition witness", version: "0.1.0",
+  properties: Schema.Struct({ id: Schema.String, event_count: Schema.Int, binding_pin: Schema.String }),
+  identity: [{ name: "primary", properties: ["id"] }],
+  links: [{ id: "events", target: StockEvent, cardinality: { to: "many", from: "one" } }],
 })

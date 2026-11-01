@@ -1200,6 +1200,7 @@ fn validate_action_payload(
             "access",
             "uiEffects",
             "quantityEffect",
+            "stockPost",
             "createLinks",
         ],
         "payload",

@@ -182,6 +182,16 @@ fn validate_action_transaction_members(
             artifact_id
         );
     }
+    if payload.contains_key("stockPost") {
+        let _ = decode_member!(
+            norn_ir::ActionStockPost,
+            payload,
+            "stockPost",
+            ACTION_CODE,
+            diagnostics,
+            artifact_id
+        );
+    }
     if payload.contains_key("quantityEffect") {
         let _ = decode_member!(
             norn_ir::ActionQuantityEffect,

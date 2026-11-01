@@ -487,3 +487,45 @@ fn existence_never_leaks_matrix() {
     assert_eq!(denied.code, "action.permission_denied");
     assert_eq!(cell.ledger().len(), 1, "no refusal committed anything");
 }
+
+#[test]
+fn post_quantity_refusal_transport_preserves_categories_and_redaction() {
+    use RefusalCategory::{Conflict, Internal, Invalid, Limit, Precondition};
+    use norn_kernel::quantity::QuantityError as Q;
+    for (reason, category) in [
+        (
+            Q::InsufficientAvailable {
+                account: "stock".into(),
+            },
+            Precondition,
+        ),
+        (Q::Expired, Precondition),
+        (Q::NotExpired, Precondition),
+        (Q::Terminal, Precondition),
+        (
+            Q::StaleVersion {
+                expected: 1,
+                current: 2,
+            },
+            Conflict,
+        ),
+        (Q::Duplicate, Conflict),
+        (Q::Overflow, Limit),
+        (Q::Corrupt, Internal),
+        (Q::ClockRegression, Internal),
+        (Q::InvalidContract, Invalid),
+        (Q::InvalidReversal, Invalid),
+    ] {
+        let commit = CommitError::<Infallible>::Quantity(reason.clone()).refusal();
+        let decision = DecisionRefusal::<Infallible>::Quantity(reason.clone()).refusal();
+        let action =
+            ActionRefusal::Decision(DecisionRefusal::<Infallible>::Quantity(reason)).refusal();
+        assert_eq!(commit.code, "quantity.refused");
+        assert_eq!(commit.category, category);
+        assert_eq!(commit, decision);
+        assert_eq!(commit, action);
+        if category == Internal {
+            assert_eq!(commit.message, INTERNAL_MESSAGE);
+        }
+    }
+}

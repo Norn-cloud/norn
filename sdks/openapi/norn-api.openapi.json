@@ -1575,6 +1575,9 @@
               "$ref": "#/components/schemas/NornIrSliceDeclaration"
             }
           },
+          "stockPost": {
+            "$ref": "#/components/schemas/NornIrActionStockPost"
+          },
           "title": {
             "type": "string"
           },
@@ -1733,6 +1736,55 @@
             "description": "Scale expected by the pinned template parameter.",
             "maximum": 9007199254740992,
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrActionStockOperation": {
+        "type": "string",
+        "description": "Supported stock operations; templates are selected by the kernel.",
+        "enum": [
+          "receipt",
+          "delivery"
+        ],
+        "x-enumDescriptions": [
+          "Receive at the owned line's acquisition cost.",
+          "Deliver at the authoritative stock cost."
+        ]
+      },
+      "NornIrActionStockPost": {
+        "type": "object",
+        "description": "Receipt/delivery declaration; paths start at an owned voucher line.",
+        "required": [
+          "operation",
+          "collection",
+          "partition",
+          "accounts"
+        ],
+        "properties": {
+          "accounts": {
+            "$ref": "#/components/schemas/NornIrStockAccountPaths",
+            "description": "Link paths ending in text account identities on admitted masters."
+          },
+          "collection": {
+            "type": "string",
+            "description": "Authoritative owned collection, never a caller-provided line list."
+          },
+          "operation": {
+            "type": "string",
+            "description": "The closed stock operation.",
+            "enum": [
+              "receipt",
+              "delivery"
+            ],
+            "x-enumDescriptions": [
+              "Receive at the owned line's acquisition cost.",
+              "Deliver at the authoritative stock cost."
+            ]
+          },
+          "partition": {
+            "$ref": "#/components/schemas/NornIrStockPartitionPaths",
+            "description": "Link paths selecting the item and warehouse masters."
           }
         },
         "additionalProperties": false
@@ -11922,6 +11974,64 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrStockAccountPaths": {
+        "type": "object",
+        "description": "Account identities selected through master links, with no template override.",
+        "required": [
+          "stock",
+          "srbnb",
+          "cogs"
+        ],
+        "properties": {
+          "cogs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Cost of goods sold account on the company."
+          },
+          "srbnb": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Stock received but not billed account on the company."
+          },
+          "stock": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Stock asset account on the warehouse."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrStockPartitionPaths": {
+        "type": "object",
+        "description": "Partition masters, resolved from each owned line.",
+        "required": [
+          "item",
+          "warehouse"
+        ],
+        "properties": {
+          "item": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Required to-one links to the item."
+          },
+          "warehouse": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Required to-one links to the warehouse."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrTemporalScope": {
         "type": "object",

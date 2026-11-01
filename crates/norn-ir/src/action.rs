@@ -73,6 +73,14 @@ pub struct ActionRoot {
     )]
     #[schemars(with = "ActionQuantityEffect")]
     pub quantity_effect: Option<ActionQuantityEffect>,
+    /// Closed stock preparation bound to admitted masters and owned lines.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "ActionStockPost")]
+    pub stock_post: Option<ActionStockPost>,
     /// Declarative outgoing links to authorized records in the declared slice.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub create_links: Vec<ActionCreateLink>,
@@ -457,4 +465,50 @@ pub struct ActionCreateLink {
     pub target_type: String,
     /// Input field naming an existing authorized declared-slice object.
     pub target_id_field: String,
+}
+
+/// Receipt/delivery declaration; paths start at an owned voucher line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionStockPost {
+    /// The closed stock operation.
+    pub operation: ActionStockOperation,
+    /// Authoritative owned collection, never a caller-provided line list.
+    pub collection: String,
+    /// Link paths selecting the item and warehouse masters.
+    pub partition: StockPartitionPaths,
+    /// Link paths ending in text account identities on admitted masters.
+    pub accounts: StockAccountPaths,
+}
+
+/// Supported stock operations; templates are selected by the kernel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ActionStockOperation {
+    /// Receive at the owned line's acquisition cost.
+    Receipt,
+    /// Deliver at the authoritative stock cost.
+    Delivery,
+}
+
+/// Partition masters, resolved from each owned line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StockPartitionPaths {
+    /// Required to-one links to the item.
+    pub item: Vec<String>,
+    /// Required to-one links to the warehouse.
+    pub warehouse: Vec<String>,
+}
+
+/// Account identities selected through master links, with no template override.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StockAccountPaths {
+    /// Stock asset account on the warehouse.
+    pub stock: Vec<String>,
+    /// Stock received but not billed account on the company.
+    pub srbnb: Vec<String>,
+    /// Cost of goods sold account on the company.
+    pub cogs: Vec<String>,
 }

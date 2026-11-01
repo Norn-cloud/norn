@@ -754,7 +754,7 @@ pub fn balance_versions<S: SqlEngine>(
     clippy::too_many_lines,
     reason = "the bounded closed-operation read set is reconstructed under one transaction snapshot"
 )]
-fn state<S: SqlEngine>(
+pub(crate) fn state<S: SqlEngine>(
     engine: &S,
     world: &str,
     request: &QuantityRequest,
