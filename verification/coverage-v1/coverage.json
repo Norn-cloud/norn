@@ -2935,7 +2935,8 @@
         "generatedArtifacts": [],
         "resultArtifacts": [
           "target/verification-results/jewelry-refining-quint.json"
-        ]
+        ],
+        "bound": "Apalache max-steps 4; one metal, company and one custody owner; amounts 0..6 exact normalized fine ticks, initial company 6 and custody 0, at most one custody receipt of 6; synthetic valuation 1 per tick."
       },
       "proof": {
         "status": "reference_proved",
