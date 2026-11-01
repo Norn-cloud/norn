@@ -48,9 +48,10 @@ when it resolves to the supported direct-law contract.
 
 For CP2 the public `norn-api` DevHost runs the checked dataplane adapter and
 delivers submissions only through the existing Observed inbox; `norn-cell`
-applies admitted source mappings without depending on `norn-dataplane`, and
-the inbox key binds trusted connector instance, partition and source event
-identity as a canonical tuple.
+applies admitted source mappings without depending on `norn-dataplane`.
+Ordinary `observe_submission` inbox keys bind trusted connector instance,
+partition and source event identity as a canonical tuple; mapped
+`observe_mapped_submission` inputs use the content-addressed bundle contract below.
 
 ## Ingestion versus governed action
 
@@ -75,6 +76,8 @@ sealed raw-envelope digest and exact source/mapping/definition pins, preserving
 diagnostics and nonconforming records, and issues observed-write authority only
 after cell-owned recomputation matches the pinned bundle
 (`core.boundary.bundle_mismatch` on disagreement).
+Same-ID/different-content conflict findings and full cursor convergence remain
+follow-up cuts for this CP2 bundle bridge.
 
 ## Perform and recovery semantics
 
