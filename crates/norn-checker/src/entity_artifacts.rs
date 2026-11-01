@@ -148,7 +148,6 @@ pub fn check_artifact_set_entity_model(
         &catalog, context, &base, &local, artifacts,
     ));
     findings.extend(model_findings(&entity_context, &local, artifacts));
-    findings.extend(crate::unit_admission::check(artifacts, context.base));
 
     out.extend(findings);
     out

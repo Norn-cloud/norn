@@ -361,10 +361,6 @@ pub fn check_artifact_set(
         Err(resolution) => normalized_artifacts
             .iter()
             .flat_map(crate::check_artifact)
-            .chain(crate::unit_admission::check(
-                &normalized_artifacts,
-                &normalized_base,
-            ))
             .chain(crate::markings::check_references(
                 &normalized_artifacts,
                 &normalized_base,
@@ -372,7 +368,8 @@ pub fn check_artifact_set(
             .chain(resolution)
             .collect(),
     };
-    dedupe_findings(findings.into_iter().chain(layout_findings))
+    let unit_findings = crate::unit_admission::check(&normalized_artifacts, &normalized_base);
+    dedupe_findings(findings.into_iter().chain(layout_findings).chain(unit_findings))
 }
 
 fn normalize_artifacts(
