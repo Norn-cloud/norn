@@ -5715,6 +5715,47 @@ fn mapping_bundle_processing_refuses_forged_output_without_consumption() {
 }
 
 #[test]
+fn mapping_bundle_processing_refuses_delete_and_diagnostics_without_consumption() {
+    for delete in [false, true] {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut store = mapping_bundle_store(&directory.path().join("unsupported.sqlite"));
+        let mut raw = bundle_raw(
+            "MEAS-1",
+            if delete {
+                "1.20"
+            } else {
+                "\"invalid decimal\""
+            },
+        );
+        if delete {
+            raw.input
+                .as_object_mut()
+                .expect("raw object")
+                .insert("kind".into(), Value::from("delete"));
+        }
+        let (id, _) = store
+            .inject_mapping_bundle(&raw, &bundle_input())
+            .expect("retained evidence");
+        let before = store.read().dump().expect("before");
+        let mut cell =
+            norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+        assert!(matches!(
+            cell.process_mapping_bundle(&id),
+            Err(CellError::UnsupportedMappingProfile)
+        ));
+        assert_eq!(cell.store().read().dump().expect("after"), before);
+        assert_eq!(
+            cell.store()
+                .read()
+                .pending_observations()
+                .expect("retained inbox")
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
 fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
     let dir = tempfile::tempdir().expect("directory");
     let mut store = mapping_bundle_store(&dir.path().join("invalid.sqlite"));

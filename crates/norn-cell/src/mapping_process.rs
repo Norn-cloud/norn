@@ -55,6 +55,11 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         };
         let mut commit = CellCommit::empty().consuming(observed.consumed());
         let mut authorization = ObservationAuthorization::empty();
+        if bundle.raw.get("kind").and_then(RuntimeValue::as_str) != Some("upsert")
+            || !bundle.diagnostics.is_empty()
+        {
+            return Err(CellError::UnsupportedMappingProfile);
+        }
         for record in bundle.records {
             if !record.links.is_empty()
                 || !record.cleared_links.is_empty()
