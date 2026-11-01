@@ -5468,7 +5468,9 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
     let mut artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(&previous.canonical_set).expect("retained");
     let mut entity = serde_json::to_value(&artifacts[0]).expect("entity");
     entity["payload"]["objectType"]["implements"] = json!(["quality.Measured"]);
+    entity["dependencies"] = json!([{ "artifactId":"quality.Measured.interface", "kind":"entity", "version":"0.1.0", "required":true }]);
     artifacts[0] = serde_json::from_value(entity.clone()).expect("entity");
+    entity["dependencies"] = json!([]);
     let interface = json!({"name":"quality.Measured", "properties":[{"id":"purity", "type":{"kind":"decimal", "scale":6}}]});
     entity["artifactId"] = json!("quality.Measured.interface");
     entity["payload"] = json!({"entityVersion":"2.0", "interface":interface});
@@ -5498,8 +5500,9 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
     let model = Model::from_definitions_with_interfaces(&[serde_json::from_value(object).expect("object")], &[], &[serde_json::from_value(interface).expect("interface")]).expect("model").with_governing_laws(&artifacts).expect("laws");
     let findings = norn_checker::check_artifact_set(&artifacts, &norn_checker::EntityArtifactSetContext {registry:&std::collections::BTreeSet::new(),base:&[],tenant:None});
     assert!(findings.is_empty(), "{findings:?}");
+    let old_model = cell.store().model().clone();
     drop(cell);
-    let mut store = CellStore::open(path, model.clone(), StoreOptions::default()).expect("store");
+    let mut store = CellStore::open(path, old_model, StoreOptions::default()).expect("store");
     let mut installation = install_input("bundle", previous.installed_at + 1, &model);
     installation.canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical")).expect("UTF8");
     store.install_definitions(model, installation, Some(previous.version), "org_demo/dev").expect("admission");
