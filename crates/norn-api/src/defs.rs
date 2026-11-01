@@ -46,7 +46,6 @@ impl Admitted {
         let mut objects = Vec::new();
         let mut properties = Vec::new();
         let mut interfaces = Vec::new();
-        let mut extensions = Vec::new();
         for source in sources {
             let prepared = prepare_artifact_source(source)
                 .map_err(|diagnostics| refused(norn_checker::diagnostics_to_json(&diagnostics)))?;
@@ -65,8 +64,7 @@ impl Admitted {
                     EntityRoot::V2(root) => objects.push(root.object_type),
                     EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
                     EntityRoot::V2Interface(root) => interfaces.push(root.interface),
-                    EntityRoot::V2Extension(root) => extensions.push(root.object_type_extension),
-                    EntityRoot::V2Markings(_) => {}
+                    EntityRoot::V2Extension(_) | EntityRoot::V2Markings(_) => {}
                     EntityRoot::V1(root) => {
                         objects.push(norn_checker::lower_entity_v1(&root).object_type);
                     }
@@ -90,14 +88,6 @@ impl Admitted {
         .map_err(refused)?;
         if !checked.receipt.admitted {
             return Err(refused("artifact set has checker errors"));
-        }
-        for extension in extensions {
-            let target = objects
-                .iter_mut()
-                .find(|object| object.name == extension.target)
-                .ok_or_else(|| refused("extension target is unavailable"))?;
-            target.properties.extend(extension.properties);
-            target.links.extend(extension.links);
         }
         Ok(Self {
             layout: String::from_utf8(
