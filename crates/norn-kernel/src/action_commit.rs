@@ -4517,12 +4517,10 @@ pub fn prepare_action_input_for_call<'a, X>(
     )
 }
 
-fn prepare_action_input_inner<'a, X>(
-    action: &'a ActionRoot,
-    raw_input: &'a JsonObject,
-    action_artifact_id: Option<&'a str>,
-    action_version: Option<&'a str>,
-) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
+fn normalize_action_input<X>(
+    action: &ActionRoot,
+    raw_input: &JsonObject,
+) -> Result<JsonObject, ActionRefusal<X>> {
     let schema = norn_expr::schema::Schema::parse_action(
         &norn_ir::JsonValue::Object(action.input_schema.clone()),
         "$input",
@@ -4540,6 +4538,16 @@ fn prepare_action_input_inner<'a, X>(
             field: "$input".to_owned(),
         });
     };
+    Ok(normalized)
+}
+
+fn prepare_action_input_inner<'a, X>(
+    action: &'a ActionRoot,
+    raw_input: &'a JsonObject,
+    action_artifact_id: Option<&'a str>,
+    action_version: Option<&'a str>,
+) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
+    let normalized = normalize_action_input::<X>(action, raw_input)?;
     let profile = ResourceLimitProfile::norn_limits_v1();
     if !has_action_preparation_features(action) && normalized == *raw_input {
         validate_action_input(action, &normalized)?;
@@ -4548,7 +4556,7 @@ fn prepare_action_input_inner<'a, X>(
             raw_input,
             action_artifact_id,
             action_version,
-            effective_input: normalized.clone(),
+            effective_input: normalized,
             derived_values: Vec::new(),
             remaining_fuel: profile.turn.fuel_units,
             receipt_evidence_bytes: 0,
