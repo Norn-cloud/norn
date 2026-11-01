@@ -6,6 +6,11 @@ from pathlib import Path
 
 
 def check(dump):
+    from rest import encode
+    boundary = {'qty': Decimal('999999999999.999999'), 'items': [Decimal('0.000001')]}
+    encoded = encode(boundary)
+    assert json.loads(encoded, parse_float=Decimal) == boundary
+    assert '"999999999999.999999"' not in encoded
     assert dump['format'] == 'norn.stock-dump/1' and dump['engine'] == 'erpnext'
     assert len(dump['cases']) == 1
     case = dump['cases'][0]
