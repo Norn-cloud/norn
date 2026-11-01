@@ -205,8 +205,8 @@ mod tests {
         ForecastExport {
             tenant,
             world: "main",
-            plan: &plan,
-            rows: &rows,
+            plan,
+            rows,
             version,
             source_digest: digest.clone(),
             source_head: 1,
