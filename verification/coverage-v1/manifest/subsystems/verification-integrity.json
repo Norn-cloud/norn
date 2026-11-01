@@ -452,6 +452,7 @@
     "verification/stripmine-2026-08-22/scripts/validate.sh",
     "tools/norn-ts/fixtures/stock-parity/scenarios.ts",
     "tools/norn-ts/src/parity/stock-trace.ts",
-    "tools/norn-ts/test/stock-trace.test.ts"
+    "tools/norn-ts/test/stock-trace.test.ts",
+    "crates/norn-checker/src/obligations/induction.rs"
   ]
 }

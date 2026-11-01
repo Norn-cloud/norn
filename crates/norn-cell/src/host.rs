@@ -235,7 +235,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             scope: self.scope.clone(),
             logical_time,
             idempotency_key: Some(idempotency_key.to_owned()),
-            quantity: Some(request.clone()),
+            quantity: Some(request.clone().into()),
             ..CommitBatch::default()
         })
     }
@@ -297,7 +297,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
                 timer_id: id,
                 incarnation: pending.commit_seq,
             }),
-            quantity: Some(request),
+            quantity: Some(request.into()),
             ..CommitBatch::default()
         })?;
         Ok(true)
@@ -1242,23 +1242,23 @@ where
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {
-    /// Admit ordinary fact/link writes and one quantity operation atomically.
-    /// The ordinary kernel guards and quantity CAS/availability checks share
-    /// the store transaction. The trusted caller supplies authorization.
+    /// Admit one domain-neutral proposal and its ordered partition postings.
+    /// All fact/link and quantity fences share one store transaction. Failure in
+    /// any partition publishes nothing. The trusted caller supplies authorization.
     ///
     /// # Errors
     /// Shared commit admission, typed quantity refusals or changed-input reuse.
-    pub fn commit_with_quantity(
+    pub fn commit_with_partition_postings(
         &mut self,
         commit: CellCommit<E, C, I>,
-        request: &norn_ir::quantity_ledger::QuantityRequest,
+        requests: &[norn_ir::quantity_ledger::QuantityRequest],
         idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         self.commit_with_authorization(
             commit,
             None,
             None,
-            Some((request, idempotency_key)),
+            Some((requests, idempotency_key)),
             &[],
             &[],
             &[],
@@ -1291,7 +1291,7 @@ where
         mut commit: CellCommit<E, C, I>,
         authorization: Option<&ObservationAuthorization>,
         owned_rows: Option<OwnedRowsCommitProof>,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
         derived: &[(FactKey, Vec<String>)],
         references: &[norn_kernel::FactExpectation],
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
@@ -1300,7 +1300,15 @@ where
         // Include the complete kernel input, including read/write expectations,
         // before defaults. The host's injected logical time is not retry input.
         let submitted = quantity
-            .map(|(request, key)| to_runtime(&(MAIN_WORLD, &self.scope, key, request, &commit)))
+            .map(|(request, key)| {
+                to_runtime(&(
+                    MAIN_WORLD,
+                    &self.scope,
+                    key,
+                    crate::store::QuantityBatch(request.to_vec()),
+                    &commit,
+                ))
+            })
             .transpose()
             .map_err(CommitError::Host)?;
         // Exact submitted-intent retries reach the store before current-model
@@ -1366,7 +1374,7 @@ where
             .retain(|read| !property_reads.iter().any(|(source, _)| source == read));
         batch.marking_derived_properties = derived.to_vec();
         if let Some((request, key)) = quantity {
-            batch.quantity = Some(request.clone());
+            batch.quantity = Some(crate::store::QuantityBatch(request.to_vec()));
             batch.idempotency_key = Some(key.to_owned());
             if let Some(receipt) = self
                 .store
@@ -1597,7 +1605,7 @@ where
             commit,
             None,
             None,
-            quantity,
+            quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
             &[],
             proof.reference_reads(),
             proof.property_reads(),
@@ -1607,10 +1615,10 @@ where
     fn commit_action_quantity(
         &mut self,
         commit: CellCommit<E, C, I>,
-        request: &norn_ir::quantity_ledger::QuantityRequest,
+        requests: &[norn_ir::quantity_ledger::QuantityRequest],
         idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_quantity(commit, request, idempotency_key)
+        self.commit_with_partition_postings(commit, requests, idempotency_key)
     }
 
     fn commit_owned_rows(
