@@ -1,5 +1,7 @@
 //! Exact JSON admission and deterministic redaction for received observations.
 //!
+//! DP-BOUNDARY-1: published dependency metadata equals the executable policy
+//! (`norn-skeleton-guard::machine_boundaries_match_dependency_policy`).
 //! DP-EXACT-1: parsing refuses numbers or duplicate keys changed by JSON decoding.
 //! DP-EXACT-2: integers in the u64 range remain exact beyond f64 precision.
 //! DP-REDACT-1: an invalid policy leaves the payload unchanged.
