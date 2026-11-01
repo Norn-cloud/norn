@@ -386,9 +386,8 @@ fn lifecycle_guard(
     values
 }
 
-impl<X> Refusable for DecisionRefusal<X> {
-    fn refusal(&self) -> Refusal {
-        let mut refusal = Refusal::new(self.code(), self.category(), self);
+impl<X> DecisionRefusal<X> {
+    fn lifecycle_reason(&self) -> Option<RefusalReason> {
         let reason = match self {
             Self::NotFromState {
                 lifecycle,
@@ -423,18 +422,13 @@ impl<X> Refusable for DecisionRefusal<X> {
                     ("current", RuntimeValue::String(state.clone())),
                 ]),
             )),
-            Self::LifecyclePropertySet { key, property } => Some((
-                "lifecycle.transition_only",
+            Self::LifecyclePropertySet {
                 key,
-                refusal_values([("lifecycle", RuntimeValue::String(property.clone()))]),
-            )),
-            Self::UnknownLifecycle { key, lifecycle } => Some((
-                "lifecycle.declared",
-                key,
-                refusal_values([("lifecycle", RuntimeValue::String(lifecycle.clone()))]),
-            )),
-            Self::UnresolvedLifecycle { key, lifecycle } => Some((
-                "lifecycle.resolved",
+                property: lifecycle,
+            }
+            | Self::UnknownLifecycle { key, lifecycle }
+            | Self::UnresolvedLifecycle { key, lifecycle } => Some((
+                self.code(),
                 key,
                 refusal_values([("lifecycle", RuntimeValue::String(lifecycle.clone()))]),
             )),
@@ -489,11 +483,18 @@ impl<X> Refusable for DecisionRefusal<X> {
             | Self::Overflow
             | Self::Host(_) => None,
         };
-        refusal.reason = reason.map(|(law, key, values)| RefusalReason {
+        reason.map(|(law, key, values)| RefusalReason {
             law: law.to_owned(),
             subject: key.to_string(),
             values,
-        });
+        })
+    }
+}
+
+impl<X> Refusable for DecisionRefusal<X> {
+    fn refusal(&self) -> Refusal {
+        let mut refusal = Refusal::new(self.code(), self.category(), self);
+        refusal.reason = self.lifecycle_reason();
         refusal
     }
 }
