@@ -2796,10 +2796,12 @@
         "status": "partial",
         "scope": "reference",
         "artifacts": [
-          "verification/core-physics-v1/proofs/CoreValueLedger.lean"
+          "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+          "verification/core-physics-v1/proofs/CoreQuantity.lean"
         ],
         "commands": [
-          "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean"
+          "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+          "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": []
@@ -2811,7 +2813,8 @@
       ],
       "sourceFiles": [
         "verification/core-physics-v1/models/core-value-ledger.qnt",
-        "verification/core-physics-v1/proofs/CoreValueLedger.lean"
+        "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+        "verification/core-physics-v1/proofs/CoreQuantity.lean"
       ]
     }
   ]

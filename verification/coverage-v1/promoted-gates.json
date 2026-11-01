@@ -1189,6 +1189,21 @@
       ],
       "resultArtifacts": [],
       "generatedArtifacts": []
+    },
+    {
+      "id": "core-quantity-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
     }
   ]
 }
