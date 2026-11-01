@@ -99,6 +99,7 @@ def build_sources() -> list[dict[str, Any]]:
             "canonicalUrl": "https://schema.org/version/30.0/",
             "license": "CC-BY-SA-3.0",
             "redistribution": "reference_only",
+            "importMode": "map_only",
             "files": [
                 {
                     "path": "https://schema.org/version/latest/schemaorg-current-https.jsonld",
@@ -114,6 +115,8 @@ def build_sources() -> list[dict[str, Any]]:
             "canonicalUrl": "https://example.invalid/norn/toy-taxonomy/1/",
             "license": "Apache-2.0",
             "redistribution": "vendored",
+            "importMode": "import",
+            "importer": {"name": "norn.ontology.company-commerce-builder", "version": "0.1.0"},
             "files": [
                 {"path": str(categories_path.relative_to(ROOT)), "sha256": sha256(categories_path)},
                 {"path": str(attributes_path.relative_to(ROOT)), "sha256": sha256(attributes_path)},
