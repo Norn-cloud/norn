@@ -165,6 +165,7 @@ pub const CRATES: &[CrateRule] = &[
         Ring::One,
         &["norn-kernel", "norn-checker", "norn-projections", "norn-ir"],
     ),
+    rule("norn-dataplane", Ring::One, &["norn-ir"]),
     r0(
         "norn-api",
         &["norn-ir", "norn-kernel"],

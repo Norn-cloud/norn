@@ -1614,6 +1614,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-dataplane"
+version = "0.1.0"
+dependencies = [
+ "norn-ir",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "norn-decisions"
 version = "0.1.0"
 dependencies = [
