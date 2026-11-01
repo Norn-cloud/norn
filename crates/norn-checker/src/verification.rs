@@ -271,16 +271,15 @@ pub fn retained_law_membership(
     let mut instances = BTreeMap::new();
     for (owner, pack, _) in packs.values() {
         for instance in pack.instances.iter().flatten() {
-            if instance.scope == law.scope {
-                if crate::scope_conflict(&instance.scope, &owner.scope).is_some()
+            if instance.scope == law.scope
+                && (crate::scope_conflict(&instance.scope, &owner.scope).is_some()
                     || instance.instance_id.trim().is_empty()
                     || instances
                         .insert(instance.instance_id.clone(), instance.clone())
                         .is_some()
-                    || instances.len() > budget.max_nodes
-                {
-                    return Err(refused());
-                }
+                    || instances.len() > budget.max_nodes)
+            {
+                return Err(refused());
             }
         }
     }
