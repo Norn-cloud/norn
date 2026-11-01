@@ -1,4 +1,9 @@
 //! Pure keyset-page planning for a Frappe completeness sweep.
+//!
+//! DP-SWEEP-PLAN-1: only matching feed/doctype and normalized cursors plan GETs.
+//! DP-SWEEP-PLAN-2: keyset filters implement (modified, name) > cursor; lookback
+//! rewinds time and clears the name without changing the caller's cursor.
+//! Sampled evidence: `sweep_planning_conforms`, `generated_sweep_plans_conform`.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -6,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::frappe::FrappeSource;
 use crate::raw_observation::RawObservation;
-use crate::webhook::{IngestError, format_frappe_datetime};
+use crate::webhook::{IngestError, format_frappe_datetime, normalize_frappe_datetime};
 
 /// The pipeline version recorded on sweep observations.
 pub const FRAPPE_SWEEP_PIPELINE: &str = "norn-dataplane.frappe-sweep/1";
@@ -164,6 +169,13 @@ impl FrappeSweep {
                 reason: "the cursor belongs to another feed or doctype",
             });
         }
+        if let Some(cursor) = after
+            && normalize_frappe_datetime(&cursor.modified)? != cursor.modified
+        {
+            return Err(IngestError::InvalidSweep {
+                reason: "the cursor timestamp is not normalized",
+            });
+        }
         let (listing, fields, mut filters) = match feed {
             SweepFeed::Documents => (
                 self.doctype.as_str(),
@@ -219,5 +231,78 @@ impl FrappeSweep {
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "conformance assertions")]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn sweep() -> FrappeSweep {
+        FrappeSweep {
+            source: FrappeSource {
+                source: "fixture".into(),
+                redaction: None,
+            },
+            doctype: "Fixture".into(),
+            page_size: 20,
+            lookback_secs: 60,
+        }
+    }
+
+    #[test]
+    fn sweep_planning_conforms() {
+        let mut sweep = sweep();
+        let cursor = SweepCursor {
+            feed: SweepFeed::Documents,
+            doctype: sweep.doctype.clone(),
+            modified: "2026-11-01 00:01:00.000000".into(),
+            name: "a/b".into(),
+        };
+        let command = sweep
+            .plan(SweepFeed::Documents, Some(&cursor))
+            .expect("plan");
+        assert_eq!(command.after.as_ref(), Some(&cursor));
+        let or_filter = command
+            .query
+            .iter()
+            .find(|(key, _)| key == "or_filters")
+            .expect("keyset");
+        assert_eq!(
+            serde_json::from_str::<Value>(&or_filter.1).expect("json"),
+            json!([
+                ["modified", ">", cursor.modified],
+                ["name", ">", cursor.name]
+            ])
+        );
+        let rewound = sweep.rewind(&cursor).expect("lookback");
+        assert_eq!(rewound.modified, "2026-11-01 00:00:00.000000");
+        assert!(rewound.name.is_empty());
+        assert!(sweep.plan(SweepFeed::Deletions, Some(&cursor)).is_err());
+        let mut invalid = cursor.clone();
+        invalid.modified = "not a timestamp".into();
+        assert!(sweep.plan(SweepFeed::Documents, Some(&invalid)).is_err());
+        sweep.page_size = 0;
+        assert!(sweep.plan(SweepFeed::Documents, None).is_err());
+    }
+
+    proptest! {
+        #[test]
+        fn generated_sweep_plans_conform(size in 1u32..10_000, name in "[a-zA-Z0-9/]{1,24}", deletions in any::<bool>(), seconds in 0u32..3600) {
+            let mut sweep = sweep();
+            sweep.page_size = size;
+            sweep.lookback_secs = seconds;
+            let feed = if deletions { SweepFeed::Deletions } else { SweepFeed::Documents };
+            let cursor = SweepCursor { feed, doctype: sweep.doctype.clone(), modified: "2026-11-01 00:01:00.000000".into(), name };
+            let planned = sweep.plan(feed, Some(&cursor)).expect("valid generated cursor");
+            prop_assert_eq!(planned.method.as_str(), "GET");
+            prop_assert_eq!(planned.after.as_ref(), Some(&cursor));
+            prop_assert!(planned.query.contains(&("limit_page_length".into(), size.to_string())));
+            let rewound = sweep.rewind(&cursor).expect("rewind");
+            prop_assert!(rewound.name.is_empty());
+            prop_assert!(rewound.modified <= cursor.modified);
+        }
     }
 }
