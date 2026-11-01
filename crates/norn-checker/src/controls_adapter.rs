@@ -129,13 +129,13 @@ fn project(
     if grants.len() != actions.len() {
         return None;
     }
-    let mut concrete = object.extends.is_none()
-        && object.properties.is_empty()
-        && object.links.is_empty()
-        && object.invariants.is_empty()
-        && object.lifecycles.is_empty()
-        && object.implements.is_empty()
-        && object.owned_collections.is_empty();
+    let mut shape = serde_json::to_value(object).ok()?;
+    shape.as_object_mut()?.remove("controls");
+    shape.as_object_mut()?.remove("description");
+    let mut concrete = shape
+        == serde_json::json!({
+            "name": object.name, "properties": [{"id":"id", "type":{"kind":"text"}}]
+        });
     for policy in policies {
         let PolicyRoot::Access(policy) = policy else {
             return None;
@@ -166,7 +166,11 @@ fn project(
         }
     }
     for action in actions {
-        concrete &= action.effect_program.is_none()
+        concrete &= matches!(&action.effect_program,
+            Some(norn_ir::ActionEffectProgram::UpsertInputObject {
+                object_id_field, object_kind, write_mode: norn_ir::UpsertWriteMode::Upsert, ..
+            }) if object_id_field == "id" && object_kind == object.name.as_str())
+            && action.scope_required == ["orgId"]
             && action.writes.is_empty()
             && action.preconditions.is_empty()
             && action.slice.is_empty()
@@ -174,7 +178,10 @@ fn project(
             && action.commands.is_empty()
             && action.quantity_effect.is_none()
             && action.create_links.is_empty()
-            && empty_schema(&action.input_schema)
+            && serde_json::to_value(&action.input_schema).ok()
+                == Some(
+                    serde_json::json!({"type":"object", "properties":{"id":{"type":"string", "enum":["witness"]}}, "required":["id"], "additionalProperties":false}),
+                )
             && empty_schema(&action.output_schema);
     }
     Some((
