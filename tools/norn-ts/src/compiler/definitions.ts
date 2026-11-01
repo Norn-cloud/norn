@@ -1013,13 +1013,14 @@ class DefinitionCompiler {
   }
 
   private lifecycle(input: ts.Expression): E.LifecycleDecl {
-    const m = this.closedRecord(input, ["property", "description", "initial", "terminal", "transitions"], ["property", "initial", "transitions"])
-    const description = m.get("description"), terminal = m.get("terminal")
+    const m = this.closedRecord(input, ["property", "description", "initial", "terminal", "immutable", "transitions"], ["property", "initial", "transitions"])
+    const description = m.get("description"), terminal = m.get("terminal"), immutable = m.get("immutable")
     return {
       property: this.string(m.get("property")!),
       ...(description ? { description: this.string(description) } : {}),
       initial: this.strings(m.get("initial")!),
       ...(terminal ? { terminal: this.strings(terminal) } : {}),
+      ...(immutable ? { immutable: this.strings(immutable) } : {}),
       transitions: this.list(m.get("transitions")!).map((t) => this.transition(t)),
     }
   }
