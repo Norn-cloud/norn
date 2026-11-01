@@ -16,9 +16,11 @@ pub(crate) fn check(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) 
         let Decoded::Root(root) = decode_v2(artifact) else {
             continue;
         };
-        let codes = pinned_codes(artifact, candidates, base);
+        let vocabulary = pinned_codes(artifact, candidates, base);
+        let codes = vocabulary.as_deref();
         let mut inspect = |path: &str, i, ty: &PropertyType| {
-            visit(ty, &format!("/payload/{path}/{i}/type"), artifact, codes.as_deref(), &mut out);
+            let pointer = format!("/payload/{path}/{i}/type");
+            visit(ty, &pointer, artifact, codes, &mut out);
         };
         let (prefix, properties, links) = match *root {
             EntityRoot::V2(root) => {
@@ -94,13 +96,10 @@ fn pinned_codes(
         .into_iter()
         .filter(|def| def.name.as_str() == CODES);
     let definition = definitions.next()?;
-    if definitions.next().is_some() {
-        return None;
-    }
     let PropertyType::Enum { values } = definition.property_type else {
         return None;
     };
-    Some(values)
+    definitions.next().is_none().then_some(values)
 }
 
 fn visit(
