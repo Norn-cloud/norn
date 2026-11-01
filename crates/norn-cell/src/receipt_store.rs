@@ -350,13 +350,13 @@ mod tests {
         assert!(cell.store().read().head_command().expect("outbox").is_none());
     }
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
         #[test]
         fn consumed_or_different_frontier_never_admits(consumed in any::<bool>(), authenticated in any::<u64>(), current in any::<u64>()) {
             let admitted = crate::receipt_fence::usable(consumed, authenticated, current);
             prop_assert_eq!(admitted, !consumed && authenticated == current);
             prop_assert!(!crate::receipt_fence::usable(true, authenticated, authenticated));
         }
-        #![proptest_config(ProptestConfig::with_cases(16))]
         #[test]
         fn forged_or_wrong_scope_intake_never_persists(suffix in "[a-z]{1,8}", wrong_scope in any::<bool>()) {
             let dir = tempfile::tempdir().expect("dir");
