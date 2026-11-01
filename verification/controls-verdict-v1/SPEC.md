@@ -31,3 +31,18 @@ The evidence truth table is exhaustively exercised by controls module tests.
 Adapter conformance tests must exercise refusal, unknown, closure and witness
 requirements through artifact-set admission, rather than reconstructing this table.
 Evidence is finite model evidence, never a temporal proof or a live-runtime claim.
+
+## Action-order adapter
+
+The alpha adapter forgets lifecycle state, data guards and cross-object effects,
+retaining every action as a self edge. This is a complete overapproximation of
+ordering, so singleton-role separation remains sound. Role conjuncts intersect;
+permit rules union. Resource restrictions and non-role conjuncts are erased.
+Generic grants, unbounded role grants, unsupported policy forms and undecodable
+inputs yield unknown rather than an incomplete graph.
+
+Only the closed, empty-schema, effect-free action fragment on a property-free,
+link-free, lifecycle-free object supplies concrete witnesses. Other collisions
+remain unknown. Required witnesses fail closed outside this fragment. Inherited
+controls are checked for every subtype against the full base plus candidate pool,
+including when a candidate adds grants without editing the controlled entity.

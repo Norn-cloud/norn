@@ -137,6 +137,21 @@ const fn warning_introduced(
 /// Every diagnostic code the checker can emit, sorted by code.
 pub static REGISTRY: &[CodeEntry] = &[
     entry(
+        "controls.validation.invalid_path",
+        Tier::T3,
+        "Invalid sensitive path declaration",
+    ),
+    entry(
+        "controls.validation.refuted",
+        Tier::T3,
+        "Concrete duty separation counterexample",
+    ),
+    entry(
+        "controls.validation.witness_required",
+        Tier::T3,
+        "Concrete availability witness required",
+    ),
+    entry(
         "action.validation.command_environment_underivable",
         Tier::T2,
         "outbound command expressions require an object input schema with a derivable expression environment",
