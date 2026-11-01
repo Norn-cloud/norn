@@ -1,10 +1,8 @@
 //! Direct governing-law resolution and evaluation on the shared metered expression engine.
-use crate::{
-    FactKey, TypeCatalog, cell_host::JsonObject,
-};
+use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
 use norn_expr::{EvaluationBudget, Expression, Value};
 use norn_ir::{
-    ArtifactEnvelope, DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, LawIR,
+    ArtifactEnvelope, DataQualityOutcome, DataQualitySeverity, LawIR,
     LawModality, LawResponse, LawRoot, LawSeverity, ObjectTypeName,
 };
 use serde::{Deserialize, de::IntoDeserializer};
@@ -44,8 +42,6 @@ impl LawEvaluationError {
 /// One evaluated law violation; findings retain the actual law pin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LawFailure {
-    /// Exact governing declaration identity.
-    pub rule_ref: DataQualityRuleRef,
     /// Declared severity, independent of proof classification.
     pub severity: DataQualitySeverity,
     /// Declared explanation.
@@ -100,18 +96,6 @@ fn supported(law: &LawIR) -> bool {
         && matches!(law.modality, LawModality::Always {} | LawModality::Never {})
         && matches!(law.response, LawResponse::Predicate { .. })
 }
-fn pin(artifact: &ArtifactEnvelope, law: &LawIR) -> Result<DataQualityRuleRef, LawEvaluationError> {
-    let bytes = norn_ir::canonical::canonical_json_of(law)
-        .map_err(|e| LawEvaluationError::Invalid(e.to_string()))?;
-    Ok(DataQualityRuleRef::Law {
-        artifact_id: artifact.artifact_id.clone(),
-        law_id: law.id.clone(),
-        version: format!(
-            "sha256:{}",
-            norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
-        ),
-    })
-}
 /// OBS-EVIDENCE-1 / LAW-SUPPORTED-1: evaluate retained direct laws, never caller payloads.
 ///
 /// # Errors
@@ -160,12 +144,11 @@ pub fn evaluate(
         };
         if let Err(outcome) = result {
             failures.push(LawFailure {
-                rule_ref: pin(artifact, &law)?,
                 severity: match law.severity {
                     LawSeverity::Error => DataQualitySeverity::Error,
                     LawSeverity::Warning => DataQualitySeverity::Warning,
                 },
-                message: law.rationale,
+                message: format!("{}: {}", law.id, law.rationale),
                 outcome,
             });
         }
@@ -200,7 +183,7 @@ fn boolean(
         }),
         Ok(result) => match result.value() {
             Value::Bool(value) => Ok(*value),
-            other => Err(DataQualityOutcome::NonBoolean {
+            other @ (Value::Null | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => Err(DataQualityOutcome::NonBoolean {
                 actual: format!("{other:?}"),
             }),
         },
