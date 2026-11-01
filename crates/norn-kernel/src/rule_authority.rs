@@ -120,6 +120,24 @@ pub fn prepare_rule_decision<X>(
     decision: &RuleDecision,
     source_owned_targets: &BTreeSet<FactKey>,
 ) -> Result<PreparedDecision, DecisionRefusal<X>> {
+    prepare_rule_decision_with_limits(
+        catalog,
+        slice,
+        turn,
+        decision,
+        source_owned_targets,
+        &EnvelopeLimits::V1,
+    )
+}
+
+pub(crate) fn prepare_rule_decision_with_limits<X>(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    decision: &RuleDecision,
+    source_owned_targets: &BTreeSet<FactKey>,
+    limits: &EnvelopeLimits,
+) -> Result<PreparedDecision, DecisionRefusal<X>> {
     if catalog
         .rules
         .get(decision.rule_id.as_str())
@@ -142,7 +160,7 @@ pub fn prepare_rule_decision<X>(
         slice,
         turn,
         &decision.output,
-        &EnvelopeLimits::V1,
+        limits,
         AdmissionOrigin::Rule,
         source_owned_targets,
     )
@@ -187,6 +205,56 @@ pub struct AdmittedStockRule {
 }
 
 impl AdmittedStockRule {
+    pub(crate) fn receipt_binding<X>(
+        &self,
+        scope: &BTreeMap<String, String>,
+    ) -> Result<String, crate::ActionRefusal<X>> {
+        let scope: Vec<_> = scope
+            .iter()
+            .map(|(key, value)| (key.as_bytes(), value.as_bytes()))
+            .collect();
+        norn_ir::canonical::domain_hash_hex(b"stock.receipt/1\0", &(&self.pin, scope))
+            .map(|pin| format!("stock.post/1:{pin}"))
+            .map_err(|_error| crate::ActionRefusal::InvalidInput {
+                field: "scope".into(),
+            })
+    }
+
+    pub(crate) fn seal(&self, output: DecisionOutput) -> RuleDecision {
+        RuleDecision {
+            rule_id: self.rule_id.clone(),
+            pin: self.pin.clone(),
+            output,
+        }
+    }
+
+    /// Build a receipt/delivery invoke with the admitted artifact identity.
+    /// Pass the result to `commit_action`; authorization and sealing remain there.
+    #[must_use]
+    pub fn call<'a>(
+        &'a self,
+        voucher_id: &str,
+        scope: BTreeMap<String, String>,
+        actor: String,
+        idempotency_key: String,
+        turn: DecisionTurn,
+    ) -> crate::ActionCall<'a> {
+        crate::ActionCall {
+            action: &self.action,
+            action_artifact_id: &self.artifact_id,
+            action_version: &self.version,
+            scope,
+            actor,
+            input: BTreeMap::from([(
+                "id".into(),
+                norn_ir::RuntimeValue::String(voucher_id.into()),
+            )]),
+            idempotency_key,
+            turn,
+            object_type: None,
+        }
+    }
+
     /// The admitted action; this immutable view grants no rule seal.
     #[must_use]
     pub const fn action(&self) -> &norn_ir::ActionRoot {
@@ -365,6 +433,22 @@ mod stock_tests {
             world: World::Main,
             consumes: None,
         };
+        let scope = BTreeMap::from([("orgId".into(), "org_demo".into())]);
+        let binding = rule
+            .receipt_binding::<std::convert::Infallible>(&scope)
+            .unwrap();
+        assert_eq!(
+            binding,
+            rule.receipt_binding::<std::convert::Infallible>(&scope)
+                .unwrap(),
+            "POST-RETRY-PIN"
+        );
+        assert_ne!(
+            binding,
+            rule.receipt_binding::<std::convert::Infallible>(&BTreeMap::new())
+                .unwrap(),
+            "POST-RETRY-SCOPE"
+        );
         let mut decision = RuleDecision {
             rule_id: rule.rule_id.clone(),
             pin: "forged".into(),

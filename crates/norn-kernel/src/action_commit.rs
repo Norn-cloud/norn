@@ -442,6 +442,15 @@ impl ActionCallRecord {
             && self.object == other.object
             && self.input == other.input
             && self.actor == other.actor
+            && (!(self
+                .effect_kind
+                .as_deref()
+                .is_some_and(|k| k.starts_with("stock.post/1:"))
+                || other
+                    .effect_kind
+                    .as_deref()
+                    .is_some_and(|k| k.starts_with("stock.post/1:")))
+                || self.effect_kind == other.effect_kind)
     }
 
     fn binds_same_generated_call(
@@ -909,9 +918,6 @@ where
     let action = call.action;
     if action.stock_post.is_some() {
         catalog.checked_stock_rule::<H::Error>(call)?;
-        return Err(ActionRefusal::UnsupportedEffect {
-            action_id: action.action_id.clone(),
-        });
     }
     if !action.create_links.is_empty()
         && matches!(
@@ -1029,7 +1035,6 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    let action = call.action;
     let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
     else {
         return Err(ActionRefusal::InvalidInput {
@@ -1060,9 +1065,21 @@ where
     check_kind(catalog, &object_type, object_kind)?;
     let record_key = FactKey::new(
         ACTION_CALL_TYPE,
-        format!("{}/{}", action.action_id, call.idempotency_key),
+        format!("{}/{}", call.action.action_id, call.idempotency_key),
     );
-    let record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
+    let mut record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
+    let stock_snapshot = if call.action.stock_post.is_some() {
+        record.effect_kind = Some(
+            catalog
+                .checked_stock_rule::<H::Error>(call)?
+                .receipt_binding(&call.scope)?,
+        );
+        Some(stock::prepare_stock_snapshot(
+            host, catalog, call, authorizer,
+        )?)
+    } else {
+        None
+    };
     let recorded = host.load(&record_key).map_err(host_failure)?;
     if let Some(outcome) = replay(&recorded, &record, &call.idempotency_key)? {
         return Ok(outcome);
@@ -1080,14 +1097,13 @@ where
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
-        action,
+        call.action,
         &preparation.effective_input,
         &slice.values,
         &mut preparation.remaining_fuel,
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
     )?;
-    let mut record = record;
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
@@ -1116,6 +1132,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            stock_snapshot,
         },
         EnvelopePolicy { limits, meter },
     )
@@ -1390,6 +1407,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            stock_snapshot: None,
         },
         EnvelopePolicy { limits, meter },
     )
@@ -3277,6 +3295,7 @@ where
             record_key: record_key.clone(),
             recorded,
             record,
+            stock_snapshot: None,
             series_candidate: Some(candidate),
             remaining_fuel: preparation.remaining_fuel,
         };
@@ -3437,6 +3456,7 @@ struct Pending {
     recorded: FactState,
     record: ActionCallRecord,
     series_candidate: Option<SeriesCandidate>,
+    stock_snapshot: Option<stock::StockSnapshot>,
 }
 
 /// Per-decision limits and, when present, the shared aggregate turn meter.
@@ -3540,14 +3560,15 @@ where
         effective_input,
         mut remaining_fuel,
         target,
-        slice,
+        mut slice,
         reference_only,
-        link_reads,
+        mut link_reads,
         precondition_reads,
         record_key,
         recorded,
         record,
         series_candidate,
+        stock_snapshot,
     } = pending;
     let generated_key = series_candidate.is_some();
     let additional_events = usize::from(generated_key);
@@ -3573,8 +3594,30 @@ where
         commands,
         timers: Vec::new(),
     };
-    let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
-    let mut created_links = Vec::new();
+    let stock = stock_snapshot
+        .map(|snapshot| {
+            stock::prepare_stock_commit(
+                host,
+                catalog,
+                call,
+                &snapshot,
+                &mut slice,
+                &mut link_reads,
+                &output,
+                limits,
+            )
+        })
+        .transpose()?;
+    let (mut prepared, mut created_links, stock_quantity) = if let Some(stock) = stock {
+        (stock.0, stock.1, Some(stock.2))
+    } else {
+        (
+            prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?,
+            Vec::new(),
+            None,
+        )
+    };
+    counts.events = prepared.events.len();
     for binding in &call.action.create_links {
         let target_id = effective_input
             .get(&binding.target_id_field)
@@ -3658,7 +3701,10 @@ where
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
-    let result = if let Some((request, key)) = quantity {
+    let result = if let Some(quantity) = stock_quantity {
+        let proof = OwnedRowsCommitProof::new(&commit, limits.max_events, Some(quantity));
+        host.commit_owned_rows(commit, proof)
+    } else if let Some((request, key)) = quantity {
         if let Some(proof) = reference_reads {
             host.commit_action_references(commit, proof, Some((&request, &key)))
         } else {
@@ -3681,6 +3727,7 @@ where
         )),
         Err(error) => action_commit_conflict(
             host,
+            catalog,
             call,
             authorizer,
             error,
@@ -3972,6 +4019,7 @@ struct ActionReplayState<'a> {
 
 fn action_commit_conflict<H: CellHost + ?Sized>(
     host: &H,
+    catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     authorizer: &dyn ActionAuthorizer,
     error: CommitError<H::Error>,
@@ -4006,6 +4054,9 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
             // The winner may have changed authorization-relevant
             // values. A replay must use current authorization too.
             authorize_target(host, call, effective_input, authorizer, &record.object)?;
+            if call.action.stock_post.is_some() {
+                stock::prepare_stock_snapshot(host, catalog, call, authorizer)?;
+            }
             return Ok(outcome);
         }
     }

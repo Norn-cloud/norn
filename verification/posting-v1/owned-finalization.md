@@ -139,3 +139,16 @@ proposal from authorized reads and seal it; callers cannot submit this proposal.
 
 POST-QUANTITY-SNAPSHOT: all quantity reconstruction reads share one adapter-owned SQLite read snapshot, reusing an existing transaction; refusal releases a newly owned snapshot. SQL transaction-control guards remain unchanged.
 POST-CATALOG-ORDER: extension and property-type order does not change the schema pin. Conformance reverses both lists and checks the same pin.
+
+
+## Sealed stock transaction join
+
+POST-ATOMIC-JOIN: commit_action recomputes authoritative stock inputs and seals
+only the admitted stock rule's output, then commits the voucher transition,
+StockEvents, partition, two GL legs, quantity and receipt in one commit_owned_rows
+transaction. Lines, manifests, masters and complete history memberships retain
+CAS fences. Quantity uses the exact typed pack and current balance fences.
+POST-RETRY-PIN: stock receipts bind the admitting definition and full call scope;
+identical retry still requires current voucher and stock-read authorization.
+POST-RETRY-KEY-EXACT commits raw idempotency-key bytes to posting identity; a changed binding refuses without writes. POST-P4 is the durable engine
+conformance scenario for this join; surface acceptance is separate.
