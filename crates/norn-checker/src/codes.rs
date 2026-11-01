@@ -1332,6 +1332,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "transition {id} is not a transition of the inherited lifecycle; a subtype may only drop transitions",
     ),
     entry(
+        "mapping.interpretation.unsupported",
+        Tier::T3,
+        "law interpretations require member conformance and preservation obligations",
+    ),
+    entry(
         "mapping.model.expression_type",
         Tier::T3,
         "{expression}: {detail} ({code})",
