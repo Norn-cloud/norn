@@ -500,7 +500,7 @@ fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
             from: vec!["approved".into(), "partially_invoiced".into()],
         };
         let expected = format!(
-            "commerce.SalesOrder/SO-1 is {}; transition invoice only leaves approved or partially_invoiced, so it cannot fire now",
+            "commerce.SalesOrder/SO-1: status is {}; transition invoice only leaves approved or partially_invoiced, so it cannot fire now",
             current.as_deref().unwrap_or("unset")
         );
         assert_eq!(decision.to_string(), expected);

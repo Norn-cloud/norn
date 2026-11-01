@@ -1465,7 +1465,7 @@ pub enum DecisionRefusal<X> {
     },
     /// The object's current state is not a source state of the transition.
     #[error(
-        "{key} is {actual}; transition {transition} only leaves {allowed}, so it cannot fire now", actual = current.as_deref().unwrap_or("unset"), allowed = from.join(" or ")
+        "{key}: {lifecycle} is {actual}; transition {transition} only leaves {allowed}, so it cannot fire now", actual = current.as_deref().unwrap_or("unset"), allowed = from.join(" or ")
     )]
     NotFromState {
         /// The lifecycle property.
