@@ -5281,7 +5281,7 @@ fn obs_evidence_idempotent_capture_reuses_the_original_finding_cutoff() {
     let fact = norn_ir::runtime::encode(&finding).expect("encoded finding");
     store.inject("retry-producer", &fact).expect("committed producer preimage");
     let batch = norn_cell::CommitBatch {world:MAIN_WORLD.into(), scope:"org_demo/dev".into(), logical_time:store.read().clock_floor().expect("clock"), idempotency_key:Some("finding-request".into()), consumes:Some(norn_cell::Consumption::Observation {observation_id:"retry-producer".into()}), events:vec![norn_ir::runtime_object! {"op"=>"data_quality_finding", "fact"=>fact}], ..norn_cell::CommitBatch::default()};
-    assert!(matches!(store.commit(&batch).expect("first"), norn_cell::CommitOutcome::Applied(_)));
+    assert!(matches!(store.commit(&batch).expect("first"), norn_cell::CommitOutcome::Committed(_)));
     assert!(matches!(store.commit(&batch).expect("normalized retry"), norn_cell::CommitOutcome::Replayed(_)));
     let retained = store.read().ledger_page(0, 100).expect("ledger").into_iter().filter(|entry| entry.event.get("fact").and_then(|fact| fact.get("id")).and_then(Value::as_str) == Some(finding.id.as_str())).count();
     assert_eq!(retained, 1);
