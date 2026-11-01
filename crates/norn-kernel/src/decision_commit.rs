@@ -75,6 +75,7 @@ use crate::observations::{LogicalTime, World};
 #[derive(Debug, Clone, Default)]
 pub struct TypeCatalog<'a> {
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
+    pub(crate) rules: BTreeMap<&'a str, &'a crate::AdmittedRule>,
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
     extensions: Vec<&'a ObjectTypeExtension>,
     property_types: Option<&'a [PropertyTypeDef]>,
@@ -110,11 +111,23 @@ impl<'a> TypeCatalog<'a> {
                 .into_iter()
                 .map(|object_type| (object_type.name.as_str(), object_type))
                 .collect(),
+            rules: BTreeMap::new(),
             interfaces: BTreeMap::new(),
             extensions: Vec::new(),
             property_types: None,
             effective_model: OnceLock::new(),
         }
+    }
+
+    /// Bind rule evaluation authority to the cell's admitted definitions.
+    #[must_use]
+    pub fn with_rules(mut self, rules: impl IntoIterator<Item = &'a crate::AdmittedRule>) -> Self {
+        self.rules.extend(
+            rules
+                .into_iter()
+                .map(|rule| (rule.decision().rule_id(), rule)),
+        );
+        self
     }
 
     /// The same catalog with the admitted interfaces implemented by its
@@ -1821,7 +1834,7 @@ pub fn prepare_decision<X>(
     prepare_decision_with_source_owned_targets(catalog, slice, turn, output, &BTreeSet::new())
 }
 
-/// Prepares a rule decision while refusing direct fact changes to the
+/// Prepares unsealed decision data while refusing direct fact changes to the
 /// source-owned targets resolved by its host. The protected set is supplied
 /// from persisted observation authority markers and trigger provenance.
 /// Native objects of the same type remain writable.
@@ -1888,7 +1901,7 @@ fn prepare_decision_with_limits_and_source_owned_targets<X>(
         turn,
         output,
         limits,
-        AdmissionOrigin::Rule,
+        AdmissionOrigin::Action,
         source_owned_targets,
     )
 }
@@ -1961,14 +1974,14 @@ pub(crate) fn prepare_observed_properties<X>(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AdmissionOrigin {
+pub(crate) enum AdmissionOrigin {
     Rule,
     Action,
     Observation,
     OwnedRows,
 }
 
-fn prepare_decision_with_limits_for<X>(
+pub(crate) fn prepare_decision_with_limits_for<X>(
     catalog: &TypeCatalog<'_>,
     slice: &FactSlice,
     turn: &DecisionTurn,
@@ -2186,6 +2199,22 @@ where
         output.commands.len(),
         output.timers.len(),
     );
+    commit_prepared_decision(host, turn, prepared, counts, meter)
+}
+
+pub(crate) fn commit_prepared_decision<H>(
+    host: &mut H,
+    turn: &DecisionTurn,
+    prepared: PreparedDecision,
+    counts: EnvelopeCounts,
+    meter: Option<&mut TurnEnvelopeMeter>,
+) -> Result<CommitReceipt, DecisionRefusal<H::Error>>
+where
+    H: CellHost + ?Sized,
+    H::Event: From<FactEvent>,
+    H::Command: From<JsonObject>,
+    H::Input: From<JsonObject>,
+{
     if let Some(meter) = meter.as_deref() {
         meter
             .check(counts)
