@@ -399,6 +399,9 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
             if ownership == "custody" && !custody {
                 return Err(ActionRefusal::StockPosting(StockPostError::CustodySale));
             }
+            if !["custody", "company"].contains(&ownership.as_str()) {
+                return Err(invalid("metal ownership must be company or custody"));
+            }
             if custody {
                 if ownership != "custody" {
                     return Err(invalid("custody posting requires customer-owned metal"));
@@ -427,6 +430,8 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
             let fine = gross
                 .checked_mul(purity)
                 .ok_or(ActionRefusal::StockPosting(StockPostError::Overflow))?;
+            norn_ir::runtime::Decimal::parse(&fine.to_string())
+                .map_err(|_| ActionRefusal::StockPosting(StockPostError::Overflow))?;
             if fine != integer("fine_ticks")? {
                 return Err(ActionRefusal::StockPosting(StockPostError::Purity));
             }
@@ -730,7 +735,7 @@ pub fn plan_stock_effects<X>(
             "id" => event.id, "partition_id" => partition.witness.key,
             "ordinal" => partition.history.len().saturating_add(index), "operation" => operation,
             "quantity" => stock_decimal(quantity)?, "value" => stock_decimal(value)?,
-            "allocations" => stock_json(&event.allocations)?, "owner" => stock_json(&partition.owner)?, "voucher_id" => target.key,
+            "allocations" => stock_json(&event.allocations)?, "owner" => stock_json(partition.owner.as_ref().unwrap_or(&partition.masters[0]))?, "voucher_id" => target.key,
             "line_id" => line.id, "effective_at" => effective,
         ) else {
             return Err(stock_invalid("invalid stock event object"));
@@ -766,7 +771,7 @@ pub fn plan_stock_effects<X>(
         .ok_or_else(|| stock_invalid("stock partition total overflow"))?;
     let V::Object(values) = norn_ir::runtime_object! (
         "id" => partition.witness.key, "event_count" => partition.history.len().saturating_add(plan.events.len()),
-        "binding_pin" => partition.binding_pin, "owner" => stock_json(&partition.owner)?, "quantity" => stock_decimal(quantity)?, "value" => stock_decimal(value)?,
+        "binding_pin" => partition.binding_pin, "owner" => stock_json(partition.owner.as_ref().unwrap_or(&partition.masters[0]))?, "quantity" => stock_decimal(quantity)?, "value" => stock_decimal(value)?,
         "layers" => stock_json(&plan.layers)?, "effective_at" => effective,
     ) else {
         return Err(stock_invalid("invalid stock witness object"));

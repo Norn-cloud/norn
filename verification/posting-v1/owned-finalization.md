@@ -165,7 +165,9 @@ custody_owner must equal that owner. The lot's canonical item identity selects
 its partition; its owner and complete authoritative metadata are pinned in the
 partition's binding hash. Owner/purity reassignment after a first posting
 refuses, including after an empty return. Events and the partition record the
-canonical owner. Company receipt/delivery cannot consume a custody lot.
+canonical owner. JEWELRY-NAMED-OWNER: custody requires a non-null named
+party. Company inventory records its canonical company FactKey as owner;
+null is never a published owner. Company receipt/delivery cannot consume a custody lot.
 
 JEWELRY-ZERO-COMPANY: custody receipt creates zero-value FIFO layers; return
 consumes those layers. Both use the existing conserved quantity templates and
@@ -174,7 +176,8 @@ value on customer metal. No parallel posting adapter is introduced.
 
 JEWELRY-EXACT-INPUT: the #263 normalization boundary supplies positive integer
 gross_micrograms and purity_numerator in 1..24,000,000. The kernel recomputes
-signed-i128 fine ticks with checked multiplication and requires exact agreement
+fine ticks with checked multiplication bounded by runtime Decimal's
+96-bit integer maximum (79,228,162,514,264,337,593,543,950,335) and requires exact agreement
 with fine_ticks. It never rounds or accepts a caller's asserted product.
 
 JEWELRY-REFUSAL-NOOP: custody sale returns stock.custody_sale_refused with a

@@ -3046,13 +3046,6 @@ mod cp1_stock {
                             .expect("typed custody fixture"),
                         )
                         .expect("typed custody fixture");
-                        if ["stock.ReceiptLine", "stock.DeliveryLine"].contains(&ty.name.as_str()) {
-                            ty.links
-                                .iter_mut()
-                                .find(|l| l.id.as_str() == "item")
-                                .expect("typed custody fixture")
-                                .target = norn_ir::ObjectTypeName("jewelry.MetalLot".into());
-                        }
                         if ["stock.PurchaseReceipt", "stock.DeliveryNote"]
                             .contains(&ty.name.as_str())
                         {
@@ -3128,7 +3121,7 @@ mod cp1_stock {
             values: BTreeMap::new(),
         }
     }
-    fn seed(store: &mut CellStore, metal: bool) {
+    fn seed(store: &mut CellStore, metal: bool, overflow: bool) {
         let mut writes = vec![
             put(
                 "stock.Company",
@@ -3228,7 +3221,12 @@ mod cp1_stock {
                 {
                     if object_type == "stock.Item" {
                         *object_type = "jewelry.MetalLot".into();
-                        values.extend(serde_json::from_value::<JsonObject>(json!({"ownership":"custody","metal":"Au","gross_micrograms":8,"purity_numerator":18000000,"fine_ticks":144000000})).expect("typed custody fixture"));
+                        let gross = 79_228_162_514_264_337_593_543_950_335_i128 / 24_000_000;
+                        let gross = gross + i128::from(overflow);
+                        values.extend(serde_json::from_str::<JsonObject>(&format!(
+                            r#"{{"ownership":"custody","metal":"Au","gross_micrograms":{gross},"purity_numerator":24000000,"fine_ticks":{}}}"#,
+                            if overflow { 1 } else { gross * 24_000_000 }
+                        )).expect("Decimal boundary fixture"));
                     }
                 }
             }
@@ -3321,13 +3319,28 @@ mod cp1_stock {
     }
     #[tokio::test]
     async fn post_cp1_engine_atomic_fifo_retry_reopen_and_replay() {
-        run(false).await;
+        run(false, false).await;
     }
     #[tokio::test]
     async fn custody_isolated_refused_is_noop_durable_correspondence() {
-        run(true).await;
+        run(true, false).await;
     }
-    async fn run(metal: bool) {
+    #[tokio::test]
+    async fn custody_decimal_boundary_overflow_is_noop() {
+        run(true, true).await;
+    }
+    fn assert_custody_sale(
+        cell: &mut NativeCell,
+        catalog: &TypeCatalog<'_>,
+        sale: &ActionCall<'_>,
+    ) {
+        let before = cell.store().read().dump().expect("dump");
+        let error = commit_action(cell, catalog, sale, &Reads).expect_err("custody sale");
+        assert_eq!(error.code(), "stock.custody_sale_refused");
+        assert!(error.to_string().contains("custody"));
+        assert_eq!(before, cell.store().read().dump().expect("no writes"));
+    }
+    async fn run(metal: bool, overflow: bool) {
         let (artifacts, definitions) = definitions(metal);
         let rules =
             norn_kernel::admit_stock_rules(&artifacts).expect("checker-admitted stock definitions");
@@ -3340,10 +3353,18 @@ mod cp1_stock {
         store
             .bind("scope", "org_demo/dev")
             .expect("POST-STORE-BIND-BEFORE-FIRST-COMMIT");
-        seed(&mut store, metal);
+        seed(&mut store, metal, overflow);
         let mut cell: NativeCell =
             NativeCell::new(store, "org_demo/dev", |c| c.payload.clone()).expect("host");
         let receipt = invoke(&catalog, "stock.receipt.submit", "pr", "receive");
+        if overflow {
+            let before = cell.store().read().dump().expect("dump");
+            let error = commit_action(&mut cell, &catalog, &receipt, &Reads)
+                .expect_err("JEWELRY-DECIMAL-BOUNDARY");
+            assert_eq!(error.code(), "stock.arithmetic_overflow");
+            assert_eq!(before, cell.store().read().dump().expect("no writes"));
+            return;
+        }
         let snapshot =
             prepare_stock_snapshot(&cell, &catalog, &receipt, &Reads).expect("authoritative setup");
         let partition = snapshot
@@ -3423,6 +3444,24 @@ mod cp1_stock {
             )
             .expect("quantity balance");
         assert_eq!(balance.posted, "1000000", "POST-QUANTITY");
+        let mut sale_artifacts = artifacts.clone();
+        for artifact in &mut sale_artifacts {
+            if let ArtifactPayload::Action(payload) = &mut artifact.payload {
+                let mut action: norn_ir::ActionRoot =
+                    serde_json::from_value(payload.to_json_value()).expect("action");
+                if let Some(post) = &mut action.stock_post {
+                    post.operation = norn_ir::ActionStockOperation::Delivery;
+                }
+                *payload = serde_json::from_value(serde_json::to_value(action).expect("action"))
+                    .expect("action");
+            }
+        }
+        let sale_rules = norn_kernel::admit_stock_rules(&sale_artifacts).expect("sale rules");
+        let sale_catalog = TypeCatalog::new(&definitions).with_stock_rules(&sale_rules);
+        let sale = invoke(&sale_catalog, "stock.delivery.submit", "over", "sale");
+        if metal {
+            assert_custody_sale(&mut cell, &sale_catalog, &sale);
+        }
         let before = cell.store().read().dump().expect("dump");
         let over = invoke(&catalog, "stock.delivery.submit", "over", "oversell");
         let error =
@@ -3478,6 +3517,9 @@ mod cp1_stock {
             commit_action(&mut cell, &catalog, &delivery, &Reads).expect("reopen retry"),
             ActionOutcome::Replayed { .. }
         ));
+        if metal {
+            assert_custody_sale(&mut cell, &sale_catalog, &sale);
+        }
         let replay_path = dir.path().join("replay.sqlite");
         CellStore::restore_from(
             &mut exporter,
