@@ -844,11 +844,16 @@ pub fn recover_legacy_admission_receipt(
         }
     }
 
-    if checked.receipt.admitted {
+    for format in [FLOAT_RECEIPT_FORMAT, FLOAT_LAW_RECEIPT_FORMAT] {
+        if !checked.receipt.admitted
+            || (format == FLOAT_LAW_RECEIPT_FORMAT && checked.receipt.law_enrollment.is_empty())
+        {
+            continue;
+        }
         let bytes = norn_canonical::serialize(
             &checked
                 .receipt
-                .to_canonical_value_with_format(FLOAT_RECEIPT_FORMAT, true)?,
+                .to_canonical_value_with_format(format, true)?,
         )?;
         let recovered =
             String::from_utf8(bytes).map_err(|error| invalid_receipt(error.to_string()))?;
@@ -1023,11 +1028,10 @@ impl ArtifactSetRef {
         artifact_ref: fn(&ArtifactEnvelope) -> Result<ArtifactRef, ReceiptError>,
     ) -> Result<Self, ReceiptError> {
         let refs = |envelopes: &[ArtifactEnvelope]| -> Result<Vec<ArtifactRef>, ReceiptError> {
-            let mut refs = envelopes
+            let refs = envelopes
                 .iter()
                 .map(artifact_ref)
                 .collect::<Result<Vec<_>, _>>()?;
-            refs.sort();
             Ok(refs)
         };
         Self::from_refs(refs(artifacts)?, refs(base)?)

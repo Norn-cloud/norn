@@ -283,7 +283,7 @@ export interface components {
          * @description Receipt format for a newly issued checker receipt.
          * @enum {string}
          */
-        NornCheckReceiptFormat: "norn-checker/receipt@2" | "norn-checker/receipt@3" | "norn-checker/receipt@4";
+        NornCheckReceiptFormat: "norn-checker/receipt@5" | "norn-checker/receipt@6" | "norn-checker/receipt@7";
         /** @description One finding in the checker's stable diagnostics document. */
         NornCheckerDiagnostic: {
             /** @description The artifact that owns this finding, when known. */

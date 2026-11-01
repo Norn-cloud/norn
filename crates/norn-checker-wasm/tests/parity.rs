@@ -34,7 +34,7 @@ const OUT_ENV: &str = "NORN_CHECKER_WASM_PARITY_OUT";
 /// `norn-checker`'s pinned hash of the retail registry receipt
 /// (`tests/check_receipt.rs`): the ABI issues the same receipt.
 const RETAIL_RECEIPT_SHA256: &str =
-    "c4f1873c8393a5148cc6b039bcb4e01355345f45e4d921ee55d0d0c8766b803e";
+    "14ea133c9477b0218076a0afa73d87be7da5a529745f1609c67c2035520a347f";
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

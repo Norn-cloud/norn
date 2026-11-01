@@ -225,6 +225,15 @@ pub struct NornInheritedLawOrigin {
 /// Receipt format for a newly issued checker receipt.
 #[derive(Debug, Clone, Copy, ToSchema)]
 pub enum NornCheckReceiptFormat {
+    /// `norn-checker/receipt@2`.
+    #[serde(rename = "norn-checker/receipt@2")]
+    V2,
+    /// `norn-checker/receipt@3`.
+    #[serde(rename = "norn-checker/receipt@3")]
+    V3,
+    /// `norn-checker/receipt@4`, with inherited-law origins.
+    #[serde(rename = "norn-checker/receipt@4")]
+    V4,
     /// Exact-source receipt, mapless.
     #[serde(rename = "norn-checker/receipt@5")]
     V5,

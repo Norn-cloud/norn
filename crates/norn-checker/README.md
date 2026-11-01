@@ -20,11 +20,7 @@ It holds every check over the typed IR in `norn-ir` (T1-CHK-1, #2524, moved them
 Retained definition receipts are verified against their recorded checker/profile and exact artifact set before re-admission. Legacy `receipt@1` evidence retains the historical identifier policy; upgraded `receipt@2` evidence records that policy explicitly. New installs and updates always enforce the current identifier limits. Identifier limits are defined in `norn-ir::identifier_limits`.
 
 ### Exact-source receipt identity (HOST-RECEIPT)
-
-RECEIPT-EXACT: receipt identity is injective over exact canonical source
-(subject to SHA-256 collision resistance). Candidate and base identities hash
-retained semantic source under Norn1 after inline layout extraction, before f64
-decoding. Typed inputs bind their serialized projection; raw admission callers
+RECEIPT-EXACT: receipt identity is injective over exact canonical source (assuming SHA-256 collision resistance). Candidate and base identities hash exact semantic source under Norn1 after inline layout extraction. Typed inputs bind their serialized projection; raw admission callers
 must use `check_artifact_sources_with_receipt` and `verify_admission_receipt_sources`.
 
 Permanent vectors: EXACT-INTEGER (`9007199254740992` / `9007199254740993`),
@@ -36,4 +32,4 @@ receipt identity when keys are reordered. The tests are in `tests/check_receipt.
 The second identity generation writes receipt@5 (mapless), @6 (flow map), @7
 (law origins); @1–@4 already name persisted formats. Readers temporarily accept
 @1–@4 with historical hash semantics, including hash-only recovery. Their removal
-is a separate contract change. Historical receipts do not attest exact source.
+is a separate contract change.
