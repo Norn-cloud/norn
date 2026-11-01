@@ -13,7 +13,7 @@
 import { relative, resolve, sep } from "node:path"
 import ts from "typescript"
 import type { Diagnostic, ProfileChecker } from "../check.ts"
-import type { Json } from "../canonical.ts"
+import { type Json, toJson } from "../canonical.ts"
 import { BudgetExceeded, type ExpansionBudget } from "../builder/budget.ts"
 import * as C from "../builder/connector.ts"
 import * as A from "../builder/action.ts"
@@ -746,7 +746,7 @@ class DefinitionCompiler {
             semanticsVersion: "1.0", identity: this.json(policy.get("identity")!),
             order: this.json(policy.get("order")!), arithmetic: this.json(policy.get("arithmetic")!),
             maxItems: this.json(policy.get("maxItems")!), maxAccumulatorBytes: this.json(policy.get("maxAccumulatorBytes")!),
-            itemSchema: stepInput.properties.item, accumulatorSchema: output, initial: X.render(initial, scope),
+            itemSchema: toJson(stepInput.properties.item), accumulatorSchema: toJson(output), initial: X.render(initial, scope),
           }
         }
         calls.push({ id: name, name, type: "decisionNode", content: { key: pin.artifactId, inputField, outputPath: name, passThrough: true, ...(orderedFold ? { orderedFold } : {}) } })
