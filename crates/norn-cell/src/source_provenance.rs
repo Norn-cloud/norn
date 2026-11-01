@@ -67,16 +67,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if observed.id.0 != *observation_id || *observation_id != format!("mapping-bundle:{}", bundle.digest)
             || receipt.body.definitions_version != bundle.definitions_version { return Err(invalid()); }
         self.recheck_mapping_bundle(&bundle)?;
-        let mapped = bundle.records.iter().find(|r| r.object_type == fact.object_type && r.key == fact.key).ok_or_else(invalid)?;
+        source_from_bundle(&bundle, &instance).map(Some)
+    }
+}
+
+fn source_from_bundle(bundle: &MappingBundle, instance: &ObjectRecord) -> Result<InstanceSourceProvenance, CellError> {
+    let invalid = || CellError::MappingBundleMismatch;
+        let mapped = bundle.records.iter().find(|r| r.object_type == instance.object_type && r.key == instance.id).ok_or_else(invalid)?;
         let invocation = mapped.invocations.first().ok_or_else(invalid)?;
         if invocation.input.iter().filter(|(p, _)| p.as_str() != norn_checker::mapping::OBJECT_ID_FIELD)
             .any(|(property, value)| instance.values.get(property) != Some(value)) { return Err(invalid()); }
         let (artifact_id, version, sha256) = bundle.artifact_pins.iter().find(|(id, _, _)| *id == bundle.input.mapping).ok_or_else(invalid)?.clone();
         let text = |field: &str| bundle.raw.get(field).and_then(RuntimeValue::as_str).map(str::to_owned).ok_or_else(invalid);
-        Ok(Some(InstanceSourceProvenance {
+        Ok(InstanceSourceProvenance {
             bundle_digest:bundle.digest.clone(), source_record_ref:mapped.provenance.source.clone(),
             document_ref:SourceRecordRef::new(text("source")?, text("source_id")?), document_digest:text("payload_digest")?,
             mapping_pin:MappingPin {artifact_id,version,sha256}, field_provenance:mapped.property_provenance.clone(),
-        }))
-    }
+        })
 }
