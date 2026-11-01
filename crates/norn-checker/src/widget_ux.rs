@@ -6311,11 +6311,10 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                 Type::Record(name)
             }
             Schema::Array(items) => self.schema_type(items, records).list(),
-            Schema::String(None) => Type::text(),
+            Schema::String(None) | Schema::Decimal(_) => Type::text(),
             Schema::String(Some(values)) => Type::enumeration(values.iter().cloned()),
             Schema::Integer => Type::Integer,
             Schema::Number => Type::Number,
-            Schema::Decimal(_) => Type::text(),
             Schema::Boolean => Type::Bool,
             Schema::Null | Schema::Json => Type::Json,
             Schema::Nullable(inner) => self.schema_type(inner, records).optional(),
@@ -7034,7 +7033,6 @@ fn inferred_matches_schema(
         (InferredType::Enum(values), Schema::String(Some(allowed))) => Err(format!(
             "{path} produces string values {values:?} outside ActionIR values {allowed:?}"
         )),
-        (InferredType::String, Schema::Decimal(_)) => Ok(()),
         (InferredType::Const(text), decimal @ Schema::Decimal(_)) => decimal
             .decode_action_input(norn_ir::RuntimeValue::String(text.clone()), path)
             .map(|_value| ())
@@ -7047,7 +7045,8 @@ fn inferred_matches_schema(
             }
             Ok(())
         }
-        (InferredType::Null, Schema::Null)
+        (InferredType::String, Schema::Decimal(_))
+        | (InferredType::Null, Schema::Null)
         | (
             InferredType::String
             | InferredType::Const(_)
