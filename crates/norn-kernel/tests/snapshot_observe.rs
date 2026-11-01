@@ -1236,7 +1236,7 @@ norn_testkit::proptest::proptest! {
         let key = FactKey::new("test.SnapshotOrder", "SO-1");
         let values: JsonObject = serde_json::from_value(json!({"amount": -1})).unwrap();
         let provenance = provenance("amount");
-        let mut cell = cell();
+        let mut cell = cell().with_types(vec![object_type.clone()]);
         let delivery = next_delivery(&mut cell, "original");
         let slice = load_slice(&cell, [key.clone()]).unwrap();
         commit_observed_snapshot(
