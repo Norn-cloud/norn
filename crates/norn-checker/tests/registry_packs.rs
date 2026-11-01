@@ -179,3 +179,26 @@ fn shopify_order_is_a_commitment_and_its_receivable_the_claim() {
         ["norn.core.commitment.gives.rise.to"]
     );
 }
+
+#[test]
+fn odoo_moves_give_rise_to_transactions_and_draft_reset_is_non_conforming() {
+    // Lead rulings 2026-10-31: an invoice gives rise to an accounting
+    // transaction rather than being one; resetting a posted move to draft is
+    // non-conforming source behaviour, flagged and never mapped.
+    let coverage = coverage("norn.link.odoo.canon");
+    let move_targets: Vec<&String> = coverage.mapped["norn.odoo.account.move"]
+        .iter()
+        .flat_map(|(_, to)| to)
+        .collect();
+    assert_eq!(move_targets, ["norn.finance.invoice"]);
+    assert!(
+        coverage
+            .mapped
+            .contains_key("norn.odoo.account.move.posting")
+    );
+    assert!(
+        coverage
+            .non_conforming
+            .contains("norn.odoo.account.move.button.draft")
+    );
+}

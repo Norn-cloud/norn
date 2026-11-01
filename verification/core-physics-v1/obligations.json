@@ -1,0 +1,111 @@
+{
+  "registry_version": "norn.verification.obligations.v1",
+  "obligations": [
+    {
+      "id": "INV-CORE-VALUE-CONSERVATION",
+      "law": "core.law.value_conservation",
+      "domain": "core-physics",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "Every admitted exchange or journal effect nets to zero in every unit, and so does every book built only through the core posting primitives.",
+      "owner": "norn.core physics pack; kernel accounting-leg commit check",
+      "assumptions": [
+        "Amounts are exact integers at one declared precision per unit.",
+        "Value moves only through types that declare an accounting leg; an undeclared type is a marked boundary where the inherited claim stops."
+      ],
+      "counterexamples": [
+        "a two-leg journal debiting 100 and crediting 90 is admitted",
+        "100 EGP balanced against -100 USD",
+        "a workflow posts each half of an exchange in a separate unbalanced journal"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-CORE-POSTED-IMMUTABLE",
+      "law": "core.law.posted_immutable",
+      "domain": "core-physics",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "No admitted operation edits or removes a posted economic event or journal entry; each admitted operation only adds entries.",
+      "owner": "norn.core physics pack; kernel accounting-leg commit check",
+      "assumptions": [
+        "The ledger is the only writer of posted entries."
+      ],
+      "counterexamples": [
+        "an update to a posted leg is committed",
+        "a posted leg is deleted through an unmarked ancestor type"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-CORE-LINKED-REVERSAL",
+      "law": "core.law.correction_is_linked_reversal",
+      "domain": "core-physics",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "A correction is a new entry linked to its posted original with exactly negated legs, so the pair nets to zero on every account and unit; an entry is reversed at most once and a reversal is never reversed.",
+      "owner": "norn.core physics pack",
+      "assumptions": [
+        "A partial correction is a full reversal followed by a new posting."
+      ],
+      "counterexamples": [
+        "a reversal with a different amount than its original",
+        "two reversals of one original",
+        "a reversal of a reversal"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-CORE-QUANTITY-CONSERVATION",
+      "law": "core.law.quantity_conservation",
+      "domain": "core-physics",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "For one resource in one unit, stock received equals stock issued plus stock on hand; a transformation issues its inputs and receives its outputs, so the law holds per resource.",
+      "owner": "norn.core physics pack; kernel quantity ledger",
+      "assumptions": [
+        "Quantities are exact and in one unit per balance partition; conversions are separate balanced postings."
+      ],
+      "counterexamples": [
+        "a transfer that debits one location without crediting another",
+        "a transformation output with no recorded consumption"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-CORE-ESCROW-NON-NEGATIVE",
+      "law": "core.law.escrow_non_negative",
+      "domain": "core-physics",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "Holds (escrow, reservations, quota use) are never negative and never exceed the balance they are held against, so available quantity is never negative.",
+      "owner": "norn.core physics pack; kernel quantity ledger",
+      "assumptions": [
+        "Every hold, release and consumption goes through the quantity ledger in one cell transaction."
+      ],
+      "counterexamples": [
+        "two reservations each fit the available stock but together exceed it",
+        "releasing more than is held"
+      ],
+      "status": "specified"
+    },
+    {
+      "id": "INV-CORE-COMMITMENT-COMPLETION",
+      "law": "core.law.commitment_completion",
+      "domain": "core-physics",
+      "priority": "P0",
+      "kind": "liveness",
+      "statement": "A commitment ends fulfilled, cancelled or breached and is never dropped: terminal states are absorbing, no operation removes a commitment, and once its due time passes the deadline event ends it.",
+      "owner": "norn.core physics pack; cell clock deadline timer",
+      "assumptions": [
+        "The cell clock raises the deadline event for every open commitment once its due time is reached (timer fairness)."
+      ],
+      "counterexamples": [
+        "a promised commitment past its due time that is neither fulfilled nor breached",
+        "a cancelled commitment reopened",
+        "a commitment row deleted while open"
+      ],
+      "status": "specified"
+    }
+  ]
+}

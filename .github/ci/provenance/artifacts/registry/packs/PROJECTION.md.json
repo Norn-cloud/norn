@@ -1,5 +1,5 @@
 {
-  "sha256": "3f48b75ac630676a002448e78e94a21919fc98411c63331e1469b7e48ba26f8d",
+  "sha256": "4b65455572c8f2858c9b53c46cda0151502e772d8e9cf20c3cb3007c9d59725b",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -7,6 +7,7 @@
   "analyzed_sources": [],
   "parents": [
     "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
+    "registry/packs/odoo/artifacts/norn.link.odoo.canon.json",
     "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
     "crates/norn-checker/tests/registry_packs.rs"
   ],
