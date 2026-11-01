@@ -7,6 +7,8 @@ Run on Boat/CI from a clean checkout with Rust 1.98, Bun and frozen authoring de
 bash scripts/demo/run.sh
 ```
 
+Fallback status: **checker-admitted / refused; obligations generated; runtime execution not yet (#341 #342 #343)**.
+
 The default exits successfully only when the current admission demonstration succeeds; it always says INCOMPLETE. `--require-complete` exits 1 while required beats are missing. Unexpected compile/check failures stop execution. No tenant, external integration or stock/books state is manufactured. The script has no output fixtures or mocked adapters.
 
 CURRENT: `jewelry.source.ts` declares a small measurement schema and lifecycle, not a complete REA implementation. The Rust example authors a typed LawIR over it and invokes the existing checker and obligation generator. It prints admitted definitions, EN/AR reviewed wording slots, exact generated challenge/assessments, an actual invalid-binding refusal and a protected-law-edit refusal. A law admission, transition-frame assessment or goal inventory is not runtime enforcement, a generated solver counterexample or a proof. The local approval object is example-only and grants no deployment authority. EN/AR controlled rendering remains #322; no parallel renderer is implemented here.

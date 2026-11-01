@@ -6,7 +6,8 @@ case "${1:-}" in
   *) printf 'usage: bash scripts/demo/run.sh [--require-complete]\n' >&2; exit 2 ;;
 esac
 printf 'Source: %s\n' "$(git rev-parse HEAD)"
-printf 'Admission-only rehearsal; target business values are not runtime results.\n'
+printf 'checker-admitted / refused; obligations generated; runtime execution not yet (#341 #342 #343)\n'
+printf 'Target business values are not runtime results.\n'
 printf 'Beat 1 — working stock/books app\nnot yet: #214 #341 #342 (declared valuation and atomic effect closure)\n'
 printf 'Beat 2 — inspect authored definitions (schema fragment only)\n'
 bun tools/norn-ts/src/cli.ts profile scripts/demo/jewelry.source.ts
