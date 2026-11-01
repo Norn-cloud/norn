@@ -1499,7 +1499,7 @@ pub enum DecisionRefusal<X> {
         /// Registered guard diagnostic, preserving the underlying failure.
         diagnostic: Option<&'static str>,
         /// The object.
-        key: FactKey,
+        key: Box<FactKey>,
         /// The transition.
         transition: String,
         /// The guard source.
@@ -1639,12 +1639,11 @@ impl<X> DecisionRefusal<X> {
             | Self::UnresolvedLifecycle { key, .. }
             | Self::UnknownTransition { key, .. }
             | Self::GuardFalse { key, .. }
-            | Self::GuardError { key, .. }
             | Self::Stale { key, .. }
             | Self::AccountingPosting { key, .. }
             | Self::InvariantBudgetExceeded { key, .. }
             | Self::TraversalLimitExceeded { key, .. } => Some(key),
-            Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
+            Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } | Self::GuardError { key, .. } => {
                 Some(key.as_ref())
             }
             Self::ReadOnlyWorld
@@ -2614,7 +2613,7 @@ fn check_guards<X>(
         .map(|entry| entry.code);
     let guard_error = |guard: &str, reason: String| DecisionRefusal::GuardError {
         diagnostic,
-        key: key.clone(),
+        key: Box::new(key.clone()),
         transition: declared.id.as_str().to_owned(),
         guard: guard.to_owned(),
         reason,

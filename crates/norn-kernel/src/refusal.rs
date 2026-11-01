@@ -377,12 +377,16 @@ fn lifecycle_guard(
     transition: &str,
     guard: &str,
     error: Option<&str>,
+    underlying_code: Option<&str>,
 ) -> BTreeMap<String, RuntimeValue> {
     let mut values = refusal_values([("transition", transition.into()), ("guard", guard.into())]);
     let (name, value) = error.map_or(("result", RuntimeValue::Bool(false)), |error| {
         ("error", error.into())
     });
     values.insert(name.to_owned(), value);
+    if let Some(code) = underlying_code {
+        values.insert("underlyingCode".to_owned(), code.into());
+    }
     values
 }
 
@@ -444,31 +448,14 @@ impl<X> DecisionRefusal<X> {
                     ("transition", RuntimeValue::String(transition.clone())),
                 ]),
             )),
-            Self::GuardFalse {
-                key,
-                transition,
-                guard,
-                diagnostic,
-            } => {
-                let mut values = lifecycle_guard(transition, guard, None);
-                if diagnostic.is_some() {
-                    values.insert("underlyingCode".to_owned(), "decision.guard_false".into());
-                }
-                Some(("lifecycle.guard", key, values))
-            }
-            Self::GuardError {
-                key,
-                transition,
-                guard,
-                reason,
-                diagnostic,
-            } => {
-                let mut values = lifecycle_guard(transition, guard, Some(reason));
-                if diagnostic.is_some() {
-                    values.insert("underlyingCode".to_owned(), "decision.guard_error".into());
-                }
-                Some(("lifecycle.guard_evaluable", key, values))
-            }
+            Self::GuardFalse { key, transition, guard, diagnostic } => Some((
+                "lifecycle.guard", key,
+                lifecycle_guard(transition, guard, None, diagnostic.map(|_| "decision.guard_false")),
+            )),
+            Self::GuardError { key, transition, guard, reason, diagnostic } => Some((
+                "lifecycle.guard_evaluable", key.as_ref(),
+                lifecycle_guard(transition, guard, Some(reason), diagnostic.map(|_| "decision.guard_error")),
+            )),
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
