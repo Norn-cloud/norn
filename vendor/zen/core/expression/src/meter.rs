@@ -23,7 +23,7 @@ mod proof;
 
 /// Returned when a charge would take a [`Meter`] past its limit.
 ///
-/// `used` is the failing total, saturated at u64::MAX when it overflows.
+/// `used` is the failing total, saturated at `u64::MAX` when it overflows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[error("operation budget exhausted: {used} units needed, limit {limit}")]
 pub struct BudgetExhausted {
