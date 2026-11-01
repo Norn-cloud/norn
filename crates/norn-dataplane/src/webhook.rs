@@ -40,9 +40,6 @@ pub enum IngestError {
         /// The MAC's message.
         reason: String,
     },
-    /// The body is not JSON.
-    #[error("the body is not JSON: {0}")]
-    Json(#[from] serde_json::Error),
     /// A required field or header is absent or has the wrong type.
     #[error("required field `{field}` is missing or not a {expected}")]
     MissingField {
@@ -64,20 +61,6 @@ pub enum IngestError {
         value: String,
         /// The parser's message.
         reason: String,
-    },
-    /// The delivery came from a different shop than configured.
-    #[error("delivery is for shop `{found}`, expected `{expected}`")]
-    ShopMismatch {
-        /// The configured shop domain.
-        expected: String,
-        /// The header value.
-        found: String,
-    },
-    /// The sweep configuration is unusable.
-    #[error("invalid sweep configuration: {reason}")]
-    InvalidSweep {
-        /// Why.
-        reason: &'static str,
     },
     /// The resulting observation was refused.
     #[error(transparent)]
@@ -155,25 +138,4 @@ pub(crate) fn format_frappe_datetime(datetime: jiff::civil::DateTime) -> String 
         datetime.minute(),
         datetime.second(),
     )
-}
-
-/// Normalize an RFC 3339 instant with offset (Shopify `updated_at`,
-/// `X-Shopify-Triggered-At`) to zero-padded UTC microseconds since the Unix
-/// epoch, so lexicographic order equals time order across offsets.
-///
-/// # Errors
-///
-/// [`IngestError::InvalidTimestamp`], including instants before the epoch.
-pub fn normalize_instant(value: &str) -> Result<String, IngestError> {
-    let invalid = |reason: String| IngestError::InvalidTimestamp {
-        value: value.to_owned(),
-        reason,
-    };
-    let instant: jiff::Timestamp = value
-        .trim()
-        .parse()
-        .map_err(|error: jiff::Error| invalid(error.to_string()))?;
-    let micros = u64::try_from(instant.as_microsecond())
-        .map_err(|error| invalid(format!("before the Unix epoch ({error})")))?;
-    Ok(format!("{micros:020}"))
 }

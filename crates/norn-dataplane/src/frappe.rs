@@ -29,10 +29,13 @@
 //! - An upsert's `event_id` is `{doctype}/{name}@{modified}`; a delete's is
 //!   `{doctype}/{name}#deleted@{modified}`, with `modified` normalized
 //!   ([`normalize_frappe_datetime`]). The completeness sweep
-//!   ([`crate::sweep`]) derives the same ids from the same source state, so a
+//!   derives the same ids from the same source state, so a
 //!   webhook and a sweep that saw the same version converge to one
 //!   observation.
 //!
+//! DP-FRAPPE-1: authenticate raw bytes before parsing; invalid signatures refuse.
+//! DP-FRAPPE-2: signed replay preserves source identity, version and pipeline
+//! provenance through sealing, submission and convergence (`frappe_ingest_conforms`).
 //! Observations are history, not authorization.
 
 use serde_json::{Map, Value};
@@ -201,4 +204,43 @@ pub fn ingest_frappe_webhook(
         None,
         FRAPPE_WEBHOOK_PIPELINE,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    #[test]
+    #[allow(clippy::expect_used, reason = "conformance assertions")]
+    fn frappe_ingest_conforms() {
+        let source = FrappeSource {
+            source: "fixture".into(),
+            redaction: None,
+        };
+        let body = br#"{"event":"on_submit","doc":{"doctype":"Order","name":"fixture","modified":"2026-11-01 00:00:00","amount":42}}"#;
+        let mut mac = Hmac::<Sha256>::new_from_slice(b"fixture").expect("key");
+        mac.update(body);
+        let signature = STANDARD.encode(mac.finalize().into_bytes());
+        let obs =
+            ingest_frappe_webhook(&source, b"fixture", body, Some(&signature), 42).expect("signed");
+        assert_eq!(obs.source_id, "Order/fixture");
+        assert_eq!(obs.source_version, "2026-11-01 00:00:00.000000");
+        assert_eq!(obs.pipeline_version, FRAPPE_WEBHOOK_PIPELINE);
+        assert_eq!(obs.extracted_at, 42);
+        let submission = obs.submission().expect("submission");
+        assert_eq!(submission.mapping_version, FRAPPE_WEBHOOK_PIPELINE);
+        assert_eq!(submission.payload["payload_digest"], obs.payload_digest);
+        let view = crate::Convergence::from_log([&obs, &obs]).expect("replay");
+        assert_eq!(
+            view.current("fixture", "Order/fixture")
+                .expect("record")
+                .payload,
+            obs.payload
+        );
+        assert!(ingest_frappe_webhook(&source, b"fixture", b"not JSON", None, 42).is_err());
+        assert!(ingest_frappe_webhook(&source, b"other", body, Some(&signature), 42).is_err());
+    }
 }
