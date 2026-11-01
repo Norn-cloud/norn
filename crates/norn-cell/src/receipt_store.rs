@@ -38,8 +38,7 @@ impl norn_kernel::receipt_binding::AcceptedReceiptStore for Bound<'_> {
     fn resolve(
         &self,
         _: &Digest,
-    ) -> Result<norn_kernel::receipt_binding::ReceiptResolution<'_>, CellError>
-    {
+    ) -> Result<norn_kernel::receipt_binding::ReceiptResolution<'_>, CellError> {
         Ok(norn_kernel::receipt_binding::ReceiptResolution::Accepted {
             acceptance: &self.0.acceptance,
             receipt: &self.0.receipt,
@@ -466,7 +465,9 @@ pub(crate) fn claim<S: SqlEngine>(
     let current = reader.next_commit_seq()?;
     let (retained, consumed) = reader.conn.query_optional("SELECT body, consumed_commit_seq FROM _norn_function_receipt WHERE reference=?1 AND scope=?2", params![reference.0, scope], |row| Ok((row.get::<String>(0)?, row.get::<Option<i64>>(1)?)))?.ok_or_else(|| refused("unknown"))?;
     let body = serde_json::to_string(stored).map_err(CellError::Json)?;
-    if retained != body || !crate::receipt_fence::usable(consumed.is_some(), stored.frontier, current) {
+    if retained != body
+        || !crate::receipt_fence::usable(consumed.is_some(), stored.frontier, current)
+    {
         return Err(refused("replayed_or_stale"));
     }
     reader.conn.execute("UPDATE _norn_function_receipt SET consumed_commit_seq=?1 WHERE reference=?2 AND scope=?3 AND body=?4 AND consumed_commit_seq IS NULL", params![i64::try_from(current).map_err(|_invalid| refused("frontier"))?, reference.0, scope, body])?;
