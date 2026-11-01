@@ -57,7 +57,7 @@ impl ActionAuthorizer for Policy<'_> {
 /// # Errors
 /// Scope, policy, revision, argument and kernel refusals change no business state.
 #[utoipa::path(post, path = "/v1/actions", request_body = ActionRequest,
-    params(("x-norn-org-id" = String, Header, description = "Explicit organization"), ("x-norn-environment-id" = String, Header, description = "Explicit environment")),
+    params(("x-norn-org-id" = String, Header, description = "Explicit organization"), ("x-norn-environment-id" = String, Header, description = "Explicit environment"), ("x-norn-actor" = String, Header, description = "Actor supplied by the trusted authentication adapter")),
     responses((status = 200, body = ActionResponse), (status = 400, body = crate::refusal::Refusal), (status = 403, body = crate::refusal::Refusal), (status = 404, body = crate::refusal::Refusal), (status = 409, body = crate::refusal::Refusal), (status = 422, body = crate::refusal::Refusal), (status = 429, body = crate::refusal::Refusal), (status = 500, body = crate::refusal::Refusal)))]
 pub fn call_action_in_epoch<E: SqlEngine>(
     host: &DevHost<E>,
@@ -224,6 +224,10 @@ mod http_adapter {
         body: axum::body::Bytes,
         mcp: bool,
     ) -> axum::response::Response {
+        let request_id = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("id").cloned())
+            .unwrap_or(serde_json::Value::Null);
         let result = tokio::task::spawn_blocking(move || {
             let actor = headers.get("x-norn-actor").and_then(|v| v.to_str().ok());
             let value: serde_json::Value = serde_json::from_slice(&body).map_err(|e| Refusal::invalid(e.to_string()))?;
@@ -260,6 +264,15 @@ mod http_adapter {
             Ok(value) => {
                 ([(http::header::CONTENT_TYPE, "application/json")], value).into_response()
             }
+            Err(error) if mcp => (
+                http::StatusCode::from_u16(error.status)
+                    .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR),
+                axum::Json(serde_json::json!({
+                    "jsonrpc":"2.0", "id":request_id,
+                    "error":{"code":-32600,"message":error.message.clone(),"data":error}
+                })),
+            )
+                .into_response(),
             Err(error) => (
                 http::StatusCode::from_u16(error.status)
                     .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR),
