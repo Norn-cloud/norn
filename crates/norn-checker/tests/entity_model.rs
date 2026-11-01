@@ -353,6 +353,22 @@ fn every_code_has_a_negative_case() {
             ] }),
         ),
         (
+            codes::PROTECTED_OWNED_ROW_FIELD,
+            "/objectTypes/0/ownedCollections/0/rowIdProperty",
+            serde_json::json!({ "objectTypes": [
+                { "name": "test.Parent",
+                  "links": [{ "id": "lines", "target": "test.Child",
+                    "cardinality": { "to": "many", "from": "one" } }],
+                  "ownedCollections": [{ "id": "lines", "childType": "test.Child",
+                    "rowIdProperty": "row_id", "orderingKey": "idx",
+                    "cascadeOnParentDelete": true, "maxRows": 20 }] },
+                { "name": "test.Child", "properties": [
+                    { "id": "row_id", "type": text, "protected": true },
+                    { "id": "idx", "type": { "kind": "integer" } }
+                ] }
+            ] }),
+        ),
+        (
             codes::DUPLICATE_INTERFACE,
             "/objectTypes/0/implements/1",
             serde_json::json!({ "objectTypes": [{ "name": "test.Thing",
