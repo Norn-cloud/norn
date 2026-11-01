@@ -113,7 +113,7 @@ mod tests {
     }
     #[test]
     fn vm_policy_shares_fuel_and_refuses_implicit_numeric_fallbacks() {
-        use crate::{Variable, compile_expression, meter::Meter, vm::VM};
+        use crate::{compile_expression, meter::Meter, vm::VM, Variable};
         let meter = Meter::new(1000);
         let mut vm = VM::new();
         vm.set_meter(Some(meter.with_arithmetic(ScaledArithmetic {
@@ -159,22 +159,18 @@ mod tests {
             scale: 18,
             rounding: Rounding::Refuse,
         };
-        assert!(
-            profile
-                .binary(
-                    "Add",
-                    Decimal::ZERO,
-                    "0.000000000000000001".parse().unwrap()
-                )
-                .is_ok()
-        );
-        assert!(
-            ScaledArithmetic {
-                scale: 19,
-                ..profile
-            }
-            .coefficient(Decimal::ZERO)
-            .is_err()
-        );
+        assert!(profile
+            .binary(
+                "Add",
+                Decimal::ZERO,
+                "0.000000000000000001".parse().unwrap()
+            )
+            .is_ok());
+        assert!(ScaledArithmetic {
+            scale: 19,
+            ..profile
+        }
+        .coefficient(Decimal::ZERO)
+        .is_err());
     }
 }
