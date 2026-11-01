@@ -44,6 +44,8 @@
 //!   and interface invariants are statically checked as bool, and implemented
 //!   interface invariants join the effective object contract.
 //!
+//! PROTECTED-DEFAULT: owned child types have no protected effective defaults.
+//!
 //! Spans are JSON pointers into the document
 //! `{ "interfaces": [...], "objectTypes": [...], "extensions": [...] }`.
 
@@ -508,6 +510,9 @@ impl<'a, 'r> Checker<'a, 'r> {
                     let mut property = crate::entity_instance::EffectiveProperty::from_resolved(
                         resolved, markings,
                     );
+                    if self.protected(&def.name, &property.id) {
+                        property.protect();
+                    }
                     if let Some(reads) = computed_reads.get(resolved.property.id.as_str()) {
                         property.computed_inputs = reads.fields.iter().cloned().collect();
                         property.computed_reads_all = reads.whole_root;
@@ -667,7 +672,53 @@ impl<'a> Checker<'a, '_> {
         for (index, extension) in self.model.extensions.iter().enumerate() {
             self.check_extension(index, extension);
         }
+        self.check_owned_defaults();
         self.check_member_conflicts();
+    }
+
+    fn check_owned_defaults(&mut self) {
+        let collections = self
+            .types
+            .values()
+            .flat_map(|entry| {
+                entry
+                    .def
+                    .owned_collections
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, collection)| (entry.local, index, collection))
+            })
+            .collect::<Vec<_>>();
+        let mut checked = BTreeSet::new();
+        for (owner, index, collection) in collections {
+            if !checked.insert(&collection.child_type) {
+                continue;
+            }
+            let table = self.table(&collection.child_type);
+            for (property_id, property) in table.iter() {
+                if property.default.is_some() && self.protected(&collection.child_type, property_id)
+                {
+                    let mut finding = error(
+                        codes::PROTECTED_DEFAULT,
+                        format!(
+                            "owned child property {:?} of {:?} has a protected default; move the value into the authoritative rule's creation effect, or drop the protection",
+                            property_id.as_str(),
+                            collection.child_type.as_str()
+                        ),
+                        span_at(&[], &[]),
+                    );
+                    finding.span = owner.map(|owner| {
+                        let owner = owner.to_string();
+                        let index = index.to_string();
+                        span_at(
+                            &pointer(self.roots.object_types, &owner),
+                            &["ownedCollections", &index, "childType"],
+                        )
+                    });
+                    self.out.push(finding);
+                }
+            }
+        }
     }
 
     // ----- registration -------------------------------------------------
@@ -866,6 +917,25 @@ impl<'a> Checker<'a, '_> {
             .and_then(|entry| entry.def.extends.as_ref())
             .and_then(|parent| self.types.get_key_value(parent))
             .map(|(parent, _)| *parent)
+    }
+
+    fn protected(&self, name: &ObjectTypeName, property: &PropertyId) -> bool {
+        std::iter::once(name)
+            .chain(self.ancestors(name))
+            .flat_map(|name| {
+                self.types
+                    .get(name)
+                    .into_iter()
+                    .flat_map(|entry| &entry.def.properties)
+                    .chain(
+                        self.extensions
+                            .get(name)
+                            .into_iter()
+                            .flatten()
+                            .flat_map(|(_, _, extension)| &extension.properties),
+                    )
+            })
+            .any(|candidate| candidate.id == *property && candidate.protected)
     }
 
     /// The registered supertypes of `name`, nearest first.
@@ -1423,6 +1493,13 @@ impl<'a> Checker<'a, '_> {
                     );
                     kind && !property.nullable() && !property.property.is_read_only()
                 });
+                if self.protected(&collection.child_type, property_id) {
+                    self.out.push(error(
+                        codes::PROTECTED_OWNED_ROW_FIELD,
+                        format!("{member} is kernel-owned and may not be protected"),
+                        span_at(&at, &[member]),
+                    ));
+                }
                 if !valid {
                     self.out.push(error(
                         codes::INVALID_OWNED_COLLECTION,

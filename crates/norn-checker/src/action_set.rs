@@ -251,6 +251,16 @@ pub fn check_action_firing(
             at("lifecycle"),
         )];
     };
+    if object_type
+        .property(property)
+        .is_some_and(crate::EffectiveProperty::protected)
+    {
+        return vec![error(
+            codes::TARGET_NOT_WRITABLE,
+            format!("{property:?} of {name:?} is protected; only rules may change it"),
+            at("lifecycle"),
+        )];
+    }
     let Some(current) = values.get(property).and_then(JsonValue::as_string) else {
         return vec![error(
             UNDECLARED_WRITE,
@@ -769,6 +779,24 @@ impl Defined<'_> {
                 None
             }
         };
+        if matches!(program, ActionEffectProgram::UpsertInputObject { .. })
+            && let Some(JsonValue::Object(properties)) = root.input_schema.get("properties")
+        {
+            for property in properties.keys().filter(|property| {
+                self.effective_object_type
+                    .as_ref()
+                    .and_then(|effective| effective.as_ref().ok())
+                    .and_then(|effective| effective.property(property))
+                    .is_some_and(crate::EffectiveProperty::protected)
+            }) {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!("action input {property:?} is a protected system property"),
+                    action,
+                    &format!("/payload/inputSchema/properties/{property}"),
+                ));
+            }
+        }
         let owned = |id: &str| {
             lifecycles
                 .unwrap_or_default()
@@ -856,6 +884,20 @@ impl Defined<'_> {
             findings.extend(transition_findings(
                 action, kind, lifecycles, lifecycle, transition,
             ));
+            if self
+                .effective_object_type
+                .as_ref()
+                .and_then(|view| view.as_ref().ok())
+                .and_then(|view| view.property(lifecycle.as_str()))
+                .is_some_and(crate::EffectiveProperty::protected)
+            {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!("{lifecycle:?} is protected; only rules may change it"),
+                    action,
+                    "/payload/effectProgram/lifecycle",
+                ));
+            }
         }
         if let (
             ActionEffectProgram::UpsertInputObject {
@@ -1140,14 +1182,14 @@ fn owned_rows_effect_findings(
         ));
         return findings;
     };
-    if !effective
-        .properties
-        .iter()
-        .any(|property| !property.computed && effective.lifecycle(property.id.as_str()).is_none())
-    {
+    if !effective.properties.iter().any(|property| {
+        !property.computed
+            && !property.protected()
+            && effective.lifecycle(property.id.as_str()).is_none()
+    }) {
         findings.push(finding(
             codes::TARGET_NOT_WRITABLE,
-            "parent-and-rows effects require a stored non-lifecycle parent property for row-only CAS touches".to_owned(),
+            "parent-and-rows effects require a stored non-protected non-lifecycle parent property for row-only CAS touches".to_owned(),
             artifact,
             "/payload/effectProgram",
         ));
@@ -1213,7 +1255,7 @@ fn owned_rows_effect_findings(
             });
             let computed = child_effective
                 .and_then(|child| child.property(property.as_str()))
-                .is_none_or(|property| property.computed);
+                .is_none_or(|property| property.computed || property.protected());
             let lifecycle =
                 child_effective.is_some_and(|child| child.lifecycle(property.as_str()).is_some());
             if lifecycle {
@@ -1282,7 +1324,7 @@ fn owned_rows_effect_findings(
         {
             continue;
         }
-        if property.computed {
+        if property.computed || property.protected() {
             findings.push(finding(
                 codes::TARGET_NOT_WRITABLE,
                 format!(

@@ -457,6 +457,13 @@
       "tier": "T3"
     },
     {
+      "code": "core.graph.protected_default",
+      "message": "owned child property {property} of {child} has a protected default; move the value into the authoritative rule's creation effect, or drop the protection",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",
@@ -2510,6 +2517,13 @@
     {
       "code": "object_type.validation.override_widens_nullability",
       "message": "property {property} is nullable, but the property {owner} declares is not; an override may only narrow",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "object_type.validation.protected_owned_row_field",
+      "message": "kernel-owned row metadata cannot be protected: {detail}",
       "severity": "error",
       "since": "0.1.0",
       "tier": "T3"

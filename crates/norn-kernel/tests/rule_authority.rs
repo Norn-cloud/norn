@@ -97,7 +97,7 @@ fn forged_rule_identity_or_definition_pin_is_refused() {
         );
     }
     let types: Vec<ObjectTypeDef> = serde_json::from_value(serde_json::json!([{
-        "name": "demo.Order", "properties": [{"id": "half", "type": {"kind": "decimal", "scale": 0}}]
+        "name": "demo.Order", "properties": [{"id": "half", "type": {"kind": "decimal", "scale": 0}, "protected": true}]
     }]))
     .unwrap();
     let slice = FactSlice::from([(
@@ -112,4 +112,12 @@ fn forged_rule_identity_or_definition_pin_is_refused() {
         prepare_rule_decision::<Infallible>(&catalog, &slice, &turn, &evaluated, &BTreeSet::new())
             .unwrap();
     assert_eq!(prepared.writes.len(), 1);
+    let forged: norn_ir::DecisionOutput = serde_json::from_value(serde_json::json!({"facts":[{
+        "op":"set", "objectType":"demo.Order", "key":"o1", "property":"half", "value":4
+    }], "commands":[], "timers":[]}))
+    .unwrap();
+    let refusal =
+        norn_kernel::prepare_decision::<Infallible>(&catalog, &slice, &turn, &forged).unwrap_err();
+    assert_eq!(refusal.code(), "decision.invalid_output");
+    assert!(refusal.to_string().contains("protected"));
 }

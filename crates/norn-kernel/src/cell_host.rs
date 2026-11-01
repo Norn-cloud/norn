@@ -599,6 +599,12 @@ pub struct CommitVersions {
 /// no event, no enqueue, no consumption.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommitError<X> {
+    /// An existing instance of an append-only type was changed or deleted.
+    #[error("{key} is immutable")]
+    ImmutableObject {
+        /// The stored object.
+        key: FactKey,
+    },
     /// An owned child or manifest was changed without the trusted atomic
     /// parent-and-rows action, or a parent delete omitted that action.
     #[error("{key} is protected by an owned child collection transaction")]
@@ -827,6 +833,7 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::ImmutableObject { .. } => "commit.immutable_object",
             Self::DuplicateKey { .. } => "commit.duplicate_key",
             Self::NotPending { .. } => "commit.not_pending",
             Self::Conflict { .. } => "commit.conflict",
@@ -988,15 +995,16 @@ pub trait CellHost {
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>>;
 
-    /// Atomically commit an authorized business action and its checked quantity
-    /// intent. Unsupported hosts fail closed without publishing business writes.
+    /// Atomically commit one authorized proposal and its ordered partition postings.
+    /// Fact/link and balance fences cover the entire proposal, including absences.
+    /// Unsupported hosts fail closed without publishing business writes.
     ///
     /// # Errors
     /// A commit refusal; nothing was applied.
     fn commit_action_quantity(
         &mut self,
         _commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-        _request: &norn_ir::quantity_ledger::QuantityRequest,
+        _requests: &[norn_ir::quantity_ledger::QuantityRequest],
         _idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         Err(CommitError::ObservationAuthorization)
@@ -1019,7 +1027,7 @@ pub trait CellHost {
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         if let Some((request, key)) = quantity {
-            self.commit_action_quantity(commit, request, key)
+            self.commit_action_quantity(commit, std::slice::from_ref(request), key)
         } else {
             self.commit(commit)
         }

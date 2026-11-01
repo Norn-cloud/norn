@@ -445,6 +445,19 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
         }
     }
     check_versions(commit, model, view)?;
+    for write in &commit.writes {
+        let concrete = view
+            .concrete(&model.canonical(&write.key))
+            .map_err(CommitError::Host)?;
+        if concrete
+            .as_ref()
+            .is_some_and(|concrete| model.catalog.immutable(concrete))
+        {
+            return Err(CommitError::ImmutableObject {
+                key: write.key.clone(),
+            });
+        }
+    }
     check_link_authority(commit, model, view, authorization)?;
     let links = live_links_after(commit, model, view)?;
     check_endpoints(commit, model, view, &links)?;
@@ -1458,13 +1471,20 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
         }
     }
     for write in &commit.writes {
-        if !matches!(write.mutation, FactMutation::Put { .. }) {
-            continue;
-        }
         if let Some(concrete) = view
             .concrete(&model.canonical(&write.key))
             .map_err(CommitError::Host)?
             && concrete != write.key.object_type
+            && (matches!(write.mutation, FactMutation::Put { .. })
+                || model
+                    .catalog
+                    .effective_type(&concrete)
+                    .is_some_and(|effective| {
+                        effective
+                            .properties
+                            .iter()
+                            .any(norn_checker::EffectiveProperty::protected)
+                    }))
         {
             return Err(CommitError::TypeMismatch {
                 key: write.key.clone(),

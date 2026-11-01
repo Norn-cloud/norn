@@ -171,7 +171,8 @@ impl<X> CommitError<X> {
             | Self::Conflict { .. }
             | Self::LinkConflict { .. }
             | Self::LinkReadConflict { .. } => RefusalCategory::Conflict,
-            Self::DanglingLink { .. }
+            Self::ImmutableObject { .. }
+            | Self::DanglingLink { .. }
             | Self::LinkCardinality { .. }
             | Self::LinkRequired { .. }
             | Self::TypeMismatch { .. }

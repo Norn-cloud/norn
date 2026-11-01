@@ -1210,6 +1210,10 @@
             "$ref": "#/$defs/KeySpec"
           }
         },
+        "immutable": {
+          "description": "Append-only: existing instances cannot be changed or deleted. Inherited.",
+          "type": "boolean"
+        },
         "implements": {
           "description": "Interfaces the type implements, in addition to those its supertypes\nimplement. Omitted when empty.",
           "type": "array",
@@ -1382,6 +1386,10 @@
           "items": {
             "$ref": "#/$defs/MarkingId"
           }
+        },
+        "protected": {
+          "description": "System-maintained: declared rules may write it, actions may not.",
+          "type": "boolean"
         },
         "type": {
           "description": "The value kind: inline, or a shared property type through `ref`.",
