@@ -1862,12 +1862,17 @@ impl<'a> Admission<'a> {
 
     /// The definition an entity artifact id declares (mapping targets).
     pub(crate) fn declared_by(&self, artifact_id: &str) -> Option<AdmittedType<'_, 'a>> {
-        self.model
+        let mut definitions = self
+            .model
             .by_name
             .values()
             .flatten()
-            .find(|defined| defined.artifact.artifact_id == artifact_id)
-            .map(|defined| AdmittedType { defined })
+            .filter(|defined| defined.artifact.artifact_id == artifact_id);
+        let defined = definitions.next()?;
+        definitions
+            .next()
+            .is_none()
+            .then_some(AdmittedType { defined })
     }
 
     /// The definition an action effect pins, when its pinned entity artifact
