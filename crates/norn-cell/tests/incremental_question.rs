@@ -78,7 +78,12 @@ fn skipped_receipt_or_changed_population_refuses_without_partial_publication() {
         .expect("rebuild");
     let before = view.result().clone();
     context.authorization_epoch = 2;
-    assert!(view.advance(&store, context.clone(), |_| Ok(true)).is_err());
+    assert!(matches!(
+        view.advance(&store, context.clone(), |_| Ok(true)),
+        Err(norn_cell::CellError::ComputeRefused(
+            "core.compute.stale_input"
+        ))
+    ));
     assert_eq!(view.result(), &before);
     context.authorization_epoch = 1;
     store
@@ -96,12 +101,12 @@ fn skipped_receipt_or_changed_population_refuses_without_partial_publication() {
             ..CommitBatch::default()
         })
         .expect("one correction");
-    assert!(
+    assert!(matches!(
         view.advance(&store, context.clone(), |_| Err(
             norn_cell::CellError::ComputeRefused("test.refusal")
-        ))
-        .is_err()
-    );
+        )),
+        Err(norn_cell::CellError::ComputeRefused("test.refusal"))
+    ));
     assert_eq!(view.result(), &before);
     view.advance(&store, context.clone(), |_| Ok(true))
         .expect("retry the same receipt");
@@ -117,6 +122,11 @@ fn skipped_receipt_or_changed_population_refuses_without_partial_publication() {
             })
             .expect("commit");
     }
-    assert!(view.advance(&store, context, |_| Ok(true)).is_err());
+    assert!(matches!(
+        view.advance(&store, context, |_| Ok(true)),
+        Err(norn_cell::CellError::ComputeRefused(
+            "core.compute.stale_input"
+        ))
+    ));
     assert_eq!(view.result(), &before);
 }
