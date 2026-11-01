@@ -99,7 +99,7 @@ module field_authority {
       callerWrite(kind, producer, supplies, value),
       evaluateRule(rule, pin, kind, supplies, value),
       commitRule(rule, pin),
-      checkCas(Set({ computed: c, protected: p, lifecycle: l }]),
+      checkCas(Set({ computed: c, protected: p, lifecycle: l })),
     }
   }
   run deleteThenRecreateRefusedTest = initial(false, true)
