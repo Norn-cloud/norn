@@ -308,13 +308,16 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
     // This tests authoring/display, not aggregate-law admission or preservation.
     let corpus = include_str!("../../../docs/platform/structured-physics.tsv");
     let mut fields = BTreeMap::new();
-    for name in "external loss available held funded ownerBefore ownerAfter".split_whitespace() {
+    for name in "external loss available held funded".split_whitespace() {
         fields.insert(name.into(), Type::Number);
     }
     for name in "active recorded terminal open custodyRecorded edited deleted linked inverse"
         .split_whitespace()
     {
         fields.insert(name.into(), Type::Bool);
+    }
+    for name in ["ownerBefore", "ownerAfter"] {
+        fields.insert(name.into(), Type::text());
     }
     for name in ["inputs", "outputs"] {
         fields.insert(name.into(), Type::List(Box::new(Type::Number)));
