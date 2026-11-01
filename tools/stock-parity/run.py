@@ -25,14 +25,13 @@ if __name__ == '__main__':
     api = connect()
     traces = json.loads(pathlib.Path(sys.argv[1]).read_text())
     results = []
-    credentials = json.loads(pathlib.Path('/home/user/parity-runtime/credentials.json').read_text())
     for trace in traces:
         if trace['format'] != 'norn.stock-trace/1':
             raise ValueError('Requires validated stock-trace/1')
         result = dict(case=trace['id'], method=trace['method'], status='complete', reason=None, checkpoints=[])
         try:
             fixture = provision(api, trace)
-            driver = Driver(api, fixture, credentials)
+            driver = Driver(api, fixture)
             result['initial'] = checkpoint(driver, -1, [])
             for index, step in enumerate(trace['steps']):
                 attempts = driver.step(step)

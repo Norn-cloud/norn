@@ -50,6 +50,7 @@ PY
 bash /home/user/parity-source/tools/stock-parity/boot.sh
 cd /home/user/parity-source/tools/stock-parity
 python3 run.py /home/user/traces.json /home/user/results.json
+python3 check_smoke.py /home/user/results.json
 '''.replace('DIGEST', digest)
         result = json.loads(boat('exec', vm, '--json', '--timeout', '600', '--', 'bash', '-lc', command))
         if not result.get('success'):

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 
 class Driver:
-    def __init__(self, api, fixture, credentials):
+    def __init__(self, api, fixture):
         self.api, self.f = api, fixture
         self.docs = {}
 
