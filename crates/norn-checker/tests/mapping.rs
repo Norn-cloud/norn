@@ -43,6 +43,134 @@ const MAPPING_ID: &str = "erpnext.norn_core";
 const FASHION_SOURCE_ID: &str = "erpnext.fashion_source_schema";
 const FASHION_MAPPING_ID: &str = "erpnext.fashion_item.mapping";
 
+fn pinned_interpretation() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
+    use norn_ir::mapping::{
+        InterpretationEndpoint, InterpretationFormat, InterpretationRole, LawInterpretationIr,
+    };
+    use norn_ir::{CompositionPackRoot, PackArtifactKind, PackArtifactRef};
+    let entities = model_artifacts();
+    let entity = entities.first().expect("one model entity");
+    let base: Vec<_> = ["toy.capacity", "toy.credit"]
+        .into_iter()
+        .map(|id| {
+            let pack = CompositionPackRoot {
+                pack_id: id.to_owned(),
+                pack_version: "0.1".to_owned(),
+                pack_kind: None,
+                provides: None,
+                extensions: None,
+                artifacts: vec![PackArtifactRef {
+                    artifact_id: entity.artifact_id.clone(),
+                    version: entity.version.clone(),
+                    kind: PackArtifactKind::Entity,
+                    additional: Default::default(),
+                }],
+            };
+            envelope(
+                id,
+                "business_pack",
+                &serde_json::to_value(pack).expect("pack"),
+            )
+        })
+        .collect();
+    let endpoint = |layer: &ArtifactEnvelope| {
+        let pin = ArtifactRef::of(layer).expect("retained pack hashes");
+        InterpretationEndpoint {
+            artifact_id: pin.artifact_id,
+            version: pin.version,
+            sha256: pin.sha256,
+        }
+    };
+    let document = LawInterpretationIr {
+        format: InterpretationFormat::V1,
+        role: InterpretationRole::LawInterpretation,
+        source_layer: endpoint(base.first().expect("source")),
+        target_layer: endpoint(base.get(1).expect("target")),
+    };
+    let mut artifact = envelope(
+        "toy.capacity_credit",
+        "mapping",
+        &serde_json::to_value(document).expect("interpretation"),
+    );
+    artifact.dependencies = base
+        .iter()
+        .map(|a| norn_ir::ArtifactDependency {
+            artifact_id: a.artifact_id.clone(),
+            kind: a.kind(),
+            version: Some(a.version.clone()),
+            required: true,
+        })
+        .collect();
+    (artifact, base)
+}
+
+#[test]
+fn map_pins_and_multi_retain_independent_edges_without_granting_conformance() {
+    let (first, base) = pinned_interpretation();
+    let mut second = first.clone();
+    second.artifact_id = "toy.capacity_credit_review".to_owned();
+    let findings = norn_checker::mapping::check_mapping_artifacts(&[first, second], &base);
+    assert_eq!(findings.len(), 2, "{findings:#?}");
+    assert!(
+        findings
+            .iter()
+            .all(|f| f.code == "mapping.interpretation.unsupported")
+    );
+}
+
+#[test]
+fn map_pins_refuse_missing_ambiguous_edited_or_candidate_only_layers() {
+    let (candidate, base) = pinned_interpretation();
+    let mut ambiguous = base.clone();
+    ambiguous.extend(base.clone());
+    let mut edited = base.clone();
+    edited.first_mut().expect("source").name.push_str(" edited");
+    for retained in [vec![], ambiguous, edited] {
+        let findings = norn_checker::mapping::check_mapping_artifacts(
+            std::slice::from_ref(&candidate),
+            &retained,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "mapping.interpretation.invalid_endpoint")
+        );
+    }
+    let mut candidates = base;
+    candidates.push(candidate);
+    let findings = norn_checker::mapping::check_mapping_artifacts(&candidates, &[]);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == "mapping.interpretation.invalid_endpoint")
+    );
+}
+
+#[test]
+fn map_pins_require_unique_required_exact_dependencies() {
+    for case in 0..5 {
+        let (mut candidate, base) = pinned_interpretation();
+        match case {
+            0 => candidate.dependencies.clear(),
+            1 => candidate.dependencies.first_mut().expect("source").required = false,
+            2 => candidate.dependencies.first_mut().expect("source").version = None,
+            3 => {
+                candidate.dependencies.first_mut().expect("source").version =
+                    Some("0.2.0".to_owned())
+            }
+            _ => candidate
+                .dependencies
+                .extend(candidate.dependencies.clone()),
+        }
+        let findings = norn_checker::mapping::check_mapping_artifacts(&[candidate], &base);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "mapping.interpretation.invalid_endpoint")
+        );
+    }
+}
+
 #[test]
 fn map_roles_unqualified_interpretations_refuse_admission_and_record_compilation() {
     use norn_ir::mapping::{

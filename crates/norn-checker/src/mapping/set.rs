@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
-use norn_ir::mapping::{MappingDocument, MappingIr};
+use norn_ir::mapping::{LawInterpretationIr, MappingDocument, MappingIr};
 use norn_ir::source_schema::SourceSchemaIr;
 use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload};
 
@@ -48,12 +48,12 @@ pub fn check_mapping_artifacts(
     let mut out = Vec::new();
     for artifact in artifacts {
         if artifact.kind() == ArtifactKind::Mapping
-            && matches!(
+            && let Ok(MappingDocument::LawInterpretation(document)) =
                 serde_json::to_value(artifact.payload.to_json_value())
-                    .and_then(serde_json::from_value::<MappingDocument>),
-                Ok(MappingDocument::LawInterpretation(_))
-            )
+                    .and_then(serde_json::from_value::<MappingDocument>)
         {
+            out.extend(interpretation_endpoints(artifact, &document, base));
+            out.extend(key_findings(artifact));
             out.push(in_payload(
                 error(
                     "mapping.interpretation.unsupported",
@@ -106,6 +106,43 @@ pub fn check_mapping_artifacts(
                 .into_iter()
                 .map(|finding| in_payload(finding, artifact)),
         );
+    }
+    out
+}
+
+fn interpretation_endpoints(
+    artifact: &ArtifactEnvelope,
+    document: &LawInterpretationIr,
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for (at, pin) in [
+        ("/sourceLayer", &document.source_layer),
+        ("/targetLayer", &document.target_layer),
+    ] {
+        let retained: Vec<_> = base
+            .iter()
+            .filter(|a| a.artifact_id == pin.artifact_id && a.version == pin.version)
+            .collect();
+        let dependencies: Vec<_> = artifact
+            .dependencies
+            .iter()
+            .filter(|d| d.artifact_id == pin.artifact_id)
+            .collect();
+        let exact_dependency = matches!(dependencies.as_slice(), [dependency]
+            if dependency.kind == ArtifactKind::BusinessPack && dependency.required
+                && dependency.version.as_deref() == Some(pin.version.as_str()));
+        let exact_retained = matches!(retained.as_slice(), [layer]
+            if layer.kind() == ArtifactKind::BusinessPack
+                && ArtifactRef::of(layer).ok().is_some_and(|r| r.sha256 == pin.sha256));
+        let exact_version = SEMVER.as_ref().is_some_and(|g| g.is_match(&pin.version));
+        if !exact_dependency || !exact_retained || !exact_version {
+            out.push(in_payload(error(
+                "mapping.interpretation.invalid_endpoint",
+                format!("interpretation endpoint {:?} requires one retained business pack, an exact required dependency and matching version/content identity", pin.artifact_id),
+                Span::pointer(at),
+            ), artifact));
+        }
     }
     out
 }
