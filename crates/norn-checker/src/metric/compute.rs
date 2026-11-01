@@ -1,5 +1,7 @@
 //! Checked, identity-grained lowering for the bounded exact query profile.
 
+pub mod arithmetic;
+
 use norn_ir::metric::{MetricFilter, TimeGrain};
 use norn_ir::{MetricDefinition, ObjectTypeName, PropertyId, PropertyType, QuestionIR};
 

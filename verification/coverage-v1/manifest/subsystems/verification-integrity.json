@@ -453,6 +453,8 @@
     "verification/stripmine-2026-08-22/scripts/validate.sh",
     "tools/norn-ts/fixtures/stock/stock.source.ts",
     "tools/norn-ts/test/stock-definitions.test.ts",
-    "crates/norn-checker/src/obligations/induction.rs"
+    "crates/norn-checker/src/obligations/induction.rs",
+    "crates/norn-checker/src/metric/compute/arithmetic.rs",
+    "verification/query-compute-v1/arithmetic_kani.rs"
   ]
 }
