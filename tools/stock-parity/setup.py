@@ -3,9 +3,9 @@ import uuid
 from rest import NativeError
 
 
-def ensure(api, doctype, name, **fields):
+def ensure(api, doctype, identity, **fields):
     try:
-        return api.get(doctype, name)
+        return api.get(doctype, identity)
     except NativeError as error:
         if error.status != 404:
             raise
