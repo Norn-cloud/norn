@@ -11,6 +11,10 @@
 //!   webhooks, and completeness sweeps all converge to the same state.
 //! - A delete is an ordinary observation that leaves a tombstone.
 
+//! DP-CONV-1: reordering distinct immutable observations and replaying identical
+//! deliveries yields the same view. DP-CONV-2: delete wins an equal-version tie;
+//! source and record identities remain separate. Sampled evidence: convergence_conforms.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
@@ -122,5 +126,47 @@ impl Convergence {
         self.current
             .iter()
             .map(|((source, source_id), record)| (source.as_str(), source_id.as_str(), record))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ObservationDraft;
+    #[test]
+    #[allow(clippy::expect_used, reason = "conformance assertions")]
+    fn convergence_conforms() {
+        let make = |event, version, kind| {
+            ObservationDraft {
+                source: "fixture".into(),
+                source_id: "record".into(),
+                event_id: event,
+                kind,
+                source_version: version,
+                payload: Value::Null,
+                extracted_at: 1,
+                cursor: None,
+                pipeline_version: "fixture/v1".into(),
+            }
+            .seal(None)
+            .expect("seal")
+        };
+        let old = make("old".into(), "1".into(), ObservationKind::Upsert);
+        let live = make("live".into(), "2".into(), ObservationKind::Upsert);
+        let gone = make("gone".into(), "2".into(), ObservationKind::Delete);
+        let mut view = Convergence::from_log([&old, &live, &gone]);
+        assert_eq!(view, Convergence::from_log([&gone, &live, &old]));
+        assert_eq!(view.apply(&gone), Applied::Duplicate);
+        assert_eq!(
+            view.current("fixture", "record").expect("record").kind,
+            ObservationKind::Delete
+        );
+        assert!(view.current("other", "record").is_none());
+        assert!(view.current("fixture", "other").is_none());
+        assert_eq!(view.records().count(), 1);
+        let table = crate::iceberg::create_table_request();
+        assert_eq!(table["properties"]["norn.append-only"], "true");
+        assert_eq!(table["properties"]["format-version"], "3");
+        assert_eq!(table["schema"]["fields"][6]["type"], "variant");
     }
 }

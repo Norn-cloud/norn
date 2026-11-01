@@ -24,6 +24,9 @@
 //!   `source, source_id, source_version, event_id` so the "latest observation
 //!   wins" transform ([`crate::converge`]) is a sorted scan.
 
+//! DP-TABLE-1: the catalog request declares append-only v3 observations.
+//! This is a storage contract, not evidence of a running Iceberg writer.
+
 use serde_json::{Value, json};
 
 use crate::raw_observation::RAW_OBSERVATION_CONTRACT;
