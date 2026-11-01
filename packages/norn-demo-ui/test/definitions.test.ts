@@ -48,3 +48,48 @@ for (const ending of ["\r\n", "\r", "\n"]) {
     expect(text.value).toBe(source)
   })
 }
+
+const entity: DefinitionEntry = {
+  metadata: { ...entry.metadata, artifactId: "demo.Parcel", name: "Parcel" }, source: '{"exact":9007199254740993}',
+  definition: { kind: "entity", dependencies: [], payload: { entityVersion: "2.0", objectType: {
+    name: "demo.Parcel", properties: [
+      { id: "mass", type: { kind: "decimal", scale: 3, unit: { system: "ucum", code: "kg" } } },
+      { id: "phase", type: { kind: "enum", values: [{ value: "draft" }, { value: "sent" }, { value: "lost" }] } },
+    ], links: [{ id: "destination", target: "demo.Place", cardinality: { from: "many", to: "one", required: true } }],
+    lifecycles: [{ property: "phase", initial: ["draft"], terminal: ["sent", "lost"], immutable: ["sent"],
+      transitions: [{ id: "send", from: ["draft"], to: "sent", guards: ["self.mass > 0"] }] }],
+    invariants: [{ id: "positive", message: "Mass stays positive", expression: "self.mass > 0" }],
+  } } },
+}
+const action: DefinitionEntry = {
+  metadata: { artifactId: "demo.Send", kind: "action", name: "Send parcel", version: "0.1.0" }, source: '{}',
+  definition: { kind: "action", dependencies: [{ artifactId: "demo.Positive", kind: "law", required: true }], payload: {
+    actionId: "demo.Send", idempotent: true, ledgered: true, scopeRequired: [], outputSchema: {},
+    inputSchema: { type: "object", properties: { parcelId: { type: "string" } } }, preconditions: ["input.parcelId != null"],
+    effectProgram: { kind: "fire_transition", entityArtifactId: "demo.Parcel", entityArtifactVersion: "0.1.0", objectKind: "demo.Parcel", objectIdField: "parcelId", lifecycle: "phase", transition: "send" },
+  } },
+}
+
+test("D5–D7: declared properties, units, relationships, states and action bindings correspond", () => {
+  const html = renderDefinitionsDocument({ entries: [action, entity] })
+  for (const value of ["decimal(3) · ucum:kg", "destination", "demo.Place", "draft · initial", "sent · terminal · immutable", "lost · terminal", "Send parcel<br>— send →", "self.mass &gt; 0", "parcelId", "demo.Positive"]) expect(html).toContain(value)
+  expect(html.indexOf('<h2>Entities')).toBeLessThan(html.indexOf('<h2>Actions'))
+  expect(html).toContain('<summary>Source</summary>')
+  expect(html).toContain('draft → sent')
+})
+
+test("D6: absent action stays unresolved; absent declarations invent no transitions", () => {
+  const html = renderDefinitionsDocument({ entries: [entity] })
+  expect(html).toContain("No action supplied")
+  expect(html).not.toContain("Send parcel")
+  const empty = renderDefinitionsDocument({ entries: [{ ...entity, definition: { kind: "entity", dependencies: [], payload: { entityVersion: "2.0", objectType: { name: "demo.Empty" } } } }] })
+  expect(empty).not.toContain('class="transitions"')
+})
+
+test("D8: rule target, derivation and outputs are declared; structured text is escaped", () => {
+  const html = renderDefinitionsDocument({ entries: [{ metadata: { ...entry.metadata, kind: "rule" }, source: '{}', definition: {
+    kind: "rule", dependencies: [], payload: { ruleId: "demo.Total", appliesTo: "demo.Parcel", expression: '<script>amount</script>', outputSchema: { total: { type: "number" } } },
+  } }] })
+  for (const value of ["Applies to", "demo.Parcel", "Derives / checks", "Declared outputs", "total", "&lt;script&gt;amount&lt;/script&gt;"]) expect(html).toContain(value)
+  expect(html).not.toContain('<script>')
+})
