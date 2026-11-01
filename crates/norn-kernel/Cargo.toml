@@ -17,6 +17,7 @@ norn-expr = { path = "../norn-expr" }
 norn-ir = { path = "../norn-ir" }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.20"
+serde_json = "1.0.150"
 
 [dev-dependencies]
 # Test support only (T6-PSM-1): the proptest-state-machine Decider harness.
@@ -27,7 +28,6 @@ norn-testkit = { path = "../norn-testkit" }
 # decide rule, so only an accepted result is shown to advance a Run. Test
 # support only; SKELETON already admits norn-kernel <- norn-decisions.
 norn-decisions = { path = "../norn-decisions" }
-serde_json = "1.0.150"
 
 [lints]
 workspace = true
