@@ -500,6 +500,7 @@
     "verification/kernel-l1/Reference.lean",
     "verification/kernel-l1/VersionProof.lean",
     "verification/kernel-l1/version_kani.rs",
-    "verification/kernel-l1/version_verus.rs"
+    "verification/kernel-l1/version_verus.rs",
+    "crates/norn-cell/src/compute/lineage.rs"
   ]
 }
