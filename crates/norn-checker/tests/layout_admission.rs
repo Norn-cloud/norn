@@ -368,6 +368,10 @@ fn verbatim_execution_requires_more_than_the_norn1_artifact_hash() {
         )
         .expect("receipt");
         assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+        eprintln!(
+            "semantic-identity witness {literal:?}: receipt {}",
+            checked.receipt.content_sha256().expect("receipt hash")
+        );
         hashes.push(checked.receipt.artifact_set.artifacts[0].sha256.clone());
         results.push(
             norn_expr::Expression::compile(&expression)
