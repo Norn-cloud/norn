@@ -39,10 +39,10 @@ struct State {
     receipts: Vec<Intent>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Outcome {
     Committed,
-    Replay,
+    Replay(Intent),
     Refused,
     RolledBack,
     AckLost,
@@ -61,7 +61,7 @@ impl State {
         }
         if let Some(prior) = self.receipts.iter().find(|p| p.key == c.intent.key) {
             return if prior == &c.intent {
-                Outcome::Replay
+                Outcome::Replay(prior.clone())
             } else {
                 Outcome::Refused
             };
@@ -203,7 +203,7 @@ fn lost_ack_after_commit_is_a_committed_retry() {
     let c = witness(&s, 1, vec![(1, 5_000)]);
     assert_eq!(s.submit(&c, true, Some(5)), Outcome::AckLost);
     let committed = s.clone();
-    assert_eq!(s.submit(&c, true, None), Outcome::Replay);
+    assert_eq!(s.submit(&c, true, None), Outcome::Replay(c.intent.clone()));
     assert_eq!(s, committed, "POST-IDENTITY");
     for conflict in [
         Intent {
