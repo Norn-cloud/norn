@@ -130,7 +130,9 @@ fn project(
         return None;
     }
     let mut concrete = object.extends.is_none()
-        && object.properties.is_empty()
+        && serde_json::to_value(&object.properties).ok()
+            == Some(serde_json::json!([{"id":"id", "type":{"kind":"text"}}]))
+        && object.identity.is_empty()
         && object.links.is_empty()
         && object.invariants.is_empty()
         && object.lifecycles.is_empty()
@@ -166,7 +168,11 @@ fn project(
         }
     }
     for action in actions {
-        concrete &= action.effect_program.is_none()
+        concrete &= matches!(&action.effect_program,
+            Some(norn_ir::ActionEffectProgram::UpsertInputObject {
+                object_id_field, object_kind, write_mode: norn_ir::UpsertWriteMode::Upsert, ..
+            }) if object_id_field == "id" && object_kind == object.name.as_str())
+            && action.scope_required == ["orgId"]
             && action.writes.is_empty()
             && action.preconditions.is_empty()
             && action.slice.is_empty()
@@ -174,7 +180,10 @@ fn project(
             && action.commands.is_empty()
             && action.quantity_effect.is_none()
             && action.create_links.is_empty()
-            && empty_schema(&action.input_schema)
+            && serde_json::to_value(&action.input_schema).ok()
+                == Some(
+                    serde_json::json!({"type":"object", "properties":{"id":{"type":"string", "enum":["witness"]}}, "required":["id"], "additionalProperties":false}),
+                )
             && empty_schema(&action.output_schema);
     }
     Some((

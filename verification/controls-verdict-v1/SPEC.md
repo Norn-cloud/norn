@@ -20,6 +20,9 @@ Named invariants:
 
 - **No promotion:** invalid, exhausted and possible counterexamples remain unknown.
 - **Concrete witness:** witnessed requires an inspectable nonempty concrete trace.
+- **Kernel correspondence:** every reported witness replays through kernel action
+  admission and commit to the witnessed state. A refused step makes the collision
+  unknown, never witnessed or refuted.
 - **Nonvacuity:** proven separation never implies witnessed availability.
 - **Refusal:** any refuted verdict produces an error and refuses installation.
 - **Required witness:** requireWitness refuses admission unless availability is witnessed.
@@ -36,6 +39,15 @@ The alpha adapter retains every action as a self edge, forgetting state, guards 
 This complete overapproximation preserves singleton-role separation.
 Role conjuncts intersect; permit rules union. Resource restrictions and non-role conjuncts are erased.
 Generic or unbounded role grants, unsupported policies and undecodable inputs yield unknown.
-Concrete witnesses require empty-schema, effect-free actions on a property-free, link-free, lifecycle-free object.
+Concrete witnesses use only `upsert_input_object` in unrestricted upsert mode,
+on an existing object whose sole property is mutable text `id`. Every step takes
+the closed input `{id: "witness"}` and preserves that same object state.
+The object has no identity constraints, inheritance, links, invariants, lifecycle,
+interfaces or owned collections. Actions require only org scope, have empty output
+schemas and no guards, derivations, slices, commands, quantity effects or link creation.
+Effect-free actions, create-only upserts, mismatched targets and all other effects
+remain abstract. Kernel correspondence tests execute every reported trace step
+through `commit_action` on a schema-backed host and check the committed state;
+refused effects and guarded steps must remain unknown.
 Other collisions remain unknown; required witnesses then fail admission.
 Inherited controls are checked on every subtype against the full pool, including candidate grant additions.
