@@ -407,15 +407,48 @@ mod tests {
         definitions.push(target);
         Model::from_definitions(&definitions, &[]).expect("model")
     }
+    fn tombstone_dependency(store: &mut CellStore, scope: &str) {
+            for write in [
+                FactWriteRow::Put {
+                    object_type: "test.ReceiptTarget".into(),
+                    key: "ghost".into(),
+                    values: norn_ir::RuntimeObject::from([(
+                        "id".into(),
+                        RuntimeValue::String("ghost".into()),
+                    )]),
+                },
+                FactWriteRow::Delete {
+                    object_type: "test.ReceiptTarget".into(),
+                    key: "ghost".into(),
+                },
+            ] {
+                store
+                    .commit(&CommitBatch {
+                        world: MAIN_WORLD.into(),
+                        scope: scope.to_owned(),
+                        logical_time: 1_790_000_000_000,
+                        writes: vec![write],
+                        ..CommitBatch::default()
+                    })
+                    .expect("tombstone");
+            }
+    }
     fn setup(path: &std::path::Path) -> (Cell, DispatchedCommand, FunctionReceipt, Checks, Model) {
         setup_with_pin(path, false)
     }
-    fn setup_with_pin(path: &std::path::Path, pin_absence: bool) -> (Cell, DispatchedCommand, FunctionReceipt, Checks, Model) {
+    fn setup_with_pin(
+        path: &std::path::Path,
+        pin_absence: bool,
+    ) -> (Cell, DispatchedCommand, FunctionReceipt, Checks, Model) {
         let manifest: FunctionManifest = fixture("manifest");
         let checks =
             Checks(norn_checker::function::admit_function_manifest(&manifest).expect("manifest"));
         let mut invocation: FunctionInvocation = fixture("invocation");
-        invocation.freshness = if pin_absence { norn_ir::function::FreshnessMode::RelevantState } else { norn_ir::function::FreshnessMode::DestinationCas };
+        invocation.freshness = if pin_absence {
+            norn_ir::function::FreshnessMode::RelevantState
+        } else {
+            norn_ir::function::FreshnessMode::DestinationCas
+        };
         invocation.destination = Some(norn_ir::function::Destination {
             object_type: "test.ReceiptTarget".into(),
             key: "target-1".into(),
@@ -423,7 +456,16 @@ mod tests {
         });
         invocation.dependency.facts.clear();
         invocation.dependency.predicates.clear();
-        if pin_absence { invocation.dependency.facts.push(norn_ir::function::FactPin { object_type: "test.ReceiptTarget".into(), key: "ghost".into(), version: 0 }); }
+        if pin_absence {
+            invocation
+                .dependency
+                .facts
+                .push(norn_ir::function::FactPin {
+                    object_type: "test.ReceiptTarget".into(),
+                    key: "ghost".into(),
+                    version: 0,
+                });
+        }
 
         let dispatched = DispatchedCommand::pin(invocation, checks.0.execution_profile.clone())
             .expect("dispatch");
@@ -478,11 +520,7 @@ mod tests {
                 ..CommitBatch::default()
             })
             .expect("enqueue");
-        if pin_absence {
-            for write in [FactWriteRow::Put { object_type: "test.ReceiptTarget".into(), key: "ghost".into(), values: norn_ir::RuntimeObject::from([("id".into(), RuntimeValue::String("ghost".into()))]) }, FactWriteRow::Delete { object_type: "test.ReceiptTarget".into(), key: "ghost".into() }] {
-                store.commit(&CommitBatch { world: MAIN_WORLD.into(), scope: dispatched.invocation.tenant.clone(), logical_time: 1_790_000_000_000, writes: vec![write], ..CommitBatch::default() }).expect("tombstone");
-            }
-        }
+        if pin_absence { tombstone_dependency(&mut store, &dispatched.invocation.tenant); }
         let result = receipt.clone();
         let mut cell = Cell::new(store, dispatched.invocation.tenant.clone(), move |_| {
             norn_ir::runtime::encode(&result)
@@ -521,12 +559,23 @@ mod tests {
     #[test]
     fn deleted_dependency_refuses_a_never_written_freshness_pin() {
         let dir = tempfile::tempdir().expect("dir");
-        let (mut cell, dispatched, receipt, checks, _) = setup_with_pin(&dir.path().join("cell.sqlite"), true);
+        let (mut cell, dispatched, receipt, checks, _) =
+            setup_with_pin(&dir.path().join("cell.sqlite"), true);
         let before = cell.store().verified_head().expect("head");
-        assert_eq!(cell.store().read().version(MAIN_WORLD, "test.ReceiptTarget", "ghost").expect("version"), 2);
+        assert_eq!(
+            cell.store()
+                .read()
+                .version(MAIN_WORLD, "test.ReceiptTarget", "ghost")
+                .expect("version"),
+            2
+        );
         assert!(retain(&mut cell, &dispatched, &receipt, &checks, true).is_err());
         assert_eq!(cell.store().verified_head().expect("head"), before);
-        assert!(cell.function_receipt_evidence(&receipt.content_digest().expect("digest")).expect("evidence").is_none());
+        assert!(
+            cell.function_receipt_evidence(&receipt.content_digest().expect("digest"))
+                .expect("evidence")
+                .is_none()
+        );
     }
     #[test]
     fn authenticated_receipt_survives_reopen_with_recorded_time_and_source() {
