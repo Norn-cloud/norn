@@ -2468,7 +2468,7 @@ where
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
-    record.parameter_reads.clone_from(&slice.parameter_reads);
+    record.parameter_reads.clone_from(&action_slice.parameter_reads);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
 
     // Replays must be resolved before CAS validation: a create retry carries
