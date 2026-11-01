@@ -1058,7 +1058,7 @@ fn public_induction_goals_bind_exact_law_and_transition_commitments() {
             right.bind_submission(left.body()),
             Err(ChallengeError::InvalidSubmission)
         );
-        assert_eq!(left.body()["generator"], "norn.application-obligations/8");
+        assert_eq!(left.body()["generator"], "norn.application-obligations/9");
         assert_eq!(
             left.body()["inductionRules"]["profile"],
             "norn.induction-statements/2"
