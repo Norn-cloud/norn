@@ -465,14 +465,14 @@
     },
     {
       "code": "controls.validation.refuted",
-      "message": "Concrete duty separation counterexample",
+      "message": "Finite-model duty separation counterexample",
       "severity": "error",
       "since": "0.2.0",
       "tier": "T3"
     },
     {
       "code": "controls.validation.witness_required",
-      "message": "Concrete availability witness required",
+      "message": "Kernel availability witness required",
       "severity": "error",
       "since": "0.2.0",
       "tier": "T3"
