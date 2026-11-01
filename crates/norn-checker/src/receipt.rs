@@ -385,12 +385,13 @@ fn source_refs(
     let mut refs = Vec::with_capacity(sources.len());
     for source in sources {
         let (artifact, semantic_source) =
-            match crate::layout::prepare_artifact_source(source.clone()) {
-                Ok(prepared) => (prepared.artifact, prepared.source),
-                Err(_) => (
+            if let Ok(prepared) = crate::layout::prepare_artifact_source(source.clone()) {
+                (prepared.artifact, prepared.source)
+            } else {
+                (
                     norn_ir::runtime::decode(source).map_err(invalid_receipt)?,
                     source.clone(),
-                ),
+                )
             };
         let bytes = semantic_source
             .canonical_json()
