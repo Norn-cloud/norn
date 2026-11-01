@@ -324,7 +324,6 @@
     "crates/norn-ir/src/metric.rs",
     "crates/norn-ir/src/osi.rs",
     "crates/norn-ir/src/policy_value.rs",
-    "crates/norn-ir/tests/policy_values.rs",
     "crates/norn-ir/src/provenance.rs",
     "crates/norn-ir/src/rule.rs",
     "crates/norn-ir/src/runtime.rs",
@@ -337,6 +336,7 @@
     "crates/norn-ir/src/view.rs",
     "crates/norn-ir/src/widget.rs",
     "crates/norn-ir/src/widget_ux.rs",
+    "crates/norn-ir/tests/policy_values.rs",
     "crates/norn-kernel/Cargo.toml",
     "crates/norn-kernel/src/action.rs",
     "crates/norn-kernel/src/action_commit.rs",
@@ -346,6 +346,7 @@
     "crates/norn-kernel/src/decision_commit.rs",
     "crates/norn-kernel/src/effect.rs",
     "crates/norn-kernel/src/envelope.rs",
+    "crates/norn-kernel/src/guard_diagnostic.rs",
     "crates/norn-kernel/src/limits.rs",
     "crates/norn-kernel/src/naming_series.rs",
     "crates/norn-kernel/src/observations.rs",
@@ -495,6 +496,7 @@
     "verification/kernel-l1/Audit.lean",
     "verification/kernel-l1/Reference.lean",
     "verification/kernel-l1/VersionProof.lean",
+    "verification/kernel-l1/guard_diagnostic_kani.rs",
     "verification/kernel-l1/version_kani.rs",
     "verification/kernel-l1/version_verus.rs"
   ]

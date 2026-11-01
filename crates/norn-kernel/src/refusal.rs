@@ -448,21 +448,27 @@ impl<X> DecisionRefusal<X> {
                 key,
                 transition,
                 guard,
-            } => Some((
-                "lifecycle.guard",
-                key,
-                lifecycle_guard(transition, guard, None),
-            )),
+                diagnostic,
+            } => {
+                let mut values = lifecycle_guard(transition, guard, None);
+                if diagnostic.is_some() {
+                    values.insert("underlyingCode".to_owned(), "decision.guard_false".into());
+                }
+                Some(("lifecycle.guard", key, values))
+            }
             Self::GuardError {
                 key,
                 transition,
                 guard,
                 reason,
-            } => Some((
-                "lifecycle.guard_evaluable",
-                key,
-                lifecycle_guard(transition, guard, Some(reason)),
-            )),
+                diagnostic,
+            } => {
+                let mut values = lifecycle_guard(transition, guard, Some(reason));
+                if diagnostic.is_some() {
+                    values.insert("underlyingCode".to_owned(), "decision.guard_error".into());
+                }
+                Some(("lifecycle.guard_evaluable", key, values))
+            }
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
