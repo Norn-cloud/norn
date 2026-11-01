@@ -29,7 +29,7 @@ pub enum ExprError {
     BudgetExhausted {
         /// The budget's unit limit.
         limit: u64,
-        /// Failing total, saturated at u64::MAX when the mathematical sum overflows.
+        /// Failing total, saturated at `u64::MAX` when the mathematical sum overflows.
         used: u64,
     },
     /// A decimal string is not an exact, supported Norn number.
