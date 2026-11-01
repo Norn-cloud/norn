@@ -1026,6 +1026,10 @@ def validate(
         f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_claimed)}, "
         f"unexpected={sorted(core_physics_claimed - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
     )
+    require(
+        set(by_id.get("jewelry", {}).get("obligations", [])) == REQUIRED_JEWELRY_OBLIGATION_IDS,
+        "jewelry coverage must claim exactly the approved law closure",
+    )
     require(set(by_id) == MANDATORY | present_domains, f"mandatory subsystem mismatch: expected {sorted(MANDATORY)}, got {sorted(by_id)}")
 
     lean_composite_gates = coverage.get("leanCompositeGates", {})
