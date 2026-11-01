@@ -1088,3 +1088,60 @@ fn composition_pack_member_kinds_follow_the_canonical_enum() {
             .any(|code| code == "business_pack.validation.invalid_payload")
     );
 }
+
+fn decimal_binding_findings(unit: Option<&str>, scales: [u64; 3]) -> Vec<norn_checker::Diagnostic> {
+    let names = ["input", "output", "loss"];
+    let interface: norn_ir::InterfaceDef = serde_json::from_value(json!({
+        "name":"core.Conversion", "properties": names.map(|id| json!({
+            "id":id, "type":{"kind":"decimal-binding","group":"conversion"}
+        }))
+    }))
+    .expect("bound contract");
+    let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name":"toy.Melt", "implements":["core.Conversion"],
+        "properties": names.into_iter().zip(scales).map(|(id, scale)| {
+            let mut kind = json!({"kind":"decimal", "scale":scale});
+            if let Some(unit) = unit { kind["unit"] = json!({"system":"ucum","code":unit}); }
+            json!({"id":id, "type":kind})
+        }).collect::<Vec<_>>()
+    }))
+    .expect("implementor");
+    norn_checker::check_entity_model(
+        &norn_checker::EntityModel {
+            interfaces: &[interface],
+            object_types: &[object],
+            ..norn_checker::EntityModel::EMPTY
+        },
+        &norn_checker::EntityContext {
+            catalog: &[],
+            registry: &BTreeSet::new(),
+            base: norn_checker::EntityModel::EMPTY,
+            tenant: None,
+        },
+    )
+}
+
+#[test]
+fn interface_decimal_binding_resolves_concrete_units_and_scales_without_defaults() {
+    for unit in ["g", "kg"] {
+        assert!(decimal_binding_findings(Some(unit), [3; 3]).is_empty());
+    }
+    assert!(
+        decimal_binding_findings(None, [3; 3])
+            .iter()
+            .any(|d| d.code.as_str() == "core.values.unit_binding_required")
+    );
+    assert!(
+        decimal_binding_findings(Some("g"), [3, 2, 3])
+            .iter()
+            .any(|d| d.code.as_str() == "core.values.unit_mismatch")
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn interface_decimal_binding_generated_scales_are_identical_or_refused(a in 0_u64..9, b in 0_u64..9, c in 0_u64..9) {
+        let findings = decimal_binding_findings(Some("g"), [a,b,c]);
+        proptest::prop_assert_eq!(findings.is_empty(), a == b && b == c);
+    }
+}

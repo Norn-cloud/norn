@@ -442,7 +442,7 @@ pub(crate) fn check_type_members(
                 out.push(error(
                     codes::UNIT_BINDING_REQUIRED,
                     "a Decimal binding requires a nonempty identifier group".to_owned(),
-                    span_at(pointer, &["type", "group"]),
+                    span_at(base, &["type", "group"]),
                 ));
             }
         }
