@@ -128,3 +128,139 @@ fn source_pointers_obey_rfc6901_escaping() {
         assert!(lower_deontic_law(&rule).is_ok());
     }
 }
+
+#[allow(clippy::expect_used, reason = "test-only typed requirement fixture")]
+fn requirement() -> norn_ir::deontic::StructuredRequirement {
+    use norn_ir::deontic::{RequirementText, RequirementTiming, RequirementWording};
+    let text = || RequirementText {
+        en: "declared predicate".into(),
+        ar: "المحمول المعلن".into(),
+    };
+    let mut norm = obligation().expect("fixture");
+    norm.law.modality = LawModality::Always {};
+    norm.law.timing = None;
+    norm.law.condition = Some(norn_ir::ZenExpression("input.active".into()));
+    norm.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("input.quantity >= 0.00".into()),
+    };
+    norn_ir::deontic::StructuredRequirement {
+        norm,
+        timing: RequirementTiming::SameCommit,
+        wording: RequirementWording {
+            scope: text(),
+            activation: text(),
+            component: text(),
+            response: text(),
+        },
+    }
+}
+
+#[allow(clippy::expect_used, reason = "test-only typed environment fixture")]
+fn requirement_env() -> norn_expr::ZenTypeEnv {
+    use norn_expr::{EntityDefinitions, EnvOptions, Type, ZenTypeEnv};
+    ZenTypeEnv::from_artifact_set(&EntityDefinitions::default(), EnvOptions::default())
+        .expect("environment")
+        .bind_input(std::collections::BTreeMap::from([
+            ("active".into(), Type::Bool),
+            ("quantity".into(), Type::Number),
+        ]))
+        .expect("input")
+}
+
+#[test]
+fn structured_safety_fragment_preserves_grades_timing_and_source() {
+    use norn_checker::deontic::check_requirement;
+    use norn_ir::deontic::{RequirementTiming, StructuredRequirement};
+    for grade in [
+        DeonticModality::Obligation,
+        DeonticModality::Permission,
+        DeonticModality::Prohibition,
+    ] {
+        for timing in [
+            RequirementTiming::SameCommit,
+            RequirementTiming::EveryCommittedState,
+        ] {
+            let mut r = requirement();
+            r.norm.modality = grade;
+            r.norm.law.modality = if grade == DeonticModality::Prohibition {
+                LawModality::Never {}
+            } else {
+                LawModality::Always {}
+            };
+            r.timing = timing;
+            check_requirement(&r, &requirement_env()).expect("structural only");
+            let ir = serde_json::to_string(&r).expect("wire");
+            assert_eq!(
+                serde_json::from_str::<StructuredRequirement>(&ir).expect("typed"),
+                r
+            );
+            if grade == DeonticModality::Permission {
+                assert_eq!(
+                    lower_deontic_law(&r.norm),
+                    Err(LawLoweringRefusal::Permission)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn structured_fragment_refuses_progress_mismatches_and_untyped_predicates() {
+    use norn_checker::deontic::{RequirementRefusal as R, check_requirement};
+    let env = requirement_env();
+    let mut r = requirement();
+    for modality in [
+        LawModality::Eventually {},
+        LawModality::Until {
+            predicate: norn_ir::ZenExpression("true".into()),
+        },
+    ] {
+        r.norm.law.modality = modality;
+        assert_eq!(check_requirement(&r, &env), Err(R::UnsupportedTiming));
+    }
+    r = requirement();
+    r.norm.law.timing = Some(norn_ir::LawTiming::Within { millis: "1".into() });
+    assert_eq!(
+        check_requirement(&r, &env).expect_err("deadline").code(),
+        "requirement.timing.unsupported"
+    );
+    r = requirement();
+    r.norm.modality = DeonticModality::Prohibition;
+    assert_eq!(check_requirement(&r, &env), Err(R::ModalityMismatch));
+    for expression in [
+        "input.quantity",
+        "input.missing == 1",
+        "input.quantity == 'kg'",
+    ] {
+        r = requirement();
+        r.norm.law.condition = Some(norn_ir::ZenExpression(expression.into()));
+        assert_eq!(check_requirement(&r, &env), Err(R::PredicateType));
+    }
+    r = requirement();
+    r.wording.response.ar.clear();
+    assert_eq!(check_requirement(&r, &env), Err(R::MissingTemplate));
+    r = requirement();
+    r.norm.law.response = norn_ir::LawResponse::Action {
+        artifact_id: "future.action".into(),
+    };
+    assert_eq!(check_requirement(&r, &env), Err(R::UnsupportedResponse));
+}
+
+#[test]
+fn structured_sources_feed_existing_precedence_without_a_new_hierarchy() {
+    use norn_checker::norm_precedence::{GroundedNorm, check_norm_precedence};
+    use std::collections::BTreeSet;
+    let r = requirement();
+    let grounded = GroundedNorm {
+        id: r.norm.law.id,
+        modality: r.norm.modality,
+        authority: (r.norm.authority_id, r.norm.authority_version),
+        authority_level: Some(1),
+        enacted: 0,
+        applicable: BTreeSet::from([0, 1]),
+        excepted: BTreeSet::from([1]),
+    };
+    let contexts = check_norm_precedence(&[grounded], 2).expect("existing precedence");
+    assert_eq!(contexts.first().expect("applicable").obligations, vec![0]);
+    assert!(contexts.get(1).expect("excepted").survivors.is_empty());
+}
