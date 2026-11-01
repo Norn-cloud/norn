@@ -450,6 +450,7 @@
     "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
     "verification/stripmine-2026-08-22/scripts/validate.sh",
-    "verification/coverage-v1/test_welldb_enrollment.py"
+    "verification/coverage-v1/test_welldb_enrollment.py",
+    "crates/norn-checker/src/obligations/induction.rs"
   ]
 }

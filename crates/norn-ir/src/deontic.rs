@@ -77,3 +77,41 @@ pub struct RuleException {
     pub condition: ZenExpression,
     pub source: RuleSourceSpan,
 }
+
+/// Structured authoring over the existing law and normative source model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StructuredRequirement {
+    pub norm: DeonticRule,
+    pub timing: RequirementTiming,
+    pub wording: RequirementWording,
+}
+
+/// Closed safety fragment. No event activation, clocks, fairness or progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementTiming {
+    /// Condition and response are evaluated at every applicable committed state.
+    EveryCommittedState,
+    /// Condition and response refer to the same proposed commit's state.
+    /// This is not an edge trigger or a promise to respond in a later commit.
+    SameCommit,
+}
+
+/// Reviewed bilingual templates; identifiers and expressions remain in `norm`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RequirementWording {
+    pub scope: RequirementText,
+    pub activation: RequirementText,
+    pub component: RequirementText,
+    pub response: RequirementText,
+}
+
+/// Reviewed English and Arabic display, never executable free prose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RequirementText {
+    pub en: String,
+    pub ar: String,
+}
