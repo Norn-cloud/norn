@@ -195,10 +195,19 @@ fn missing_pins_members_types_and_unbounded_or_impure_predicates_refuse() {
 }
 proptest::proptest! {
     #[test]
-    fn excessive_resource_bounds_never_admit(extra in 1_u32..1_000_000) {
+    fn excessive_resource_bounds_never_admit(extra in 1_u64..1_000_000, slot in 0_usize..18) {
+        let paths = [
+            "/decide/cpu_p99_micros", "/decide/fuel_envelope_micros", "/decide/fuel_units",
+            "/turn/cpu_p99_micros", "/turn/fuel_units", "/slice/max_canonical_bytes",
+            "/slice/max_records", "/slice/max_relation_depth", "/slice/qualification_ceiling_bytes",
+            "/memory/max_turn_working_bytes", "/memory/live_footprint_target_bytes",
+            "/envelope/max_output_bytes", "/envelope/max_events", "/envelope/max_commands",
+            "/envelope/max_timers", "/helper/cpu_p99_micros", "/helper/aggregate_micros_per_decision",
+            "/helper/max_guest_memory_bytes",
+        ];
         let mut wire = serde_json::to_value(qualified()).expect("wire");
-        let ceiling = ResourceLimitProfile::norn_limits_v1().slice.max_records;
-        wire["payload"]["bounds"]["slice"]["maxRecords"] = json!(ceiling.saturating_add(extra));
+        let field = wire["payload"]["bounds"].pointer_mut(paths[slot]).expect("profile field");
+        *field = json!(field.as_u64().expect("integer cap").saturating_add(extra));
         let class = serde_json::from_value(wire).expect("wire remains typed");
         proptest::prop_assert!(findings(&[class], &[item()]).iter()
             .any(|d| d.code.as_str() == "core.graph.incomplete_classification"));

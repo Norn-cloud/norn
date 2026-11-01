@@ -85,6 +85,12 @@ pub(crate) fn check_admission(
     artifacts: &[ArtifactEnvelope],
     context: &crate::EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
+    if !artifacts
+        .iter()
+        .any(|a| a.kind() == ArtifactKind::DefinedConcept)
+    {
+        return Vec::new();
+    }
     let pool: Vec<_> = artifacts.iter().chain(context.base).cloned().collect();
     let catalog = crate::definition_catalog::project(&[], &pool, context.registry).ok();
     artifacts
@@ -156,7 +162,7 @@ fn entity_closure(
     while let Some(current) = closure.get(cursor).cloned() {
         let others: Vec<_> = pool
             .iter()
-            .filter(|a| a.artifact_id != current.artifact_id || a.version != current.version)
+            .filter(|a| a.artifact_id != current.artifact_id)
             .cloned()
             .collect();
         let resolved = crate::resolve_artifact_set(std::slice::from_ref(&current), &others)
