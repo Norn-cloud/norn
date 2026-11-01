@@ -523,7 +523,8 @@ mod tests {
     #![allow(
         clippy::unwrap_used,
         clippy::indexing_slicing,
-        reason = "conformance fixtures"
+        clippy::too_many_lines,
+        reason = "conformance fixture assembly"
     )]
     use super::*;
     use crate::{

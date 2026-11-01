@@ -91,8 +91,7 @@ protection, quantity configuration, accounting admission and atomic publication.
 
 ## Authoritative history and planning (P2b)
 
-POST-HISTORY-FENCE: concrete master tuple selects the partition; authorized fact
-(including ABSENT), complete adjacency and event facts are fenced. Identity,
+POST-HISTORY-FENCE: concrete master tuple selects the partition; authorized fact (including ABSENT), complete adjacency and event facts are fenced. Identity,
 count and dense ordinals agree. POST-RUNTIME-BINDINGS: master book/graph/version/currency/accounts/UOM are pinned; configuration changes refuse.
 CP1 templates are receipt/delivery, layer posted; plans grant no commit authority.
 `post_history_fences_and_refusal` checks absent/empty-adjacency races, replay and readable over-delivery refusal without writes.
