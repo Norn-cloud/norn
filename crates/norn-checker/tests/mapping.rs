@@ -18,7 +18,7 @@
 //! artifact-set check, coverage for every map, and, applied to `ERPNext`
 //! documents, action invocations, link patches, and provenance.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::{fs, path::Path};
 
 use norn_checker::lint::coverage::{MemberRef, MemberStatus};
@@ -63,7 +63,7 @@ fn pinned_interpretation() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
                     artifact_id: entity.artifact_id.clone(),
                     version: entity.version.clone(),
                     kind: PackArtifactKind::Entity,
-                    additional: Default::default(),
+                    additional: BTreeMap::new(),
                 }],
             };
             envelope(
@@ -199,7 +199,7 @@ fn map_pins_require_unique_required_exact_dependencies() {
             2 => candidate.dependencies.first_mut().expect("source").version = None,
             3 => {
                 candidate.dependencies.first_mut().expect("source").version =
-                    Some("0.2.0".to_owned())
+                    Some("0.2.0".to_owned());
             }
             _ => candidate
                 .dependencies
