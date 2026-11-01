@@ -369,7 +369,12 @@ pub fn check_artifact_set(
             .collect(),
     };
     let unit_findings = crate::unit_admission::check(&normalized_artifacts, &normalized_base);
-    dedupe_findings(findings.into_iter().chain(layout_findings).chain(unit_findings))
+    dedupe_findings(
+        findings
+            .into_iter()
+            .chain(layout_findings)
+            .chain(unit_findings),
+    )
 }
 
 fn normalize_artifacts(
