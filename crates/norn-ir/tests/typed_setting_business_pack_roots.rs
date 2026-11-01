@@ -442,7 +442,7 @@ fn parameter_exact_1_decimal_literals_survive_envelope_and_runtime() {
         );
     }
     for value in [
-        json!(9007199254740993_u64),
+        json!(9_007_199_254_740_993_u64),
         json!("1e-29"),
         json!("0.00000000000000000000000000001"),
         json!("79228162514264337593543950336"),
