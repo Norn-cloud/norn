@@ -1595,6 +1595,32 @@ export interface components {
             /** @description The terminal property. */
             property: string;
         };
+        /**
+         * EffectiveLawInstance
+         * @description LAW-INSTANCE-CONTRACT-1: an application of a law retains its original
+         *     identity, concrete subject, attachment and complete origin paths.
+         *     This projection is not a new law or evidence of preservation.
+         */
+        NornIrEffectiveLawInstance: {
+            /** @description Declared governing boundary, including retained pack/app attachments. */
+            attachment: components["schemas"]["NornIrLawRoot"];
+            /** @description Explicit typed member substitutions; no rewritten child LawIR. */
+            bindings: {
+                [key: string]: components["schemas"]["NornIrMemberRef"];
+            };
+            /** @description Original law artifact/version and stable law member ID. */
+            law: components["schemas"]["NornIrMemberRef"];
+            /** @description Norn1 identity of the unchanged law artifact. */
+            lawDigest: string;
+            /** @description Original governed concept/interface/container identity. */
+            origin: components["schemas"]["NornIrMemberRef"];
+            /** @description Every inheritance, containment or mapping path; a diamond retains all. */
+            paths: components["schemas"]["NornIrMemberRef"][][];
+            /** @description Concrete implementing type, independently pinned. */
+            subject: components["schemas"]["NornIrMemberRef"];
+            /** @description Norn1 identity of that concrete type artifact. */
+            subjectDigest: string;
+        };
         /** @description A recognized source action and the checked predicate that admits it. */
         NornIrEntitlementActionMap: {
             /** @description Exact Norn action id. */
@@ -2735,7 +2761,27 @@ export interface components {
             transitionId: string;
         };
         /** @description Named application boundary; authorization still comes from the envelope. */
-        NornIrLawRoot: components["schemas"]["NornIrLawRootOneOf0"] | components["schemas"]["NornIrLawRootOneOf1"] | components["schemas"]["NornIrLawRootOneOf2"] | components["schemas"]["NornIrLawRootOneOf3"];
+        NornIrLawRoot: {
+            id: string;
+            /** @enum {string} */
+            kind: "company";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "app";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "cell";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "entity";
+        };
         /** @description Organization/company boundary. */
         NornIrLawRootOneOf0: {
             id: string;
@@ -2748,14 +2794,20 @@ export interface components {
             /** @enum {string} */
             kind: "app";
         };
-        /** @description Cell ownership root. */
+        /** @description Exact retained composition-pack boundary. */
         NornIrLawRootOneOf2: {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
+        };
+        /** @description Cell ownership root. */
+        NornIrLawRootOneOf3: {
             id: string;
             /** @enum {string} */
             kind: "cell";
         };
         /** @description Exact entity type boundary. */
-        NornIrLawRootOneOf3: {
+        NornIrLawRootOneOf4: {
             id: string;
             /** @enum {string} */
             kind: "entity";
@@ -3254,7 +3306,44 @@ export interface components {
          *     interface name, a property, link, lifecycle-property, or transition id,
          *     an object-map id, a law id.
          */
-        NornIrMember: components["schemas"]["NornIrMemberOneOf0"] | components["schemas"]["NornIrMemberOneOf1"] | components["schemas"]["NornIrMemberOneOf2"] | components["schemas"]["NornIrMemberOneOf3"] | components["schemas"]["NornIrMemberOneOf4"] | components["schemas"]["NornIrMemberOneOf5"] | components["schemas"]["NornIrMemberOneOf6"] | components["schemas"]["NornIrMemberOneOf7"];
+        NornIrMember: {
+            /** @enum {string} */
+            kind: "artifact";
+        } | {
+            /** @enum {string} */
+            kind: "type";
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "property";
+            property: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "link";
+            link: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "state";
+            lifecycle: string;
+            state: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "transition";
+            lifecycle: string;
+            transition: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "object_map";
+            map: string;
+        } | {
+            /** @enum {string} */
+            kind: "law";
+            law: string;
+        };
         /** @description One interpretation between exact catalog members, never a coverage claim. */
         NornIrMemberInterpretation: {
             /** @description Source type, property, link, lifecycle state or transition identity. */
