@@ -1,6 +1,7 @@
 //! Checked, identity-grained lowering for the bounded exact query profile.
 
 pub mod arithmetic;
+pub mod contribution;
 
 use norn_ir::metric::{MetricFilter, TimeGrain};
 use norn_ir::{MetricDefinition, ObjectTypeName, PropertyId, PropertyType, QuestionIR};
@@ -35,6 +36,8 @@ pub struct QuestionPlan {
     question: QuestionIR,
     sums: Vec<KeyedSum>,
     max_items: u32,
+    properties: Vec<EffectiveProperty>,
+    definitions: Vec<MetricDefinition>,
 }
 
 impl QuestionPlan {
@@ -54,6 +57,18 @@ impl QuestionPlan {
     #[must_use]
     pub fn sums(&self) -> &[KeyedSum] {
         &self.sums
+    }
+
+    /// Checked effective properties used for projection and store-model binding.
+    #[must_use]
+    pub fn properties(&self) -> &[EffectiveProperty] {
+        &self.properties
+    }
+
+    /// Canonically ordered declarations, retained for content-addressing the plan.
+    #[must_use]
+    pub fn definitions(&self) -> &[MetricDefinition] {
+        &self.definitions
     }
 
     /// Full-population bound; exceeding it must discard the result.
@@ -147,7 +162,17 @@ pub fn admit(
             lower_sum(definition, question, catalog)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let properties = catalog
+        .object_type_named(question.object_set.as_str())
+        .and_then(Result::ok)
+        .ok_or_else(refuse)?
+        .properties
+        .clone();
+    let mut definitions = definitions.to_vec();
+    definitions.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(QuestionPlan {
+        properties,
+        definitions,
         question: question.clone(),
         sums,
         max_items,
