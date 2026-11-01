@@ -882,7 +882,7 @@ mod tests {
             ["4000", "-4000"],
             "POST-EFFECTS balanced derived GL"
         );
-        assert!(effects.output.facts.iter().any(|fact| matches!(fact, norn_ir::FactChange::Set { property, value, .. } if property.as_str() == "quantity" && value.to_string() == "1")), "POST-EFFECTS remaining quantity");
+        assert!(effects.output.facts.iter().any(|fact| matches!(fact, norn_ir::FactChange::Set { property, value, .. } if property.as_str() == "quantity" && matches!(value, JsonValue::Number(number) if number.canonical() == "1"))), "POST-EFFECTS remaining quantity");
         snapshot
             .facts
             .get_mut(&target)
