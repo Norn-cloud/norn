@@ -172,3 +172,15 @@ test("FOLD-AUTHORING compiles closed step schemas and pins the helper", () => {
     source.replace('maxItems: 32', 'maxItems: input.slice.initial.count'),
   ]) expect(compile(invalid).ok).toBe(false)
 }, 60_000)
+
+test("FOLD-OPERANDS refuses structural extra fields through const aliases", () => {
+  const source = readFileSync(join(TOOL_ROOT, "fixtures/decisions/ordered-fold.source.ts"), "utf8")
+  const wideItems = source.replace("items: Schema.Array(Item)", "items: Schema.Array(Schema.Struct({ id: Schema.String, amount: Schema.Finite, source: Schema.String }))")
+  const wideState = source.replace("initial: State", "initial: Schema.Struct({ total: Schema.Finite, count: Schema.Int, ids: Schema.Array(Schema.String), segments: Schema.Array(Schema.Array(Schema.Finite)), source: Schema.String })")
+  const alias = (text: string) => text.replace("const state = Norn.orderedFold", "const rows = input.slice.items; const seed = input.slice.initial; const state = Norn.orderedFold").replace("items: input.slice.items, initial: input.slice.initial", "items: rows, initial: seed")
+  for (const invalid of [wideItems, wideState, alias(wideItems), alias(wideState), alias(wideState).replace("items: rows", "items: []")]) {
+    const result = compile(invalid)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.diagnostics.some(d => d.code === "NORN-FLOW-TYPE")).toBe(true)
+  }
+}, 60_000)

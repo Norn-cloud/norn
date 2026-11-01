@@ -22,6 +22,7 @@ import {
   isScalar,
   literalSchema,
   mergeSchemas,
+  acceptsSchema,
   record as recordSchema,
 } from "./schema.ts"
 
@@ -285,4 +286,21 @@ export function render(expr: Expr, scope: Scope): string {
 function operand(expr: Expr, scope: Scope): string {
   const text = render(expr, scope)
   return ["Literal", "Ref", "List", "Record", "Call"].includes(expr._tag) ? text : `(${text})`
+}
+
+/** FOLD-OPERANDS: contextual empty arrays retain their declared item schema. */
+export function conforms(expr: Expr, expected: ValueSchema, scope: Scope): boolean {
+  if (expr._tag === "Conditional") return typeOf(expr.condition, scope).type === "boolean" && conforms(expr.yes, expected, scope) && conforms(expr.no, expected, scope)
+  if (expr._tag === "Coalesce") {
+    const value = typeOf(expr.value, scope)
+    const nonnull = Array.isArray(value.type) ? { ...value, type: value.type[0] } as ValueSchema : value
+    return (value.type === "null" || acceptsSchema(expected, nonnull)) && conforms(expr.fallback, expected, scope)
+  }
+  const target = Array.isArray(expected.type) ? { ...expected, type: expected.type[0] } as ValueSchema : expected
+  if (expr._tag === "List" && target.type === "array") return expr.items.every(item => conforms(item, target.items, scope))
+  if (expr._tag === "Record" && target.type === "object") {
+    return (target.required ?? []).every(k => expr.fields.some(([name]) => name === k))
+      && expr.fields.every(([k, value]) => target.properties[k] !== undefined && conforms(value, target.properties[k], scope))
+  }
+  return acceptsSchema(expected, typeOf(expr, scope))
 }

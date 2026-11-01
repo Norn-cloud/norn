@@ -242,3 +242,10 @@ concat and additional arguments remain outside this authoring form.
 FOLD-AUTHORING-CORRESPONDENCE: Rust conformance consumes compiler-generated
 RuleIR goldens; TypeScript tests compare those goldens with fresh extraction.
 The evaluator tests never spawn a compiler or acquire a process capability.
+
+FOLD-OPERANDS: collection items and initial state must satisfy the helper's
+closed contracts during compilation, including through const aliases. Structural
+extra fields, missing required fields and incompatible nested schemas refuse
+with NORN-FLOW-TYPE. Literal empty arrays receive the declared item schema;
+integer inputs may widen to number, and string enums may narrow. Runtime schema
+checks remain mandatory for actual values and untrusted artifacts.
