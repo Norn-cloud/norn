@@ -53,3 +53,9 @@ freshness check, so competing requests cannot both initialize the cell.
 Correspondence: `definitions_install::host_provision_atomic_at_every_storage_boundary`
 injects errors and abrupt subprocess exit after every SQL operation, before
 commit and after commit, then reopens, retries and checks conflicting retries.
+
+HOST-VERSION-ABSENT: every syntactically valid but unrepresentable revision is
+absent (404), including u64::MAX and the first integer above the SQL seam limit.
+HOST-HTTP-WORKER: synchronous store access and complete retained-set admission
+run on the blocking pool, outside the Tokio request worker; actor/scope admission
+still precedes store reads. HTTP correspondence covers allowed/denied actors.

@@ -319,6 +319,47 @@ mod defs_read {
         }
         assert_eq!(reads.load(Ordering::SeqCst), 0);
     }
+    #[cfg(feature = "http-host")]
+    #[tokio::test]
+    async fn host_http_actor_and_unrepresentable_version_conformance() {
+        use tower::ServiceExt as _;
+        let (host, _, _) = host();
+        let app = crate::routes::router(Arc::new(host.with_authorizer(Reader)));
+        for (actor, suffix, status, key, value) in [
+            ("reader", "", 200, "version", serde_json::json!(1)),
+            ("other", "", 403, "code", serde_json::json!("authz.denied")),
+            (
+                "reader",
+                "&version=18446744073709551615",
+                404,
+                "code",
+                serde_json::json!("defs.version_not_found"),
+            ),
+            (
+                "reader",
+                "&version=9007199254740993",
+                404,
+                "code",
+                serde_json::json!("defs.version_not_found"),
+            ),
+        ] {
+            let request = http::Request::builder()
+                .uri(format!(
+                    "/v1/defs?orgId=org%2F%25x&environmentId=dev%2F%25x{suffix}"
+                ))
+                .header("x-norn-actor", actor)
+                .body(axum::body::Body::empty())
+                .expect("request");
+            let response = app.clone().oneshot(request).await.expect("response");
+            assert_eq!(response.status().as_u16(), status);
+            let bytes = axum::body::to_bytes(response.into_body(), 16384)
+                .await
+                .expect("body");
+            let document: serde_json::Value = serde_json::from_slice(&bytes).expect("document");
+            assert_eq!(document[key], value);
+        }
+    }
+
     #[test]
     fn host_definition_epoch_keeps_install_and_read_revisions_coherent() {
         let (host, _, mut query) = host();
