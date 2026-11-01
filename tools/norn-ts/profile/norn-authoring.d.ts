@@ -275,8 +275,9 @@ declare module "@norn/authoring" {
       }>
       /** Boolean ZEN Expressions over `input` and the declared `slice`. */
       readonly preconditions?: ReadonlyArray<Expression<boolean>>
-      /** Outgoing links to existing objects, each required in the declared slice. */
+      /** Closed preparation from owned lines and linked stock masters. */
       readonly stockPost?: import("../src/builder/action.ts").StockPost
+      /** Outgoing links to existing objects, each required in the declared slice. */
       readonly createLinks?: ReadonlyArray<{
         readonly link: string
         readonly targetType: TypeDefinition<unknown> | string

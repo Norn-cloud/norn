@@ -370,5 +370,5 @@ fn post_authority_requires_preparation_without_writes() {
         refusal,
         norn_kernel::ActionRefusal::UnsupportedEffect { .. }
     ));
-    assert!(storage.commits().is_empty());
+    assert!(storage.ledger().is_empty());
 }

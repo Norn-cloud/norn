@@ -1800,6 +1800,21 @@ impl<'a> Model<'a> {
             .map(|(_, target)| target.as_str())
     }
 
+    fn stock_link_target(&self, start: &str, path: &[String]) -> Option<&str> {
+        if path.is_empty() || path.len() > 4 {
+            return None;
+        }
+        let mut current = self.object_type(start)?;
+        for id in path {
+            if !current.required_links.contains(id) {
+                return None;
+            }
+            current = self.object_type(self.link_target(&current.name, id)?)?;
+        }
+        self.effective_object_type_named(&current.name)?;
+        Some(&current.name)
+    }
+
     /// The object type `artifact` defines.
     fn defined_by(&self, artifact: &ArtifactEnvelope) -> Option<&Defined<'a>> {
         self.by_name.values().flatten().find(|defined| {
@@ -2068,29 +2083,9 @@ fn stock_post_findings(
             let field = model.effective_object_type_named(line)?.properties.iter().find(|p| p.id.as_str() == *id)?;
             if field.nullable || field.computed || !matches!(field.kind, crate::entity_instance::EffectiveKind::Base(norn_ir::PropertyType::Decimal { scale, .. }) if scale.0 == 6) { return None; }
         }
-        let resolve = |path: &[String]| -> Option<String> {
-            if path.is_empty() || path.len() > 4 {
-                return None;
-            }
-            let mut current = line.to_owned();
-            for id in path {
-                let link = model
-                    .object_type(&current)?
-                    .links
-                    .iter()
-                    .find(|(name, _)| name == id)?;
-                if !model.object_type(&current)?.required_links.contains(id) {
-                    return None;
-                }
-                current.clone_from(&link.1);
-            }
-            model.effective_object_type_named(&current)?;
-            Some(current)
-        };
-        if resolve(&post.partition.item)? != "stock.Item"
-            || resolve(&post.partition.warehouse)? != "stock.Warehouse"
-        {
-            return None;
+        let resolve = |path: &[String]| model.stock_link_target(line, path);
+        for (path, owner) in [(&post.partition.item, "stock.Item"), (&post.partition.warehouse, "stock.Warehouse")] {
+            if !model.effective_object_type_named(resolve(path)?)?.lineage.iter().any(|n| n.as_str() == owner) { return None; }
         }
         for (path, owner) in [
             (&post.accounts.stock, "stock.Warehouse"),
@@ -2103,11 +2098,11 @@ fn stock_post_findings(
             if links != expected { return None; }
             let name = resolve(links)?;
             let field = model
-                .effective_object_type_named(&name)?
+                .effective_object_type_named(name)?
                 .properties
                 .iter()
                 .find(|p| p.id.as_str() == property)?;
-            if name != owner
+            if !model.effective_object_type_named(name)?.lineage.iter().any(|n| n.as_str() == owner)
                 || field.nullable
                 || field.computed
                 || !matches!(

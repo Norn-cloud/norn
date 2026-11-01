@@ -45,6 +45,8 @@ if (checker) test("POST-BINDING: unresolved, mistyped and open declarations refu
     ['"stock":["destination","stock_account"]', '"stock":["item","name"]'],
     ['"srbnb":["destination","company","srbnb_account"]', '"srbnb":["destination","company","currency"]'],
     ['"kind":"decimal","scale":6', '"kind":"decimal","scale":2'],
+    ['"target":"stock.Item"', '"target":"stock.Missing"'],
+    ['"required":true', '"required":false'],
     ['"collection":"lines"', '"collection":"missing"'],
     ['"operation":"receipt"', '"operation":"transfer"'],
     ['"operation":"receipt"', '"operation":"receipt","templateId":"caller"'],
