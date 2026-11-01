@@ -7,7 +7,11 @@ mod unit_codes;
 fn missing_vocabulary_and_unknown_system_refuse() {
     let bytes: [u8; 2] = kani::any();
     let code = std::str::from_utf8(&bytes).unwrap_or("");
-    assert!(!unit_codes::admitted(false, code, ["mg", "kg"].iter().copied()));
+    assert!(!unit_codes::admitted(
+        false,
+        code,
+        ["mg", "kg"].iter().copied()
+    ));
     assert!(!unit_codes::admitted(true, code, std::iter::empty()));
 }
 
