@@ -455,7 +455,9 @@ echo "$plan"''',
          "with": {"path": "~/.bun/install/cache",
                   "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}"}},
     ]
-    cleanup = {"name": "Reclaim runner disk space", "run": """df -h
+    cleanup = {"name": "Reclaim runner disk space",
+               "if": "${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",
+               "run": """df -h
 sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
 sudo docker image prune -af
 df -h

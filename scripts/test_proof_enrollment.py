@@ -78,7 +78,7 @@ class EnrollmentTests(unittest.TestCase):
         module.validate_workflow_integrity([])
         workflow = module.yaml.load(source, Loader=module.WorkflowLoader)
         for job in ("core", "test", "phase"):
-            for mutation in ("extra", "reordered", "missing", "changed"):
+            for mutation in ("extra", "reordered", "missing", "changed", "unconditional", "event-only", "runner-only"):
                 with self.subTest(job=job, mutation=mutation), tempfile.TemporaryDirectory() as directory:
                     candidate = copy.deepcopy(workflow)
                     steps = candidate["jobs"][job]["steps"]
@@ -88,6 +88,12 @@ class EnrollmentTests(unittest.TestCase):
                         steps[0], steps[1] = steps[1], steps[0]
                     elif mutation == "missing":
                         steps.pop(0)
+                    elif mutation == "unconditional":
+                        steps[0].pop("if")
+                    elif mutation == "event-only":
+                        steps[0]["if"] = "${{ github.event_name != 'merge_group' }}"
+                    elif mutation == "runner-only":
+                        steps[0]["if"] = "${{ runner.environment != 'self-hosted' }}"
                     else:
                         steps[0]["run"] += "echo unexpected\n"
                     path = Path(directory) / "workflow.yml"
