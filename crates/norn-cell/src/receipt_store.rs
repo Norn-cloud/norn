@@ -81,34 +81,90 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         completion: &Completion<'_>,
         checks: &ResultChecks<'_, A, R>,
     ) -> Result<Digest, CellError> {
-        let reference = completion.receipt.content_digest().map_err(|_invalid| refused("digest"))?;
+        let reference = completion
+            .receipt
+            .content_digest()
+            .map_err(|_invalid| refused("digest"))?;
         let scope = self.scope.clone();
         let now = self.now;
-        if dispatched.invocation.tenant != scope || dispatched.invocation.world != MAIN_WORLD { return Err(refused("scope")); }
+        if dispatched.invocation.tenant != scope || dispatched.invocation.world != MAIN_WORLD {
+            return Err(refused("scope"));
+        }
         self.store.verified_head()?;
         let reader = self.store.read();
         let source = reader.next_commit_seq()?;
-            let pending = reader.head_command()?.ok_or_else(|| refused("unknown"))?;
-            let invocation = norn_ir::runtime_object! { "type" => "norn.function/v1", "invocation" => norn_ir::runtime::encode(&dispatched.invocation).map_err(|_invalid| refused("dispatch"))? };
-            let receipt = norn_ir::runtime::encode(completion.receipt).map_err(|_invalid| refused("body"))?;
-            if pending.command.command_id != dispatched.invocation.command_id
-                || pending.command.generation != dispatched.generation().0
-                || pending.command.command.get("payload") != Some(&invocation)
-                || pending.result.as_ref() != Some(&receipt) { return Err(refused("dispatch")); }
-            let command = reader.object(MAIN_WORLD, "norn.FunctionCommand", &dispatched.invocation.command_id)?.ok_or_else(|| refused("state"))?;
-            let state: CommandState = norn_ir::runtime::decode(command.values.get("state").ok_or_else(|| refused("state"))?).map_err(|_invalid| refused("state"))?;
-            let context = ReconcileContext { tenant: &scope, world: MAIN_WORLD, now, policy: ReconcilePolicy::DEFAULT };
-            let Reconciliation::Accepted(mut acceptance) = reconcile(&context, dispatched, &state, completion, checks, &ReceiptView(&reader)).map_err(|error| match error { norn_kernel::result_reconciliation::ReconcileError::View(view) => view, norn_kernel::result_reconciliation::ReconcileError::Canonical(_) => refused("reconciliation") })? else { return Err(refused("not_accepted")); };
-            acceptance.reads.push(norn_kernel::FactExpectation { key: FactKey::new("norn.FunctionCommand", &dispatched.invocation.command_id), expected: FactVersion(command.version) });
+        let pending = reader.head_command()?.ok_or_else(|| refused("unknown"))?;
+        let invocation = norn_ir::runtime_object! { "type" => "norn.function/v1", "invocation" => norn_ir::runtime::encode(&dispatched.invocation).map_err(|_invalid| refused("dispatch"))? };
+        let receipt =
+            norn_ir::runtime::encode(completion.receipt).map_err(|_invalid| refused("body"))?;
+        if pending.command.command_id != dispatched.invocation.command_id
+            || pending.command.generation != dispatched.generation().0
+            || pending.command.command.get("payload") != Some(&invocation)
+            || pending.result.as_ref() != Some(&receipt)
+        {
+            return Err(refused("dispatch"));
+        }
+        let command = reader
+            .object(
+                MAIN_WORLD,
+                "norn.FunctionCommand",
+                &dispatched.invocation.command_id,
+            )?
+            .ok_or_else(|| refused("state"))?;
+        let state: CommandState = norn_ir::runtime::decode(
+            command
+                .values
+                .get("state")
+                .ok_or_else(|| refused("state"))?,
+        )
+        .map_err(|_invalid| refused("state"))?;
+        let context = ReconcileContext {
+            tenant: &scope,
+            world: MAIN_WORLD,
+            now,
+            policy: ReconcilePolicy::DEFAULT,
+        };
+        let Reconciliation::Accepted(mut acceptance) = reconcile(
+            &context,
+            dispatched,
+            &state,
+            completion,
+            checks,
+            &ReceiptView(&reader),
+        )
+        .map_err(|error| match error {
+            norn_kernel::result_reconciliation::ReconcileError::View(view) => view,
+            norn_kernel::result_reconciliation::ReconcileError::Canonical(_) => {
+                refused("reconciliation")
+            }
+        })?
+        else {
+            return Err(refused("not_accepted"));
+        };
+        acceptance.reads.push(norn_kernel::FactExpectation {
+            key: FactKey::new("norn.FunctionCommand", &dispatched.invocation.command_id),
+            expected: FactVersion(command.version),
+        });
 
         let frontier = source.checked_add(1).ok_or_else(|| refused("frontier"))?;
-        let stored = StoredReceipt { receipt: completion.receipt.clone(), acceptance, source, frontier };
+        let stored = StoredReceipt {
+            receipt: completion.receipt.clone(),
+            acceptance,
+            source,
+            frontier,
+        };
         let body = serde_json::to_string(&stored).map_err(CellError::Json)?;
-        if body.len() > LIMIT { return Err(refused("limit")); }
+        if body.len() > LIMIT {
+            return Err(refused("limit"));
+        }
         let authority = crate::codec::hash_json(&stored)?;
         let batch = CommitBatch {
-            world: MAIN_WORLD.to_owned(), scope: scope.clone(), logical_time: now.as_millis(),
-            events: vec![norn_ir::runtime_object! { "type" => EVENT, "reference" => reference.0.clone(), "authoritySha256" => authority }],
+            world: MAIN_WORLD.to_owned(),
+            scope: scope.clone(),
+            logical_time: now.as_millis(),
+            events: vec![
+                norn_ir::runtime_object! { "type" => EVENT, "reference" => reference.0.clone(), "authoritySha256" => authority },
+            ],
             ..CommitBatch::default()
         };
         self.store.commit_guarded(&batch, |reader| -> Result<(), CellError> {
