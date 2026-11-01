@@ -5543,3 +5543,49 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_ne!(different, id);
     }
 }
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn mapping_bundle_processing_replay_has_one_bundle_and_finding(deliveries in 2usize..5) {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("mapped.sqlite");
+        let mut store = mapping_bundle_store(&path);
+        let raw = bundle_raw("MEAS-1", "1.20");
+        let input = bundle_input();
+        let model = store.model().clone();
+        for index in 0..deliveries {
+            let (id, inserted) = store.inject_mapping_bundle(&raw, &input).expect("capture");
+            norn_testkit::proptest::prop_assert_eq!(inserted, index == 0);
+            let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+            norn_testkit::proptest::prop_assert_eq!(cell.process_mapping_bundle(&id).expect("processing"), index == 0);
+            let reader = cell.store().read();
+            let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("review");
+            norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+            norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
+            norn_testkit::proptest::prop_assert!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").is_some());
+            let persisted = reader.ledger_page(0, 100).expect("history").into_iter().filter(|e| e.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")).count();
+            norn_testkit::proptest::prop_assert_eq!(persisted, 1);
+            drop(cell);
+            store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
+        }
+    }
+}
+
+#[test]
+fn mapping_bundle_processing_refuses_forged_output_without_consumption() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&directory.path().join("forged.sqlite"));
+    let (id, _) = store.inject_mapping_bundle(&bundle_raw("MEAS-1", "1.20"), &bundle_input()).expect("capture");
+    let pending = store.read().pending_observations().expect("inbox");
+    let mut observed: norn_kernel::Observed<Value> = norn_ir::runtime::decode(&pending[0].observed).expect("observed");
+    let mut bundle: norn_cell::mapping_bundle::MappingBundle = norn_ir::runtime::decode(&observed.input).expect("bundle");
+    bundle.records[0].invocations[0].input.insert("purity".into(), Value::from_json_text("0.80").expect("decimal"));
+    observed.input = norn_ir::runtime::encode(&bundle).expect("bundle");
+    observed.id.0 = "forged".into();
+    store.inject("forged", &norn_ir::runtime::encode(&observed).expect("envelope")).expect("ordinary caller evidence");
+    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    assert!(matches!(cell.process_mapping_bundle("forged"), Err(CellError::MappingBundleMismatch)));
+    assert_eq!(cell.store().read().pending_observations().expect("inbox").len(), 2);
+    assert!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("fact").is_none());
+    assert!(cell.process_mapping_bundle(&id).expect("original sealed evidence"));
+}

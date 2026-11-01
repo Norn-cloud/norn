@@ -271,6 +271,7 @@
     "crates/norn-cell/src/host.rs",
     "crates/norn-cell/src/lib.rs",
     "crates/norn-cell/src/mapping_bundle.rs",
+    "crates/norn-cell/src/mapping_process.rs",
     "crates/norn-cell/src/migration.rs",
     "crates/norn-cell/src/model.rs",
     "crates/norn-cell/src/observation_quality.rs",
