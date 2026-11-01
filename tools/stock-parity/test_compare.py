@@ -2,7 +2,7 @@
 from copy import deepcopy
 import json
 import unittest
-from compare import compare, markdown, exact, DECISIONS
+from compare import compare, markdown, exact, rate, DECISIONS
 
 
 def dump(engine):
@@ -23,6 +23,10 @@ class Contract(unittest.TestCase):
 
     def report(self, dispositions=None):
         return compare(self.n, self.e, dispositions or [])
+
+    def test_terminating_rate_preserves_all_places(self):
+        self.assertEqual(rate(1024, 1), '0.0009765625')
+        self.assertEqual(rate(5 ** 30, 1), '0.000000000000000000001073741824')
 
     def test_stub_match_and_representation(self):
         self.n['cases'][0]['checkpoints'][0]['stock'][0]['value'] = '20.000000'

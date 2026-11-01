@@ -198,11 +198,15 @@ def rate(quantity, value):
         return '—'
     ratio = Fraction(value, quantity)
     denominator = ratio.denominator
+    places = 0
     for factor in (2, 5):
+        power = 0
         while denominator % factor == 0:
             denominator //= factor
+            power += 1
+        places = max(places, power)
     with localcontext() as context:
-        context.prec = len(str(abs(ratio.numerator))) + len(str(ratio.denominator)) + 1
+        context.prec = len(str(abs(ratio.numerator))) + places + 1
         return (format(Decimal(ratio.numerator) / Decimal(ratio.denominator), 'f')
                 if denominator == 1 else str(ratio))
 
