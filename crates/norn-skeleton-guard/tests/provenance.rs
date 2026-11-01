@@ -6,7 +6,7 @@
     reason = "synthetic policy fixtures"
 )]
 
-use norn_skeleton_guard::ci::provenance::{self, MANIFEST};
+use norn_skeleton_guard::ci::provenance::{self, CONTROL, MANIFEST, RECORDS};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
@@ -67,13 +67,21 @@ impl Fixture {
         json!({"id":"toy-upstream","revision":"1.2.3","evidence":self.reference(path)})
     }
     fn save(&self) {
+        if self.root().join(CONTROL).exists() {
+            fs::remove_dir_all(self.root().join(CONTROL)).unwrap();
+        }
         self.write(
             MANIFEST,
-            &serde_json::to_vec(
-                &json!({"version":1,"software_sources":self.software,"artifacts":self.records}),
-            )
-            .unwrap(),
+            &serde_json::to_vec(&json!({"version":2,"software_sources":self.software})).unwrap(),
         );
+        for record in &self.records {
+            let mut body = record.clone();
+            let path = body.as_object_mut().unwrap().remove("path").unwrap();
+            self.write(
+                &format!("{RECORDS}{}.json", path.as_str().unwrap()),
+                &serde_json::to_vec(&body).unwrap(),
+            );
+        }
     }
     fn report(&self) -> provenance::Report {
         self.save();
@@ -142,8 +150,57 @@ fn unknown_ambiguous_and_cyclic_ancestry_fails_closed() {
     f.derived("a", "b", "generated");
     f.derived("b", "a", "generated");
     f.rejects("cyclic ancestry");
-    f.records.push(f.records[0].clone());
-    f.rejects("duplicate artifact");
+}
+
+/// #121: each refusal the single manifest gave survives per-file records.
+#[test]
+fn per_file_records_refuse_wrong_hash_missing_and_unlisted() {
+    let mut f = Fixture::new();
+    let i = f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.passes();
+    f.records[i]["sha256"] = json!("0".repeat(64));
+    f.rejects("content hash drift");
+    let mut f = Fixture::new();
+    f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.save();
+    fs::remove_file(f.root().join(format!("{RECORDS}crates/a/src/lib.rs.json"))).unwrap();
+    let r = provenance::check_distribution(f.root());
+    assert!(r.rejected_paths["crates/a/src/lib.rs"][0].contains("missing shipped-artifact"));
+    let mut f = Fixture::new();
+    f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.save();
+    fs::remove_file(f.root().join("crates/a/src/lib.rs")).unwrap();
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.rejected_paths["crates/a/src/lib.rs"]
+            .iter()
+            .any(|e| e.contains("missing artifact"))
+    );
+    let f = Fixture::new();
+    f.save();
+    for stray in [
+        format!("{CONTROL}extra.json"),
+        format!("{RECORDS}LICENSE.yaml"),
+    ] {
+        f.write(&stray, b"{}");
+        let r = provenance::check_distribution(f.root());
+        assert!(
+            r.rejected_paths[&stray]
+                .iter()
+                .any(|e| e.contains("unknown provenance control"))
+        );
+        fs::remove_file(f.root().join(&stray)).unwrap();
+    }
+    // The path is the record's file name, never a field it can claim.
+    f.write(
+        &format!("{RECORDS}LICENSE.json"),
+        &serde_json::to_vec(&f.records[0]).unwrap(),
+    );
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.rejected_paths[&format!("{RECORDS}LICENSE.json")][0]
+            .contains("malformed provenance record")
+    );
 }
 
 #[test]
@@ -213,7 +270,7 @@ fn authored_queries_proofs_verdicts_may_analyze_rejected_sources() {
         "accounting-domain",
         "inventory-domain",
         "certified-domain-law",
-        "soliman",
+        "private-business",
     ] {
         let mut bad = Fixture::new();
         bad.add("renamed.json", b"never admitted", category);
@@ -413,7 +470,6 @@ fn strict_records_reject_unknown_fields_categories_origins_and_directory_claims(
         ("category", json!("unknown")),
         ("origin", json!("unknown")),
         ("bypass", json!(true)),
-        ("path", json!("folder/../LICENSE")),
     ] {
         let mut f = Fixture::new();
         f.records[0][field] = value;
@@ -439,6 +495,7 @@ fn policy_fixture() -> Fixture {
     fixture.add(".github/workflows/core.yml", b"on: pull_request\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
     for path in [
         "scripts/ci/core.sh",
+        ".config/nextest.toml",
         "scripts/ci/validate-runner-policy.py",
         "scripts/proof_enrollment.py",
         "verification/coverage-v1/validate.py",
@@ -555,6 +612,128 @@ fn trusted_policy_preserves_retained_core_obligations() {
     );
 }
 
+/// Move the fixture's coverage to the per-subsystem layout, as the codemod does.
+fn split_coverage(candidate: &mut Fixture, subsystems: &[(&str, &[u8])]) {
+    let monolith = "verification/coverage-v1/coverage.json";
+    candidate
+        .records
+        .retain(|record| record["path"] != monolith);
+    fs::remove_file(candidate.root().join(monolith)).unwrap();
+    candidate.add(
+        "verification/coverage-v1/manifest/index.json",
+        b"{}",
+        "code",
+    );
+    for (id, body) in subsystems {
+        candidate.add(
+            &format!("verification/coverage-v1/manifest/subsystems/{id}.json"),
+            body,
+            "code",
+        );
+    }
+    candidate.save();
+    index_fixture(candidate);
+}
+
+fn retained_errors(candidate: &Fixture, base: &Fixture) -> Vec<String> {
+    norn_skeleton_guard::ci::run(candidate.root(), base.root())
+}
+
+#[test]
+fn trusted_policy_reads_per_subsystem_coverage_against_a_monolith_base() {
+    let base = policy_fixture();
+    let mut candidate = policy_fixture();
+    split_coverage(
+        &mut candidate,
+        &[(
+            "quantity-ledger",
+            br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        )],
+    );
+    let errors = retained_errors(&candidate, &base);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(retained_errors(&candidate, &candidate).is_empty());
+}
+
+#[test]
+fn trusted_policy_refuses_per_subsystem_coverage_that_drops_obligations() {
+    let base = policy_fixture();
+    for subsystems in [
+        &[("quantity-ledger", &br#"{"obligations":[]}"#[..])][..],
+        &[(
+            "other",
+            &br#"{"obligations":["synthetic-preserved-obligation"]}"#[..],
+        )][..],
+    ] {
+        let mut candidate = policy_fixture();
+        split_coverage(&mut candidate, subsystems);
+        let errors = retained_errors(&candidate, &base);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error
+                    .contains("quantity-ledger: retained core obligations were removed")),
+            "{errors:?}"
+        );
+    }
+}
+
+#[test]
+fn trusted_policy_refuses_both_coverage_layouts_and_stray_entries() {
+    let base = policy_fixture();
+    let mut both = policy_fixture();
+    both.add(
+        "verification/coverage-v1/manifest/subsystems/quantity-ledger.json",
+        br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        "code",
+    );
+    both.save();
+    index_fixture(&both);
+    let errors = retained_errors(&both, &base);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("both verification/coverage-v1/coverage.json")),
+        "{errors:?}"
+    );
+    let index = "verification/coverage-v1/manifest/index.json";
+    let mut headless = policy_fixture();
+    split_coverage(&mut headless, &[]);
+    headless.records.retain(|record| record["path"] != index);
+    fs::remove_file(headless.root().join(index)).unwrap();
+    headless.save();
+    index_fixture(&headless);
+    let errors = retained_errors(&headless, &base);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("manifest/index.json is missing")),
+        "{errors:?}"
+    );
+    let mut stray = policy_fixture();
+    split_coverage(
+        &mut stray,
+        &[(
+            "quantity-ledger",
+            br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        )],
+    );
+    stray.add(
+        "verification/coverage-v1/manifest/subsystems/notes.txt",
+        b"synthetic",
+        "code",
+    );
+    stray.save();
+    index_fixture(&stray);
+    let errors = retained_errors(&stray, &base);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("unknown entry notes.txt")),
+        "{errors:?}"
+    );
+}
+
 #[test]
 fn trusted_policy_rejects_artifact_promotion_drift() {
     let mut fixture = policy_fixture();
@@ -577,5 +756,394 @@ fn trusted_policy_rejects_artifact_promotion_drift() {
             .iter()
             .any(|error| error.contains("missing=[\"Law\"]")),
         "{errors:?}"
+    );
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "commit only independently authored disposable policy test data"
+)]
+fn commit_fixture(fixture: &Fixture) -> String {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(fixture.root())
+            .args(args)
+            .output()
+            .expect("git fixture commit")
+    };
+    assert!(git(&["add", "."]).status.success());
+    let identity = [
+        "-c",
+        "user.name=fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+    ];
+    let commit = [
+        &identity[..],
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+    ]
+    .concat();
+    assert!(git(&commit).status.success());
+    String::from_utf8(git(&["rev-parse", "HEAD"]).stdout)
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+/// A same-shape candidate whose only finding is a changed gate file: its older
+/// commit is the unchanged tree and its head commit changes the gate.
+fn gate_change_candidate() -> (Fixture, String, String) {
+    let mut candidate = policy_fixture();
+    let older = commit_fixture(&candidate);
+    let path = "scripts/ci/core.sh";
+    let record = candidate
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("gate record");
+    candidate.write(path, b"#!/usr/bin/env bash\necho reviewed gate change\n");
+    candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
+    candidate.save();
+    let head = commit_fixture(&candidate);
+    (candidate, older, head)
+}
+
+/// The base-owned trusted lane over `candidate`, with API evidence as recorded by
+/// the workflow: an optional `/approve-gates <commit>` comment by a user with `permission`.
+fn checked_with(
+    candidate: &Fixture,
+    head_repository: &str,
+    head: &str,
+    approved: Option<(&str, &str)>,
+) -> Vec<String> {
+    let comments: Vec<Value> = approved
+        .map(|(commit, permission)| json!({"user":"owner","body":format!("/approve-gates {commit}"),"created_at":"2026-10-30T12:00:00Z","updated_at":"2026-10-30T12:00:00Z","permission":permission}))
+        .into_iter()
+        .collect();
+    let evidence = json!({"repository":"Norn-cloud/norn","head_repository":head_repository,"head_sha":head,"comments":comments});
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("maintainer-approval.json");
+    fs::write(&path, evidence.to_string()).unwrap();
+    let base = policy_fixture();
+    norn_skeleton_guard::ci::run_with_evidence(candidate.root(), base.root(), Some(&path))
+}
+
+fn rejected(errors: &[String], reason: &str) {
+    assert!(errors.iter().any(|error| error == "scripts/ci/core.sh: gate contract differs from the trusted base"), "{errors:?}");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.starts_with("maintainer path: ") && error.contains(reason)),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn trusted_policy_admits_a_gate_change_an_admin_approved_on_its_exact_head() {
+    let (candidate, _, head) = gate_change_candidate();
+    let errors = checked_with(&candidate, "Norn-cloud/norn", &head, Some((&head, "admin")));
+    assert!(errors.is_empty(), "{errors:?}");
+    // Without evidence the same candidate is rejected exactly as before.
+    let base = policy_fixture();
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert_eq!(
+        errors,
+        ["scripts/ci/core.sh: gate contract differs from the trusted base"]
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_an_approval_of_a_stale_head() {
+    let (candidate, older, head) = gate_change_candidate();
+    rejected(
+        &checked_with(
+            &candidate,
+            "Norn-cloud/norn",
+            &head,
+            Some((&older, "admin")),
+        ),
+        "no admin commented",
+    );
+    // Evidence recorded for the older head cannot vouch for the candidate checkout.
+    rejected(
+        &checked_with(
+            &candidate,
+            "Norn-cloud/norn",
+            &older,
+            Some((&older, "admin")),
+        ),
+        "the candidate is",
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_an_approval_from_a_non_admin() {
+    let (candidate, _, head) = gate_change_candidate();
+    rejected(
+        &checked_with(&candidate, "Norn-cloud/norn", &head, Some((&head, "write"))),
+        "no admin commented",
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_a_fork_gate_change_even_with_an_exact_head_approval() {
+    let (candidate, _, head) = gate_change_candidate();
+    rejected(
+        &checked_with(
+            &candidate,
+            "contributor/norn",
+            &head,
+            Some((&head, "admin")),
+        ),
+        "only Norn-cloud/norn branches",
+    );
+}
+
+#[test]
+fn trusted_policy_rejects_a_gate_change_without_an_approval_comment() {
+    let (candidate, _, head) = gate_change_candidate();
+    rejected(
+        &checked_with(&candidate, "Norn-cloud/norn", &head, None),
+        "no admin commented",
+    );
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "build merge-queue history over independently authored disposable policy test data"
+)]
+fn git_in(fixture: &Fixture, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(fixture.root())
+        .args([
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .expect("git fixture");
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// Rewrite `path` with its manifest record, as a reviewed pull request would.
+fn change(candidate: &mut Fixture, path: &str, data: &[u8]) {
+    let record = candidate
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("record");
+    candidate.write(path, data);
+    candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
+    candidate.save();
+}
+
+/// Queue-style history: base, then one `--no-ff` merge per pull request head,
+/// where each head branches from the base and applies `edit`. Returns the
+/// base, the pull request heads and the group head.
+fn merge_group(edits: &[&dyn Fn(&mut Fixture)]) -> (Fixture, String, Vec<String>, String) {
+    let mut candidate = policy_fixture();
+    let base = commit_fixture(&candidate);
+    git_in(&candidate, &["branch", "-M", "queue"]);
+    let mut heads = Vec::new();
+    for (index, edit) in edits.iter().enumerate() {
+        let branch = format!("pr-{index}");
+        git_in(&candidate, &["checkout", "--quiet", "-b", &branch, &base]);
+        edit(&mut candidate);
+        git_in(&candidate, &["add", "."]);
+        git_in(
+            &candidate,
+            &["commit", "--quiet", "--allow-empty", "-m", &branch],
+        );
+        heads.push(git_in(&candidate, &["rev-parse", "HEAD"]));
+        git_in(&candidate, &["checkout", "--quiet", "queue"]);
+        git_in(
+            &candidate,
+            &["merge", "--quiet", "--no-ff", "--no-edit", &branch],
+        );
+    }
+    let head = git_in(&candidate, &["rev-parse", "HEAD"]);
+    (candidate, base, heads, head)
+}
+
+fn gate_edit(candidate: &mut Fixture) {
+    change(
+        candidate,
+        "scripts/ci/core.sh",
+        b"#!/usr/bin/env bash\necho reviewed gate change\n",
+    );
+}
+
+/// A pull request that changes no gate file (here, no file at all: every byte
+/// is in the single-line manifest, so two edits of it would conflict).
+fn data_edit(_: &mut Fixture) {}
+
+/// A queued pull request's head, head repository and optional
+/// `/approve-gates` (commit, commenter permission).
+type Pull<'a> = (&'a str, &'a str, Option<(&'a str, &'a str)>);
+
+/// The base-owned lane over a merge group with the workflow-recorded evidence:
+/// each pull request head with an optional `/approve-gates` comment.
+fn group_checked(candidate: &Fixture, base: &str, head: &str, pulls: &[Pull<'_>]) -> Vec<String> {
+    let pull_requests: Vec<Value> = pulls
+        .iter()
+        .map(|&(sha, repository, approved)| {
+            let comments: Vec<Value> = approved
+                .map(|(commit, permission)| json!({"user":"owner","body":format!("/approve-gates {commit}"),"created_at":"2026-10-30T12:00:00Z","updated_at":"2026-10-30T12:00:00Z","permission":permission}))
+                .into_iter()
+                .collect();
+            json!({"number":1,"head_repository":repository,"head_sha":sha,"comments":comments})
+        })
+        .collect();
+    let evidence = json!({"repository":"Norn-cloud/norn","merge_group":{"base_sha":base,"head_sha":head},"pull_requests":pull_requests});
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("maintainer-approval.json");
+    fs::write(&path, evidence.to_string()).unwrap();
+    let trusted = policy_fixture();
+    norn_skeleton_guard::ci::run_with_evidence(candidate.root(), trusted.root(), Some(&path))
+}
+
+#[test]
+fn merge_group_admits_an_approved_gate_change_behind_data_only_pulls() {
+    let (candidate, base, heads, head) = merge_group(&[&data_edit, &gate_edit]);
+    let pulls = [
+        (heads[0].as_str(), "contributor/norn", None),
+        (
+            heads[1].as_str(),
+            "Norn-cloud/norn",
+            Some((heads[1].as_str(), "admin")),
+        ),
+    ];
+    let errors = group_checked(&candidate, &base, &head, &pulls);
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+#[test]
+fn merge_group_without_gate_changes_needs_no_evidence() {
+    let (candidate, base, _, head) = merge_group(&[&data_edit]);
+    assert!(group_checked(&candidate, &base, &head, &[]).is_empty());
+}
+
+#[test]
+fn merge_group_rejects_unapproved_fork_and_stale_gate_changes() {
+    let (candidate, base, heads, head) = merge_group(&[&gate_edit]);
+    let pr = heads[0].as_str();
+    for (pulls, reason) in [
+        (vec![(pr, "Norn-cloud/norn", None)], "no admin commented"),
+        (
+            vec![(pr, "Norn-cloud/norn", Some((pr, "write")))],
+            "no admin commented",
+        ),
+        (
+            vec![(pr, "contributor/norn", Some((pr, "admin")))],
+            "only Norn-cloud/norn branches",
+        ),
+        (
+            vec![(pr, "Norn-cloud/norn", Some((base.as_str(), "admin")))],
+            "no admin commented",
+        ),
+        (vec![], "no pull request evidence"),
+    ] {
+        rejected(&group_checked(&candidate, &base, &head, &pulls), reason);
+    }
+    // Evidence for another group head cannot vouch for the candidate.
+    let approved = [(pr, "Norn-cloud/norn", Some((pr, "admin")))];
+    rejected(
+        &group_checked(&candidate, &base, pr, &approved),
+        "the candidate is",
+    );
+}
+
+#[test]
+fn merge_group_rejects_gates_that_differ_from_the_approved_head() {
+    let (mut candidate, base, heads, _) = merge_group(&[&gate_edit]);
+    // An extra gate edit on top of the reviewed merge is not what the admin approved.
+    change(
+        &mut candidate,
+        "scripts/ci/core.sh",
+        b"#!/usr/bin/env bash\necho unreviewed\n",
+    );
+    git_in(&candidate, &["commit", "--quiet", "-am", "unreviewed"]);
+    let amended = git_in(&candidate, &["rev-parse", "HEAD"]);
+    let pr = heads[0].as_str();
+    let pulls = [(pr, "Norn-cloud/norn", Some((pr, "admin")))];
+    rejected(
+        &group_checked(&candidate, &base, &amended, &pulls),
+        "is not a two-parent merge",
+    );
+    let merged = git_in(&candidate, &["rev-parse", "HEAD~1"]);
+    git_in(&candidate, &["reset", "--quiet", "--soft", &merged]);
+    git_in(&candidate, &["commit", "--quiet", "--amend", "--no-edit"]);
+    let tampered = git_in(&candidate, &["rev-parse", "HEAD"]);
+    rejected(
+        &group_checked(&candidate, &base, &tampered, &pulls),
+        "differ from pull request head",
+    );
+}
+
+#[test]
+fn merge_group_rejects_squashed_history() {
+    let mut candidate = policy_fixture();
+    let base = commit_fixture(&candidate);
+    gate_edit(&mut candidate);
+    let head = commit_fixture(&candidate);
+    let pulls = [(
+        head.as_str(),
+        "Norn-cloud/norn",
+        Some((head.as_str(), "admin")),
+    )];
+    rejected(
+        &group_checked(&candidate, &base, &head, &pulls),
+        "is not a two-parent merge",
+    );
+}
+
+#[test]
+fn merge_group_admits_exactly_the_longest_walk_and_rejects_a_longer_one() {
+    for (merges, admitted) in [(64, true), (65, false)] {
+        let mut edits: Vec<&dyn Fn(&mut Fixture)> = vec![&data_edit; merges - 1];
+        edits.push(&gate_edit);
+        let (candidate, base, heads, head) = merge_group(&edits);
+        let pr = heads[merges - 1].as_str();
+        let errors = group_checked(
+            &candidate,
+            &base,
+            &head,
+            &[(pr, "Norn-cloud/norn", Some((pr, "admin")))],
+        );
+        if admitted {
+            assert!(errors.is_empty(), "{errors:?}");
+        } else {
+            rejected(&errors, "longer than 64 merges");
+        }
+    }
+}
+
+#[test]
+fn merge_group_admits_a_shared_head_when_any_of_its_pull_requests_is_approved() {
+    let (candidate, base, heads, head) = merge_group(&[&gate_edit]);
+    let pr = heads[0].as_str();
+    let pulls = [
+        (pr, "contributor/norn", None),
+        (pr, "Norn-cloud/norn", Some((pr, "admin"))),
+    ];
+    let errors = group_checked(&candidate, &base, &head, &pulls);
+    assert!(errors.is_empty(), "{errors:?}");
+    rejected(
+        &group_checked(&candidate, &base, &head, &pulls[..1]),
+        "only Norn-cloud/norn branches",
     );
 }

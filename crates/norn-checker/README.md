@@ -14,7 +14,7 @@ It holds every check over the typed IR in `norn-ir` (T1-CHK-1, #2524, moved them
 
 ## Check receipts (#2851)
 
-- `check_artifact_set_with_receipt` runs `check_artifact_set` under a resource-limit profile and issues a `CheckReceipt` (`norn-checker/receipt@4`, Norn1 canonical JSON with its own content hash). It binds the artifact-set identity (each candidate and base envelope as `(artifactId, version, sha256)`, plus one set hash), the `LimitProfileRef` (`norn.limits/1` by default), the set's ZEN Expression `TypeEnvRef` (`norn.expr.env/1`, derived only for a clean set, with only `actor` bound) beside the expression checker profile (`norn_expr::check::CHECKER_PROFILE`, currently `norn-zen/6`, published in `crates/norn-expr/src/check.rs`), the checker name and version, the identifier admission profile (`norn-identifiers/1` for new admissions), and a digest of the findings. A clean set whose environment cannot be derived is rejected with `artifact_set.expression.environment_underivable`.
+- `check_artifact_set_with_receipt` runs `check_artifact_set` under a resource-limit profile and issues a `CheckReceipt` (`norn-checker/receipt@5`, Norn1 canonical JSON with its own content hash). It binds the artifact-set identity (each candidate and base envelope as `(artifactId, version, sha256)`, plus one set hash), the `LimitProfileRef` (`norn.limits/1` by default), the set's ZEN Expression `TypeEnvRef` (`norn.expr.env/1`, derived only for a clean set, with only `actor` bound) beside the expression checker profile (`norn_expr::check::CHECKER_PROFILE`, currently `norn-zen/6`, published in `crates/norn-expr/src/check.rs`), the checker name and version, the identifier admission profile (`norn-identifiers/1` for new admissions), and a digest of the findings. A clean set whose environment cannot be derived is rejected with `artifact_set.expression.environment_underivable`.
 - Every EntityIR v2 expression site (computed properties, invariants, lifecycle guards) is parsed at T2 (T1-ONT-2, #2515; `object_types::check_zen_syntax`), and sites read their object through `self`. Boolean invariant type checking is implemented, including refusal of link/inverse-role reads. Remaining per-site type checking and environment references (each site's `self`/`input` binding) belong to T1-EXPR-5 (#2523). The golden receipt is `tests/golden/check-receipt.retail.json`; regenerate it with `NORN_CHECKER_UPDATE_GOLDENS=1 cargo test -p norn-checker --test check_receipt` and re-pin its hash.
 
 Retained definition receipts are verified against their recorded checker/profile and exact artifact set before re-admission. Legacy `receipt@1` evidence retains the historical identifier policy; upgraded `receipt@2` evidence records that policy explicitly. New installs and updates always enforce the current identifier limits. Identifier limits are defined in `norn-ir::identifier_limits`.
@@ -36,9 +36,9 @@ EXACT-ORDER requires reordered object keys to retain identity. EXACT-LITERAL
 requires a changed ordinary literal to change identity. EXACT-VERIFY requires
 a receipt to refuse substitution of the other member of either pair.
 
-The second source-identity generation uses receipt@4 (mapless) and receipt@5
-(with flow source map); @1–@3 already name persisted formats. Writers emit
-@4/@5. Readers temporarily accept @1–@3 with their historical hash semantics,
+The second source-identity generation uses receipt@5 (mapless), receipt@6
+(with flow source map), and receipt@7 (law origins); @1–@4 already name persisted formats. Writers emit
+@5/@6/@7. Readers temporarily accept @1–@4 with their historical hash semantics,
 including hash-only recovery; removing those readers is a separate contract
 change. No old receipt attests exact source. New source receipts are verified
 against the supplied exact source, never against a reconstructed f64 document.

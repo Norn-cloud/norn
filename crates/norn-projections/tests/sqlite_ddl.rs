@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use norn_ir::{ObjectTypeDef, PropertyTypeDef};
 use norn_projections::sqlite_ddl::{
     MAX_COLUMNS_PER_TABLE, OVERFLOW_COLUMN, SqliteDdlError, SqliteDdlInput, ValueEncoding,
-    project_sqlite_ddl,
+    project_logical_sqlite_ddl, project_sqlite_ddl,
 };
 
 const UPDATE_ENV: &str = "NORN_PROJECTIONS_UPDATE_GOLDENS";
@@ -98,6 +98,71 @@ fn fixture_corpus_ddl_matches_its_golden() {
     assert!(
         golden == sql,
         "{GOLDEN} is stale or missing; regenerate with {UPDATE_ENV}=1 cargo test -p norn-projections --test sqlite_ddl"
+    );
+}
+
+/// The logical rendering is the physical DDL with every property column named
+/// by its raw id (no corpus identifier otherwise contains `"p:`), and no
+/// physical property column can equal a system column or SQLite rowid alias.
+#[test]
+fn property_columns_are_prefixed_and_the_logical_rendering_keeps_raw_ids() {
+    let object_types = object_types();
+    let property_types = property_types();
+    let input = SqliteDdlInput {
+        object_types: &object_types,
+        property_types: &property_types,
+    };
+    let physical = project_sqlite_ddl(&input).expect("physical projects");
+    let logical = project_logical_sqlite_ddl(&input).expect("logical projects");
+    assert_eq!(logical.to_sql(), physical.to_sql().replace("\"p:", "\""));
+    for table in &physical.object_tables {
+        for column in &table.columns {
+            if let Some(name) = &column.column {
+                assert_eq!(*name, format!("p:{}", column.property.as_str()));
+            }
+        }
+    }
+
+    let reserved = [
+        "_world",
+        "_id",
+        "_type",
+        "_version",
+        "_scope",
+        "_overflow",
+        "_source",
+        "_target",
+        "rowid",
+        "oid",
+        "_rowid_",
+    ];
+    let properties: Vec<serde_json::Value> = reserved
+        .iter()
+        .map(|id| serde_json::json!({ "id": id, "type": { "kind": "text" } }))
+        .collect();
+    let def = decode_object_type(serde_json::json!({
+        "name": "acme.Reserved",
+        "properties": properties,
+        "identity": [{ "name": "primary", "properties": ["rowid", "_id"] }]
+    }));
+    let schema = project_sqlite_ddl(&SqliteDdlInput {
+        object_types: &[def],
+        property_types: &[],
+    })
+    .expect("reserved property ids project");
+    let table = &schema.object_tables[0];
+    assert_eq!(table.columns.len(), reserved.len());
+    for column in &table.columns {
+        let name = column.column.as_deref().expect("physical column");
+        assert!(
+            name.starts_with("p:") && !reserved.contains(&name),
+            "{name}"
+        );
+    }
+    assert!(
+        table.statements[1].ends_with("(\"_scope\", \"_world\", \"p:rowid\", \"p:_id\")"),
+        "{}",
+        table.statements[1]
     );
 }
 
@@ -190,7 +255,7 @@ fn computed_properties_are_excluded_and_refs_resolve() {
     assert!(
         line.statements
             .iter()
-            .any(|statement| statement.starts_with("CREATE UNIQUE INDEX IF NOT EXISTS \"o:commerce.SalesOrderLine/key:primary\" ON \"o:commerce.SalesOrderLine\" (\"_scope\", \"_world\", \"order_number\", \"line_number\")"))
+            .any(|statement| statement.starts_with("CREATE UNIQUE INDEX IF NOT EXISTS \"o:commerce.SalesOrderLine/key:primary\" ON \"o:commerce.SalesOrderLine\" (\"_scope\", \"_world\", \"p:order_number\", \"p:line_number\")"))
     );
 }
 

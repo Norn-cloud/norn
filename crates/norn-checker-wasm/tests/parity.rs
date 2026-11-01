@@ -279,7 +279,7 @@ fn clean_set_issues_the_pinned_receipt() {
         "norn-checker/diagnostics@1"
     );
     assert_eq!(output["diagnostics"]["diagnostics"], serde_json::json!([]));
-    assert_eq!(output["receipt"]["format"], "norn-checker/receipt@4");
+    assert_eq!(output["receipt"]["format"], "norn-checker/receipt@5");
     assert_eq!(output["receiptSha256"], RETAIL_RECEIPT_SHA256);
 }
 
@@ -567,7 +567,7 @@ fn version_names_the_formats() {
     let version = json_of(&output_of("version"));
     assert_eq!(version["abi"], "norn-checker-abi/1");
     assert_eq!(version["diagnosticsFormat"], "norn-checker/diagnostics@1");
-    assert_eq!(version["receiptFormat"], "norn-checker/receipt@4");
+    assert_eq!(version["receiptFormat"], "norn-checker/receipt@5");
     assert_eq!(version["exprProfile"], "norn-zen/6");
 }
 

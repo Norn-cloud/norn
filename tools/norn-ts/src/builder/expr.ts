@@ -30,7 +30,7 @@ export type LogicalOp = "and" | "or"
 
 export type Expr =
   | { readonly _tag: "Binary"; readonly op: "+" | "-" | "*" | "/" | "%" | "in"; readonly left: Expr; readonly right: Expr }
-  | { readonly _tag: "Call"; readonly fn: "lower" | "upper" | "trim" | "len" | "contains" | "startsWith" | "endsWith" | "dateBefore"; readonly args: ReadonlyArray<Expr> }
+  | { readonly _tag: "Call"; readonly fn: "lower" | "upper" | "trim" | "len" | "contains" | "startsWith" | "endsWith" | "dateBefore" | "date" | "timestamp"; readonly args: ReadonlyArray<Expr> }
   | { readonly _tag: "Conditional"; readonly condition: Expr; readonly yes: Expr; readonly no: Expr }
   | { readonly _tag: "Coalesce"; readonly value: Expr; readonly fallback: Expr }
   | { readonly _tag: "Unsafe"; readonly text: string; readonly schema: ValueSchema }
@@ -176,7 +176,7 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
         if (args.length !== 1 || (args[0]?.type !== "string" && args[0]?.type !== "array")) throw new ExprError("NORN-FLOW-EXPRESSION", "length expects a string or array")
         return integer
       }
-      const arity = ["lower", "upper", "trim"].includes(expr.fn) ? 1 : 2
+      const arity = ["lower", "upper", "trim", "date", "timestamp"].includes(expr.fn) ? 1 : 2
       if (args.length !== arity || args.some((a) => a.type !== "string")) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects ${arity} string arguments`)
       return arity === 1 ? text() : boolean
     }

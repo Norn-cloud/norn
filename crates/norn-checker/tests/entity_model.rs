@@ -271,6 +271,11 @@ fn every_code_has_a_negative_case() {
     let order_number = serde_json::json!({ "id": "order_number", "type": text });
     let registry_cases = [
         (
+            interface_codes::INVALID_INHERITANCE,
+            "/interfaces/0/extends",
+            serde_json::json!({"interfaces":[{"name":"test.Child","extends":["test.Absent"]}]}),
+        ),
+        (
             codes::LINK_PROPERTY_MARKINGS_UNSUPPORTED,
             "/objectTypes/0/links/0/properties/0/markings",
             serde_json::json!({"objectTypes":[{"name":"test.Thing","links":[{"id":"owner","target":"crm.Customer","cardinality":one_of_many,"properties":[{"id":"email","type":{"kind":"text"},"markings":["pii.contact"]}]}]}]}),
@@ -1778,5 +1783,86 @@ fn link_property_catalog_markings_are_refused_after_resolution() {
         diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == codes::LINK_PROPERTY_MARKINGS_UNSUPPORTED)
+    );
+}
+
+#[test]
+fn interface_diamonds_inherit_members_constraints_links_and_invariants_once() {
+    let mut model = serde_json::json!({
+        "interfaces": [
+            {"name":"test.Root","properties":[{"id":"code","type":{"kind":"text"},"constraints":{"minLength":3}}],
+             "invariants":[{"id":"valid_code","expression":"self.code != ''","message":"code is present"}]},
+            {"name":"test.Left","extends":["test.Root"]},
+            {"name":"test.Right","extends":["test.Root"]},
+            {"name":"test.Diamond","extends":["test.Left","test.Right"],
+             "links":[{"id":"parent","target":"test.Root","cardinality":{"to":"one","from":"many","required":true}}]}
+        ],
+        "objectTypes":[{"name":"test.Thing","implements":["test.Diamond"],
+            "properties":[{"id":"code","type":{"kind":"text"}}],
+            "links":[{"id":"parent","target":"test.Diamond","cardinality":{"to":"one","from":"many","required":true}}]}]
+    });
+    assert_eq!(findings(&model), vec![]);
+    model["objectTypes"][0]["properties"][0]["default"] = serde_json::json!("x");
+    assert!(
+        findings(&model)
+            .iter()
+            .any(|(code, _)| code == codes::DEFAULT_VIOLATES_CONSTRAINT)
+    );
+    model["objectTypes"][0]["properties"] = serde_json::json!([]);
+    assert!(
+        findings(&model)
+            .iter()
+            .any(|(code, _)| code == codes::MISSING_INTERFACE_PROPERTY)
+    );
+}
+
+#[test]
+fn interface_parent_graphs_and_diamond_conflicts_are_checked_without_implementers() {
+    let invalid = interface_codes::INVALID_INHERITANCE;
+    for interfaces in [
+        serde_json::json!([{"name":"test.Child","extends":["test.Absent"]}]),
+        serde_json::json!([{"name":"test.Child","extends":["test.Child"]}]),
+        serde_json::json!([{"name":"test.First","extends":["test.Second"]},{"name":"test.Second","extends":["test.First"]}]),
+        serde_json::json!([{"name":"test.Root"},{"name":"test.Child","extends":["test.Root","test.Root"]}]),
+        serde_json::json!([
+            {"name":"test.Left","properties":[{"id":"code","type":{"kind":"text"},"constraints":{"minLength":5}}]},
+            {"name":"test.Right","properties":[{"id":"code","type":{"kind":"text"},"constraints":{"maxLength":3}}]},
+            {"name":"test.Child","extends":["test.Left","test.Right"]}]),
+        serde_json::json!([
+            {"name":"test.Root","properties":[{"id":"code","type":{"kind":"text"}}]},
+            {"name":"test.Child","extends":["test.Root"],"properties":[{"id":"code","type":{"kind":"integer"}}]}]),
+    ] {
+        let model = serde_json::json!({"interfaces":interfaces});
+        assert!(
+            findings(&model).iter().any(|(code, _)| code == invalid),
+            "{model}"
+        );
+    }
+}
+
+#[test]
+fn interface_invariants_defer_parent_member_typing_until_artifact_set_admission() {
+    let definition: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name":"test.Child","extends":["test.Parent"],
+        "invariants":[{"id":"present","expression":"self.code != ''","message":"code must be present"}]
+    })).expect("interface");
+    assert!(norn_checker::check_interface_local(&definition).is_empty());
+    let model = serde_json::json!({"interfaces":[
+        {"name":"test.Parent","properties":[{"id":"code","type":{"kind":"text"}}]},
+        definition
+    ]});
+    assert!(findings(&model).is_empty());
+}
+
+#[test]
+fn inverse_roles_cannot_shadow_members_of_descendant_interfaces_without_implementers() {
+    let model = serde_json::json!({"interfaces":[
+        {"name":"test.Parent"},
+        {"name":"test.Child","extends":["test.Parent"],"properties":[{"id":"code","type":{"kind":"text"}}]}
+    ],"objectTypes":[{"name":"test.Source","links":[{"id":"owner","target":"test.Parent","inverse":"code","cardinality":{"to":"one","from":"many"}}]}]});
+    assert!(
+        findings(&model)
+            .iter()
+            .any(|(code, _)| code == codes::MEMBER_ID_CONFLICT)
     );
 }

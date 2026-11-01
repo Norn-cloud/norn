@@ -317,6 +317,17 @@ fn reopen_after(sql: &str) -> Result<CellStore, CellError> {
 }
 
 #[test]
+fn an_orphan_event_at_sequence_zero_is_refused_on_reopen() {
+    let reopened = reopen_after(
+        "INSERT INTO \"_norn_ledger\" (\"seq\", \"commit_seq\", \"world\", \"event\", \"prev_hash\", \"hash\") VALUES (0, 1, 'main', '{\"type\":\"orphan\"}', 'unused', 'unused')",
+    );
+    assert!(
+        matches!(reopened, Err(CellError::LedgerCorrupt { seq: 0, .. })),
+        "{reopened:?}"
+    );
+}
+
+#[test]
 fn a_tampered_ledger_is_refused_on_reopen() {
     let reopened = reopen_after(
         "UPDATE \"_norn_ledger\" SET \"event\" = '{\"type\":\"forged\"}' WHERE \"seq\" = 2",

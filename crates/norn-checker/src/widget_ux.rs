@@ -209,6 +209,26 @@ pub(crate) fn check_widget_ux_set(
             };
         let mut checker = UxChecker::new(artifact, &combined, &catalog, &ux, &mut diagnostics);
         checker.check();
+        let nullable_inputs = checker.nullable_form_inputs();
+        let composed = |widget: &norn_ir::WidgetArtifactRef| {
+            let baseline = combined.iter().find(|candidate| {
+                candidate.artifact_id == widget.id
+                    && candidate.version == widget.version
+                    && candidate.kind() == ArtifactKind::Widget
+            })?;
+            let ArtifactPayload::Widget(payload) = &baseline.payload else {
+                return None;
+            };
+            serde_json::to_value(payload.ux.as_value()?)
+                .and_then(serde_json::from_value::<norn_ir::WidgetUx>)
+                .ok()
+        };
+        diagnostics.extend(crate::ui_interaction::check(
+            artifact,
+            &ux,
+            &nullable_inputs,
+            &composed,
+        ));
     }
     diagnostics
 }
@@ -366,6 +386,41 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             next_record: 0,
             enforce_effect_root: true,
         }
+    }
+
+    /// `(form id, input name)` pairs whose every feeding `ActionIR` input leaf is declared nullable.
+    /// Only the server's schema decides nullability; an unparsed action or an indirect mapping
+    /// contributes nothing, so no clear affordance is ever required by guesswork.
+    fn nullable_form_inputs(&self) -> BTreeSet<(String, String)> {
+        let mut nullable = BTreeSet::new();
+        for form in &self.ux.forms {
+            let Some(binding) = self.action_bindings.get(form.submit_binding_id.as_str()) else {
+                continue;
+            };
+            let Some(action) = self.actions.get(binding.binding_id.as_str()) else {
+                continue;
+            };
+            for input_name in &form.input_names {
+                let expected = format!("input.draft.{input_name}");
+                let fed: Vec<&String> = binding
+                    .input_mapping
+                    .iter()
+                    .filter(|(_, expression)| expression.as_str().trim() == expected)
+                    .map(|(action_input, _)| action_input)
+                    .collect();
+                if !fed.is_empty()
+                    && fed.iter().all(|name| {
+                        action
+                            .fields
+                            .get(name.as_str())
+                            .is_some_and(|(schema, _)| matches!(schema, Schema::Nullable(_)))
+                    })
+                {
+                    nullable.insert((form.form_id.clone(), input_name.clone()));
+                }
+            }
+        }
+        nullable
     }
 
     fn check(&mut self) {

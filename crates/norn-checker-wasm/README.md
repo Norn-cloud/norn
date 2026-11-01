@@ -16,7 +16,7 @@ profile, source, and evaluation failures. Invalid artifacts are findings.
 
 | JavaScript | Rust | Result |
 |---|---|---|
-| `checkArtifactSet(artifactsJson, contextJson)` | `check_artifact_set_json` | `{format: "norn-checker-abi/check@1", admitted, diagnostics, receipt, receiptSha256}` — `diagnostics` is the `norn-checker/diagnostics@1` document, `receipt` the Norn1 `norn-checker/receipt@4` document (both `null`-receipt when an envelope does not decode) |
+| `checkArtifactSet(artifactsJson, contextJson)` | `check_artifact_set_json` | `{format: "norn-checker-abi/check@1", admitted, diagnostics, receipt, receiptSha256}` — `diagnostics` is the `norn-checker/diagnostics@1` document, `receipt` the Norn1 `norn-checker/receipt@5` document (both `null`-receipt when an envelope does not decode) |
 | `lifecycleDiagrams(artifactsJson)` | `lifecycle_diagrams_json` | `[{type, artifactId, property, mermaid}]` — Mermaid `stateDiagram-v2` per declared lifecycle |
 | `checkExpression(expr, envArtifactsJson, expectedType, selfType?)` | `check_expression_json` | `{format: "norn-checker-abi/expression@1", profile: "norn-zen/6", ok, inferred, diagnostics: [{code, message, span}], environment}` |
 | `evaluateExpression(expr, inputJson, profile?)` | `evaluate_expression_json` | `{format: "norn-checker-abi/evaluation@1", ok, profile: "norn-zen/6", unitsUsed, value | error}` — bounded `norn-expr` evaluation over explicit WidgetIR inputs |

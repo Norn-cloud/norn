@@ -3,7 +3,7 @@
   "packId": "norn.ontology-pack.quantity-units",
   "packVersion": "0.1",
   "canonicalArtifact": "pack.json",
-  "canonicalArtifactSha256": "fc885fcaabbed29071054e5dff28db243f84250d37ce5a4bb53bf88f27923de6",
+  "canonicalArtifactSha256": "612fce414c7f0c44dfbe6f45649d0503d414694893b980cba0190e0b5380688a",
   "canonicalAuthority": "norn_ir_closed_world_checker",
   "projectionMethod": "reviewed_static_v0",
   "reproductionChecker": "verification/ontology/scripts/validate.py",

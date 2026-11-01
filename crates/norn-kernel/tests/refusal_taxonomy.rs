@@ -1,5 +1,6 @@
 #![allow(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::indexing_slicing,
     clippy::pedantic,
     reason = "integration-test crate: fixture helpers unwrap and index"
@@ -16,10 +17,11 @@
 
 //! The runtime refusal taxonomy (T1-L4, #2420): every kernel refusal has a
 //! stable code, a `category()`, and a safe `{code, category, message}` form.
-//! Visibility and internal messages are fixed, and the existence-never-leaks
+//! Visibility and internal messages are fixed, wrapper refusals preserve the
+//! domain code, classification, and redaction, and the existence-never-leaks
 //! matrix holds through the action path.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::path::Path;
 
@@ -28,16 +30,17 @@ use norn_ir::{
     posting::AccountingError,
 };
 use norn_kernel::action::{
-    ACTION_IDEMPOTENCY_KEY_MAX_BYTES, ActionCommandRejection, ActionCommandShape, ActionRejection,
-    check_action_command,
+    ACTION_IDEMPOTENCY_KEY_MAX_BYTES, ActionAuthorityState, ActionCommandRejection,
+    ActionCommandShape, ActionRejection, AuthorizedRejection, OwnerExpectation, TransitionBinding,
+    VersionedAction, VersionedActionRequest, check_action_command,
 };
 use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionRefusal, CellCommit,
-    CellHost, Command, CommitError, DecisionRefusal, DecisionTurn, EnvelopeKind, FactEvent,
-    FactKey, FactMutation, FactVersion, FactWrite, INTERNAL_MESSAGE, LogicalTime,
-    NOT_FOUND_MESSAGE, Refusable, Refusal, RefusalCategory, StepError, TypeCatalog, World,
-    commit_action,
+    CellHost, Command, CommitError, DecisionRefusal, DecisionTurn, Entropy, EnvelopeKind,
+    EnvelopeLimits, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, INTERNAL_MESSAGE,
+    LogicalTime, NOT_FOUND_MESSAGE, Observations, Refusable, Refusal, RefusalCategory, StepError,
+    TypeCatalog, World, commit_action, step,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
@@ -69,7 +72,8 @@ fn refusal_categories_are_stable() {
     let cases: Vec<(Refusal, &str, RefusalCategory)> = vec![
         (
             decision(DecisionRefusal::NotFromState {
-                key: key.clone(),
+                lifecycle: "status".into(),
+                key: Box::new(key.clone()),
                 transition: "invoice".into(),
                 current: Some("draft".into()),
                 from: vec!["approved".into()],
@@ -314,8 +318,94 @@ fn internal_refusals_never_carry_details() {
     ] {
         assert_eq!(refusal.category, RefusalCategory::Internal);
         assert_eq!(refusal.message, INTERNAL_MESSAGE);
+        assert!(refusal.reason.is_none());
         assert!(!refusal.message.contains("tenant-42"));
     }
+}
+
+#[test]
+fn actual_step_preserves_versioned_action_refusals() {
+    let observations = Observations::main(LogicalTime::EPOCH, Entropy::from_bytes([0; 32]));
+    for (current, expected, transition, code, category) in [
+        (
+            2,
+            1,
+            "transition",
+            "action.owner_version_conflict",
+            RefusalCategory::Conflict,
+        ),
+        (
+            u64::MAX,
+            u64::MAX,
+            "transition",
+            "action.owner_version_overflow",
+            RefusalCategory::Limit,
+        ),
+        (
+            0,
+            0,
+            "",
+            "action.invalid_transition_identity",
+            RefusalCategory::Invalid,
+        ),
+    ] {
+        let state = ActionAuthorityState {
+            owner_versions: BTreeMap::from([(1u8, current)]),
+            ..Default::default()
+        };
+        let request = VersionedActionRequest {
+            transition_id: transition.to_owned(),
+            binding: TransitionBinding {
+                input_sha256: "input".to_owned(),
+                effect_sha256: "effect".to_owned(),
+            },
+            preconditions: vec![OwnerExpectation {
+                owner: 1,
+                expected_version: expected,
+            }],
+            mutation_owners: BTreeSet::from([1]),
+            idempotency_key: "idempotency".to_owned(),
+        };
+        let error = step(
+            &VersionedAction::new(),
+            &state,
+            &request,
+            &observations,
+            &EnvelopeLimits::V1,
+        )
+        .expect_err("the domain rejects this request");
+        let refusal = error.refusal();
+        assert_eq!(refusal.code, code);
+        assert_eq!(refusal.category, category);
+        assert_eq!(error.code(), refusal.code);
+        assert_eq!(error.category(), refusal.category);
+    }
+}
+
+#[test]
+fn nested_wrappers_preserve_internal_redaction() {
+    let host = CommitError::Host("private tenant database path");
+    let expected = host.refusal();
+    assert!(expected.reason.is_none());
+    let step = StepError::Rejected(host);
+    assert!(step.refusal().reason.is_none());
+    assert_eq!(step.refusal(), expected);
+    assert_eq!(step.refusal().message, INTERNAL_MESSAGE);
+    let shell = AuthorizedRejection::Shell(step);
+    assert_eq!(shell.refusal(), expected);
+    assert!(shell.refusal().reason.is_none());
+    assert_eq!(shell.category(), RefusalCategory::Internal);
+    assert_eq!(shell.code(), expected.code);
+}
+
+#[test]
+fn outer_failures_keep_their_own_codes() {
+    let step = StepError::<ActionRejection>::ReadOnlyWorld;
+    assert_eq!(step.code(), "decision.read_only_world");
+    assert_eq!(step.category(), RefusalCategory::Invalid);
+    let shell = AuthorizedRejection::<CommitError<Infallible>>::LogicalTimeRollback;
+    assert_eq!(shell.code(), "action.logical_time_rollback");
+    assert_eq!(shell.category(), RefusalCategory::Invalid);
 }
 
 struct Policy(Option<ActionDenial>);
@@ -394,6 +484,9 @@ fn existence_never_leaks_matrix() {
         "an invisible object must read exactly like an absent one"
     );
     assert_eq!(absent, absent_forbidden);
+    for refusal in [&hidden, &absent, &absent_forbidden] {
+        assert!(refusal.reason.is_none());
+    }
     assert_eq!(hidden.code, "action.target_not_found");
     assert_eq!(hidden.category, RefusalCategory::Visibility);
     assert_eq!(hidden.message, NOT_FOUND_MESSAGE);
@@ -401,4 +494,40 @@ fn existence_never_leaks_matrix() {
     assert_eq!(denied.category, RefusalCategory::Permission);
     assert_eq!(denied.code, "action.permission_denied");
     assert_eq!(cell.ledger().len(), 1, "no refusal committed anything");
+}
+
+#[test]
+fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
+    for current in [Some("on_hold".to_owned()), None] {
+        let decision = DecisionRefusal::<Infallible>::NotFromState {
+            lifecycle: "status".into(),
+            key: Box::new(FactKey::new("commerce.SalesOrder", "SO-1")),
+            transition: "invoice".into(),
+            current: current.clone(),
+            from: vec!["approved".into(), "partially_invoiced".into()],
+        };
+        let expected = format!(
+            "commerce.SalesOrder/SO-1: status is {}; transition invoice only leaves approved or partially_invoiced, so it cannot fire now",
+            current.as_deref().unwrap_or("unset")
+        );
+        assert_eq!(decision.to_string(), expected);
+        let refusal = decision.refusal();
+        assert_eq!(refusal.message, expected);
+        assert_eq!(
+            serde_json::to_value(&refusal).unwrap()["reason"],
+            json!({
+                "law": "lifecycle.transition_source",
+                "subject": "commerce.SalesOrder/SO-1",
+                "values": {
+                    "lifecycle": "status", "transition": "invoice",
+                    "current": current, "allowed": ["approved", "partially_invoiced"]
+                }
+            })
+        );
+        assert_eq!(ActionRefusal::Decision(decision).refusal(), refusal);
+        assert_eq!(
+            serde_json::from_value::<Refusal>(serde_json::to_value(&refusal).unwrap()).unwrap(),
+            refusal
+        );
+    }
 }

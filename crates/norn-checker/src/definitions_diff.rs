@@ -777,6 +777,7 @@ struct ObjectTypeSnapshot {
 #[derive(Debug, Clone, Default)]
 struct InterfaceSnapshot {
     artifact_id: String,
+    extends: Vec<String>,
     invariants: BTreeMap<String, InvariantSnapshot>,
 }
 
@@ -843,6 +844,7 @@ impl EntityModelSnapshot {
                     name.to_owned(),
                     InterfaceSnapshot {
                         artifact_id: artifact.artifact_id.clone(),
+                        extends: strings(interface.get("extends")),
                         invariants: invariant_array(interface.get("invariants")),
                     },
                 );
@@ -1031,10 +1033,16 @@ impl EntityModelSnapshot {
                 },
             );
         }
-        for interface_name in &definition.implements {
+        let mut pending: Vec<_> = definition.implements.iter().collect();
+        let mut held = BTreeSet::new();
+        while let Some(interface_name) = pending.pop() {
+            if !held.insert(interface_name) {
+                continue;
+            }
             let Some(interface) = self.interfaces.get(interface_name) else {
                 continue;
             };
+            pending.extend(interface.extends.iter());
             for (id, invariant) in &interface.invariants {
                 invariants.insert(
                     (
