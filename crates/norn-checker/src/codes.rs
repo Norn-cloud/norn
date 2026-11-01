@@ -476,6 +476,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "catalog projections cannot activate definitions",
     ),
     entry(
+        "core.graph.cycle",
+        Tier::T3,
+        "classification dependencies must be acyclic",
+    ),
+    entry(
         "core.graph.incomplete_classification",
         Tier::T3,
         "classification requires complete supported semantic admission and evaluation",

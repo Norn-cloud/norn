@@ -29,6 +29,7 @@ pub mod codes;
 mod concept_roles;
 pub mod connector_path;
 pub mod consistency;
+mod defined_concepts;
 pub mod definition_catalog;
 pub mod definitions_diff;
 pub mod deontic;

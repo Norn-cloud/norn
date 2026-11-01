@@ -1809,37 +1809,16 @@ pub(crate) fn check_typed_root(
             check_document_root(payload, &object, diagnostics, artifact_id);
         }
         ArtifactPayload::DefinedConcept(_) => {
-            check_defined_concept_root(&object, diagnostics, artifact_id);
+            if let Err(error) = crate::defined_concepts::decode(payload) {
+                diagnostics.push(invalid_diagnostic(
+                    "defined_concept.validation.invalid_payload",
+                    error,
+                    "payload",
+                    artifact_id,
+                ));
+            }
         }
         ArtifactPayload::Action(_) | ArtifactPayload::Rule(_) | ArtifactPayload::Law(_) => {}
-    }
-}
-
-fn check_defined_concept_root(
-    object: &BTreeMap<String, JsonValue>,
-    diagnostics: &mut Vec<Diagnostic>,
-    artifact_id: Option<&str>,
-) {
-    // Canonical JSON retains integral resource bounds through legacy JsonValue.
-    let decoded = norn_canonical::canonical_json_of(object)
-        .map_err(|error| error.to_string())
-        .and_then(|bytes| {
-            let root: norn_ir::DefinedConceptRoot =
-                serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-            let encoded =
-                norn_canonical::canonical_json_of(&root).map_err(|error| error.to_string())?;
-            if encoded != bytes {
-                return Err("payload must use the declared object representation".into());
-            }
-            Ok(root)
-        });
-    if let Err(error) = decoded {
-        diagnostics.push(invalid_diagnostic(
-            "defined_concept.validation.invalid_payload",
-            error,
-            "payload",
-            artifact_id,
-        ));
     }
 }
 

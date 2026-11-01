@@ -464,6 +464,13 @@
       "tier": "T2"
     },
     {
+      "code": "core.graph.cycle",
+      "message": "classification dependencies must be acyclic",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
       "code": "core.graph.incomplete_classification",
       "message": "classification requires complete supported semantic admission and evaluation",
       "severity": "error",

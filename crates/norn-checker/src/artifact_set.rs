@@ -369,7 +369,9 @@ pub fn check_artifact_set(
             .chain(resolution)
             .collect(),
     };
-    dedupe_findings(findings.into_iter().chain(layout_findings))
+    dedupe_findings(findings.into_iter().chain(layout_findings).chain(
+        crate::defined_concepts::check_cycles(&normalized_artifacts, &normalized_base),
+    ))
 }
 
 fn normalize_artifacts(
