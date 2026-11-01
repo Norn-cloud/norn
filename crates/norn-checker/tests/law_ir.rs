@@ -525,18 +525,23 @@ fn law_tighten_is_conjunctive_and_weakening_or_stale_containment_refuses() {
             .iter()
             .any(|d| d.code.as_str() == codes::WEAKENS_INHERITED)
     );
-    base.retain(|a| a.artifact_id != "commerce.SalesOrder.entity");
+    base.retain(|a| {
+        a.artifact_id != "commerce.SalesOrder.entity" && a.artifact_id != law.artifact_id
+    });
+    let findings = norn_checker::verification::effective_law_instances(
+        &[law],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &base,
+            tenant: None,
+        },
+        RETAINED_TEST_BUDGET,
+    )
+    .expect_err("removed retained member refuses");
     assert!(
-        norn_checker::verification::effective_law_instances(
-            &[law],
-            &EntityArtifactSetContext {
-                registry: &BTreeSet::new(),
-                base: &base,
-                tenant: None
-            },
-            RETAINED_TEST_BUDGET
-        )
-        .is_err()
+        findings
+            .iter()
+            .any(|d| d.code.as_str() == codes::UNRESOLVED_SCOPE)
     );
 }
 
