@@ -679,6 +679,23 @@ pub enum ActionRefusal<X> {
         /// The safe refusal detail.
         reason: String,
     },
+    /// An authorized delivery exceeds the master-selected partition's stock.
+    #[error(
+        "insufficient stock for item {item} in warehouse {warehouse}: requested {requested}, available {available}"
+    )]
+    InsufficientStock {
+        /// Item identity.
+        item: String,
+        /// Warehouse identity.
+        warehouse: String,
+        /// Exact requested quantity in display units.
+        requested: String,
+        /// Exact available quantity in display units.
+        available: String,
+    },
+    /// Pure stock plan preparation refused.
+    #[error(transparent)]
+    StockPosting(crate::stock_posting::StockPostError),
     /// A visible, required single-object slice entry does not exist.
     #[error("required action slice entry {entry:?} is missing")]
     SliceObjectMissing {
@@ -758,6 +775,8 @@ impl<X> ActionRefusal<X> {
             Self::KindMismatch { .. } => "artifact_set.action.effect_kind_mismatch",
             Self::IdempotencyConflict { .. } => "action.idempotency_conflict",
             Self::WriteModeFailed { .. } => "action.write_mode_failed",
+            Self::InsufficientStock { .. } => "stock.insufficient_stock",
+            Self::StockPosting(_) => "stock.posting_refused",
             Self::Decision(refusal) => refusal.code(),
         }
     }

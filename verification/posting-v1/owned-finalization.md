@@ -73,3 +73,18 @@ both refusals.
 POST-READ-ORIGIN: `prepare_stock_snapshot` reads manifest-ordered owned lines and declared master/account paths. Complete parent links must agree with the manifest. Facts and complete link sets survive as fences. Type authorization precedes manifest/adjacency reads; object authorization precedes disclosure, retaining the action-authorized parent snapshot. `post_read_origin_denied_reads_preserve_business_state` checks denied-read no-write behavior. The API grants no write authority.
 
 POST-MASTER-PARTITION: warehouses belong to the voucher company; master kinds follow admitted type lineage, including subtypes. CP1 requires FIFO. POST-EXACT-INPUT: quantities/rates become integer millionths without rounding or negative values (`post_value_exact_millionths`). History/fold planning follows in P2b; atomic commit and alpha acceptance in P3/P4.
+
+## History schema and refusal contract (P2b expansion)
+
+POST-HISTORY-SCHEMA: the typed stock fixture declares a partition witness with
+an event count and complete `events` adjacency. Each event names its partition,
+identity, dense ordinal, closed movement kind and exact scale-six quantity/value.
+Company masters declare the book/graph/version/currency used by planning.
+`stock.artifacts.json` is generated from `stock.source.ts` and checked for drift.
+POST-REFUSAL-REASON: insufficient stock has a stable typed refusal naming item,
+warehouse and exact requested/available display quantities. Stock fold refusals
+retain their typed source. Both are ordinary precondition refusals.
+This schema expansion activates no reader or writer. The following P2b cut must
+fence the partition (including absence), complete adjacency and all event facts,
+validate dense history and call the shared stock fold. P3 still owns output
+protection, quantity configuration, accounting admission and atomic publication.

@@ -3,7 +3,7 @@ import { Norn } from "@norn/authoring"
 
 export const Company = Norn.type({
   name: "stock.Company", title: "Company", version: "0.1.0",
-  properties: Schema.Struct({ id: Schema.String, name: Schema.String, currency: Schema.Literal("USD"), book_id: Schema.String, srbnb_account: Schema.String, cogs_account: Schema.String }),
+  properties: Schema.Struct({ id: Schema.String, name: Schema.String, currency: Schema.Literal("USD"), book_id: Schema.String, graph_id: Schema.String, graph_version: Schema.Int, srbnb_account: Schema.String, cogs_account: Schema.String }),
   identity: [{ name: "primary", properties: ["id"] }],
 })
 export const Warehouse = Norn.type({
@@ -145,4 +145,17 @@ export const DeliveryNoteSubmit = Norn.action({
     partition: { item: ["item"], warehouse: ["source"] },
     accounts: { stock: ["source", "stock_account"], srbnb: ["source", "company", "srbnb_account"], cogs: ["source", "company", "cogs_account"] },
   },
+})
+
+export const StockEvent = Norn.type({
+  name: "stock.StockEvent", title: "Stock event", version: "0.1.0",
+  properties: Schema.Struct({ id: Schema.String, partition_id: Schema.String, ordinal: Schema.Int,
+    operation: Schema.Literals(["receipt", "delivery"]), quantity: Norn.decimal(6), value: Norn.decimal(6) }),
+  identity: [{ name: "primary", properties: ["id"] }],
+})
+export const StockPartition = Norn.type({
+  name: "stock.Partition", title: "Stock partition witness", version: "0.1.0",
+  properties: Schema.Struct({ id: Schema.String, event_count: Schema.Int }),
+  identity: [{ name: "primary", properties: ["id"] }],
+  links: [{ id: "events", target: StockEvent, cardinality: { to: "many", from: "one" } }],
 })

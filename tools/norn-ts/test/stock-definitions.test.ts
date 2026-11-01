@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { compileDefinitions } from "../src/compiler/definitions.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
@@ -14,7 +15,8 @@ test("stock schemas and lifecycle compile deterministically", () => {
   const again = compileDefinitions(file, options)
   if (!again.ok) throw new Error(JSON.stringify(again.diagnostics))
   expect(canonicalJson(compiled.artifacts)).toBe(canonicalJson(again.artifacts))
-  expect(compiled.artifacts).toHaveLength(18)
+  expect(compiled.artifacts).toHaveLength(20)
+  expect(canonicalJson(compiled.artifacts)).toBe(canonicalJson(JSON.parse(readFileSync(join(TOOL_ROOT, "fixtures/stock/stock.artifacts.json"), "utf8"))))
   const voucher = compiled.artifacts.find(value => value && typeof value === "object" && "artifactId" in value && value.artifactId === "stock.Voucher.entity")
   expect(voucher).toMatchObject({ payload: { objectType: { lifecycles: [{
     property: "status", initial: ["draft"], terminal: ["cancelled"], transitions: [
