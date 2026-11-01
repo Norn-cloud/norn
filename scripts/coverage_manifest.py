@@ -71,6 +71,11 @@ def load(directory: Path = COVERAGE) -> dict[str, Any]:
     return document
 
 
+def write_subsystem(body: dict[str, Any], path: Path) -> None:
+    """Serialize one subsystem using the manifest format."""
+    path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+
+
 def write(document: dict[str, Any], directory: Path) -> None:
     """Replace `directory` with `document` in the split layout (codemod and canaries)."""
     index = {key: value for key, value in document.items() if key != "subsystems"}
@@ -85,7 +90,7 @@ def write(document: dict[str, Any], directory: Path) -> None:
     (directory / SUBSYSTEMS).mkdir(parents=True)
     (directory / INDEX).write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
     for identity, body in bodies.items():
-        (directory / SUBSYSTEMS / f"{identity}.json").write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+        write_subsystem(body, directory / SUBSYSTEMS / f"{identity}.json")
 
 
 def digest(directory: Path = COVERAGE) -> str:

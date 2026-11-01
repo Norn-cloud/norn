@@ -11,6 +11,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import coverage_manifest
+
 PROVENANCE = '.github/ci/provenance/artifacts/'
 COVERAGE = 'verification/coverage-v1/manifest/subsystems/'
 
@@ -88,7 +91,10 @@ def provenance(path, base, ours, theirs, unresolved):
 
 
 def write(path, value):
-    Path(path).write_text(json.dumps(value, indent=2) + '\n')
+    if path.startswith(COVERAGE):
+        coverage_manifest.write_subsystem(value, Path(path))
+    else:
+        Path(path).write_text(json.dumps(value, indent=2) + '\n')
     git('add', '--', path)
 
 

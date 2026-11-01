@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+from merge_main import manifest
+
 TOOL = Path(__file__).with_name('merge_main.py').resolve()
 RECORD = '.github/ci/provenance/artifacts/source.txt.json'
 COVERAGE = 'verification/coverage-v1/manifest/subsystems/test.json'
@@ -77,6 +79,12 @@ class MergeTests(unittest.TestCase):
     def test_manifest_union(self):
         values = [dict(sourceFiles=['base', s]) for s in ('base', 'ours', 'theirs')]
         self.assertEqual(self.scenario(COVERAGE, *values, True), dict(sourceFiles=['base', 'ours', 'theirs']))
+
+    def test_union_retains_one_sided_deletions(self):
+        self.assertEqual(
+            manifest(['retained'], ['new'], ['retained']),
+            ['new', 'retained'],
+        )
 
     def test_same_entry_conflict_aborts(self):
         values = [dict(obligationClaims=[dict(id='law', runtime=s)]) for s in ('base', 'ours', 'theirs')]
