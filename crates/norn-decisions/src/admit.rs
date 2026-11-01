@@ -943,13 +943,6 @@ fn fold_policies(
             }
         }
     }
-    if !folds.is_empty() {
-        return Err(AdmissionError::NodeNotAdmitted {
-            rule_id: root.rule_id.clone(),
-            node_id: String::new(),
-            node_type: "orderedFold",
-        });
-    }
     Ok(Arc::new(crate::step::StepContracts {
         schemas: contracts.schemas.clone(),
         folds,

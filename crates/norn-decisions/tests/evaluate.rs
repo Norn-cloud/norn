@@ -429,7 +429,7 @@ fn sub_decision(rule_id: &str, calls: Option<&str>) -> Json {
 }
 
 #[test]
-fn ordered_fold_is_not_silently_loaded_as_an_ordinary_sub_decision() {
+fn malformed_fold_is_refused_instead_of_an_ordinary_sub_decision() {
     let fixture = corpus("reorder_decision.json");
     let mut root = rule(&fixture);
     let node = root
@@ -877,6 +877,40 @@ fn folded(
     Ok(result.output.commands[0]["state"].clone())
 }
 
+#[test]
+fn declared_capacity_allocation_uses_order_and_preserves_residuals() {
+    let item = closed(&json!({"id":{"type":"string"},"capacity":{"type":"integer"}}));
+    let state = closed(
+        &json!({"demand":{"type":"integer"},"residual":{"type":"integer"},"allocated":{"type":"array","items":{"type":"integer"}}}),
+    );
+    let rules = fold_rules(
+        &item,
+        &state,
+        &[
+            vec![(
+                "taken",
+                "accumulator.demand < item.capacity ? accumulator.demand : item.capacity",
+            )],
+            vec![
+                ("demand", "accumulator.demand - taken"),
+                ("residual", "accumulator.residual + item.capacity - taken"),
+                ("allocated", "flatten([accumulator.allocated, [taken]])"),
+            ],
+        ],
+    );
+    let initial = json!({"demand":7,"residual":0,"allocated":[]});
+    let expected = value(&json!({"demand":0,"residual":3,"allocated":[5,2]}));
+    for items in [
+        json!([{"id":"a","capacity":5},{"id":"b","capacity":5}]),
+        json!([{"id":"b","capacity":5},{"id":"a","capacity":5}]),
+    ] {
+        assert_eq!(
+            folded(&rules, initial.clone(), items).unwrap(),
+            norn_decisions::value_to_runtime(&expected).unwrap()
+        );
+    }
+}
+
 fn fifo_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
     let layer = closed(
         &json!({"id":{"type":"string"},"quantity":{"type":"integer"},"value":{"type":"integer"}}),
@@ -924,6 +958,50 @@ fn fifo_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
         content.expressions[1].value=norn_ir::ZenExpression("slice.expected == null or result.allocations == slice.expected ? [{actionId:'result',state:result}] : null".into());
     }
     rules
+}
+
+#[test]
+fn declared_fifo_matches_all_retained_reference_histories_and_cp1() {
+    let rules = fifo_fold();
+    let cases: Vec<Json> =
+        serde_json::from_str(include_str!("fixtures/fold-fifo-oracle.json")).unwrap();
+    assert_eq!(cases.len(), 1008);
+    for case in cases {
+        let mut layers = json!([]);
+        let mut last = None;
+        for event in case["history"].as_array().unwrap() {
+            let quantity = event["quantity"].as_str().unwrap().parse::<i64>().unwrap();
+            if event["kind"] == "receipt" {
+                layers.as_array_mut().unwrap().push(json!({"id":event["id"],"quantity":quantity,"value":event["value"].as_str().unwrap().parse::<i64>().unwrap()}));
+            } else {
+                let result = folded(
+                    &rules,
+                    json!({"demand":quantity,"value":0,"layers":[],"allocations":[]}),
+                    layers,
+                )
+                .unwrap();
+                let result: Json =
+                    serde_json::from_slice(&result.canonical_json().unwrap()).unwrap();
+                assert_eq!(result["demand"], 0);
+                layers = result["layers"].clone();
+                last = Some(result);
+            }
+        }
+        for (actual, field) in [
+            (layers, "layers"),
+            (last.unwrap()["allocations"].clone(), "allocations"),
+        ] {
+            let expected:Vec<Json>=case[field].as_array().unwrap().iter().map(|l|json!({"id":l["receipt"],"quantity":l["quantity"].as_str().unwrap().parse::<i64>().unwrap(),"value":l["value"].as_str().unwrap().parse::<i64>().unwrap()})).collect();
+            assert_eq!(actual, json!(expected));
+        }
+    }
+    let result = folded(
+        &rules,
+        json!({"demand":4,"value":0,"layers":[],"allocations":[]}),
+        json!([{"id":"a","quantity":2,"value":20},{"id":"b","quantity":3,"value":60}]),
+    )
+    .unwrap();
+    assert_eq!(result, norn_decisions::value_to_runtime(&value(&json!({"demand":0,"value":60,"layers":[{"id":"b","quantity":1,"value":20}],"allocations":[{"id":"a","quantity":2,"value":20},{"id":"b","quantity":2,"value":40}]}))).unwrap());
 }
 
 fn average_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
@@ -978,6 +1056,39 @@ fn average_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
     )
 }
 
+#[test]
+fn declared_average_matches_every_retained_prefix_with_original_cost_returns() {
+    let rules = average_fold();
+    let cases: Vec<Vec<Json>> =
+        serde_json::from_str(include_str!("fixtures/fold-average-oracle.json")).unwrap();
+    assert_eq!(cases.len(), 648);
+    for history in cases {
+        let mut items = Vec::new();
+        for (i, step) in history.iter().enumerate() {
+            let event = &step["event"];
+            items.push(json!({"id":format!("{i:03}"),"eventId":event["id"],"expected":null,"reference":event.get("delivery").and_then(Json::as_str).unwrap_or(""),"kind":event["kind"],"quantity":event["quantity"].as_str().unwrap().parse::<i64>().unwrap(),"value":event.get("value").and_then(Json::as_str).unwrap_or("0").parse::<i64>().unwrap()}));
+            let result = folded(
+                &rules,
+                json!({"quantity":0,"value":0,"allocation":0,"issues":[]}),
+                json!(items),
+            )
+            .unwrap();
+            let result: Json = serde_json::from_slice(&result.canonical_json().unwrap()).unwrap();
+            for (field, expected) in [
+                ("quantity", &step["balance"]["quantity"]),
+                ("value", &step["balance"]["value"]),
+                ("allocation", &step["allocation"]["value"]),
+            ] {
+                assert_eq!(
+                    result[field],
+                    expected.as_str().unwrap().parse::<i64>().unwrap(),
+                    "{i}: {items:?}"
+                );
+            }
+        }
+    }
+}
+
 fn movement(
     index: usize,
     id: &str,
@@ -988,7 +1099,6 @@ fn movement(
 ) -> Json {
     json!({"id":format!("{index:03}"),"eventId":id,"expected":null,"kind":kind,"quantity":quantity,"value":amount,"reference":reference})
 }
-
 fn average_result(items: Vec<Json>) -> Result<Json, Box<dyn std::error::Error>> {
     let result = folded(
         &average_fold(),
@@ -999,58 +1109,103 @@ fn average_result(items: Vec<Json>) -> Result<Json, Box<dyn std::error::Error>> 
 }
 
 #[test]
-fn fold_declarations_wait_for_execution_conformance() {
-    let item = closed(&json!({"id":{"type":"string"}}));
-    let state = closed(&json!({"total":{"type":"integer"}}));
-    for rules in [
-        fifo_fold(),
-        average_fold(),
-        fold_rules(&item, &state, &[vec![("total", "accumulator.total")]]),
-    ] {
-        assert!(matches!(
-            AdmittedDecision::admit(&rules.0, &rules.1, binding()),
-            Err(AdmissionError::NodeNotAdmitted {
-                node_type: "orderedFold",
-                ..
-            })
-        ));
-        let encoded = serde_json::to_string(&rules.0).unwrap();
-        assert_eq!(
-            serde_json::from_str::<norn_ir::RuleRoot>(&encoded).unwrap(),
-            rules.0
-        );
+fn declared_transfer_return_and_cancellation_vectors_preserve_original_allocations() {
+    for quantity in 1..=6 {
+        for amount in 0..=6 {
+            for moved in 1..=quantity {
+                let receipt = movement(0, "r", "receipt", quantity, amount, "");
+                let transfer = movement(1, "t", "transfer", moved, 0, "");
+                let source = average_result(vec![receipt.clone(), transfer.clone()]).unwrap();
+                let carried = source["allocation"].as_i64().unwrap();
+                let destination =
+                    average_result(vec![movement(0, "t", "receipt", moved, carried, "")]).unwrap();
+                assert_eq!(
+                    source["quantity"].as_i64().unwrap()
+                        + destination["quantity"].as_i64().unwrap(),
+                    quantity
+                );
+                assert_eq!(
+                    source["value"].as_i64().unwrap() + destination["value"].as_i64().unwrap(),
+                    amount
+                );
+                assert!(
+                    average_result(vec![
+                        receipt.clone(),
+                        transfer.clone(),
+                        movement(2, "ret", "return", moved, 0, "t")
+                    ])
+                    .is_err()
+                );
+                assert!(
+                    average_result(vec![
+                        receipt.clone(),
+                        transfer.clone(),
+                        movement(2, "more", "receipt", quantity, amount, ""),
+                        movement(3, "t", "delivery", 1, 0, "")
+                    ])
+                    .is_err()
+                );
+                let restored = average_result(vec![receipt]).unwrap();
+                assert_eq!(restored["quantity"], quantity);
+                assert_eq!(restored["value"], amount);
+            }
+        }
     }
-    let error = folded(
-        &fifo_fold(),
-        json!({"demand":1,"value":0,"layers":[],"allocations":[]}),
-        json!([]),
-    )
-    .unwrap_err();
-    assert!(matches!(
-        error.downcast_ref::<AdmissionError>(),
-        Some(AdmissionError::NodeNotAdmitted {
-            node_type: "orderedFold",
-            ..
-        })
-    ));
-    let error = average_result(vec![movement(0, "r", "receipt", 1, 10, "")]).unwrap_err();
-    assert!(matches!(
-        error.downcast_ref::<AdmissionError>(),
-        Some(AdmissionError::NodeNotAdmitted {
-            node_type: "orderedFold",
-            ..
-        })
-    ));
-    assert_eq!(
-        serde_json::from_str::<Vec<Json>>(include_str!("fixtures/fold-fifo-oracle.json"))
-            .unwrap()
-            .len(),
-        1008
+    let receipt = movement(0, "r", "receipt", 5, 3, "");
+    let delivery = movement(1, "d", "delivery", 3, 0, "");
+    let returned = movement(2, "ret", "return", 1, 0, "d");
+    let before = average_result(vec![receipt.clone(), delivery.clone(), returned.clone()]).unwrap();
+    assert_eq!(before["allocation"], 1);
+    assert!(average_result(vec![receipt.clone(), returned]).is_err());
+    let after_return_cancel = average_result(vec![receipt.clone(), delivery]).unwrap();
+    assert_eq!(after_return_cancel["quantity"], 2);
+    assert_eq!(after_return_cancel["value"], 1);
+    let restored = average_result(vec![receipt]).unwrap();
+    assert_eq!(restored["quantity"], 5);
+    assert_eq!(restored["value"], 3);
+}
+
+#[test]
+fn declared_live_allocation_guards_refuse_changed_cost_or_receipt_identity() {
+    let receipt = movement(0, "r", "receipt", 5, 3, "");
+    let later = movement(1, "r2", "receipt", 1, 100, "");
+    let mut delivery = movement(2, "d", "delivery", 1, 0, "");
+    delivery["expected"] = json!(17);
+    assert!(average_result(vec![receipt.clone(), later, delivery.clone()]).is_ok());
+    assert!(average_result(vec![receipt, delivery]).is_err());
+    let rules = fifo_fold();
+    let admitted = AdmittedDecision::admit(&rules.0, &rules.1, binding()).unwrap();
+    let input = value(
+        &json!({"items":[{"id":"b","quantity":1,"value":10}],"initial":{"demand":1,"value":0,"layers":[],"allocations":[]},"expected":[{"id":"a","quantity":1,"value":10}]}),
     );
-    assert_eq!(
-        serde_json::from_str::<Vec<Json>>(include_str!("fixtures/fold-average-oracle.json"))
-            .unwrap()
-            .len(),
-        648
-    );
+    assert!(run(&admitted, input, event(), EvaluationBudget::new(100_000)).is_err());
+    for a in 0..=6 {
+        for b in 0..=6 {
+            for moved in 1..=5 {
+                let source = folded(
+                    &rules,
+                    json!({"demand":moved,"value":0,"layers":[],"allocations":[]}),
+                    json!([{"id":"a","quantity":2,"value":a},{"id":"b","quantity":3,"value":b}]),
+                )
+                .unwrap();
+                let source: Json =
+                    serde_json::from_slice(&source.canonical_json().unwrap()).unwrap();
+                let carried = source["value"].as_i64().unwrap();
+                let residual: i64 = source["layers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|layer| layer["value"].as_i64().unwrap())
+                    .sum();
+                assert_eq!(carried + residual, a + b);
+                let destination = movement(0, "t", "receipt", moved, carried, "");
+                let issued = movement(1, "d", "delivery", moved, 0, "");
+                assert_eq!(
+                    average_result(vec![destination, issued.clone()]).unwrap()["allocation"],
+                    carried
+                );
+                assert!(average_result(vec![issued]).is_err());
+            }
+        }
+    }
 }

@@ -661,6 +661,17 @@ fn check_node(
                 sink,
             );
             if let Some(fold) = &body.ordered_fold {
+                if body
+                    .input_field
+                    .as_deref()
+                    .is_none_or(|field| field.trim().is_empty())
+                {
+                    sink.push(
+                        codes::ORDERED_FOLD_INVALID,
+                        "a fold requires an explicit collection selector",
+                        format!("{content}.orderedFold"),
+                    );
+                }
                 if body.execution_mode == Some(norn_ir::jdm::JdmExecutionMode::Loop) {
                     sink.push(
                         codes::ORDERED_FOLD_INVALID,
@@ -741,8 +752,6 @@ fn check_ordered_fold(fold: &norn_ir::jdm::OrderedFold, content: &str, sink: &mu
         );
     }
     check_standard(fold.initial.as_str(), format!("{path}.initial"), sink);
-    sink.push(codes::ORDERED_FOLD_UNSUPPORTED,
-        "ordered-fold execution is unavailable; refusing rather than evaluating a loop with different arithmetic", path);
 }
 
 fn check_standard(source: &str, path: String, sink: &mut Sink<'_>) {
@@ -1334,6 +1343,29 @@ pub fn check_sub_decision_closures(
                 ));
                 continue;
             };
+            if let Some(JdmNode::DecisionNode { content, .. }) = graph.nodes.get(reference.node)
+                && content.ordered_fold.is_some()
+                && !std::iter::once(target)
+                    .chain(
+                        nested
+                            .members
+                            .iter()
+                            .filter_map(|identity| pool.by_identity.get(identity).copied()),
+                    )
+                    .all(|helper| {
+                        decode_graph(helper).is_some_and(|graph| {
+                            norn_expr::schema::fold_step_graph_supported(&graph)
+                        })
+                    })
+            {
+                findings.push(set_finding(
+                    codes::ORDERED_FOLD_INVALID,
+                    "nested fold or loop helper is unsupported".to_owned(),
+                    artifact,
+                    &pointer,
+                    DiagnosticRemediation::FixDefinition,
+                ));
+            }
             let depth = nested.depth.saturating_add(1);
             if depth > MAX_SUB_DECISION_DEPTH {
                 findings.push(set_finding(

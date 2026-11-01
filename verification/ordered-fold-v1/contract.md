@@ -1,8 +1,7 @@
 # Ordered-fold semantics 1.0
 
-Status: structural declaration and fail-closed refusal. Execution is unavailable
-until the evaluator implements this contract; ordinary JDM loop mode is not an
-implementation. This extends an existing RuleIR `decisionNode`, whose `key`
+Status: bounded runtime execution with declaration-driven oracle conformance.
+Ordinary JDM loop mode is not an implementation. This extends an existing RuleIR `decisionNode`, whose `key`
 retains the existing required dependency and sub-decision closure rules.
 
 ## Declaration and transition relation
@@ -62,11 +61,9 @@ positive/negative values, exact/nonexact division, zero divisor, overflow, empty
 input, duplicate identity, equal primary keys, oversized state, exhausted fuel
 and a step failing after earlier success are mandatory refusal witnesses.
 
-A declaration currently reports `rule.validation.ordered_fold_invalid` for a
-structural defect, and `rule.validation.ordered_fold_unsupported` for unavailable
-execution. Both are errors. The evaluator independently refuses `orderedFold`
-before constructing a normal sub-decision, even if the checker was skipped.
-No solver evidence or executable application capability is claimed by this cut.
+A structurally unsupported declaration reports `rule.validation.ordered_fold_invalid`.
+The evaluator independently rechecks the closed profile and helper contracts.
+The supported fragment is executable; no generated solver proof is claimed.
 
 ## Scaled VM correspondence (A2 arithmetic cut)
 
@@ -81,14 +78,14 @@ quotient uses the declared rounding and exact remainder, never decimal division.
 
 FOLD-NUMERIC-CLOSURE: the scaled VM permits the four arithmetic operators,
 negation, comparisons, conditional/list/record construction and the non-arithmetic
-`len`/`flatten` functions. Compiler-generated record keys permit string-to-string
-conversion; converting other types is refused. Other numeric functions, methods, modulo and power
+`len`/`flatten` functions. String-to-string conversion supports compiler-generated
+record keys; conversion of numbers or other values is refused. Other numeric functions, methods, modulo and power
 refuse rather than escape the declared arithmetic. This policy shares the caller's
 fuel counter; it never changes another clone's arithmetic policy. The evaluator
 must validate numeric input/output leaves as well as numeric literal operands.
 `scaled` unit correspondence covers exact results, both midpoint signs,
 negative divisors, inexact refusal, zero division, scale and overflow boundaries,
-and VM dispatch with shared fuel. Fold admission remains refused in this cut.
+and VM dispatch with shared fuel. The scaled policy is scoped to this fold and its helper closure.
 
 FOLD-STEP-SCHEMA: helper contract equality compares parsed schemas, independent
 of object or required-member ordering. The checker and runtime admission share
@@ -97,9 +94,9 @@ refuse. Each invocation checks its exact input before running any helper node
 and its complete output before it becomes state. Nested ordinary calls retain
 the fold helper's boundary check. Non-fold helper admission is unchanged.
 The checks charge materialization to shared fuel. No schema failure produces
-an accumulator or effects; the execution-unavailable gate still applies here.
+an accumulator or effects.
 
-## Required execution correspondence and oracle scope
+## Execution correspondence and oracle scope
 
 FOLD-SCHEDULE: inspect the node input under shared fuel, select the array, check
 its size/items/unique canonical identities, then sort using metered insertion

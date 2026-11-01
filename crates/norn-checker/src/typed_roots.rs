@@ -3630,7 +3630,7 @@ mod tests {
     }
 
     #[test]
-    fn ordered_fold_declarations_fail_closed_before_execution_support() {
+    fn ordered_fold_declarations_admit_only_the_supported_closed_profile() {
         let mut rule = rule_with_sub_decision();
         let fold = json!({
             "semanticsVersion": "1.0",
@@ -3646,15 +3646,9 @@ mod tests {
             "arithmetic": {"scale": 0, "rounding": "refuse"}
         });
         rule["payload"]["graph"]["nodes"][4]["content"]["orderedFold"] = fold;
+        rule["payload"]["graph"]["nodes"][4]["content"]["inputField"] = json!("slice.items");
         let actual = findings(rule.clone());
-        assert!(
-            has(
-                &actual,
-                "rule.validation.ordered_fold_unsupported",
-                "payload.graph.nodes[4].content.orderedFold"
-            ),
-            "{actual:?}"
-        );
+        assert!(actual.is_empty(), "{actual:?}");
         for (member, invalid) in [
             ("maxItems", json!(0)),
             ("maxAccumulatorBytes", json!(0)),
