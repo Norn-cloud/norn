@@ -1646,7 +1646,7 @@ fn cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations() {
     let helpers = rules.iter().filter(|(_, r)| r.contract == Some(norn_ir::RuleContractV2::SubDecision)).map(|(id, r)| (id.clone(), r.clone())).collect();
     let admitted = AdmittedDecision::admit(&rules["jewelry.fold.plan.rule"], &helpers, binding()).unwrap();
     let input = json!({
-        "opening":{"resource_code":"a","quantity":100,"gross":100,"value":1000,"unit":"g","currency":"USD"},
+        "opening":{"resource_code":"a","quantity":100,"unit":"g","currency":null,"valuation_method":"fifo","gross_quantity":100,"purity":1000,"valuation_currency":"USD","book_value":1000},
         "scrap":{"resource_code":"b","gross":25,"purity":800,"value":180,"unit":"g","currency":"USD"},
         "sell_quantity":20,"sale_price":300,"threshold":0.005,
         "products":[

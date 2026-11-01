@@ -252,6 +252,9 @@ and funded conversion helpers. One pure plan applies them in order: sell,
 normalize the separate scrap exchange, fund WIP from retained and newly received
 holdings, then allocate output, explicit loss and non-fine byproduct. Quantities
 are grams, purity per-mille, values USD; exact scale-6 refuse arithmetic is declared.
+The opening snapshot retains the inherited Resource fields, separate gram unit
+and valuation currency, plus the measured/book fields of the declared subtype.
+Its projection into allocation items is written in the same Norn decision.
 Source IDs and residual allocations remain data. Initial accumulators derive
 from declared zeroes and prior fold results, not caller-supplied partial state.
 
