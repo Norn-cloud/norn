@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 import ts from "typescript"
-import { requireNfcText } from "../src/compiler/index.ts"
+import { compileFile, requireNfcText } from "../src/compiler/index.ts"
 import { compileDefinitions } from "../src/compiler/definitions.ts"
 import type { MappingSourceContract } from "../src/builder/mapping.ts"
 import { sourceMappedDiagnostics } from "../src/checker-abi.ts"
@@ -169,3 +169,18 @@ test("ADMITTED-TEXT-NFC: editor metadata is preserved and errors identify semant
   expect(() => requireNfcText(invalid, source)).toThrow("definition test.editor text at /name")
   expect(() => requireNfcText({...artifact, kind: "entity"}, source)).toThrow("/payload/graph/settings/text")
 })
+
+test("ADMITTED-TEXT-NFC: flow compiler checks emitted semantic literals", () => {
+  const dir = mkdtempSync(join(tmpdir(), "norn-flow-nfc-"))
+  try {
+    const file = join(dir, "flow.ts")
+    for (const text of ["é", "e\u0301"]) {
+      writeFileSync(file, `import { Effect } from "effect"
+import { Norn } from "@norn/authoring"
+export default Norn.flow({id: "test.nfc", version: "1.0.0"}, Effect.gen(function* () { return {value: "${text}"} }))`)
+      const result = compileFile(file, {scope, sourcePath: "flow.ts"})
+      expect(result.ok).toBe(text === "é")
+      if (!result.ok) expect(result.diagnostics).toContainEqual(expect.objectContaining({code: "definition.text.not_nfc"}))
+    }
+  } finally { rmSync(dir, {recursive: true, force: true}) }
+}, 30_000)
