@@ -1,0 +1,19 @@
+{
+  "description": "A Frappe on_trash webhook: the delete is an observation carrying the tombstone as received.",
+  "draft": {
+    "source": "erpnext",
+    "source_id": "Sales Order/SO-0001",
+    "event_id": "Sales Order/SO-0001#deleted@2026-10-01 09:40:11.000914",
+    "kind": "delete",
+    "source_version": "2026-10-01 09:40:11.000914",
+    "payload": {
+      "doctype": "Sales Order",
+      "name": "SO-0001",
+      "modified": "2026-10-01 09:40:11.000914",
+      "docstatus": 2
+    },
+    "extracted_at": 1790847611204,
+    "pipeline_version": "norn-dataplane.frappe-webhook/1"
+  },
+  "policy": null
+}
