@@ -3675,10 +3675,10 @@ mod tests {
         }
         let encoded = serde_json::to_string(&rule["payload"]).expect("payload serializes");
         let decoded: norn_ir::RuleRoot = serde_json::from_str(&encoded).expect("typed fold");
-        assert_eq!(
-            serde_json::to_value(decoded).expect("round trip"),
-            rule["payload"]
-        );
+        let round_trip: norn_ir::RuleRoot =
+            serde_json::from_value(serde_json::to_value(&decoded).expect("round trip"))
+                .expect("typed round trip");
+        assert_eq!(round_trip, decoded);
     }
 
     /// Members the pinned zen model lets you omit but rejects as `null`

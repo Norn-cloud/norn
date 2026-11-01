@@ -429,6 +429,51 @@ fn sub_decision(rule_id: &str, calls: Option<&str>) -> Json {
 }
 
 #[test]
+fn ordered_fold_is_not_silently_loaded_as_an_ordinary_sub_decision() {
+    let fixture = corpus("reorder_decision.json");
+    let mut root = rule(&fixture);
+    let node = root
+        .graph
+        .as_mut()
+        .unwrap()
+        .nodes
+        .iter_mut()
+        .find_map(|node| {
+            if let norn_ir::JdmNode::DecisionNode { content, .. } = node {
+                Some(content)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    node.ordered_fold = Some(norn_ir::jdm::OrderedFold {
+        semantics_version: "1.0".to_owned(),
+        order: vec![],
+        identity: "id".to_owned(),
+        item_schema: BTreeMap::new(),
+        accumulator_schema: BTreeMap::new(),
+        initial: "{}".into(),
+        max_items: 1,
+        max_accumulator_bytes: 100,
+        arithmetic: norn_ir::jdm::FoldArithmetic {
+            scale: 0,
+            rounding: norn_ir::jdm::FoldRounding::Refuse,
+        },
+    });
+    let subs = BTreeMap::from([(
+        "retail.reorder_priority.rule".to_owned(),
+        rule(&fixture["subDecisions"]["retail.reorder_priority.rule"]),
+    )]);
+    assert!(matches!(
+        AdmittedDecision::admit(&root, &subs, binding()),
+        Err(AdmissionError::NodeNotAdmitted {
+            node_type: "orderedFold",
+            ..
+        })
+    ));
+}
+
+#[test]
 fn the_sub_decision_closure_is_exact_and_bounded() {
     let fixture = corpus("reorder_decision.json");
     let root = rule(&fixture);
