@@ -1001,15 +1001,31 @@ fn average_result(items: Vec<Json>) -> Result<Json, Box<dyn std::error::Error>> 
     Ok(serde_json::from_slice(&result.canonical_json()?)?)
 }
 
+fn capacity_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
+    let item = closed(&json!({"id":{"type":"string"},"capacity":{"type":"integer"}}));
+    let state = closed(
+        &json!({"demand":{"type":"integer"},"residual":{"type":"integer"},"allocated":{"type":"array","items":{"type":"integer"}}}),
+    );
+    fold_rules(
+        &item,
+        &state,
+        &[
+            vec![(
+                "taken",
+                "accumulator.demand < item.capacity ? accumulator.demand : item.capacity",
+            )],
+            vec![
+                ("demand", "accumulator.demand - taken"),
+                ("residual", "accumulator.residual + item.capacity - taken"),
+                ("allocated", "flatten([accumulator.allocated, [taken]])"),
+            ],
+        ],
+    )
+}
+
 #[test]
 fn fold_declarations_wait_for_execution_conformance() {
-    let item = closed(&json!({"id":{"type":"string"}}));
-    let state = closed(&json!({"total":{"type":"integer"}}));
-    for rules in [
-        fifo_fold(),
-        average_fold(),
-        fold_rules(&item, &state, &[vec![("total", "accumulator.total")]]),
-    ] {
+    for rules in [fifo_fold(), average_fold(), capacity_fold()] {
         assert!(matches!(
             AdmittedDecision::admit(&rules.0, &rules.1, binding()),
             Err(AdmissionError::NodeNotAdmitted {
