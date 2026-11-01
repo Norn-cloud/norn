@@ -45,9 +45,6 @@ pub struct DefsResponse {
     pub base_artifact_ids: Vec<String>,
     /// Admitted semantic documents, preserving exact numeric values.
     pub artifacts: Vec<Box<RawValue>>,
-    /// Non-executable authoring projection bound to the receipt.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub flow_source_map: Option<norn_ir::FlowSourceMap>,
 }
 
 /// Read under one definition epoch; scope and authorization precede store access.
@@ -90,10 +87,14 @@ fn defs_response(
     let receipt = installed
         .admission_receipt
         .ok_or_else(|| Refusal::host("missing receipt"))?;
-    norn_checker::verify_admission_receipt(&receipt, &installed.receipt_sha256)
-        .map_err(Refusal::host)?;
     let admitted = crate::defs::Admitted::from_source(&installed.canonical_set, scope)
-        .map_err(Refusal::host)?;
+        .map_err(|error| Refusal::host(error.code))?;
+    let digest = norn_checker::admission_receipt_sha256(&receipt).map_err(Refusal::host)?;
+    if digest != installed.receipt_sha256 || digest != admitted.receipt_sha256 {
+        return Err(Refusal::host(
+            "retained receipt does not bind these definitions",
+        ));
+    }
     Ok(DefsResponse {
         admitted: true,
         version: installed.version,
@@ -112,7 +113,6 @@ fn defs_response(
         registry: installed.registry,
         base_artifact_ids: Vec::new(),
         artifacts: serde_json::from_str(&installed.canonical_set).map_err(Refusal::host)?,
-        flow_source_map: None,
     })
 }
 
