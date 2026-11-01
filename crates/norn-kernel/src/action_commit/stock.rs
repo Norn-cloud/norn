@@ -259,6 +259,9 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
     }
     let company = reader.path(&target, &["company".into()])?;
     let mut partitions = BTreeMap::<[FactKey; 3], StockPartitionInput>::new();
+    let model = crate::CommitModel::new(catalog);
+    let item_type = ObjectTypeName("stock.Item".into());
+    let warehouse_type = ObjectTypeName("stock.Warehouse".into());
     for (index, id) in rows.iter().enumerate() {
         let key = FactKey::new(collection.child_type.as_str(), id.clone());
         let values = reader.fact(&key)?;
@@ -274,8 +277,8 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
         }
         let item = reader.path(&key, &binding.partition.item)?;
         let warehouse = reader.path(&key, &binding.partition.warehouse)?;
-        if item.object_type.as_str() != "stock.Item"
-            || warehouse.object_type.as_str() != "stock.Warehouse"
+        if !model.is_a(&item.object_type, &item_type)
+            || !model.is_a(&warehouse.object_type, &warehouse_type)
             || reader.path(&warehouse, &["company".into()])? != company
         {
             return Err(invalid("stock partition masters disagree"));
