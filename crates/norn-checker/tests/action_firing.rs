@@ -192,6 +192,14 @@ fn receipt_effect_admits_reference_and_writer_closure_but_refuses_invalid_bindin
                 .any(|finding| finding.code.as_str() == "artifact_set.action.target_not_writable")
         );
     }
+    proptest::test_runner::TestRunner::new(proptest::test_runner::Config::with_cases(32))
+        .run(&"[a-z]{1,16}", |suffix| {
+            let mut invalid = action.clone();
+            let target = format!("unknown_{suffix}");
+            invalid["payload"]["effectProgram"]["acceptReceipt"]["resultBindings"] = serde_json::json!({target:"customer"});
+            proptest::prop_assert!(!check(&invalid).is_empty());
+            Ok(())
+        }).expect("generated undeclared receipt targets always refuse");
     let mut body = action.clone();
     body["payload"]["inputSchema"]["properties"]["receipt"] =
         serde_json::json!({"type":"object", "properties":{}, "additionalProperties":false});
