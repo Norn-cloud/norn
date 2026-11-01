@@ -32,7 +32,7 @@ export const PostInvoice = Norn.action({
     { name: "settings", type: Setting, key: { link: { from: "registry", link: "settings" } } },
     { name: "selected", type: Setting, key: { parameter: { from: "settings", settingKey: "tax.rate", effectiveAt: "effective_at", precedence: [{ orgId: "org_demo", environmentId: "dev" }, { orgId: "org_demo" }, {}] } } },
   ],
-  preconditions: [Norn.expression(Context, context => context.input.rate === context.slice.selected.value)],
+  preconditions: [Norn.expression(Context, context => context.input.currency === "USD" && context.input.rate === context.slice.selected.value)],
   writes: [{ type: Invoice, change: "created" }],
   effect: { kind: "upsert_input_object", type: Invoice, objectIdField: "id", writeMode: { kind: "create_only" } },
 })

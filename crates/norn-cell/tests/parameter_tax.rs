@@ -68,7 +68,7 @@ fn definitions() -> Definitions {
     let mut interfaces = Vec::new();
     let mut actions = Vec::new();
     for artifact in artifacts {
-        let payload = serde_json::to_value(artifact.payload).expect("typed payload");
+        let payload = artifact.payload.to_json_value();
         if let Some(object) = payload.get("objectType") {
             types.push(serde_json::from_value(object.clone()).expect("object type"));
         }
