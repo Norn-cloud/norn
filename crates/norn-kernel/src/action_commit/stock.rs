@@ -148,6 +148,10 @@ fn millionths<X>(values: &JsonObject, property: &str) -> Result<u128, ActionRefu
 /// # Errors
 /// Scope, authorization, malformed ownership, missing masters or bounds refuse
 /// without any write. The caller must retain every returned fence at commit.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one bounded snapshot preparation pass"
+)]
 pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
     host: &H,
     catalog: &TypeCatalog<'_>,
@@ -206,7 +210,7 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
     let collection = definition
         .owned_collections
         .iter()
-        .find(|c| c.id == binding.collection)
+        .find(|c| c.id.as_str() == binding.collection)
         .ok_or_else(|| invalid("missing owned collection"))?;
     let manifest_key = owned_manifest_key::<H::Error>(&target, &binding.collection)?;
     // Internal manifests are disclosed only after the parent read gate above.
@@ -299,21 +303,21 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
 mod tests {
     use super::*;
     #[test]
-    fn post_value_exact_millionths_never_round_or_accept_negative() {
+    fn post_value_exact_millionths_never_round_or_accept_negative()
+    -> Result<(), norn_ir::runtime::RuntimeValueError> {
         for (input, expected) in [
             ("1.000001", Some(1_000_001)),
             ("0", Some(0)),
             ("-1", None),
             ("0.0000001", None),
         ] {
-            let values = JsonObject::from([(
-                "quantity".into(),
-                JsonValue::Number(Decimal::parse(input).expect("decimal")),
-            )]);
+            let values =
+                JsonObject::from([("quantity".into(), JsonValue::Number(Decimal::parse(input)?))]);
             assert_eq!(
                 millionths::<std::convert::Infallible>(&values, "quantity").ok(),
                 expected
             );
         }
+        Ok(())
     }
 }
