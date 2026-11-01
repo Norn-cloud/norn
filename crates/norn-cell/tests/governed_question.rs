@@ -49,25 +49,23 @@ impl CellHost for Capture {
     type Input = JsonObject;
     type Error = std::io::Error;
     fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
-        Ok(self.cell.load(key).expect("memory read"))
+        self.cell.load(key).map_err(|never| match never {})
     }
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
-        Ok(self.cell.load_link(key).expect("memory link"))
+        self.cell.load_link(key).map_err(|never| match never {})
     }
     fn supports_reference_reads(&self) -> bool {
         true
     }
     fn load_reference(&self, key: &FactKey, max: u64) -> Result<Option<BoundedFact>, Self::Error> {
-        Ok(self
-            .cell
+        self.cell
             .load_reference(key, max)
-            .expect("memory reference"))
+            .map_err(|never| match never {})
     }
     fn load_bounded(&self, key: &FactKey, max: u64) -> Result<Option<BoundedFact>, Self::Error> {
-        Ok(self
-            .cell
+        self.cell
             .load_bounded(key, max)
-            .expect("bounded memory read"))
+            .map_err(|never| match never {})
     }
     fn commit(&mut self, _: Proposal) -> Result<CommitReceipt, CommitError<Self::Error>> {
         Err(CommitError::Host(std::io::Error::other(
@@ -134,7 +132,7 @@ fn prepared() -> (Cell, Proposal, ActionReferenceReads) {
         cell,
         prepared: None,
     };
-    let call = ActionCall {
+    let invocation = ActionCall {
         action: &action,
         action_artifact_id: "example.record.update.action",
         action_version: "0.1.0",
@@ -153,7 +151,7 @@ fn prepared() -> (Cell, Proposal, ActionReferenceReads) {
             consumes: None,
         },
     };
-    let outcome = commit_action(&mut capture, &TypeCatalog::new(&types), &call, &Allow);
+    let outcome = commit_action(&mut capture, &TypeCatalog::new(&types), &invocation, &Allow);
     assert!(outcome.is_err());
     let (proposal, proof) = capture
         .prepared
