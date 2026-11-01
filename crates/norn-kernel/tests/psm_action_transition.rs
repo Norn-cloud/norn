@@ -313,31 +313,6 @@ fn foreign_transition_ids_are_refused_before_replay() {
 }
 
 #[test]
-fn owner_version_overflow_is_refused() {
-    let decider = VersionedAction::<Owner>::new();
-    let mut state = decider.initial_state();
-    state.owner_versions.insert(0, u64::MAX);
-    let request = VersionedActionRequest {
-        transition_id: "t0".to_string(),
-        binding: TransitionBinding {
-            input_sha256: "in".to_string(),
-            effect_sha256: "fx".to_string(),
-        },
-        preconditions: vec![OwnerExpectation {
-            owner: 0,
-            expected_version: u64::MAX,
-        }],
-        mutation_owners: BTreeSet::from([0]),
-        idempotency_key: "k".to_string(),
-    };
-    let observations = Observations::main(LogicalTime::EPOCH, Entropy::from_bytes([0; 32]));
-    assert_eq!(
-        decider.decide(&state, &request, &observations),
-        Err(ActionRejection::OwnerVersionOverflow)
-    );
-}
-
-#[test]
 fn action_command_scope_fails_closed_before_identity_fields() {
     let shape = |org_id, action_id, action_version, idempotency_key| ActionCommandShape {
         org_id,

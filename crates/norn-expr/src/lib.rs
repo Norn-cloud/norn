@@ -49,6 +49,8 @@
 //! # Ok::<(), norn_expr::ExprError>(())
 //! ```
 
+#![forbid(unsafe_code)]
+
 pub mod actor;
 pub mod check;
 mod convert;

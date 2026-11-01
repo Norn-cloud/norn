@@ -3033,10 +3033,18 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
                 Err(format!("value {text:?} is not one of {values:?}"))
             }
         }
-        (
-            Some(Json::String(text)),
-            Type::Text { .. } | Type::Date | Type::Timestamp { .. } | Type::Duration,
-        ) => Ok(Value::String(text.clone())),
+        (Some(Json::String(text)), Type::Text { .. } | Type::Duration) => {
+            Ok(Value::String(text.clone()))
+        }
+        (Some(Json::String(text)), Type::Date) => {
+            norn_expr::temporal::validate_date(text).map_err(|failure| failure.to_string())?;
+            Ok(Value::String(text.clone()))
+        }
+        (Some(Json::String(text)), Type::Timestamp { .. }) => {
+            norn_expr::temporal::canonical_timestamp(text)
+                .map(Value::String)
+                .map_err(|failure| failure.to_string())
+        }
         (Some(Json::Number(number)), Type::Integer) if number.parse::<i64>().is_ok() => {
             number_value(number)
         }

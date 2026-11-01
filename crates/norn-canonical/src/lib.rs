@@ -299,8 +299,8 @@ pub enum CanonicalJsonError {
         /// The serializer's error description.
         message: String,
     },
-    /// A typed value could not be serialized to JSON before canonicalization
-    /// ([`canonical_json_of`]).
+    /// A typed value could not be serialized to JSON
+    /// ([`canonical_json_of`] or [`serialize_json_verbatim`]).
     Serialize {
         /// The serializer's error description.
         message: String,
@@ -385,8 +385,10 @@ pub fn parse(input: impl AsRef<[u8]>) -> Result<JsonValue, CanonicalJsonError> {
 /// Parse one JSON document like [`parse`], with numbers normalized to exact
 /// Norn1 decimal strings, but strings and object keys kept verbatim (no NFC
 /// normalization): the exact ingress parse for runtime values (#2770), which
-/// must not change user text. Hash the result with [`serialize`], which
-/// normalizes.
+/// must not change user text. Hash the result with [`serialize`] for Norn1,
+/// which normalizes. Exact-byte commitments instead retain the original input
+/// or [`serialize_json_verbatim`] output; this parser validates those bytes,
+/// but its normalized numbers must not replace the commitment's bytes.
 ///
 /// # Errors
 ///
@@ -401,6 +403,32 @@ pub fn parse_json_verbatim(input: impl AsRef<[u8]>) -> Result<JsonValue, Canonic
     let mut parser = Parser::new(bytes);
     parser.normalize_strings = false;
     parser.parse_document()
+}
+
+/// Encode a typed value as compact Serde JSON for an exact-byte commitment.
+///
+/// This preserves the existing `serde_json::to_vec` representation, including
+/// typed field order, the active map backend, Unicode spelling, numeric tokens
+/// and escaping. It does not apply Norn1 normalization or add a hash domain.
+/// Unlike [`canonical_json_of`], its bytes may depend on Serde JSON features.
+/// It preserves the typed serialization, not the original source document's
+/// whitespace, escape spelling or number spelling lost during deserialization.
+///
+/// Callers retain their existing byte budgets and [`parse_json_verbatim`]
+/// validation before committing these bytes: this function adds no validation,
+/// number/depth limits or refusal policy. Use [`canonical_json_of`] for ordinary
+/// Norn1 identities; use this path only when the commitment requires the exact
+/// typed representation rather than Norn1 equivalence.
+///
+/// # Errors
+///
+/// Returns [`CanonicalJsonError::Serialize`] if Serde JSON cannot encode the value.
+pub fn serialize_json_verbatim<T: Serialize + ?Sized>(
+    value: &T,
+) -> Result<Vec<u8>, CanonicalJsonError> {
+    serde_json::to_vec(value).map_err(|error| CanonicalJsonError::Serialize {
+        message: error.to_string(),
+    })
 }
 
 /// Alias for [`parse`].
@@ -449,9 +477,9 @@ pub fn canonicalize_json(input: impl AsRef<[u8]>) -> Result<Vec<u8>, CanonicalJs
 /// Norn1 (sorted keys, NFC strings, exact numbers), so the bytes never depend
 /// on `serde_json`'s map backend. `preserve_order` (insertion order) is
 /// feature-unified into any build that links `cedar-policy` (#2882). This is
-/// the only sanctioned way to turn Serde data into bytes that are hashed; the
-/// skeleton guard rejects raw `serde_json::to_vec`/`to_writer` outside this
-/// crate.
+/// the typed serialization path for Norn1 hashes. Existing exact-byte
+/// commitments instead use [`serialize_json_verbatim`], also owned by this
+/// crate; the skeleton guard rejects raw Serde JSON byte encodings elsewhere.
 ///
 /// # Errors
 ///

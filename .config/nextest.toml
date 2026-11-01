@@ -1,0 +1,8 @@
+# Pinned gate file: CI runs the `ci` profile and ignores any default filter.
+[profile.ci]
+fail-fast = false
+retries = 0
+slow-timeout = { period = "120s" }
+
+[profile.ci.junit]
+path = "junit.xml"
