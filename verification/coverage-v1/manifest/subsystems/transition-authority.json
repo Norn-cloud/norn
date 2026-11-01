@@ -253,6 +253,9 @@
     "Kernel L1 adds a single-object mathematical reference and a checked-successor correspondence fragment only. VersionProof does not prove stale-CAS admission, durable persistence, or whole-kernel refinement; no evidence status is promoted by its enrollment."
   ],
   "sourceFiles": [
+    "crates/norn-cell/src/compute/governed_policy.rs",
+    "crates/norn-cell/src/compute/governed.rs",
+    "crates/norn-cell/src/compute/ivm.rs",
     "Cargo.toml",
     "crates/norn-api/Cargo.toml",
     "crates/norn-api/src/contracts.rs",
@@ -263,12 +266,6 @@
     "crates/norn-canonical/src/number.rs",
     "crates/norn-cell/Cargo.toml",
     "crates/norn-cell/src/codec.rs",
-    "crates/norn-cell/src/compute.rs",
-    "crates/norn-cell/src/compute/governed.rs",
-    "crates/norn-cell/src/compute/governed_policy.rs",
-    "crates/norn-cell/src/compute/ivm.rs",
-    "crates/norn-cell/src/compute/lineage.rs",
-    "crates/norn-cell/src/compute/olap.rs",
     "crates/norn-cell/src/engine.rs",
     "crates/norn-cell/src/error.rs",
     "crates/norn-cell/src/export.rs",
@@ -279,6 +276,7 @@
     "crates/norn-cell/src/migration.rs",
     "crates/norn-cell/src/model.rs",
     "crates/norn-cell/src/payload_storage.rs",
+    "crates/norn-cell/src/compute.rs",
     "crates/norn-cell/src/reactive.rs",
     "crates/norn-cell/src/reactive_read.rs",
     "crates/norn-cell/src/read.rs",
@@ -330,6 +328,7 @@
     "crates/norn-ir/src/metric.rs",
     "crates/norn-ir/src/osi.rs",
     "crates/norn-ir/src/policy_value.rs",
+    "crates/norn-ir/tests/policy_values.rs",
     "crates/norn-ir/src/provenance.rs",
     "crates/norn-ir/src/rule.rs",
     "crates/norn-ir/src/runtime.rs",
@@ -342,7 +341,6 @@
     "crates/norn-ir/src/view.rs",
     "crates/norn-ir/src/widget.rs",
     "crates/norn-ir/src/widget_ux.rs",
-    "crates/norn-ir/tests/policy_values.rs",
     "crates/norn-kernel/Cargo.toml",
     "crates/norn-kernel/src/action.rs",
     "crates/norn-kernel/src/action_commit.rs",
@@ -502,6 +500,8 @@
     "verification/kernel-l1/Reference.lean",
     "verification/kernel-l1/VersionProof.lean",
     "verification/kernel-l1/version_kani.rs",
-    "verification/kernel-l1/version_verus.rs"
+    "verification/kernel-l1/version_verus.rs",
+    "crates/norn-cell/src/compute/lineage.rs",
+    "crates/norn-cell/src/compute/olap.rs"
   ]
 }
