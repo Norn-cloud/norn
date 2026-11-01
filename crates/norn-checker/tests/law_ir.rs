@@ -340,7 +340,7 @@ fn law_contained_unknown_stale_missing_duplicate_cycle_and_budget_refuse() {
         let errors = membership(&law, &base).expect_err("incomplete membership");
         assert_eq!(errors[0].code.as_str(), codes::UNRESOLVED_SCOPE);
     }
-    let mut missing = original.clone();
+    let mut missing = original;
     missing.retain(|a| a.artifact_id != "commerce.SalesOrder.entity");
     assert!(membership(&law, &missing).is_err());
 }
