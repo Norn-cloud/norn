@@ -191,7 +191,15 @@ fn ordered_items<'a>(
                 _ => return Err("invalid order value".into()),
             });
         }
-        if !identities.insert(keys.last().cloned().ok_or("missing identity")?) {
+        let identity = keys.last().cloned().ok_or("missing identity")?;
+        let OrderKey::String(ref text) = identity else {
+            return Err("non-string identity".into());
+        };
+        meter.charge(
+            u64::try_from(text.len().saturating_add(1))?
+                .saturating_mul(u64::try_from(identities.len().saturating_add(1))?),
+        )?;
+        if !identities.insert(identity) {
             return Err("duplicate fold identity".into());
         }
         ordered.push((keys, item));
@@ -200,9 +208,15 @@ fn ordered_items<'a>(
     for i in 1..ordered.len() {
         let mut j = i;
         while let Some(previous) = j.checked_sub(1) {
-            meter.charge(u64::try_from(f.order.len())?)?;
-            if ordered.get(previous).ok_or("sort index")?.0 <= ordered.get(j).ok_or("sort index")?.0
-            {
+            let left = &ordered.get(previous).ok_or("sort index")?.0;
+            let right = &ordered.get(j).ok_or("sort index")?.0;
+            for key in left.iter().chain(right) {
+                meter.charge(match key {
+                    OrderKey::String(s) => u64::try_from(s.len())?.saturating_add(1),
+                    OrderKey::Integer(_) => 1,
+                })?;
+            }
+            if left <= right {
                 break;
             }
             ordered.swap(previous, j);

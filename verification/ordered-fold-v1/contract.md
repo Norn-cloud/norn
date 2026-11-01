@@ -103,7 +103,10 @@ an accumulator or effects; the execution-unavailable gate still applies here.
 
 FOLD-SCHEDULE: inspect the node input under shared fuel, select the array, check
 its size/items/unique canonical identities, then sort using metered insertion
-sort. Each adjacent lexicographic comparison costs one unit per declared key.
+sort. Each adjacent lexicographic comparison charges both key vectors: one unit per
+integer, or one plus UTF-8 bytes per string. Before inserting canonical identity
+number n, charge n times one plus its string bytes, a deterministic conservative
+bound on identity-set comparisons. Long shared prefixes cannot evade fuel.
 Evaluate `initial` once in the original node scope, check canonical state size,
 then invoke the existing helper for each sorted item. Validate each complete
 output and canonicalize it before the next step. Empty input still validates
