@@ -5141,3 +5141,136 @@ norn_testkit::proptest::proptest! {
         prop_assert_eq!(changed.ddl_hash(), model.ddl_hash());
     }
 }
+
+fn purity_quality_host(
+    path: &std::path::Path,
+) -> norn_cell::SqliteCell<
+    norn_kernel::ObservationEvent,
+    norn_kernel::cell_host::JsonObject,
+    norn_kernel::cell_host::JsonObject,
+> {
+    let object = json!({"name":"quality.Measurement", "properties":[{"id":"purity", "type":{"kind":"decimal", "scale":6}}]});
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_value(json!([
+        {"irVersion":"0.1", "artifactId":"quality.Measurement.entity", "kind":"entity", "namespace":"quality", "name":"Measurement", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[], "provenance":{"source":"authoring_sdk"}, "payload":{"entityVersion":"2.0", "objectType":object}},
+        {"irVersion":"0.1", "artifactId":"quality.purity.law", "kind":"law", "namespace":"quality", "name":"purity", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[{"artifactId":"quality.Measurement.entity", "kind":"entity", "version":"0.1.0", "required":true}], "provenance":{"source":"authoring_sdk"}, "payload":{
+            "lawVersion":"0.1", "id":"purity_in_range", "owner":"quality.controls", "severity":"error", "rationale":"Purity must be within zero and one", "provenance":{"source":"authoring_sdk"}, "subject":"quality.Measurement", "scope":{"root":{"kind":"entity", "id":"quality.Measurement"}, "objectTypes":["quality.Measurement"]}, "modality":{"kind":"always"}, "response":{"kind":"predicate", "expression":"self.purity >= 0 and self.purity <= 1"}
+        }}
+    ])).expect("typed synthetic declarations");
+    assert!(
+        norn_checker::check_artifact_set(
+            &artifacts,
+            &norn_checker::EntityArtifactSetContext {
+                registry: &std::collections::BTreeSet::new(),
+                base: &[],
+                tenant: None
+            }
+        )
+        .is_empty()
+    );
+    let model =
+        Model::from_definitions(&[serde_json::from_value(object).expect("measurement")], &[])
+            .expect("model")
+            .with_governing_laws(&artifacts)
+            .expect("laws");
+    let mut input = install_input("quality", 1_793_527_260_000, &model);
+    input.canonical_set = String::from_utf8(
+        norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set"),
+    )
+    .expect("UTF8");
+    let mut store = CellStore::open(path, model.clone(), StoreOptions::default()).expect("store");
+    store
+        .install_definitions(model, input, Some(0), "org_demo/dev")
+        .expect("admitted definitions");
+    norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("host")
+}
+
+fn capture_purity(
+    cell: &mut norn_cell::SqliteCell<
+        norn_kernel::ObservationEvent,
+        norn_kernel::cell_host::JsonObject,
+        norn_kernel::cell_host::JsonObject,
+    >,
+    delivery: &str,
+    purity: &str,
+) {
+    use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
+    use norn_kernel::{
+        CellHost, DecisionTurn, FactKey, ObservationId, Observed, Provenance, TypeCatalog, World,
+        load_slice,
+    };
+    let values = BTreeMap::from([(
+        "purity".to_owned(),
+        Value::from_json_text(purity).expect("exact decimal"),
+    )]);
+    let provenance: norn_ir::InstanceProvenance = serde_json::from_value(json!({"source":{"system":"synthetic-erpnext", "record":"Stock Entry Measurement/MEAS-1"}, "mappingVersion":"synthetic.measurements@1", "recordedAt":"2026-11-01T10:01:00Z", "sourceFields":["purity"]})).expect("source provenance");
+    let observed = Observed {
+        id: ObservationId(delivery.to_owned()),
+        provenance: Provenance {
+            source: "synthetic-erpnext".into(),
+            source_id: "Stock Entry Measurement/MEAS-1".into(),
+            observed_at: cell.now(),
+            mapping_version: "synthetic.measurements@1".into(),
+        },
+        input: BTreeMap::from([
+            ("values".into(), Value::Object(values.clone())),
+            (
+                "provenance".into(),
+                norn_ir::runtime::encode(&provenance).expect("provenance"),
+            ),
+        ]),
+    };
+    assert!(cell.inject(&observed).expect("capture"));
+    assert!(!cell.inject(&observed).expect("same source delivery"));
+    let pending = cell.observe().expect("observe").expect("pending");
+    let model = cell.store().model().clone();
+    let catalog = TypeCatalog::new(model.object_types()).with_governing_laws(model.law_artifacts());
+    let key = FactKey::new("quality.Measurement", "MEAS-1");
+    let slice = load_slice(cell, [key.clone()]).expect("slice");
+    let turn = DecisionTurn {
+        id: delivery.into(),
+        now: cell.now(),
+        world: World::Main,
+        consumes: Some(pending.consumed()),
+    };
+    commit_observed_snapshot(
+        cell,
+        &catalog,
+        &slice,
+        &turn,
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &[],
+            provenance: &provenance,
+        },
+    )
+    .expect("source violation remains captured");
+}
+
+// OBS-EVIDENCE-1: local delivery/restart metadata cannot duplicate a persisted finding.
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn obs_evidence_redelivery_persists_one_law_finding_after_restart(deliveries in 2usize..6, fraction in 1u16..1000) {
+        for purity in ["1.20".to_owned(), format!("1.{fraction:03}")] {
+            let directory = tempfile::tempdir().expect("directory");
+            let path = directory.path().join("quality.sqlite");
+            let mut cell = purity_quality_host(&path);
+            let mut id = None;
+            for delivery in 0..deliveries {
+                capture_purity(&mut cell, &format!("delivery-{delivery}"), &purity);
+                let model = cell.store().model().clone();
+                drop(cell);
+                cell = norn_cell::SqliteCell::open(&path, model, StoreOptions::default(), "org_demo/dev", |_| BTreeMap::new()).expect("restart");
+                let reader = cell.store().read();
+                let findings: Vec<_> = reader.ledger_page(0, 100).expect("ledger").into_iter().filter(|event| event.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")).collect();
+                norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+                let verified = reader.verified_history_event(&findings[0]).expect("proof").expect("retained producer");
+                let finding: norn_ir::DataQualityFinding = norn_ir::runtime::decode(verified.get("fact").expect("fact")).expect("finding");
+                norn_testkit::proptest::prop_assert!(matches!(&finding.rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range"));
+                if let Some(ref before) = id { norn_testkit::proptest::prop_assert_eq!(before, &finding.id); }
+                id = Some(finding.id);
+                norn_testkit::proptest::prop_assert!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").is_some());
+            }
+        }
+    }
+}
