@@ -247,6 +247,7 @@
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.mapping.json",
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.source.json",
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json",
+    "registry/packs/demo-erpnext/markings.ts",
     "registry/packs/demo-erpnext/measurements.ts",
     "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
     "registry/packs/erpnext/artifacts/norn.ontology-pack.erpnext.json",

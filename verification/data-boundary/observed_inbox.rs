@@ -175,7 +175,8 @@ fn checked_scrap_yield_submission_is_mapped_then_quarantined_by_the_cell() {
             EntityRoot::V2(root) => objects.push(root.object_type),
             EntityRoot::V2Interface(root) => interfaces.push(root.interface),
             EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
-            EntityRoot::V2Extension(_) | EntityRoot::V2Markings(_) | EntityRoot::V1(_) => panic!("unexpected demo profile"),
+            EntityRoot::V2Markings(_) => {},
+            EntityRoot::V2Extension(_) | EntityRoot::V1(_) => panic!("unexpected demo profile"),
         }
     }
     let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces).expect("model").with_governing_laws(&artifacts).expect("retained laws");
