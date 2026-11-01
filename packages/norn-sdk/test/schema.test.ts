@@ -47,6 +47,10 @@ test("LAW-INSTANCE-CONTRACT-1: effective instances retain origins and bindings",
     attachment: { kind: "pack", id: "toy.layer" }, origin: at,
     paths: [[at]], bindings: { self: at },
   }
+  const cell: Schemas["NornIrLawRootOneOf2"] = { kind: "cell", id: "cell_demo" }
+  const entity: Schemas["NornIrLawRootOneOf3"] = { kind: "entity", id: "toy.Credit" }
+  expect(cell.kind).toBe("cell")
+  expect(entity.kind).toBe("entity")
   expect(instance.law.member.kind).toBe("law")
   expect(instance.bindings.self).toEqual(instance.subject)
 })

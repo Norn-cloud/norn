@@ -7294,26 +7294,6 @@
           },
           {
             "type": "object",
-            "description": "Exact retained composition-pack boundary.",
-            "required": [
-              "kind",
-              "id"
-            ],
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "pack"
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          {
-            "type": "object",
             "description": "Cell ownership root.",
             "required": [
               "kind",
@@ -7347,6 +7327,26 @@
                 "type": "string",
                 "enum": [
                   "entity"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Exact retained composition-pack boundary.",
+            "required": [
+              "kind",
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "pack"
                 ]
               }
             },
@@ -7397,26 +7397,6 @@
       },
       "NornIrLawRootOneOf2": {
         "type": "object",
-        "description": "Exact retained composition-pack boundary.",
-        "required": [
-          "kind",
-          "id"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "pack"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrLawRootOneOf3": {
-        "type": "object",
         "description": "Cell ownership root.",
         "required": [
           "kind",
@@ -7435,7 +7415,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrLawRootOneOf4": {
+      "NornIrLawRootOneOf3": {
         "type": "object",
         "description": "Exact entity type boundary.",
         "required": [
@@ -7450,6 +7430,26 @@
             "type": "string",
             "enum": [
               "entity"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLawRootOneOf4": {
+        "type": "object",
+        "description": "Exact retained composition-pack boundary.",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pack"
             ]
           }
         },
