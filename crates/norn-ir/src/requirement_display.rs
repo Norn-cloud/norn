@@ -46,13 +46,10 @@ fn isolate(text: &str) -> String {
 impl RequirementView {
     #[must_use]
     pub const fn direction(&self) -> &'static str {
-        match self.locale {
-            RequirementLocale::En => "ltr",
-            RequirementLocale::Ar => "rtl",
-        }
+        self.word("ltr", "rtl")
     }
 
-    fn word<'a>(&self, en: &'a str, ar: &'a str) -> &'a str {
+    const fn word<'a>(&self, en: &'a str, ar: &'a str) -> &'a str {
         match self.locale {
             RequirementLocale::En => en,
             RequirementLocale::Ar => ar,
@@ -75,7 +72,7 @@ impl RequirementView {
     /// LTR identifiers/expressions use Unicode isolates inside RTL sentences.
     ///
     /// # Errors
-    /// Refuses unsupported timing or contradictory grades instead of misrendering them.
+    /// Refuses unsupported timing, contradictory grades and duplicate exception IDs.
     pub fn slots(&self) -> Result<Vec<RequirementSlot>, &'static str> {
         let r = &self.requirement;
         let law = &r.norm.law;
@@ -138,12 +135,8 @@ impl RequirementView {
             DeonticModality::Prohibition => self.word("must not", "يُحظر"),
         };
         let timing = match r.timing {
-            RequirementTiming::SameCommit => {
-                self.word("in the same commit", "في عملية التثبيت نفسها")
-            }
-            RequirementTiming::EveryCommittedState => {
-                self.word("at every committed state", "في كل حالة مثبتة")
-            }
+            RequirementTiming::SameCommit => self.word("same commit", "التثبيت نفسه"),
+            RequirementTiming::EveryCommittedState => self.word("every state", "كل حالة مثبتة"),
         };
         let source = format!(
             "{}@{}; {}#{}",
@@ -162,12 +155,7 @@ impl RequirementView {
         );
         let mut slots = vec![
             self.slot("/norm/law/scope", "Scope", "النطاق", scope.join("")),
-            self.slot(
-                "/norm/law/condition",
-                "When (pointwise)",
-                "عندما (شرط الحالة)",
-                activation,
-            ),
+            self.slot("/norm/law/condition", "Condition", "الشرط", activation),
             self.slot("/norm/law/subject", "Component", "المكوّن", component),
             self.slot("/norm/modality", "Grade", "الحكم", grade.into()),
             self.slot("/timing", "Timing", "التوقيت", timing.into()),
@@ -175,17 +163,21 @@ impl RequirementView {
             self.slot("/norm/source", "Unverified source", "مصدر بلا تحقق", source),
             self.slot("/norm/defeatedBy", "Preferences", "تفضيلات", preferred),
         ];
-        for exception in &r.norm.exceptions {
+        let mut exceptions = std::collections::BTreeSet::new();
+        for e in &r.norm.exceptions {
+            if !exceptions.insert(&e.id) {
+                return Err("law.validation.invalid_document");
+            }
             slots.push(self.slot(
                 &format!(
                     "/norm/exceptions/by-id/{}",
-                    exception.id.replace('~', "~0").replace('/', "~1")
+                    e.id.replace('~', "~0").replace('/', "~1")
                 ),
                 "Exception",
                 "استثناء",
                 isolate(&format!(
                     "{}; {}#{}",
-                    exception.condition.0, exception.source.artifact_id, exception.source.pointer
+                    e.condition.0, e.source.artifact_id, e.source.pointer
                 )),
             ));
         }

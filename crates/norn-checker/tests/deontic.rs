@@ -283,7 +283,9 @@ fn structured_nested_bindings_must_identify_real_slots() {
         states: vec!["posted".into()],
     });
     let wire = serde_json::to_value(r).expect("typed fixture");
+    let exception = wire.pointer("/norm/exceptions/0").expect("exception");
     for (pointer, value) in [
+        ("/norm/exceptions", json!([exception, exception])),
         ("/norm/law/owner", json!("")),
         ("/norm/law/scope/root/id", json!("")),
         ("/norm/law/scope/objectTypes/0", json!(" ")),
@@ -304,21 +306,28 @@ fn structured_nested_bindings_must_identify_real_slots() {
             check_requirement(&invalid, &requirement_env()),
             Err(R::InvalidBinding)
         );
+        if pointer == "/norm/exceptions" {
+            let view = norn_ir::requirement_display::RequirementView {
+                requirement: invalid,
+                locale: norn_ir::requirement_display::RequirementLocale::Ar,
+            };
+            assert!(view.slots().is_err());
+        }
     }
 }
 
 #[allow(clippy::expect_used, reason = "typed physics corpus fixture")]
-fn physics_requirement(row: &str) -> (norn_ir::deontic::StructuredRequirement, [&str; 3]) {
+fn physics_requirement(row: &str) -> (norn_ir::deontic::StructuredRequirement, [&str; 4]) {
     use norn_ir::deontic::{RequirementText, RequirementTiming};
     let text = |en: &str, ar: &str| RequirementText {
         en: en.into(),
         ar: ar.into(),
     };
-    let columns: [&str; 11] = row
+    let columns: [&str; 12] = row
         .split('\t')
         .collect::<Vec<_>>()
         .try_into()
-        .expect("eleven typed slots");
+        .expect("twelve typed slots");
     let [
         id,
         scope_en,
@@ -331,10 +340,12 @@ fn physics_requirement(row: &str) -> (norn_ir::deontic::StructuredRequirement, [
         prohibited,
         when_en,
         when_ar,
+        condition,
     ] = columns;
     let prohibited = prohibited.parse::<bool>().expect("grade flag");
     let mut r = requirement();
     r.norm.law.id = format!("core.{id}");
+    r.norm.law.condition = Some(norn_ir::ZenExpression(condition.into()));
     r.norm.law.rationale = en.into();
     r.norm.authority_id = "core.physics".into();
     r.norm.source.artifact_id = "core.physics.conformance".into();
@@ -346,26 +357,18 @@ fn physics_requirement(row: &str) -> (norn_ir::deontic::StructuredRequirement, [
     r.norm.law.response = norn_ir::LawResponse::Predicate {
         expression: norn_ir::ZenExpression(expression.into()),
     };
-    r.norm.modality = if prohibited {
-        DeonticModality::Prohibition
-    } else {
-        DeonticModality::Obligation
-    };
-    r.norm.law.modality = if prohibited {
-        LawModality::Never {}
-    } else {
-        LawModality::Always {}
-    };
-    r.timing = if prohibited || id == "commitment" {
-        RequirementTiming::EveryCommittedState
-    } else {
-        RequirementTiming::SameCommit
-    };
+    if prohibited {
+        r.norm.modality = DeonticModality::Prohibition;
+        r.norm.law.modality = LawModality::Never {};
+    }
+    if prohibited || id == "commitment" {
+        r.timing = RequirementTiming::EveryCommittedState;
+    }
     r.wording.scope = text(scope_en, scope_ar);
     r.wording.component = text(component_en, component_ar);
     r.wording.response = text(en, ar);
     r.wording.activation = text(when_en, when_ar);
-    (r, [expression, en, ar])
+    (r, [expression, en, ar, condition])
 }
 
 #[test]
@@ -381,7 +384,7 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
     for name in "external loss available held funded".split_whitespace() {
         fields.insert(name.into(), Type::Number);
     }
-    for name in "active recorded terminal open custodyRecorded edited deleted linked inverse"
+    for name in "committed ledgerCommitted proposed wasTerminal terminal custodyChanged ownershipTransfer correctionRequested correctionCommitted consumed produced recorded open custodyRecorded edited deleted linked inverse"
         .split_whitespace()
     {
         fields.insert(name.into(), Type::Bool);
@@ -397,7 +400,7 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
         .bind_input(fields)
         .expect("typed corpus inputs");
     for row in corpus.lines() {
-        let (mut r, [expression, en, ar]) = physics_requirement(row);
+        let (mut r, [expression, en, ar, condition]) = physics_requirement(row);
         norn_checker::deontic::check_requirement(&r, &env).expect("closed corpus");
         let mut ids = Vec::new();
         for locale in [L::En, L::Ar] {
@@ -406,8 +409,9 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
                 locale,
             };
             let slots = view.slots().expect("safety display");
-            assert_eq!(view.slots().expect("deterministic"), slots);
             assert!(slots.iter().any(|s| s.text.contains(expression)));
+            let activation = slots.get(1).expect("activation");
+            assert!(activation.id.ends_with("/condition") && activation.text.contains(condition));
             let response = slots
                 .iter()
                 .find(|s| s.id.ends_with("/response"))
@@ -422,8 +426,7 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
             ids.push(slots.iter().map(|s| s.id.clone()).collect::<Vec<_>>());
             let encoded = serde_json::to_string(&view).expect("view wire");
             let decoded: RequirementView = serde_json::from_str(&encoded).expect("view decode");
-            assert_eq!(decoded.requirement, r);
-            assert_eq!(decoded.slots().expect("display roundtrip"), slots);
+            assert_eq!(decoded, view);
         }
         assert_eq!(ids.first(), ids.get(1));
         r.norm.law.condition = Some(norn_ir::ZenExpression(
