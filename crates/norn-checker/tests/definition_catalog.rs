@@ -460,8 +460,8 @@ fn a_parent_row_mutation_writes_its_child_types() {
         "scope": {}, "dependencies": [{ "artifactId": "shop.OrderLine.entity", "kind": "entity", "required": true, "version": "1.0.0" }], "provenance": { "source": "system" },
         "payload": {
             "actionId": "shop.edit_order", "scopeRequired": ["orgId"], "idempotent": false,
-            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "values": { "type": "object", "additionalProperties": true }, "rows": { "type": "array", "items": { "type": "object", "additionalProperties": true } }, "version": { "type": "string" } }, "required": ["id", "values", "rows", "version"] },
-            "outputSchema": { "type": "object", "properties": {} },
+            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "values": { "type": ["null", "boolean", "number", "string", "array", "object"] }, "rows": { "type": "array", "items": { "type": ["null", "boolean", "number", "string", "array", "object"] } }, "version": { "type": "string" } }, "required": ["id", "values", "rows", "version"], "additionalProperties": false },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "writes": [{ "entityKind": "shop.Order", "change": "created" }, { "entityKind": "shop.Order", "change": "modified" }, { "entityKind": "shop.OrderLine", "change": "created" }, { "entityKind": "shop.OrderLine", "change": "modified" }, { "entityKind": "shop.OrderLine", "change": "deleted" }],
             "effectProgram": {
                 "kind": "mutate_parent_with_rows", "objectIdField": "id",
@@ -830,6 +830,20 @@ fn entity_projection_preserves_identity_declarations_and_order() {
 }
 
 #[test]
+fn ambiguous_installed_mapping_targets_never_select_a_version() {
+    let old = sales_order();
+    let mut new = serde_json::to_value(&old).expect("envelope");
+    new["version"] = json!("2.0.0");
+    let projection = project(
+        &[example_mapping()],
+        &[old, envelope(new)],
+        &BTreeSet::new(),
+    )
+    .expect("read-only projection");
+    assert!(projection.mappings.is_empty());
+}
+
+#[test]
 fn local_lifecycle_states_keep_inherited_property_ownership() {
     let mut parent: serde_json::Value = serde_json::from_str(include_str!(
         "../../../registry/core/artifacts/commerce.SalesOrder.entity.json"
@@ -880,18 +894,4 @@ fn local_lifecycle_states_keep_inherited_property_ownership() {
             .iter()
             .any(|row| row.at.member.id() == "property:commerce.SalesOrder#status")
     );
-}
-
-#[test]
-fn ambiguous_installed_mapping_targets_never_select_a_version() {
-    let old = sales_order();
-    let mut new = serde_json::to_value(&old).expect("envelope");
-    new["version"] = json!("2.0.0");
-    let projection = project(
-        &[example_mapping()],
-        &[old, envelope(new)],
-        &BTreeSet::new(),
-    )
-    .expect("read-only projection");
-    assert!(projection.mappings.is_empty());
 }
