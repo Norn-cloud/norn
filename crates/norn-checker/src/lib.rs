@@ -253,6 +253,9 @@ pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
 /// [`Diagnostic`] model, with spans resolved against `value`.
 #[must_use]
 pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
+    if let Some(finding) = definition_catalog::catalog_write_json(value) {
+        return vec![finding];
+    }
     match decode_artifact_json(value) {
         Ok(artifact) => check_artifact(&artifact),
         Err(legacy) => legacy

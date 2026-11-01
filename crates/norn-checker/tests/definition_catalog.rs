@@ -1121,3 +1121,32 @@ proptest::proptest! {
         proptest::prop_assert!(norn_checker::check_artifact_json(&forged).iter().any(|d| d.code.as_str() == "core.graph.catalog_write"));
     }
 }
+
+#[test]
+fn graph_catalog_roles_follow_declarations_not_lifecycle_shape() {
+    let [parent, _] = request_types();
+    assert_eq!(
+        catalog(&[parent.clone()], &[]).types[0].role,
+        norn_ir::ConceptRole::Thing
+    );
+    let marker = entity(
+        "shop.Marker.interface",
+        &json!({ "entityVersion": "2.0", "interface": { "name": "shop.Marker", "role": "happening" } }),
+    );
+    let mut specialized = serde_json::to_value(parent).expect("envelope");
+    specialized["payload"]["objectType"]["implements"] = json!(["shop.Marker"]);
+    let artifacts = [envelope(specialized), marker];
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
+        base: &[],
+        tenant: None,
+    };
+    assert!(check_artifact_set(&artifacts, &context).is_empty());
+    assert!(
+        catalog(&artifacts, &[])
+            .types
+            .iter()
+            .all(|row| row.role == norn_ir::ConceptRole::Happening)
+    );
+}

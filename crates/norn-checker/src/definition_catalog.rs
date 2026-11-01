@@ -857,12 +857,25 @@ impl Rows {
 
 /// GRAPH-META-1: a catalog or catalog row is never executable definition input.
 pub(crate) fn catalog_write(artifact: &ArtifactEnvelope) -> Option<crate::Diagnostic> {
-    let value = payload_json(artifact);
+    catalog_refusal(&payload_json(artifact), Some(&artifact.artifact_id))
+}
+
+pub(crate) fn catalog_write_json(value: &serde_json::Value) -> Option<crate::Diagnostic> {
+    catalog_refusal(
+        value.get("payload")?,
+        value.get("artifactId").and_then(serde_json::Value::as_str),
+    )
+}
+
+fn catalog_refusal(
+    value: &serde_json::Value,
+    artifact_id: Option<&str>,
+) -> Option<crate::Diagnostic> {
     let projection = value.get("format").and_then(serde_json::Value::as_str)
         == Some("norn.catalog/1")
         || (value.get("at").is_some()
             && (serde_json::from_value::<TransitionRow>(value.clone()).is_ok()
-                || serde_json::from_value::<LawRow>(value).is_ok()));
+                || serde_json::from_value::<LawRow>(value.clone()).is_ok()));
     if !projection {
         return None;
     }
@@ -871,6 +884,6 @@ pub(crate) fn catalog_write(artifact: &ArtifactEnvelope) -> Option<crate::Diagno
         "catalog projections cannot activate definitions".to_owned(),
         crate::Span::pointer("/payload"),
     );
-    finding.artifact_id = Some(artifact.artifact_id.clone());
+    finding.artifact_id = artifact_id.map(str::to_owned);
     Some(finding)
 }
