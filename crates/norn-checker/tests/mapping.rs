@@ -50,7 +50,7 @@ fn pinned_interpretation() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
     use norn_ir::{CompositionPackRoot, PackArtifactKind, PackArtifactRef};
     let entities = model_artifacts();
     let entity = entities.first().expect("one model entity");
-    let base: Vec<_> = ["toy.capacity", "toy.credit"]
+    let base: Vec<_> = ["toy.capacity", "toy.credit", "toy.margin"]
         .into_iter()
         .map(|id| {
             let pack = CompositionPackRoot {
@@ -107,8 +107,21 @@ fn pinned_interpretation() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
 #[test]
 fn map_pins_and_multi_retain_independent_edges_without_granting_conformance() {
     let (first, base) = pinned_interpretation();
-    let mut second = first.clone();
-    second.artifact_id = "toy.capacity_credit_review".to_owned();
+    let mut document: norn_ir::mapping::LawInterpretationIr =
+        serde_json::from_value(serde_json::to_value(&first.payload).expect("payload"))
+            .expect("interpretation");
+    let third = ArtifactRef::of(base.get(2).expect("third layer")).expect("pack identity");
+    document.target_layer = norn_ir::mapping::InterpretationEndpoint {
+        artifact_id: third.artifact_id,
+        version: third.version,
+        sha256: third.sha256,
+    };
+    let mut second = envelope(
+        "toy.capacity_margin",
+        "mapping",
+        &serde_json::to_value(document).expect("interpretation"),
+    );
+    second.dependencies = first.dependencies.clone();
     let findings = norn_checker::mapping::check_mapping_artifacts(&[first, second], &base);
     assert_eq!(findings.len(), 2, "{findings:#?}");
     assert!(
@@ -116,6 +129,34 @@ fn map_pins_and_multi_retain_independent_edges_without_granting_conformance() {
             .iter()
             .all(|f| f.code == "mapping.interpretation.unsupported")
     );
+}
+
+#[test]
+fn map_pins_refuse_stale_versions_and_mismatched_hashes() {
+    let (candidate, base) = pinned_interpretation();
+    let document: norn_ir::mapping::LawInterpretationIr =
+        serde_json::from_value(serde_json::to_value(&candidate.payload).expect("payload"))
+            .expect("interpretation");
+    for case in 0..3 {
+        let mut changed = document.clone();
+        match case {
+            0 => changed.source_layer.version = "0.2.0".to_owned(),
+            1 => changed.source_layer.sha256 = "a".repeat(64),
+            _ => changed.source_layer.artifact_id = "toy.unknown".to_owned(),
+        }
+        let mut invalid = envelope(
+            "toy.invalid",
+            "mapping",
+            &serde_json::to_value(changed).expect("interpretation"),
+        );
+        invalid.dependencies = candidate.dependencies.clone();
+        let findings = norn_checker::mapping::check_mapping_artifacts(&[invalid], &base);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "mapping.interpretation.invalid_endpoint")
+        );
+    }
 }
 
 #[test]
