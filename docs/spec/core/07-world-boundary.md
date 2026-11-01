@@ -62,6 +62,12 @@ resolved findings after a passing correction without rewriting the original.
 Capture atomically suppresses an already proven finding ID, including after
 redelivery/restart; retry normalization uses the original commit cutoff.
 
+The CP2 bridge contract captures content-addressed evidence bundles over the
+sealed raw-envelope digest and exact source/mapping/definition pins, preserving
+diagnostics and nonconforming records, and issues observed-write authority only
+after cell-owned recomputation matches the pinned bundle
+(`core.boundary.bundle_mismatch` on disagreement).
+
 ## Perform and recovery semantics
 
 All Functions, including ML/heavy pure computation, run behind perform and return recorded schema-checked receipts. Pin training/input snapshots, model/code/dependency digests, seeds where relevant, bounds and result blobs. ML confidence is not proof or write authority. Reconcile output with input identity/freshness/current authority and publish only through a guarded action.
