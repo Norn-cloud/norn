@@ -604,7 +604,7 @@ class DefinitionCompiler {
   private stockPost(input: ts.Expression): A.StockPost {
     const m = this.closedRecord(input, ["operation", "collection", "partition", "accounts"], ["operation", "collection", "partition", "accounts"])
     const operation = this.string(m.get("operation")!)
-    if (operation !== "receipt" && operation !== "delivery") throw new CompileError("NORN-FLOW-LITERAL", "stockPost operation is receipt or delivery", input)
+    if (operation !== "receipt" && operation !== "delivery" && operation !== "custodyReceipt" && operation !== "custodyReturn") throw new CompileError("NORN-FLOW-LITERAL", "unsupported closed stockPost operation", input)
     const p = this.closedRecord(m.get("partition")!, ["item", "warehouse"], ["item", "warehouse"])
     const a = this.closedRecord(m.get("accounts")!, ["stock", "srbnb", "cogs"], ["stock", "srbnb", "cogs"])
     return { operation, collection: this.string(m.get("collection")!), partition: { item: this.strings(p.get("item")!), warehouse: this.strings(p.get("warehouse")!) }, accounts: { stock: this.strings(a.get("stock")!), srbnb: this.strings(a.get("srbnb")!), cogs: this.strings(a.get("cogs")!) } }

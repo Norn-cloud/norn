@@ -785,6 +785,15 @@ impl<X> ActionRefusal<X> {
             Self::IdempotencyConflict { .. } => "action.idempotency_conflict",
             Self::WriteModeFailed { .. } => "action.write_mode_failed",
             Self::InsufficientStock { .. } => "stock.insufficient_stock",
+            Self::StockPosting(crate::stock_posting::StockPostError::CustodySale) => {
+                "stock.custody_sale_refused"
+            }
+            Self::StockPosting(crate::stock_posting::StockPostError::Purity) => {
+                "stock.purity_refused"
+            }
+            Self::StockPosting(crate::stock_posting::StockPostError::Overflow) => {
+                "stock.arithmetic_overflow"
+            }
             Self::StockPosting(_) => "stock.posting_refused",
             Self::Decision(refusal) => refusal.code(),
         }

@@ -487,6 +487,10 @@ pub enum ActionStockOperation {
     Receipt,
     /// Deliver at the authoritative stock cost.
     Delivery,
+    /// Receive customer metal without company valuation.
+    CustodyReceipt,
+    /// Return customer metal without company valuation.
+    CustodyReturn,
 }
 
 /// Partition masters, resolved from each owned line.
