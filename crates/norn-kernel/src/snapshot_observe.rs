@@ -1128,7 +1128,7 @@ pub fn finding_rule_is_violated(
 ) -> Result<bool, ObservationRefusal> {
     if let DataQualityOutcome::ObservedOutOfBand { property, .. } = &finding.outcome {
         return Err(ObservationRefusal::InvalidLifecycle {
-            property: property.to_string(),
+            property: property.0.clone(),
             reason: "state-aware finding recovery is unsupported".into(),
         });
     }
