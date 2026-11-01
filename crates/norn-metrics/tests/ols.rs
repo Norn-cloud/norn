@@ -37,7 +37,8 @@ fn table(outcomes: &[impl ToString], constant_predictor: bool) -> TemporalTable 
                     1
                 } else {
                     i64::try_from(i).expect("bounded index") + 1
-                }.to_string(),
+                }
+                .to_string(),
                 100,
             )],
             outcome: value(y.to_string(), 200),
@@ -123,5 +124,8 @@ fn residuals_are_invariant_under_a_representable_large_outcome_translation() {
 #[test]
 fn decimal_perfect_fit_refuses_rounding_noise() {
     let admitted = table(&["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"], false);
-    assert_eq!(ols(&admitted, 0.05).expect_err("unstable fit"), norn_metrics::analysis::AnalysisError::Data("zero or unstable residual variance"));
+    assert_eq!(
+        ols(&admitted, 0.05).expect_err("unstable fit"),
+        norn_metrics::analysis::AnalysisError::Data("zero or unstable residual variance")
+    );
 }

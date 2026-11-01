@@ -186,13 +186,13 @@
     "resultArtifacts": []
   },
   "limitations": [
-    "An inferred-ontology-to-transition negative integration test remains open; the authoritative field validator is intentionally limited to type/required plus exact finite string enums, and direct RelationIR does not yet implement association-object/through semantics.",
-    "Legacy unversioned relation mutation is retained for migration and pre-reset tests, checks only immutable identity plus endpoint existence, is not credited as authoritative RelationIR enforcement, and must be migrated or disabled before public production.",
+    "The external semantic lane covers the finite reviewed v0 fixture only; it is not a universal OWL/SHACL equivalence result.",
     "Mapping confidence/reviewer/direct-supersession structure is runtime tested in Rust, statically reproduced over the 19 checked-in mappings, and represented by compact Lean/Quint reference semantics. Reviewer identity is not authenticated, confidence/evidence truth is not machine-established, timestamp parsing and arbitrary graphs are outside those abstractions, and no implementation correspondence proof covers mapping provenance.",
-    "Temporal analytical tables check supplied ontology-bound rows only. Their tests do not authenticate source receipts, authorize exports, or extend the formal ontology claims to analytics.",
+    "An inferred-ontology-to-transition negative integration test remains open; the authoritative field validator is intentionally limited to type/required plus exact finite string enums, and direct RelationIR does not yet implement association-object/through semantics.",
     "The Lean file proves declared compact reference semantics for evidence separation and RelationIR binding/cardinality only; no correspondence, OWL soundness, or completeness theorem connects it to the Rust implementation or general OWL semantics.",
     "The current single authority-file writer serializes cardinality candidate-set checks; a future per-owner parallel topology must introduce an equivalent relation-kind/index consistency owner.",
-    "The external semantic lane covers the finite reviewed v0 fixture only; it is not a universal OWL/SHACL equivalence result."
+    "Legacy unversioned relation mutation is retained for migration and pre-reset tests, checks only immutable identity plus endpoint existence, is not credited as authoritative RelationIR enforcement, and must be migrated or disabled before public production.",
+    "Temporal analytical tables check supplied ontology-bound rows only. Their tests do not authenticate source receipts, authorize exports, or extend the formal ontology claims to analytics."
   ],
   "sourceFiles": [
     "crates/norn-checker/src/consistency.rs",
