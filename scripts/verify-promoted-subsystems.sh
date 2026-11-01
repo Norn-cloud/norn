@@ -620,6 +620,21 @@ run_gate fast core-value-ledger-lean \
   command \
   lean -DwarningAsError=true \
     verification/core-physics-v1/proofs/CoreValueLedger.lean
+run_gate fast core-quantity-commitment-quint-typecheck \
+  "quint typecheck verification/core-physics-v1/models/core-quantity-commitment.qnt" \
+  command \
+  quint typecheck \
+    verification/core-physics-v1/models/core-quantity-commitment.qnt
+run_gate fast core-quantity-commitment-quint \
+  "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4" \
+  command \
+  quint verify \
+    verification/core-physics-v1/models/core-quantity-commitment.qnt \
+    --backend apalache \
+    --invariants typeOk quantityConserved escrowNonNegative neverDropped \
+      terminalAbsorbing endsByDue \
+    --max-steps 4 \
+    --out "$result_root/core-quantity-commitment-quint.json"
 run_gate fast core-quantity-lean \
   "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreQuantity.lean" \
   command \
