@@ -1611,14 +1611,7 @@ proptest::proptest! {
 
 #[test]
 fn typed_authoring_ordered_fold_executes_the_declared_helper() {
-    let root = repo_root();
-    let compiled = std::process::Command::new("bun")
-        .current_dir(&root)
-        .args(["tools/norn-ts/src/cli.ts", "compile", "tools/norn-ts/fixtures/decisions/ordered-fold.source.ts", "--org", "org_demo", "--env", "dev"])
-        .output().expect("typed authoring compiler is available");
-    assert!(compiled.status.success(), "{}\n{}", String::from_utf8_lossy(&compiled.stdout), String::from_utf8_lossy(&compiled.stderr));
-    let artifacts: Vec<Json> = serde_json::from_slice(&compiled.stdout).unwrap();
-    let rules: BTreeMap<_, _> = artifacts.iter().map(|a| (a["artifactId"].as_str().unwrap().to_owned(), rule(&a["payload"]))).collect();
+    let rules = support::compiled_rules("tools/norn-ts/fixtures/decisions/ordered-fold.source.ts");
     let declared = rules["example.fold.total.rule"].clone();
     let helpers = BTreeMap::from([("example.fold.step.rule".into(), rules["example.fold.step.rule"].clone())]);
     let admitted = AdmittedDecision::admit(&declared, &helpers, binding()).unwrap();
