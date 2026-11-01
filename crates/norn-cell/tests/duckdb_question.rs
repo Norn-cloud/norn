@@ -36,10 +36,10 @@ fn commit(store: &mut CellStore, writes: Vec<FactWriteRow>) {
 
 fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) {
     let exact = store
-        .evaluate_question(plan, context.clone(), |_| Ok(true))
+        .evaluate_question(plan, context.clone(), |row| Ok(row.id != "G0"))
         .expect("cell");
     let mut sql = store
-        .evaluate_question_duckdb(plan, context, |_| Ok(true))
+        .evaluate_question_duckdb(plan, context, |row| Ok(row.id != "G0"))
         .expect("SQL");
     assert_eq!(sql.engine, Engine::Duckdb);
     sql.engine = Engine::Cell;
@@ -144,8 +144,8 @@ fn query_sql_unsupported_declared_precision_refuses_while_cell_supports_empty_po
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
-    fn generated_sql_sum_and_ratio_equal_exact_rows_and_contribution_ids(
-        population in proptest::collection::vec((-1000i64..1000,-1000i64..1000),0..8), sum in proptest::bool::ANY
+    fn generated_sql_matches_exact_rows_and_ids_after_visibility_filtering(
+        population in proptest::collection::vec((-1000i64..1000,-1000i64..1000),1..8), sum in proptest::bool::ANY
     ) {
         let (seed,base,context)=fixture();
         let (mut store,plan)=rebind(&seed,&base,3,sum);

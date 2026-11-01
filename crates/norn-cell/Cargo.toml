@@ -11,7 +11,7 @@ path = "src/lib.rs"
 
 [[test]]
 name = "duckdb_question"
-required-features = ["duckdb"]
+required-features = ["duckdb", "native"]
 
 [features]
 default = ["native"]
