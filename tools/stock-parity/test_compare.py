@@ -64,6 +64,11 @@ class Contract(unittest.TestCase):
         self.e['cases'] = []
         self.assertEqual(self.report()['counts']['unsupported'], 1)
 
+    def test_unavailable_snapshot_is_not_an_empty_observation(self):
+        for dump in (self.n, self.e):
+            dump['cases'][0]['checkpoints'][0]['status'] = 'unsupported'
+        self.assertFalse(self.report()['passed'])
+
     def test_incomplete_prefix_is_still_compared(self):
         self.e['cases'][0]['status'] = 'unsupported'
         self.n['cases'][0]['checkpoints'][0]['stock'][0]['value'] = '21'

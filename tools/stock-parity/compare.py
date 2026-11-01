@@ -119,7 +119,7 @@ def compare(norn, erpnext, dispositions):
             pair = [c.get(step) for c in checkpoints]
             entry = dict(step=step, differences=[])
             row['checkpoints'].append(entry)
-            if any(c is None for c in pair):
+            if any(c is None or c.get('status') == 'unsupported' for c in pair):
                 entry['status'] = row['status'] = 'unsupported'
                 counts['unsupported'] += 1
                 continue
