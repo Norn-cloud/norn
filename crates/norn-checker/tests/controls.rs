@@ -16,6 +16,7 @@ fn artifact(kind: &str, id: &str, payload: Value) -> ArtifactEnvelope {
     .expect("fixture");
     value["kind"] = json!(kind);
     value["artifactId"] = json!(id);
+    value["namespace"] = json!("demo");
     value["payload"] = payload;
     serde_json::from_value(value).expect("envelope")
 }
@@ -79,6 +80,14 @@ fn concrete_refutation_refuses_install() {
         checked
             .diagnostics
             .iter()
+            .all(|d| d.code.as_str() == "controls.validation.refuted"),
+        "{:?}",
+        checked.diagnostics
+    );
+    assert!(
+        checked
+            .diagnostics
+            .iter()
             .any(|d| d.code.as_str() == "controls.validation.refuted")
     );
     assert!(!checked.receipt.admitted);
@@ -99,6 +108,7 @@ fn abstract_counterexample_is_unknown_and_cannot_supply_required_witness() {
 #[test]
 fn separation_does_not_promote_abstract_reachability() {
     let checked = check(&fixture(false, true, false), &[]);
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     assert_eq!(checked.controls[0].verdict, ControlStatus::Proven);
     assert_eq!(checked.controls[0].reachability, Reachability::Unknown);
 }
@@ -107,6 +117,12 @@ fn installed_controls_are_rechecked_when_grants_change() {
     let base = fixture(false, false, false);
     let mut broadened = fixture(true, false, false).pop().expect("policy");
     broadened.artifact_id = "demo.extra_access".into();
+    if let norn_ir::ArtifactPayload::Policy(payload) = &mut broadened.payload {
+        *payload = serde_json::from_value(json!({"accessVersion":"0.1", "policyId":"demo.extra_access", "rules":[{
+            "ruleId":"extra", "actions":["demo.pay"], "resourceType":"demo.Order", "scope":{"dimensions":["org"]},
+            "allOf":[{"role":{"anyOf":["reviewer"]}}]
+        }]})).expect("policy");
+    }
     let checked = check(&[broadened], &base);
     assert_eq!(checked.controls[0].verdict, ControlStatus::Refuted);
 }
