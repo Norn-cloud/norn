@@ -88,6 +88,7 @@ pub fn implementation_digest() -> Result<Digest, CanonicalJsonError> {
         ("src/analysis.rs", include_str!("analysis.rs")),
         ("src/host.rs", include_str!("host.rs")),
         ("src/lib.rs", include_str!("lib.rs")),
+        ("src/producer.rs", include_str!("producer.rs")),
         ("src/temporal.rs", include_str!("temporal.rs")),
         ("workspace/Cargo.lock", include_str!("../../../Cargo.lock")),
     ];
@@ -115,12 +116,12 @@ pub fn manifest() -> Result<FunctionManifest, CanonicalJsonError> {
     ] };
     closure.digest = closure.computed_digest()?;
     Ok(FunctionManifest {
-        abi: FUNCTION_ABI_V1.into(), function_id: "core.analytics.ols_forecast".into(), version: 1,
+        abi: FUNCTION_ABI_V1.into(), function_id: "core.analytics.ols_forecast".into(), version: 2,
         input_schema: schema::<ForecastInput>("core.analytics.ForecastInput")?,
         output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary")?,
         error_schema: schema::<ForecastFailure>("core.analytics.ForecastFailure")?,
         implementation: Implementation { format: ImplementationFormat::Host, digest: implementation.clone(),
-            entry_point: "norn_metrics::analysis::forecast".into(),
+            entry_point: "norn_metrics::producer::perform_forecast".into(),
             locator: Some(format!("{}/{}@{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"), implementation)) },
         dependency_closure: Some(closure),
         runtime: RuntimeIdentity { id: env!("CARGO_PKG_NAME").into(), version: env!("CARGO_PKG_VERSION").into(), digest: implementation },
