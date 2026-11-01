@@ -19,6 +19,15 @@ mod induction;
 /// verbatim source/expression bytes and induction statements without layers.
 pub const GENERATOR_PROFILE: &str = "norn.application-obligations/9";
 
+const INTERPRETATION_GOAL_KINDS: [&str; 6] = [
+    "mapping_totality",
+    "mapping_domain_coverage",
+    "mapping_identity_preservation",
+    "mapping_unit_preservation",
+    "mapping_transition_simulation",
+    "mapping_law_preservation",
+];
+
 /// Why a fixed challenge could not be reconstructed or a submission was rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChallengeError {
@@ -579,7 +588,8 @@ impl ApprovedContract {
                 let statement = json!({"artifactId":artifact.artifact_id,"sha256":identity,"interpretation":interpretation,"laws":self.laws});
                 let bytes = norn_canonical::serialize_json_verbatim(&statement)
                     .map_err(|_error| ChallengeError::Closure)?;
-                edge_bytes = edge_bytes.saturating_add(bytes.len().saturating_mul(6));
+                edge_bytes = edge_bytes
+                    .saturating_add(bytes.len().saturating_mul(INTERPRETATION_GOAL_KINDS.len()));
                 if edge_bytes > 8_388_608 || edges.len() >= 1_024 {
                     return Err(ChallengeError::Limit);
                 }
@@ -667,18 +677,15 @@ impl ApprovedContract {
 }
 
 fn append_edge_goals(goals: &mut Vec<Value>, edges: &[Value]) -> Result<(), ChallengeError> {
-    if goals.len().saturating_add(edges.len().saturating_mul(6)) > 8_192 {
+    if goals
+        .len()
+        .saturating_add(edges.len().saturating_mul(INTERPRETATION_GOAL_KINDS.len()))
+        > 8_192
+    {
         return Err(ChallengeError::Limit);
     }
     for edge in edges {
-        for kind in [
-            "mapping_totality",
-            "mapping_domain_coverage",
-            "mapping_identity_preservation",
-            "mapping_unit_preservation",
-            "mapping_transition_simulation",
-            "mapping_law_preservation",
-        ] {
+        for kind in INTERPRETATION_GOAL_KINDS {
             goals.push(json!({"goal":{"kind":kind},"statement":edge,"assessment":"unknown"}));
         }
     }
