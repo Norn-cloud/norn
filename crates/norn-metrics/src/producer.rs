@@ -33,6 +33,12 @@ pub struct ForecastExport<'a> {
     pub complete: bool,
     /// Source quarantine count, resolved by the host.
     pub quarantine_count: u32,
+    /// Declared assumptions document, resolved by the host.
+    pub assumptions_digest: Digest,
+    /// Declared remedy document, resolved by the host.
+    pub remedy_digest: Digest,
+    /// Source cursor lag in milliseconds, resolved by the host.
+    pub frontier_age_ms: u64,
     /// Source frontier freshness, resolved by the host.
     pub fresh: bool,
 }
@@ -48,6 +54,7 @@ impl ForecastExport<'_> {
             self.tenant, self.world, self.version, &self.source_digest, self.source_head, self.as_of,
             self.plan.object_type(), self.plan.max_age_micros(), features, (&self.plan.outcome().property, &self.plan.outcome().unit),
             self.rows, self.complete, self.quarantine_count, self.fresh,
+            &self.assumptions_digest, &self.remedy_digest, self.frontier_age_ms,
         )).map_err(failure)?;
         if bytes.len() > 4_194_304 { return Err(failure("input byte bound")); }
         let digest = Digest::of_json_document(bytes.as_slice()).map_err(failure)?;
@@ -65,14 +72,27 @@ fn nanos(value: f64) -> Result<i64, ForecastFailure> {
     format!("{scaled:.0}").parse().map_err(failure)
 }
 
-fn compute(export: &ForecastExport<'_>, input: &ForecastInput, implementation: Digest) -> Result<ForecastSummary, ForecastFailure> {
+fn assessment(export: &ForecastExport<'_>, input: &ForecastInput, implementation: Digest) -> Result<ForecastSummary, ForecastFailure> {
     let late_features = export.rows.iter().flat_map(|row| row.features.iter().map(move |v| (row.at, v)))
         .filter(|(at, v)| v.recorded_at > *at || v.valid_at > *at).count();
     let training_rows = export.rows.iter().filter(|row| row.at < input.split_boundary).count();
     let late_training_labels = export.rows.iter().filter(|row| row.at < input.split_boundary
         && (row.outcome.recorded_at >= input.split_boundary || row.outcome.valid_at >= input.split_boundary)).count();
-    let mut summary = ForecastSummary {
-        table_version: input.table_version, table_digest: input.table_digest.clone(), source_digest: input.source_digest.clone(),
+    let latest = export.rows.iter().filter(|row| row.at < input.split_boundary)
+        .map(|row| row.outcome.recorded_at).max().ok_or_else(|| failure("empty training partition"))?;
+    let latest_ms = latest.div_euclid(1000).checked_add(i64::from(latest.rem_euclid(1000) != 0))
+        .ok_or_else(|| failure("knowledge clock overflow"))?;
+    let parameters = norn_ir::canonical::canonical_json_of(&("0.05", input.split_boundary,
+        export.plan.object_type(), export.plan.max_age_micros(),
+        export.plan.features().iter().map(|p| (&p.property, &p.unit)).collect::<Vec<_>>(),
+        (&export.plan.outcome().property, &export.plan.outcome().unit))).map_err(failure)?;
+    let error_unit = match export.plan.outcome().unit.as_ref() {
+        None => "1".into(),
+        Some(unit) if unit.system == norn_ir::UnitSystem::Ucum => unit.code.clone(),
+        Some(_) => return Err(failure("only UCUM outcome units supported by this adapter")),
+    };
+    Ok(ForecastSummary {
+        table_version: input.table_version.to_string(), table_digest: input.table_digest.clone(), source_digest: input.source_digest.clone(),
         source_head: input.source_head, split_boundary: input.split_boundary, implementation_digest: implementation, alpha: "0.05".into(),
         training_rows: u32::try_from(training_rows).map_err(failure)?,
         holdout_rows: u32::try_from(export.rows.len().saturating_sub(training_rows)).map_err(failure)?,
@@ -80,13 +100,23 @@ fn compute(export: &ForecastExport<'_>, input: &ForecastInput, implementation: D
         late_training_labels: u32::try_from(late_training_labels).map_err(failure)?,
         temporal_leakage: late_features != 0 || late_training_labels != 0,
         complete: export.complete, quarantine_count: export.quarantine_count, fresh: export.fresh,
+        parameters_digest: Digest::of_json_document(parameters).map_err(failure)?,
+        assumptions_digest: export.assumptions_digest.clone(), remedy_digest: export.remedy_digest.clone(),
+        split_at_ms: input.split_boundary.div_euclid(1000), latest_training_label_ms: latest_ms,
+        non_forward_outcome_count: u32::try_from(export.rows.iter().filter(|r| r.outcome.valid_at <= r.at).count()).map_err(failure)?,
+        frontier_age_ms: export.frontier_age_ms, diagnostics_passed: false, error_unit,
         unit: export.plan.outcome().unit.clone(), rmse_nanos: None, baseline_rmse_nanos: None, report: None,
-    };
-    if !summary.temporal_leakage {
+    })
+}
+
+fn compute(export: &ForecastExport<'_>, input: &ForecastInput, implementation: Digest) -> Result<ForecastSummary, ForecastFailure> {
+    let mut summary = assessment(export, input, implementation)?;
+    if !summary.temporal_leakage && summary.non_forward_outcome_count == 0 {
         let table = export.plan.materialize(export.as_of, export.source_head, export.rows.to_vec()).map_err(failure)?;
         let report = crate::analysis::forecast(&table, input.split_boundary).map_err(failure)?;
         summary.rmse_nanos = Some(nanos(report.rmse)?);
         summary.baseline_rmse_nanos = Some(nanos(report.baseline_rmse)?);
+        summary.diagnostics_passed = report.fit.diagnostics.iter().all(|d| d.passed);
         summary.report = Some(norn_ir::runtime::encode(&report).map_err(failure)?);
     }
     Ok(summary)
@@ -133,6 +163,7 @@ pub fn perform_forecast(invocation: &FunctionInvocation, export: &ForecastExport
         return Err(failure("scope or dispatch"));
     }
     let input: ForecastInput = norn_ir::runtime::decode(&RuntimeValue::Object(invocation.inputs.clone())).map_err(failure)?;
+    if input.split_boundary.rem_euclid(1000) != 0 { return Err(failure("cell clock split must align to milliseconds")); }
     let (expected, blob) = export.input(input.split_boundary)?;
     if input != expected || invocation.blobs.len() != 1 || invocation.blobs.get("table") != Some(&blob) {
         return Err(failure("table version/digest or split pin"));
