@@ -28,14 +28,8 @@ impl<E: SqlEngine> DevHost<E> {
         now: LogicalTime,
     ) -> Result<Self, Refusal> {
         let admitted = Admitted::from_source(source, &scope)?;
-        if CellStore::read_active_definitions(&engine)
-            .map_err(Refusal::host)?
-            .is_some()
-        {
-            return Err(Refusal::invalid(
-                "DevHost::new requires a fresh tenant cell",
-            ));
-        }
+        CellStore::require_fresh_engine(&engine)
+            .map_err(|error| Refusal::invalid(error.to_string()))?;
         let mut cell = CellStore::from_engine(
             engine,
             Model::from_definitions(&[], &[]).map_err(Refusal::host)?,
@@ -149,26 +143,20 @@ mod tests {
             LogicalTime::from_millis(1),
         )
         .expect("admitted host");
-        let before = host
-            .cell()
-            .expect("cell")
-            .read()
-            .installed_definitions(None)
-            .expect("read")
-            .expect("installed");
+        let read = || {
+            host.cell()
+                .expect("cell")
+                .read()
+                .installed_definitions(None)
+                .expect("read")
+        };
+        let before = read().expect("installed");
         assert_eq!(before.version, 1);
         assert!(
             host.install("[{}]", 1, LogicalTime::from_millis(2))
                 .is_err()
         );
-        assert_eq!(
-            host.cell()
-                .expect("cell")
-                .read()
-                .installed_definitions(None)
-                .expect("read"),
-            Some(before.clone())
-        );
+        assert_eq!(read(), Some(before.clone()));
         let after = host
             .install("[]", 1, LogicalTime::from_millis(3))
             .expect("install");
@@ -176,14 +164,7 @@ mod tests {
         assert_eq!(after.commit_seq, before.commit_seq + 1);
         assert_eq!(after.receipt_sha256, before.receipt_sha256);
         assert!(host.install("[]", 1, LogicalTime::from_millis(4)).is_err());
-        assert_eq!(
-            host.cell()
-                .expect("cell")
-                .read()
-                .installed_definitions(None)
-                .expect("read"),
-            Some(after)
-        );
+        assert_eq!(read(), Some(after));
     }
 
     #[test]
@@ -203,13 +184,27 @@ mod tests {
             include_str!("../../../fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json");
         let mut other = scope();
         other.org_id = "other".into();
-        assert_eq!(
-            Admitted::from_source(&format!("[{source}]"), &other)
+        let refused = Admitted::from_source(&format!("[{source}]"), &other)
+            .err()
+            .expect("scope refusal");
+        assert_eq!(refused.code, "defs.not_admitted");
+    }
+
+    #[test]
+    fn host_admission_refuses_residual_state_without_active_definitions() {
+        for table in ["metadata", "ledger", "value_history"] {
+            let engine = NativeEngine::open_in_memory().expect("engine");
+            engine
+                .execute_batch(&format!(
+                    "CREATE TABLE {table} (value TEXT); INSERT INTO {table} VALUES ('retained')"
+                ))
+                .expect("residual state");
+            let refusal = DevHost::new(engine, "[]", scope(), LogicalTime::EPOCH)
                 .err()
-                .expect("scope refusal")
-                .code,
-            "defs.not_admitted"
-        );
+                .expect("not fresh");
+            assert_eq!(refusal.code, "request.invalid");
+            assert_eq!(refusal.status, 400);
+        }
     }
 }
 
