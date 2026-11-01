@@ -46,6 +46,9 @@ def validate_members(value, path):
     elif isinstance(value, list):
         if all(isinstance(item, str) for item in value):
             require(len(value) == len(set(value)), f'{path}: duplicate list members')
+        if all(isinstance(item, dict) and isinstance(item.get('id'), str) for item in value):
+            identities = [item['id'] for item in value]
+            require(len(identities) == len(set(identities)), f'{path}: duplicate ids')
         for item in value:
             validate_members(item, path)
 
@@ -185,6 +188,8 @@ def main():
         if content is MISSING:
             require((root / path).is_file() and not (root / path).is_symlink(),
                     f'{path}: absent or nonregular provenance target')
+            require(not git('diff', '--name-only', '--', path).strip(),
+                    f'{path}: unstaged edit; stage it before migrating')
             content = (root / path).read_bytes()
         metadata['sha256'] = hashlib.sha256(content).hexdigest()
         plan_json(record, metadata)

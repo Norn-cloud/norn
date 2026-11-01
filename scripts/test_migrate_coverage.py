@@ -43,6 +43,14 @@ class MigrationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'duplicate list members'):
                     merge(base, own, current, 'coverage')
 
+    def test_one_sided_duplicate_ids_refused_before_return(self):
+        base = {'obligationClaims': [{'id': 'law'}]}
+        duplicate = {'obligationClaims': [{'id': 'law'}, {'id': 'law'}]}
+        for own, current in ((duplicate, base), (base, duplicate), (duplicate, duplicate)):
+            with self.subTest(own=own, current=current):
+                with self.assertRaisesRegex(ValueError, 'duplicate ids'):
+                    merge(base, own, current, 'coverage')
+
     def test_duplicate_json_key_refused(self):
         with self.assertRaisesRegex(ValueError, 'duplicate JSON key'):
             parse('{"id": "a", "id": "b"}')
