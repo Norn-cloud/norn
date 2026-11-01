@@ -1099,7 +1099,7 @@ fn transition_request<S: SqlEngine>(
         .iter()
         .find(|request| request.ledger_id == ledger)
         .cloned()
-        .ok_or(QuantityError::Corrupt.into())
+        .ok_or_else(|| QuantityError::Corrupt.into())
 }
 fn transition_requests<S: SqlEngine>(
     engine: &S,
