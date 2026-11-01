@@ -63,6 +63,8 @@ pub struct DefinitionSource {
     artifacts: Vec<ArtifactEnvelope>,
     base: Vec<ArtifactEnvelope>,
     exact_digest: String,
+    receipt_sources: crate::receipt::ReceiptSources,
+    base_sources: crate::receipt::ReceiptSources,
 }
 
 impl DefinitionSource {
@@ -93,6 +95,18 @@ impl DefinitionSource {
             b"definition-source",
             &[artifacts.as_bytes(), base.as_bytes()],
         )?;
+        let exact_candidates = norn_ir::RuntimeValue::from_json_text(artifacts)
+            .map_err(|_| ChallengeError::LossyInput)?;
+        let exact_base =
+            norn_ir::RuntimeValue::from_json_text(base).map_err(|_| ChallengeError::LossyInput)?;
+        let candidates = exact_candidates
+            .as_array()
+            .ok_or(ChallengeError::LossyInput)?;
+        let installed = exact_base.as_array().ok_or(ChallengeError::LossyInput)?;
+        let receipt_sources = crate::receipt::ReceiptSources::new(candidates, installed)
+            .map_err(|_| ChallengeError::LossyInput)?;
+        let base_sources = crate::receipt::ReceiptSources::new(installed, &[])
+            .map_err(|_| ChallengeError::LossyInput)?;
         let artifacts = decode(artifacts)?;
         let base = decode(base)?;
         // Qualify inputs before ordinary admission can construct diagnostics or
@@ -117,6 +131,8 @@ impl DefinitionSource {
             artifacts,
             base,
             exact_digest,
+            receipt_sources,
+            base_sources,
         })
     }
 }
@@ -280,7 +296,7 @@ impl ApprovedContract {
             base: &source.base,
             tenant: None,
         };
-        admit(artifacts, context)?;
+        admit(source, context)?;
         for profile in [&semantics, &assumptions, &assurance] {
             if profile.as_object().is_none_or(serde_json::Map::is_empty) {
                 return Err(ChallengeError::MissingProfile);
@@ -324,7 +340,7 @@ impl ApprovedContract {
             base: &source.base,
             tenant: None,
         };
-        let receipt = admit(artifacts, context)?;
+        let receipt = admit(source, context)?;
         if law_refs(artifacts, context.base)? != self.laws
             || reference_contracts(artifacts, context.base)? != self.reference_contracts
         {
@@ -461,7 +477,7 @@ fn preflight_goal_bytes(
 }
 
 fn admit(
-    artifacts: &[ArtifactEnvelope],
+    source: &DefinitionSource,
     context: &EntityArtifactSetContext<'_>,
 ) -> Result<String, ChallengeError> {
     if !context.base.is_empty() {
@@ -473,7 +489,7 @@ fn admit(
             ..*context
         };
         let checked = check_artifact_set_with_receipt(
-            context.base,
+            &source.base_sources,
             &full_context,
             &ResourceLimitProfile::norn_limits_v1(),
         )
@@ -499,7 +515,7 @@ fn admit(
         }
     }
     let checked = check_artifact_set_with_receipt(
-        artifacts,
+        &source.receipt_sources,
         context,
         &ResourceLimitProfile::norn_limits_v1(),
     )

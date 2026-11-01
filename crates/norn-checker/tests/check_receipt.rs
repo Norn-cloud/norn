@@ -16,7 +16,7 @@ use std::path::Path;
 
 use norn_checker::receipt::{
     CHECKER_NAME, CHECKER_VERSION, EXPR_PROFILE, RECEIPT_FORMAT, admission_receipt_sha256, codes,
-    recover_legacy_admission_receipt, verify_admission_receipt,
+    recover_legacy_admission_receipt,
 };
 use norn_checker::{
     ArtifactRef, ArtifactSetRef, CheckReceipt, CheckedArtifactSet, DiagnosticsDigest,
@@ -95,8 +95,12 @@ fn check_with(
         base: &base,
         tenant,
     };
-    check_artifact_set_with_receipt(&envelopes(artifacts), &context, limits)
-        .expect("receipt should be issued")
+    check_artifact_set_with_receipt(
+        &fixture_sources(&envelopes(artifacts), context.base),
+        &context,
+        limits,
+    )
+    .expect("receipt should be issued")
 }
 
 fn check(artifacts: &[Value]) -> CheckedArtifactSet {
@@ -282,9 +286,13 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
         tenant: None,
     };
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let checked =
-        check_artifact_set_with_flow_source_map(&artifacts, &context, &limits, Some(&map))
-            .expect("receipt should be issued");
+    let checked = check_artifact_set_with_flow_source_map(
+        &fixture_sources(&artifacts, context.base),
+        &context,
+        &limits,
+        Some(&map),
+    )
+    .expect("receipt should be issued");
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let stored = compact(&checked.receipt);
     let receipt_json: Value = serde_json::from_str(&stored).expect("receipt JSON");
@@ -298,7 +306,10 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
         .expect("sidecar-bearing receipt verifies");
     assert_eq!(verified.flow_source_map(), Some(&map));
     let retained = norn_checker::check_artifact_set_with_verified_receipt(
-        &artifacts, &context, &limits, &verified,
+        &fixture_sources(&artifacts, context.base),
+        &context,
+        &limits,
+        &verified,
     )
     .expect("retained definitions re-admit");
     assert_eq!(
@@ -308,9 +319,13 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
 
     let mut stale = map;
     stale.flows[0].artifact_refs[0].sha256 = "0".repeat(64);
-    let refused =
-        check_artifact_set_with_flow_source_map(&artifacts, &context, &limits, Some(&stale))
-            .expect("stale map is a checker finding");
+    let refused = check_artifact_set_with_flow_source_map(
+        &fixture_sources(&artifacts, context.base),
+        &context,
+        &limits,
+        Some(&stale),
+    )
+    .expect("stale map is a checker finding");
     assert!(!refused.receipt.admitted);
     assert!(refused.diagnostics.iter().any(|finding| {
         finding.code.as_str() == norn_checker::flow_source_map::codes::STALE_ARTIFACT
@@ -784,6 +799,12 @@ fn exact_receipt(
 #[test]
 fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
     use norn_checker::receipt::verify_admission_receipt_sources;
+    use norn_checker::{
+        check_artifact_set_for_install as install,
+        check_artifact_set_for_install_with_flow_source_map as install_flow,
+        check_artifact_set_with_flow_source_map as flow, check_artifact_set_with_receipt as write,
+        check_artifact_set_with_verified_receipt as recheck,
+    };
     let limits = ResourceLimitProfile::norn_limits_v1();
     for (left, right) in [
         ("9007199254740992", "9007199254740993"),
@@ -814,10 +835,70 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
             assert_ne!(digest, changed_digest);
             let body = compact(&receipt);
             verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).unwrap();
+            assert!(matches!(
+                verify_admission_receipt_sources(&body, &digest, changed, changed_base, &limits),
+                Err(norn_checker::ReceiptError::InvalidStoredReceipt { detail })
+                    if detail == "receipt artifact-set identity does not match the persisted definitions"
+            ));
+            let candidates = artifacts
+                .iter()
+                .map(|v| norn_ir::runtime::decode(v).unwrap())
+                .collect::<Vec<ArtifactEnvelope>>();
+            let installed = base
+                .iter()
+                .map(|v| norn_ir::runtime::decode(v).unwrap())
+                .collect::<Vec<ArtifactEnvelope>>();
+            let context = EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &installed,
+                tenant: None,
+            };
+            let sources = norn_checker::ReceiptSources::new(artifacts, base).unwrap();
+            let version =
+                verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).unwrap();
+            let map = FlowSourceMap {
+                format: FlowSourceMapFormat::V1,
+                flows: vec![],
+            };
+            // WRITER-CLOSURE: every public writer requires the same exact set.
+            let writers = [
+                write(&sources, &context, &limits),
+                flow(&sources, &context, &limits, Some(&map)),
+                install(&sources, &context, &limits, None),
+                install(&sources, &context, &limits, Some(&version)),
+                install_flow(&sources, &context, &limits, Some(&version), Some(&map)),
+                recheck(&sources, &context, &limits, &version),
+            ];
+            for written in writers {
+                let written = written.unwrap().receipt;
+                assert!(written.admitted);
+                assert_eq!(written.artifact_set, receipt.artifact_set);
+                verify_admission_receipt_sources(
+                    &compact(&written),
+                    &written.content_sha256().unwrap(),
+                    artifacts,
+                    base,
+                    &limits,
+                )
+                .unwrap();
+            }
             assert!(
-                verify_admission_receipt_sources(&body, &digest, changed, changed_base, &limits)
-                    .is_err()
+                matches!(norn_checker::verify_admission_receipt(&body, &digest, &candidates, &installed, &limits),
+                Err(norn_checker::ReceiptError::InvalidStoredReceipt { detail }) if detail == "new receipt verification requires retained exact sources")
             );
+            let substituted = norn_checker::ReceiptSources::new(changed, changed_base).unwrap();
+            let changed_installed = changed_base
+                .iter()
+                .map(|v| norn_ir::runtime::decode(v).unwrap())
+                .collect::<Vec<ArtifactEnvelope>>();
+            let changed_context = EntityArtifactSetContext {
+                base: &changed_installed,
+                ..context
+            };
+            assert!(recheck(&substituted, &changed_context, &limits, &version).is_err());
+            let changed_install =
+                install(&substituted, &changed_context, &limits, Some(&version)).unwrap();
+            assert_ne!(changed_install.receipt.artifact_set, receipt.artifact_set);
         }
     }
 }
@@ -1010,4 +1091,35 @@ fn unresolved_pack_members_preserve_admission_and_legacy_recovery() {
             body
         );
     }
+}
+
+fn fixture_sources(
+    artifacts: &[norn_ir::ArtifactEnvelope],
+    base: &[norn_ir::ArtifactEnvelope],
+) -> norn_checker::receipt::ReceiptSources {
+    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
+    let installed = norn_ir::runtime::encode(base).unwrap();
+    norn_checker::receipt::ReceiptSources::new(
+        candidates.as_array().unwrap(),
+        installed.as_array().unwrap(),
+    )
+    .unwrap()
+}
+
+fn verify_admission_receipt(
+    stored: &str,
+    hash: &str,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> Result<norn_checker::ReceiptVersion, norn_checker::ReceiptError> {
+    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
+    let installed = norn_ir::runtime::encode(base).unwrap();
+    norn_checker::receipt::verify_admission_receipt_sources(
+        stored,
+        hash,
+        candidates.as_array().unwrap(),
+        installed.as_array().unwrap(),
+        limits,
+    )
 }

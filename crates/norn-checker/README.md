@@ -21,7 +21,14 @@ Retained definition receipts are verified against their recorded checker/profile
 
 ### Exact-source receipt identity (HOST-RECEIPT)
 RECEIPT-EXACT: receipt identity is injective over exact canonical source (assuming SHA-256 collision resistance).
-Raw callers use `check_artifact_sources_with_receipt` and `verify_admission_receipt_sources`; typed entry points bind serialized projections.
+WRITER-CLOSURE: every writer requires `ReceiptSources`, constructed only from retained exact runtime sources,
+including the installed base. The convenience source writer uses the same constructor.
+Typed verification refuses @5–@7; historical @1–@4 readers and hash-only reconstruction remain.
+RETAINED-IDENTITY: rechecks compare exact semantic identity before reusing an attested profile;
+a changed install uses current admission. CONTEXT-BASE: a different checker base is refused.
+`tests/check_receipt.rs` enumerates ordinary, flow-map, fresh install, retained install,
+flow-map install and verified recheck writers against both precision vectors in both layer positions.
+The source convenience writer and native/WASM boundary retain their existing vector coverage.
 Conformance in `tests/check_receipt.rs`: EXACT-INTEGER (`9007199254740992` / `9007199254740993`),
 EXACT-DECIMAL (`0.1234567890123456789012345678` / `0.1234567890123456789012345679`),
 EXACT-LITERAL (`25` / `26`), EXACT-VERIFY (substitution refusal), EXACT-ORDER (key reordering).

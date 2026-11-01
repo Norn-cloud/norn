@@ -189,6 +189,7 @@ pub use ontology::{
     validate_ontology_instance_in_registry, validate_ontology_pack, validate_ontology_registry,
 };
 pub use property_types::{check_property_type_defs, resolved_property_type};
+pub use receipt::ReceiptSources;
 pub use receipt::{
     ArtifactRef, ArtifactSetRef, CheckReceipt, CheckedArtifactSet, DiagnosticsDigest,
     IDENTIFIER_ADMISSION_PROFILE, ReceiptError, ReceiptVersion, admission_receipt_sha256,

@@ -83,14 +83,22 @@ fn inline_editor_layout_is_admitted_by_json_and_typed_single_artifact_entries() 
         tenant: None,
     };
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let checked = check_artifact_set_with_receipt(&[retained], &context, &limits)
-        .expect("ordinary receipt accepts decomposed editor text");
+    let checked = check_artifact_set_with_receipt(
+        &fixture_sources(&[retained], context.base),
+        &context,
+        &limits,
+    )
+    .expect("ordinary receipt accepts decomposed editor text");
     assert!(checked.diagnostics.is_empty());
     assert_eq!(
         checked.receipt,
-        check_artifact_set_with_receipt(&[clean], &context, &limits)
-            .expect("clean receipt")
-            .receipt
+        check_artifact_set_with_receipt(
+            &fixture_sources(&[clean], context.base),
+            &context,
+            &limits
+        )
+        .expect("clean receipt")
+        .receipt
     );
 
     // Both proof source layers accept the verbatim decomposed editor description.
@@ -142,4 +150,17 @@ fn unknown_payload_root_fields_remain_closed_after_layout_extraction() {
         diagnostic.code == "rule.validation.invalid_payload"
             && diagnostic.message.contains("unrecognizedSemanticRoot")
     }));
+}
+
+fn fixture_sources(
+    artifacts: &[norn_ir::ArtifactEnvelope],
+    base: &[norn_ir::ArtifactEnvelope],
+) -> norn_checker::receipt::ReceiptSources {
+    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
+    let installed = norn_ir::runtime::encode(base).unwrap();
+    norn_checker::receipt::ReceiptSources::new(
+        candidates.as_array().unwrap(),
+        installed.as_array().unwrap(),
+    )
+    .unwrap()
 }
