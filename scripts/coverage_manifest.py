@@ -59,12 +59,16 @@ def files(directory: Path = COVERAGE) -> list[Path]:
     identities = set()
     for entry in sorted(subsystems.iterdir()):
         identity = entry.stem if entry.is_file() else entry.name
-        if not SUBSYSTEM_FILE.fullmatch(f"{identity}.json") or identity in identities or entry.is_symlink():
-            raise InvalidCoverageLayout(f"unknown or duplicate subsystem: {entry.name}")
+        if entry.is_symlink():
+            raise InvalidCoverageLayout(f"{entry.name}: not a regular file")
+        if not SUBSYSTEM_FILE.fullmatch(f"{identity}.json"):
+            raise InvalidCoverageLayout(f"unknown subsystem files: {entry.name}")
+        if identity in identities:
+            raise InvalidCoverageLayout(f"duplicate subsystem: {identity}")
         identities.add(identity)
         if entry.is_file():
             if entry.suffix != ".json":
-                raise InvalidCoverageLayout(f"unknown subsystem file: {entry.name}")
+                raise InvalidCoverageLayout(f"unknown subsystem files: {entry.name}")
             result.append(entry)
         elif entry.is_dir():
             result.extend(_entry_files(entry))
@@ -114,7 +118,7 @@ def entry_id(value: Any) -> str:
         key = next((key for key in ("id", "artifact", "path") if key in value), None)
         if key:
             identity = {key: value[key]}
-    return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
 def _subsystem(directory: Path) -> dict[str, Any]:
