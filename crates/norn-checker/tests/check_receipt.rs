@@ -1119,3 +1119,35 @@ fn verify_admission_receipt(
         limits,
     )
 }
+
+#[test]
+fn installed_context_base_must_be_nfc_before_source_rebinding() {
+    let mut source = exact_setting("1");
+    source.as_object_mut().unwrap().insert(
+        "name".to_owned(),
+        norn_ir::RuntimeValue::String("Café".to_owned()),
+    );
+    let installed: ArtifactEnvelope = norn_ir::runtime::decode(&source).unwrap();
+    let sources = norn_checker::ReceiptSources::new(&[], &[source]).unwrap();
+    let mut changed = installed.clone();
+    changed.name = "Cafe\u{301}".to_owned();
+    assert_eq!(ArtifactRef::of(&installed), ArtifactRef::of(&changed));
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let context = EntityArtifactSetContext {
+        registry: &BTreeSet::new(),
+        base: &[installed],
+        tenant: None,
+    };
+    assert!(
+        check_artifact_set_with_receipt(&sources, &context, &limits)
+            .unwrap()
+            .receipt
+            .admitted
+    );
+    let context = EntityArtifactSetContext {
+        base: &[changed],
+        ..context
+    };
+    let error = check_artifact_set_with_receipt(&sources, &context, &limits).unwrap_err();
+    assert!(error.to_string().contains("definition.text.not_nfc"));
+}

@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
+import ts from "typescript"
+import { requireNfcText } from "../src/compiler/index.ts"
 import { compileDefinitions } from "../src/compiler/definitions.ts"
 import type { MappingSourceContract } from "../src/builder/mapping.ts"
 import { sourceMappedDiagnostics } from "../src/checker-abi.ts"
@@ -146,4 +148,24 @@ test("explicitly generic authored packs do not assert vendor parity", () => {
   const result = compile(sparseMappingProgram({kind:"generic"}))
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts).toContainEqual(expect.objectContaining({kind:"mapping",payload:expect.objectContaining({extensions:{"norn.mapping.generic/1.0.0":{parity:"unqualified"}}})}))
+})
+
+test("ADMITTED-TEXT-NFC: compiler refuses decomposed semantic literals", () => {
+  const result = compile(program(`input.event.kind === "e\u0301"`))
+  expect(result.ok).toBe(false)
+  if (!result.ok) expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "definition.text.not_nfc" }))
+  expect(compile(program(`input.event.kind === "é"`)).ok).toBe(true)
+}, 30_000)
+
+test("ADMITTED-TEXT-NFC: editor metadata is preserved and errors identify semantic paths", () => {
+  const artifact = {artifactId: "test.editor", kind: "rule", payload: {ruleVersion: "2.0", graph: {
+    settings: {text: "e\u0301"}, viewport: {text: "e\u0301"}, nodes: [{description: "e\u0301", position: {text: "e\u0301"}, folded: "e\u0301", content: {inputs: [{width: "e\u0301"}], outputs: [{width: "e\u0301"}]}}], edges: [{name: "e\u0301", targetHandle: "e\u0301", type: "e\u0301"}]
+  }}}
+  const before = JSON.stringify(artifact)
+  const source = ts.createSourceFile("editor.ts", "", ts.ScriptTarget.ES2022)
+  expect(() => requireNfcText(artifact, source)).not.toThrow()
+  expect(JSON.stringify(artifact)).toBe(before)
+  const invalid = {...artifact, name: "e\u0301"}
+  expect(() => requireNfcText(invalid, source)).toThrow("definition test.editor text at /name")
+  expect(() => requireNfcText({...artifact, kind: "entity"}, source)).toThrow("/payload/graph/settings/text")
 })
