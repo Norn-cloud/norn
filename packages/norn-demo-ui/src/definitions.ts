@@ -9,8 +9,9 @@ export interface DefinitionEntry {
   readonly source: string
 }
 
-const escape = (value: string): string => value.replace(/[&<>"']/g, (character) => {
+const escape = (value: string): string => value.replace(/[&<>"'\r]/g, (character) => {
   switch (character) {
+    case "\r": return "&#13;"
     case "&": return "&amp;"
     case "<": return "&lt;"
     case ">": return "&gt;"

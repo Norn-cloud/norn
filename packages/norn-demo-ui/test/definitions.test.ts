@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { parseFragment } from "parse5"
 import { renderDefinitionsDocument, type DefinitionEntry } from "../src/definitions.ts"
 
 const entry: DefinitionEntry = {
@@ -33,3 +34,17 @@ test("empty reads do not invent definitions or guarantees", () => {
   expect(html).not.toContain("<article")
   expect(html).not.toContain("proved")
 })
+
+for (const ending of ["\r\n", "\r", "\n"]) {
+  test(`parsed source preserves ${JSON.stringify(ending)} line endings`, () => {
+    const source = `{${ending}  "name": "<alpha>&",${ending}  "amount": 9007199254740993${ending}}`
+    const html = renderDefinitionsDocument({ entries: [{ ...entry, source }] })
+    const pre = html.match(/<pre[^>]*>(.*?)<\/pre>/s)?.[1]
+    if (!pre) throw new Error("Missing source block")
+    const code = parseFragment(pre).childNodes[0]
+    if (!code || !("tagName" in code) || code.tagName !== "code") throw new Error("Missing code element")
+    const text = code.childNodes[0]
+    if (!text || !("value" in text)) throw new Error("Missing source text")
+    expect(text.value).toBe(source)
+  })
+}
