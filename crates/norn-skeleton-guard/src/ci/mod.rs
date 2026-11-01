@@ -357,28 +357,82 @@ fn enrolled_obligations(root: &Path) -> Result<Obligations, String> {
     for entry in entries {
         let entry = entry.map_err(|error| error.to_string())?;
         let name = entry.file_name();
-        let id = name
-            .to_str()
-            .and_then(|name| name.strip_suffix(".json"))
-            .filter(|id| !id.is_empty())
-            .ok_or_else(|| {
-                format!(
-                    "{COVERAGE_SUBSYSTEMS}: unknown entry {}",
-                    name.to_string_lossy()
-                )
-            })?;
-        if !entry
-            .file_type()
-            .map_err(|error| error.to_string())?
-            .is_file()
+        let raw = name.to_str().ok_or("invalid subsystem name")?;
+        let is_directory = entry.file_type().map_err(|e| e.to_string())?.is_dir();
+        let id = if is_directory {
+            raw
+        } else {
+            raw.strip_suffix(".json").unwrap_or("")
+        };
+        if id.is_empty()
+            || !id
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
         {
-            return Err(format!(
-                "{COVERAGE_SUBSYSTEMS}/{id}.json is not a regular file"
-            ));
+            return Err(format!("{COVERAGE_SUBSYSTEMS}: unknown entry {raw}"));
         }
-        enrolled.insert(id.to_owned(), obligations(&load(&entry.path())?)?);
+        let required = if is_directory {
+            entry_obligations(&entry.path())?
+        } else if entry.file_type().map_err(|e| e.to_string())?.is_file() {
+            obligations(&load(&entry.path())?)?
+        } else {
+            return Err(format!("{raw} is not a regular subsystem"));
+        };
+        if enrolled.insert(id.to_owned(), required).is_some() {
+            return Err(format!("duplicate subsystem {id}"));
+        }
     }
     Ok(enrolled)
+}
+
+fn entry_obligations(directory: &Path) -> Result<BTreeSet<String>, String> {
+    use sha2::{Digest, Sha256};
+    let read = |path: &Path| -> Result<serde_json::Value, String> {
+        if !path
+            .symlink_metadata()
+            .map_err(|e| e.to_string())?
+            .is_file()
+        {
+            return Err(format!("{} is not a regular entry", path.display()));
+        }
+        serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())
+    };
+    let metadata = read(&directory.join("index.json"))?;
+    if metadata.get("obligations") != Some(&serde_json::json!({"$entries": "obligations"})) {
+        return Err("missing subsystem obligations entry field".to_owned());
+    }
+    let folder = directory.join("obligations");
+    if !folder
+        .symlink_metadata()
+        .map_err(|e| e.to_string())?
+        .is_dir()
+    {
+        return Err("obligations is not a regular directory".to_owned());
+    }
+    let mut result = BTreeSet::new();
+    for entry in std::fs::read_dir(folder).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let value = read(&entry.path())?;
+        let id = value
+            .get("value")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("invalid obligation entry value")?;
+        if value.as_object().is_none_or(|object| object.len() != 2)
+            || value
+                .get("order")
+                .and_then(serde_json::Value::as_u64)
+                .is_none()
+        {
+            return Err("invalid obligation entry envelope".to_owned());
+        }
+        let encoded = serde_json::to_vec(id).map_err(|e| e.to_string())?;
+        let expected = format!("{:x}.json", Sha256::digest(encoded));
+        if entry.file_name().to_str() != Some(expected.as_str()) || !result.insert(id.to_owned()) {
+            return Err("duplicate or mismatched obligation entry identity".to_owned());
+        }
+    }
+    Ok(result)
 }
 
 fn obligations(subsystem: &serde_json::Value) -> Result<BTreeSet<String>, String> {

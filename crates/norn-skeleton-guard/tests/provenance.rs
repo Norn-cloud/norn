@@ -618,6 +618,44 @@ fn trusted_policy_preserves_retained_core_obligations() {
     );
 }
 
+#[test]
+fn trusted_policy_reads_entry_obligations_and_refuses_malformed_or_removed_entries() {
+    let base = policy_fixture();
+    for change in ["none", "missing", "identity", "order", "extra"] {
+        let mut candidate = policy_fixture();
+        drop_file(&mut candidate, COVERAGE_LEDGER);
+        let directory = "verification/coverage-v1/manifest/subsystems/quantity-ledger";
+        candidate.add(
+            &format!("{directory}/index.json"),
+            br#"{"obligations":{"$entries":"obligations"}}"#,
+            "code",
+        );
+        let id = "synthetic-preserved-obligation";
+        let hash = hex::encode(Sha256::digest(serde_json::to_vec(id).unwrap()));
+        let name = if change == "identity" { "wrong" } else { &hash };
+        let mut value = json!({"order": 0, "value": id});
+        if change == "order" {
+            value["order"] = json!(true);
+        }
+        if change == "extra" {
+            value["extra"] = json!(true);
+        }
+        let path = format!("{directory}/obligations/{name}.json");
+        candidate.add(&path, &serde_json::to_vec(&value).unwrap(), "code");
+        if change == "missing" {
+            drop_file(&mut candidate, &path);
+        }
+        candidate.save();
+        index_fixture(&candidate);
+        let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+        if change == "none" {
+            assert!(errors.is_empty(), "{errors:?}");
+        } else {
+            assert!(!errors.is_empty(), "accepted {change}");
+        }
+    }
+}
+
 /// Remove `path` and its record from a fixture, as a pull request would.
 fn drop_file(fixture: &mut Fixture, path: &str) {
     fixture.records.retain(|record| record["path"] != path);

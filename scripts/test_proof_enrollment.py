@@ -108,5 +108,58 @@ class EnrollmentTests(unittest.TestCase):
                 validate(root, candidate, self.gates)
 
 
+class CoverageLayoutTests(unittest.TestCase):
+    def test_both_layouts_preserve_every_claim_and_order(self):
+        document = coverage_manifest.load()
+        for split in (False, True):
+            with self.subTest(split=split), tempfile.TemporaryDirectory() as temporary:
+                target = Path(temporary) / "manifest"
+                coverage_manifest.write(document, target, split_entries=split)
+                self.assertEqual(coverage_manifest.load(target), document)
+                self.assertTrue(coverage_manifest.digest(target))
+
+    def test_layout_refusals(self):
+        document = {"subsystems": [{"id": "toy", "sourceFiles": ["a.rs", "b.rs"], "obligations": ["INV-X"]}]}
+        for split in (False, True):
+            for mutation in ("stray", "duplicate-key", "symlink", "duplicate-id"):
+                with self.subTest(split=split, mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                    target = Path(temporary) / "manifest"
+                    coverage_manifest.write(document, target, split_entries=split)
+                    subsystem = target / "subsystems" / ("toy" if split else "toy.json")
+                    metadata = subsystem / "index.json" if split else subsystem
+                    if mutation == "stray":
+                        (target / "stray").write_text("{}")
+                    elif mutation == "duplicate-key":
+                        metadata.write_text('{"sourceFiles":[],"sourceFiles":[]}')
+                    elif mutation == "symlink":
+                        metadata.unlink()
+                        metadata.symlink_to(target / "index.json")
+                    else:
+                        other = target / "subsystems" / ("toy.json" if split else "toy")
+                        if split:
+                            other.write_text("{}")
+                        else:
+                            other.mkdir()
+                    with self.assertRaises(coverage_manifest.InvalidCoverageLayout):
+                        coverage_manifest.load(target)
+
+    def test_entry_identity_and_envelope_refusals(self):
+        for change in ("identity", "unknown", "order", "directory"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
+                target = Path(temporary) / "manifest"
+                coverage_manifest.write({"subsystems": [{"id": "toy", "sourceFiles": ["a.rs"]}]}, target, split_entries=True)
+                entry = next((target / "subsystems/toy/sourceFiles").iterdir())
+                if change == "directory":
+                    entry.unlink(); entry.mkdir()
+                else:
+                    value = json.loads(entry.read_text())
+                    if change == "identity": value["value"] = "different.rs"
+                    if change == "unknown": value["extra"] = True
+                    if change == "order": value["order"] = True
+                    entry.write_text(json.dumps(value))
+                with self.assertRaises(coverage_manifest.InvalidCoverageLayout):
+                    coverage_manifest.load(target)
+
+
 if __name__ == "__main__":
     unittest.main()
