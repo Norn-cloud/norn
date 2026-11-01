@@ -4993,3 +4993,179 @@ fn adding_an_interface_parent_scans_existing_rows_before_activating_its_invarian
         }
     }
 }
+
+// HOST-PROVISION-ATOMIC: every SQL boundary, transaction commit and lost reply.
+struct ProvisionFault {
+    inner: NativeEngine,
+    step: std::rc::Rc<std::cell::Cell<usize>>,
+    fail: usize,
+    crash: bool,
+}
+
+impl ProvisionFault {
+    fn boundary(&self) -> Result<(), CellError> {
+        let step = self.step.get() + 1;
+        self.step.set(step);
+        if step == self.fail {
+            if self.crash {
+                std::process::exit(73);
+            }
+            return Err(CellError::Engine("provision fault".to_owned()));
+        }
+        Ok(())
+    }
+}
+
+impl SqlEngine for ProvisionFault {
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.inner.execute(sql, params)?;
+        self.boundary()
+    }
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        let rows = self.inner.query(sql, params)?;
+        self.boundary()?;
+        Ok(rows)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.inner.execute_batch(sql)?;
+        self.boundary()
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        let value = self.inner.transaction(|| {
+            let value = f()?;
+            self.boundary()?;
+            Ok(value)
+        })?;
+        self.boundary()?;
+        Ok(value)
+    }
+}
+
+fn provision_input() -> InstalledDefinitionInput {
+    InstalledDefinitionInput {
+        canonical_set: "[]".to_owned(),
+        registry: Vec::new(),
+        receipt_sha256: "synthetic".to_owned(),
+        admission_receipt: None,
+        readmission: None,
+        diff: json!({}),
+        installed_at: 1,
+        layout: Some("{}".to_owned()),
+    }
+}
+
+#[test]
+fn host_provision_atomic_crash_child() {
+    let Ok(path) = std::env::var("NORN_PROVISION_CRASH_PATH") else {
+        return;
+    };
+    let fail = std::env::var("NORN_PROVISION_CRASH_STEP")
+        .expect("step")
+        .parse()
+        .expect("number");
+    let engine = ProvisionFault {
+        inner: NativeEngine::open(Path::new(&path), StoreOptions::default()).expect("open"),
+        step: std::rc::Rc::new(std::cell::Cell::new(0)),
+        fail,
+        crash: true,
+    };
+    let _store =
+        CellStore::provision_definitions(engine, model(false), provision_input(), "demo/dev")
+            .expect("provision");
+    panic!("crash boundary was not reached");
+}
+
+#[test]
+fn host_provision_atomic_at_every_storage_boundary() {
+    let engine = ProvisionFault {
+        inner: NativeEngine::open_in_memory().expect("open"),
+        step: std::rc::Rc::new(std::cell::Cell::new(0)),
+        fail: usize::MAX,
+        crash: false,
+    };
+    let store =
+        CellStore::provision_definitions(engine, model(false), provision_input(), "demo/dev")
+            .expect("provision");
+    // Count only the public provisioning path, including its commit/lost-reply boundary.
+    let steps = counter.get();
+    for crash in [false, true] {
+        for fail in 1..=steps {
+            let dir = tempfile::tempdir().expect("dir");
+            let path = dir.path().join("tenant.sqlite");
+            if crash {
+                let output =
+                    std::process::Command::new(std::env::current_exe().expect("test binary"))
+                        .args(["--exact", "host_provision_atomic_crash_child"])
+                        .env("NORN_PROVISION_CRASH_PATH", &path)
+                        .env("NORN_PROVISION_CRASH_STEP", fail.to_string())
+                        .output()
+                        .expect("crash child");
+                assert_eq!(output.status.code(), Some(73), "step {fail}");
+            } else {
+                let engine = ProvisionFault {
+                    inner: NativeEngine::open(&path, StoreOptions::default()).expect("open"),
+                    step: std::rc::Rc::new(std::cell::Cell::new(0)),
+                    fail,
+                    crash: false,
+                };
+                assert!(
+                    CellStore::provision_definitions(
+                        engine,
+                        model(false),
+                        provision_input(),
+                        "demo/dev"
+                    )
+                    .is_err()
+                );
+            }
+            let engine = NativeEngine::open(&path, StoreOptions::default()).expect("reopen");
+            assert_eq!(
+                CellStore::engine_is_fresh(&engine).expect("fresh"),
+                fail < steps,
+                "crash={crash} step={fail}"
+            );
+            let store = CellStore::provision_definitions(
+                engine,
+                model(false),
+                provision_input(),
+                "demo/dev",
+            )
+            .expect("retry");
+            assert_eq!(store.read().receipts().expect("receipts").len(), 1);
+            assert_eq!(
+                store
+                    .read()
+                    .installed_definitions(None)
+                    .expect("set")
+                    .expect("active")
+                    .version,
+                1
+            );
+            drop(store);
+            for change in 0..3 {
+                let engine =
+                    NativeEngine::open(&path, StoreOptions::default()).expect("reopen conflict");
+                let mut input = provision_input();
+                if change == 0 {
+                    input.canonical_set = "[{}]".to_owned();
+                }
+                let scope = if change == 1 { "other/dev" } else { "demo/dev" };
+                assert!(
+                    CellStore::provision_definitions(engine, model(change == 2), input, scope)
+                        .is_err()
+                );
+            }
+            let store = CellStore::provision_definitions(
+                NativeEngine::open(&path, StoreOptions::default()).expect("reopen retry"),
+                model(false),
+                provision_input(),
+                "demo/dev",
+            )
+            .expect("unchanged retry");
+            assert_eq!(
+                store.read().receipts().expect("unchanged receipts").len(),
+                1
+            );
+        }
+    }
+}

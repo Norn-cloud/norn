@@ -40,3 +40,15 @@ HOST-ADMISSION: one definition epoch covers load and projection; retained versio
 HOST-WIRE/HOST-EXACT: raw source/receipt JSON, camelCase, empty collections and exact numeric vectors.
 HOST-REFUSAL: absent version `defs.version_not_found` (404); malformed query `request.invalid` (400).
 HTTP requires an authenticated routing host to supply x-norn-actor; host errors conceal diagnostics.
+
+HOST-PROVISION-ATOMIC: initialization, scope binding, initial definitions, model
+snapshot, receipt and ledger publish in one engine transaction. Failure or abrupt
+process loss before commit leaves no application schema; after commit a lost
+reply leaves the complete initial revision. An identical provisioning request
+(scope, projected model and full install input, including logical time) reopens
+revision 1 without writes; a changed request or advanced definition revision
+refuses. Residual unrelated schema is never adopted. The transaction owns the
+freshness check, so competing requests cannot both initialize the cell.
+Correspondence: `definitions_install::host_provision_atomic_at_every_storage_boundary`
+injects errors and abrupt subprocess exit after every SQL operation, before
+commit and after commit, then reopens, retries and checks conflicting retries.
