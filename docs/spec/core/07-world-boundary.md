@@ -68,6 +68,10 @@ records; raw reads retain source truth. Finding status is per law: a correction 
 without rewriting the original, even if law B still has an open finding.
 Object quarantine remains while any finding under the declared quarantine
 constraints is open; recovery requires every such finding to be resolved.
+Recovery re-evaluates each finding's rule using the retained definition model
+pinned by its emitting receipt, including after a definition install; the current
+catalog never substitutes. Quarantine derives from these version-bound open
+findings, and changed failing values do not resolve a still-violated rule.
 Capture atomically suppresses an already proven finding ID, including after
 redelivery/restart; retry normalization uses the original commit cutoff.
 
@@ -103,6 +107,7 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 - **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
 - **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
 - **OBS-BAD:** Given imported purity 1100‰, when evaluated, then capture a quarantined finding; identical native write refuses without business changes.
+- **OBS-RECOVERY-UPGRADE:** After a definition install, an old finding stays open while its pinned rule fails; only a correction satisfying that retained rule resolves it. New definitions never supersede the old finding implicitly.
 - **EFFECT-UNCERTAIN:** Given provider success followed by lost reply, when retried, then dedup/lookup resolves once or outcome remains unknown; never issue a new payment ID.
 - **EFFECT-COMPENSATE:** Given confirmed payment 25, when cancellation wins after dispatch, then a separate refund 25 records its own outcome; failed refund remains outstanding.
 - **FUNCTION-ML:** Given a pinned training table and model Function, when it returns a forecast, then record output/input digests; stale or leaked-future input cannot pass publication guards.

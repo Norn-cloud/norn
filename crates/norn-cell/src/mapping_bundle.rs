@@ -155,6 +155,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// Changed pins, raw evidence or derived output refuse `core.boundary.bundle_mismatch`.
     pub fn recheck_mapping_bundle(&self, bundle: &MappingBundle) -> Result<(), CellError> {
+        let active = self.active_definitions_version()?.ok_or_else(mismatch)?;
+        if bundle.definitions_version > active
+            || self
+                .installed_definitions(Some(bundle.definitions_version))?
+                .is_none()
+        {
+            return Err(mismatch());
+        }
         if self.mapping_bundle(&bundle.raw, &bundle.input, bundle.definitions_version)? != *bundle {
             return Err(mismatch());
         }
