@@ -1,0 +1,9 @@
+{
+  "name": "norn-cell-wasm",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-kernel"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}

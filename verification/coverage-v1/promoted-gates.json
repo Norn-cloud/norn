@@ -1161,6 +1161,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "cell-abi-runtime",
+      "profile": "fast",
+      "command": "cargo test --locked -p norn-cell-wasm",
+      "evidenceKind": "rust-tests",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "kernel-v2",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "verification-executed-test-selectors",
       "profile": "full",
       "command": "python3 scripts/validate-executed-test-selectors.py",

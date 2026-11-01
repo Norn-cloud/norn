@@ -1536,6 +1536,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-cell-wasm"
+version = "0.1.0"
+dependencies = [
+ "norn-kernel",
+ "norn-testkit",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "norn-checker"
 version = "0.2.0"
 dependencies = [

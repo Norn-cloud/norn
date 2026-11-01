@@ -1,0 +1,19 @@
+{
+  "format": "norn-cell-shim/numeric-goldens@1",
+  "about": "T3-NUM-1 (#2770): number tokens a JavaScript number or an f64 would change. Each must cross the cell shim byte-for-byte in fact values, events, command and timer payloads, performed results, and observations. Also read by crates/norn-cell-wasm/tests/abi.rs.",
+  "tokens": [
+    "9007199254740993",
+    "18446744073709551615",
+    "18446744073709551616",
+    "-9223372036854775808",
+    "9223372036854775807",
+    "0.1234567890123456789012345678901234567890",
+    "123456789012345678901234567890.123456789",
+    "-0",
+    "-0.0",
+    "1e400",
+    "1.5E+308",
+    "12e-7",
+    "5e-324"
+  ]
+}
