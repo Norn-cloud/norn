@@ -7,49 +7,67 @@
 )]
 
 //! Correspondence to verification/definition-catalog-v1/SPEC.md.
-use norn_checker::definition_catalog::project;
+use norn_checker::{EntityArtifactSetContext, check_artifact_set, definition_catalog::project};
 use norn_ir::ArtifactEnvelope;
-use norn_ir::definition_catalog::{Member, MemberRef};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
-#[test]
-fn entity_projection_preserves_identity_declarations_and_order() {
-    let artifact: ArtifactEnvelope = serde_json::from_value(serde_json::json!({
-        "irVersion": "0.1", "artifactId": "commerce.SalesOrder.entity", "kind": "entity",
-        "namespace": "commerce", "name": "SalesOrder", "version": "0.1.0", "lifecycle": "draft",
-        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
-        "payload": { "entityVersion": "2.0", "objectType": { "name": "commerce.SalesOrder",
-            "properties": [{ "id": "order_number", "type": { "kind": "text" } }] } }
+
+fn artifact(id: &str, payload: &Value) -> ArtifactEnvelope {
+    serde_json::from_value(json!({
+        "irVersion": "0.1", "artifactId": id, "kind": "entity", "namespace": "test", "name": id,
+        "version": "1.0.0", "lifecycle": "draft", "scope": {}, "dependencies": [],
+        "provenance": { "source": "system" }, "payload": payload
     }))
-    .expect("fixture");
-    let context = norn_checker::EntityArtifactSetContext {
-        registry: &BTreeSet::new(),
+    .expect("fixture")
+}
+
+fn check_ref_lifecycle(hops: usize) {
+    let values = json!({ "kind": "enum", "values": [{ "value": "open" }, { "value": "closed" }] });
+    let types: Vec<_> = (0..hops).map(|i| json!({ "name": format!("test.state{i}"),
+        "type": if i == 0 { values.clone() } else { json!({ "kind": "ref", "name": format!("test.state{}", i.saturating_sub(1)) }) } })).collect();
+    let artifacts = [
+        artifact(
+            "test.types.entity",
+            &json!({ "entityVersion": "2.0", "propertyTypes": types }),
+        ),
+        artifact(
+            "test.Order.entity",
+            &json!({ "entityVersion": "2.0", "objectType": { "name": "test.Order",
+            "properties": [{ "id": "status", "type": { "kind": "ref", "name": format!("test.state{}", hops.saturating_sub(1)) } }],
+            "lifecycles": [{ "property": "status", "initial": ["open"], "terminal": ["closed"],
+                "transitions": [{ "id": "finish", "from": ["open"], "to": "closed" }] }] } }),
+        ),
+    ];
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
         base: &[],
         tenant: None,
     };
-    assert!(norn_checker::check_artifact_set(std::slice::from_ref(&artifact), &context).is_empty());
-    let catalog =
-        project(std::slice::from_ref(&artifact), &[], &BTreeSet::new()).expect("projection");
-    let at = |member| MemberRef {
-        artifact_id: artifact.artifact_id.clone(),
-        version: artifact.version.clone(),
-        member,
-    };
-    assert!(catalog.contains(&at(Member::Type {
-        type_name: "commerce.SalesOrder".into()
-    })));
+    let findings = check_artifact_set(&artifacts, &context);
+    assert!(findings.is_empty(), "{findings:?}");
+    let catalog = project(&artifacts, &[], &registry).expect("projection");
     assert_eq!(
-        catalog
-            .properties
-            .iter()
-            .map(|row| row.at.clone())
-            .collect::<Vec<_>>(),
-        [at(Member::Property {
-            type_name: "commerce.SalesOrder".into(),
-            property: "order_number".into()
-        })]
+        json!(catalog.properties),
+        json!([{
+            "at": { "artifactId": "test.Order.entity", "version": "1.0.0",
+                "member": { "kind": "property", "typeName": "test.Order", "property": "status" } },
+            "computed": false,
+            "lifecycle": { "states": ["open", "closed"], "initial": ["open"], "terminal": ["closed"] }
+        }])
     );
     assert_eq!(
         catalog,
-        project(&[artifact], &[], &BTreeSet::new()).expect("repeat")
+        project(&artifacts, &[], &registry).expect("repeat")
     );
+}
+
+#[test]
+fn admitted_ref_enum_lifecycle_preserves_metadata_and_declaration_identity() {
+    check_ref_lifecycle(1);
+}
+
+proptest::proptest! {
+    #[test]
+    fn enum_alias_chains_preserve_lifecycle_metadata(hops in 1usize..8) { check_ref_lifecycle(hops); }
 }
