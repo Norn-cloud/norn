@@ -1,5 +1,4 @@
 //! PARAM-EXACT-1: project native numeric-setting facts without a float conversion.
-//! This adapter accepts a captured live view; fact versions remain CAS identities.
 
 use crate::{FactKey, FactState};
 use norn_checker::parameter::{
@@ -65,8 +64,6 @@ fn project(record: &Record) -> Result<(SettingRoot, ScopeRef), ParameterError> {
 
 /// Selects a setting from a captured, authorized live fact view.
 /// The caller must fence every input fact and the complete source membership.
-/// Historical queries use `resolve_parameter` with their own recorded revisions.
-///
 /// # Errors
 /// Refuses non-current context, invalid native profiles, ambiguity or missing values.
 pub fn resolve_current_parameter<'a>(
