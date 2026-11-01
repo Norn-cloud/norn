@@ -20,7 +20,8 @@ changes require a reviewed base-policy change before updating those contracts.
 
 - `ENG-IR-OWNER`: canonical types stay in IR. The engine row admits only
   kernel, checker, projections, cell and IR, for normal, build and dev edges.
-- `ENG-NO-REVERSE`: IR cannot depend on the engine, for any dependency kind.
+- `ENG-NO-REVERSE`: IR cannot depend on the engine, for any dependency kind,
+  including before the engine becomes a workspace member.
 - `ENG-RING0-PURE`: host runtime dependencies remain forbidden in ring 0,
   including dev dependencies.
 - `ENG-PREDECLARED`: the engine policy applies when its package arrives;

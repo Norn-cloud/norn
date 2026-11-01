@@ -942,7 +942,10 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
             }
             // Vendored zen crates are workspace members but keep the zen
             // source/profile rules rather than the `norn-*` edge table.
-            if member_names.contains(dep_name) && !is_zen_crate(dep_name) {
+            if (member_names.contains(dep_name)
+                || PREDECLARED_CRATES.iter().any(|rule| rule.name == dep_name))
+                && !is_zen_crate(dep_name)
+            {
                 check_norn_edge(rule, dep, &mut seen_edges, &mut out);
             } else {
                 check_third_party(
