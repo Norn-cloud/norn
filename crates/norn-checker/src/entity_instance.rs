@@ -170,7 +170,9 @@ impl EffectiveObjectType {
                 let mut effective = EffectiveProperty::new(
                     property,
                     match &property.property_type {
-                        PropertyType::Ref { .. } => EffectiveKind::Unresolved,
+                        PropertyType::Ref { .. } | PropertyType::DecimalBinding { .. } => {
+                            EffectiveKind::Unresolved
+                        }
                         base @ (PropertyType::Text { .. }
                         | PropertyType::Integer { .. }
                         | PropertyType::Decimal { .. }
@@ -215,6 +217,7 @@ impl EffectiveObjectType {
                     PropertyType::Text { .. }
                     | PropertyType::Integer { .. }
                     | PropertyType::Decimal { .. }
+                    | PropertyType::DecimalBinding { .. }
                     | PropertyType::Boolean { .. }
                     | PropertyType::Timestamp { .. }
                     | PropertyType::Date { .. }
