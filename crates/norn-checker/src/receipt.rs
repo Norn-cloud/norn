@@ -711,9 +711,7 @@ fn verify_receipt(
     } else {
         ArtifactSetRef::of(artifacts, base)?
     };
-    if norn_canonical::serialize(&parsed.artifact_set.to_canonical_value())?
-        != norn_canonical::serialize(&receipt_artifact_set.to_canonical_value())?
-    {
+    if parsed.artifact_set.canonical_json()? != receipt_artifact_set.canonical_json()? {
         return Err(invalid_receipt(
             "receipt artifact-set identity does not match the persisted definitions",
         ));
@@ -1092,6 +1090,10 @@ impl ArtifactSetRef {
             base,
             sha256,
         })
+    }
+
+    fn canonical_json(&self) -> Result<Vec<u8>, CanonicalJsonError> {
+        norn_canonical::serialize(&self.to_canonical_value())
     }
 
     fn members_value(artifacts: &[ArtifactRef], base: &[ArtifactRef]) -> JsonValue {

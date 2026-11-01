@@ -165,14 +165,7 @@ fn fixture_sources(
     .expect("fixture")
 }
 
-#[test]
-fn source_decode_verbatim_and_hash_correspondence() {
-    use norn_checker::obligations::ApprovedContract;
-    use norn_checker::receipt::{
-        RECEIPT_HASH_PROFILE, check_artifact_sources_with_receipt, verify_admission_receipt_sources,
-    };
-    use norn_ir::RuntimeValue;
-
+fn unicode_rule_sources() -> (Value, Value) {
     let mut semantic = valid_rule();
     semantic["artifactId"] = json!("test.cafe\u{301}");
     semantic["payload"]["inputSchema"]["properties"]["cafe\u{301}"] = json!({"type":"string"});
@@ -186,6 +179,18 @@ fn source_decode_verbatim_and_hash_correspondence() {
     {
         edge.as_object_mut().expect("edge").remove("type");
     }
+    (raw, semantic)
+}
+
+#[test]
+fn source_decode_verbatim_and_hash_correspondence() {
+    use norn_checker::obligations::ApprovedContract;
+    use norn_checker::receipt::{
+        RECEIPT_HASH_PROFILE, check_artifact_sources_with_receipt, verify_admission_receipt_sources,
+    };
+    use norn_ir::RuntimeValue;
+
+    let (raw, semantic) = unicode_rule_sources();
     let source = norn_ir::runtime::encode(&raw).expect("source");
     let prepared = norn_checker::prepare_artifact_source(source.clone()).expect("preparation");
     assert_eq!(
