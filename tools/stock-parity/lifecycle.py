@@ -50,6 +50,16 @@ def check(dump):
         cost = '6' if method == 'moving-average' else '4'
         assert {(r['warehouse'], r['quantityDelta'], r['valueDelta']) for r in moved} == {
             ('a', '-2', '-' + cost), ('b', '2', cost)}
+        legs = [r for r in transfer['gl'] if r['requestId'] == 'transfer']
+        assert {(r['account'], r['debit'], r['credit']) for r in legs} == {
+            ('stock-a', '0', cost), ('stock-b', cost, '0')}
+        returned = case['checkpoints'][4]
+        unit_cost = '3' if method == 'moving-average' else '2'
+        assert {(r['account'], r['debit'], r['credit']) for r in returned['gl']
+                if r['requestId'] == 'return'} == {('stock-a', unit_cost, '0'), ('cogs', '0', unit_cost)}
+        final_gl = case['checkpoints'][-1]['gl']
+        for account in {r['account'] for r in final_gl}:
+            assert sum(D(r['debit']) - D(r['credit']) for r in final_gl if r['account'] == account) == 0
         assert all(d['status'] == 2 for d in case['checkpoints'][-1]['documents'])
 
 
