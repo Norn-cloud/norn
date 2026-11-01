@@ -161,6 +161,8 @@ POST-REOPEN preserves state/chain. POST-REAL-REPLAY rebuilds the export through 
 
 JEWELRY-CUSTODY-ISOLATION: closed stockPost operations `custodyReceipt` and `custodyReturn` require a jewelry.MetalLot and a voucher owner. The linked custody_owner must equal that owner. The lot's canonical item identity selects its partition; its owner and complete authoritative metadata are pinned in the partition's binding hash. Owner/purity reassignment after a first posting refuses, including after an empty return. Company receipt/delivery cannot consume a custody lot.
 
+JEWELRY-CUSTODY-ADMISSION: custody stock bindings require a declared custody_owner link to a stock.Party and a stored non-null text or enum ownership member. The link may be optional for company lots; a custody operation still requires its actual named owner at runtime. Missing runtime-required members refuse definition admission.
+
 JEWELRY-NAMED-OWNER: custody requires a non-null named party. Events and the partition record that canonical FactKey. Company inventory records its canonical company FactKey as owner; null is never a published owner.
 
 JEWELRY-ZERO-COMPANY: custody receipt creates zero-value FIFO layers; return consumes those layers. Both use the existing conserved quantity templates and sealed commit join, emitting no GL facts. Caller rates cannot confer company value on customer metal. No parallel posting adapter is introduced.

@@ -3339,6 +3339,41 @@ mod cp1_stock {
         expected.sort();
         assert_eq!(actual, expected, "POST-GL");
     }
+    #[test]
+    fn custody_runtime_members_are_required_at_admission() {
+        for missing in ["ownership", "custody_owner"] {
+            let (mut artifacts, _) = definitions(true);
+            let artifact = artifacts
+                .iter_mut()
+                .find(|a| a.artifact_id == "jewelry.MetalLot.entity")
+                .expect("lot");
+            let ArtifactPayload::Entity(payload) = &artifact.payload else {
+                panic!("entity")
+            };
+            let mut lot: ObjectTypeDef = serde_json::from_value(
+                serde_json::to_value(payload.object_type.as_value().expect("lot")).expect("lot"),
+            )
+            .expect("lot");
+            lot.properties.retain(|p| p.id.as_str() != missing);
+            lot.links.retain(|l| l.id.as_str() != missing);
+            artifact.payload = ArtifactPayload::Entity(
+                serde_json::from_value(
+                    serde_json::to_value(EntityRootV2 {
+                        entity_version: EntityIrVersion::V2_0,
+                        object_type: lot,
+                        mutation_authority: None,
+                        extensions: None,
+                    })
+                    .expect("lot"),
+                )
+                .expect("lot"),
+            );
+            assert!(
+                norn_kernel::admit_stock_rules(&artifacts).is_err(),
+                "JEWELRY-CUSTODY-ADMISSION: {missing}"
+            );
+        }
+    }
     #[tokio::test]
     async fn post_cp1_engine_atomic_fifo_retry_reopen_and_replay() {
         run(false, false).await;
