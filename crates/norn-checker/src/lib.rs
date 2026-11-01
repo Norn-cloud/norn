@@ -189,13 +189,14 @@ pub use ontology::{
     validate_ontology_instance_in_registry, validate_ontology_pack, validate_ontology_registry,
 };
 pub use property_types::{check_property_type_defs, resolved_property_type};
+pub use receipt::ReceiptSources;
 pub use receipt::{
     ArtifactRef, ArtifactSetRef, CheckReceipt, CheckedArtifactSet, DiagnosticsDigest,
-    IDENTIFIER_ADMISSION_PROFILE, ReceiptError, ReceiptSources, ReceiptVersion,
-    admission_receipt_sha256, check_artifact_set_for_install,
-    check_artifact_set_for_install_with_flow_source_map, check_artifact_set_with_flow_source_map,
-    check_artifact_set_with_receipt, check_artifact_set_with_verified_receipt, derive_type_env,
-    recover_legacy_admission_receipt, verify_admission_receipt,
+    IDENTIFIER_ADMISSION_PROFILE, ReceiptError, ReceiptVersion, admission_receipt_sha256,
+    check_artifact_set_for_install, check_artifact_set_for_install_with_flow_source_map,
+    check_artifact_set_with_flow_source_map, check_artifact_set_with_receipt,
+    check_artifact_set_with_verified_receipt, derive_type_env, recover_legacy_admission_receipt,
+    verify_admission_receipt,
 };
 pub use widget_ux::{GeneratedTransitionEnabledWhenError, generated_transition_enabled_when};
 

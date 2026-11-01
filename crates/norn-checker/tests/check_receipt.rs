@@ -1117,17 +1117,13 @@ fn verify_admission_receipt(
     base: &[ArtifactEnvelope],
     limits: &ResourceLimitProfile,
 ) -> Result<norn_checker::ReceiptVersion, norn_checker::ReceiptError> {
-    let encode = |values: &[ArtifactEnvelope]| {
-        values
-            .iter()
-            .map(|value| norn_ir::runtime::encode(value).unwrap())
-            .collect::<Vec<_>>()
-    };
+    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
+    let installed = norn_ir::runtime::encode(base).unwrap();
     norn_checker::receipt::verify_admission_receipt_sources(
         stored,
         hash,
-        &encode(artifacts),
-        &encode(base),
+        candidates.as_array().unwrap(),
+        installed.as_array().unwrap(),
         limits,
     )
 }
