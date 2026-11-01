@@ -198,3 +198,27 @@ engine harnesses. Results must be recorded against the exact engine source head.
 The full-width meter witness first accepts u64::MAX exactly, then refuses an
 additional unit and every later charge. The diagnostic total saturates at
 u64::MAX when the rejected mathematical total is wider; accepted fuel never wraps.
+
+FOLD-RESCALE / VAL-ROUND: `ScaledArithmetic::rescale` is an explicit target
+quantization site. Source precision may exceed the destination; target scales
+are 0..18. Normalize the value, multiply its signed coefficient by the exact
+power of ten when increasing scale, or use the existing signed integer quotient
+and declared mode when decreasing it. Refuse invalid targets, intermediate i128
+overflow and results outside the exact core decimal range. No f64 conversion
+or implicit precision reduction is permitted. The canonical declaration mode
+is `norn_ir::Rounding`; existing serialized rounding strings remain unchanged.
+
+Signed midpoint scenarios at scale 2 map ±1.005 to ±1.01 with midpoint-away,
+and ±1.00 with half-even/toward-zero; refuse rejects inexact input. Trailing
+zeros, zero, precision 28, invalid scale, i128 and core-decimal range boundaries
+are explicit scenarios. Binary fold semantics remain as declared above. For
+ordinary exact expressions, preserve intermediate precision or refuse it:
+scale-3 exact multiplication preserves `(1.25 * 0.1) * 100`, then an explicit
+scale-2 half-even site produces 12.50. Scale-2 refuse rejects the first product.
+Destination rounding must not quantize each intermediate multiply to 12.00.
+
+Correspondence: generated coefficients and source/target scales 0..18 compare
+rescale against an independent signed-integer reference. Production Kani
+harnesses check all modes for i8 coefficients and scales 0..4, plus invalid u32
+targets and full-width decimal overflow witnesses. Evidence is bounded for Kani
+and sampled for proptest; neither claims arbitrary-precision symbolic execution.

@@ -457,7 +457,7 @@ fn malformed_fold_is_refused_instead_of_an_ordinary_sub_decision() {
         max_accumulator_bytes: 100,
         arithmetic: norn_ir::jdm::FoldArithmetic {
             scale: 0,
-            rounding: norn_ir::jdm::FoldRounding::Refuse,
+            rounding: norn_ir::Rounding::Refuse,
         },
     });
     let subs = BTreeMap::from([(
@@ -828,7 +828,7 @@ fn fold_rules(
             max_accumulator_bytes: 1048576,
             arithmetic: norn_ir::jdm::FoldArithmetic {
                 scale: 0,
-                rounding: norn_ir::jdm::FoldRounding::HalfAwayFromZero,
+                rounding: norn_ir::Rounding::HalfAwayFromZero,
             },
         });
     }
@@ -1570,6 +1570,41 @@ proptest::proptest! {
             } else {
                 proptest::prop_assert_eq!(u128::from(meter.used()), u128::from(first) + u128::from(second));
             }
+        }
+    }
+}
+
+proptest::proptest! {
+    /// FOLD-RESCALE: explicit quantization agrees with signed integer reference.
+    #[test]
+    fn rescale_matches_integer_reference(
+        n in -1_000_000_i64..=1_000_000,
+        source in 0_u32..=18,
+        target in 0_u32..=18,
+        mode in 0_u8..4,
+    ) {
+        use zen_engine::scaled::{Rounding, ScaledArithmetic};
+        let rounding = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][usize::from(mode)];
+        let factor = 10_u64.pow(source);
+        let text = if source == 0 { n.to_string() } else {
+            format!("{}{}.{:0width$}", if n < 0 { "-" } else { "" }, n.unsigned_abs() / factor, n.unsigned_abs() % factor, width = usize::try_from(source).unwrap())
+        };
+        let profile = ScaledArithmetic { scale: target, rounding };
+        let actual = profile.rescale(text.parse().unwrap());
+        let numerator = i128::from(n) * 10_i128.pow(target);
+        let denominator = i128::from(factor);
+        let q = numerator / denominator;
+        let remainder = numerator % denominator;
+        if rounding == Rounding::Refuse && remainder != 0 {
+            proptest::prop_assert!(actual.is_err());
+        } else {
+            let away = match rounding {
+                Rounding::Refuse | Rounding::TowardZero => false,
+                Rounding::HalfEven => 2 * remainder.abs() > denominator || (2 * remainder.abs() == denominator && q % 2 != 0),
+                Rounding::HalfAwayFromZero => 2 * remainder.abs() >= denominator,
+            };
+            let expected = q + if away { numerator.signum() } else { 0 };
+            proptest::prop_assert_eq!(profile.coefficient(actual.unwrap()).unwrap(), expected);
         }
     }
 }

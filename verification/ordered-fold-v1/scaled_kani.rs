@@ -126,3 +126,46 @@ fn scaled_intermediate_and_decimal_range_overflow_refuse() {
     .binary(op, a, b)
     .is_err());
 }
+
+/// FOLD-RESCALE: bounded coefficients/scales cover all four explicit modes.
+#[kani::proof]
+#[kani::unwind(40)]
+fn explicit_rescale_obeys_exact_and_nearest_laws() {
+    let n = i128::from(kani::any::<i8>());
+    let source = u32::from(kani::any::<u8>() % 5);
+    let target = u32::from(kani::any::<u8>() % 5);
+    let rounding = mode();
+    let profile = ScaledArithmetic { scale: target, rounding };
+    let result = profile.rescale(Decimal::from_i128_with_scale(n, source));
+    let numerator = n * 10_i128.pow(target);
+    let denominator = 10_i128.pow(source);
+    let q = numerator / denominator;
+    let remainder = numerator % denominator;
+    if rounding == Rounding::Refuse && remainder != 0 {
+        assert!(result.is_err());
+        return;
+    }
+    let actual = profile.coefficient(result.unwrap()).unwrap();
+    match rounding {
+        Rounding::Refuse | Rounding::TowardZero => assert_eq!(actual, q),
+        Rounding::HalfEven | Rounding::HalfAwayFromZero => {
+            let error = (numerator - actual * denominator).abs();
+            assert!(2 * error <= denominator);
+            if 2 * error == denominator {
+                if rounding == Rounding::HalfEven { assert_eq!(actual % 2, 0); }
+                else { assert_eq!(actual.abs(), q.abs() + 1); }
+            }
+        }
+    }
+}
+
+#[kani::proof]
+#[kani::unwind(40)]
+fn rescale_invalid_scales_and_full_width_boundaries_refuse() {
+    let target: u32 = kani::any();
+    kani::assume(target > 18);
+    assert!(ScaledArithmetic { scale: target, rounding: mode() }.rescale(Decimal::ZERO).is_err());
+    let profile = ScaledArithmetic { scale: 18, rounding: mode() };
+    assert!(profile.rescale(Decimal::MAX).is_err());
+    assert!(profile.rescale(Decimal::MIN).is_err());
+}

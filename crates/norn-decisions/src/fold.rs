@@ -5,7 +5,7 @@ use crate::{
     step::StepContracts,
 };
 use norn_expr::schema::Schema;
-use norn_ir::jdm::{FoldOrderKind, FoldRounding, OrderedFold};
+use norn_ir::{Rounding as IrRounding, jdm::{FoldOrderKind, OrderedFold}};
 use std::collections::BTreeSet;
 use zen_engine::{
     Decision, EvaluationOptions, Isolate, Variable,
@@ -37,10 +37,10 @@ impl FoldPlan {
         let profile = ScaledArithmetic {
             scale: f.arithmetic.scale,
             rounding: match f.arithmetic.rounding {
-                FoldRounding::Refuse => Rounding::Refuse,
-                FoldRounding::TowardZero => Rounding::TowardZero,
-                FoldRounding::HalfEven => Rounding::HalfEven,
-                FoldRounding::HalfAwayFromZero => Rounding::HalfAwayFromZero,
+                IrRounding::Refuse => Rounding::Refuse,
+                IrRounding::TowardZero => Rounding::TowardZero,
+                IrRounding::HalfEven => Rounding::HalfEven,
+                IrRounding::HalfAwayFromZero => Rounding::HalfAwayFromZero,
             },
         };
         let meter = meter.with_arithmetic(profile);
