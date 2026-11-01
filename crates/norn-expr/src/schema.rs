@@ -791,3 +791,18 @@ pub fn fold_step_schemas(fold: &norn_ir::jdm::OrderedFold) -> Result<(Schema, Sc
         accumulator,
     ))
 }
+
+/// Whether a helper graph stays inside the non-nested ordered-step fragment.
+#[must_use]
+pub fn fold_step_graph_supported(graph: &norn_ir::jdm::JdmGraph) -> bool {
+    use norn_ir::jdm::{JdmExecutionMode::Loop, JdmNode};
+    graph.nodes.iter().all(|node| match node {
+        JdmNode::DecisionNode { content, .. } => {
+            content.ordered_fold.is_none() && content.execution_mode != Some(Loop)
+        }
+        JdmNode::ExpressionNode { content, .. } => content.execution_mode != Some(Loop),
+        JdmNode::DecisionTableNode { content, .. } => content.execution_mode != Some(Loop),
+        JdmNode::InputNode { .. } | JdmNode::OutputNode { .. } | JdmNode::SwitchNode { .. } => true,
+        JdmNode::FunctionNode { .. } | JdmNode::CustomNode { .. } => false,
+    })
+}

@@ -1308,14 +1308,18 @@ pub fn check_sub_decision_closures(
                 // Undeclared (T2) or unresolved (the resolver) elsewhere.
                 continue;
             };
-            if let Some(JdmNode::DecisionNode { content, .. }) = graph.nodes.get(reference.node) {
-                if let Some(fold) = &content.ordered_fold {
-                    if !fold_helper_matches(fold, target) {
-                        findings.push(set_finding(codes::ORDERED_FOLD_INVALID,
-                            "fold helper schemas must equal {accumulator, item, index} -> accumulator".to_owned(),
-                            artifact, &pointer, DiagnosticRemediation::FixDefinition));
-                    }
-                }
+            if let Some(JdmNode::DecisionNode { content, .. }) = graph.nodes.get(reference.node)
+                && let Some(fold) = &content.ordered_fold
+                && !fold_helper_matches(fold, target)
+            {
+                findings.push(set_finding(
+                    codes::ORDERED_FOLD_INVALID,
+                    "fold helper schemas must equal {accumulator, item, index} -> accumulator"
+                        .to_owned(),
+                    artifact,
+                    &pointer,
+                    DiagnosticRemediation::FixDefinition,
+                ));
             }
             let Some(nested) = closure_of(target, &pool, &mut memo, &mut BTreeSet::new()) else {
                 findings.push(set_finding(
@@ -1330,6 +1334,29 @@ pub fn check_sub_decision_closures(
                 ));
                 continue;
             };
+            if let Some(JdmNode::DecisionNode { content, .. }) = graph.nodes.get(reference.node)
+                && content.ordered_fold.is_some()
+                && !std::iter::once(target)
+                    .chain(
+                        nested
+                            .members
+                            .iter()
+                            .filter_map(|identity| pool.by_identity.get(identity).copied()),
+                    )
+                    .all(|helper| {
+                        decode_graph(helper).is_some_and(|graph| {
+                            norn_expr::schema::fold_step_graph_supported(&graph)
+                        })
+                    })
+            {
+                findings.push(set_finding(
+                    codes::ORDERED_FOLD_INVALID,
+                    "nested fold or loop helper is unsupported".to_owned(),
+                    artifact,
+                    &pointer,
+                    DiagnosticRemediation::FixDefinition,
+                ));
+            }
             let depth = nested.depth.saturating_add(1);
             if depth > MAX_SUB_DECISION_DEPTH {
                 findings.push(set_finding(

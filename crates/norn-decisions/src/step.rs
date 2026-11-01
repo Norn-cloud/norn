@@ -1,7 +1,12 @@
 //! Exact schema checks at every helper invocation, including each fold step.
 use std::collections::BTreeMap;
 
-use norn_expr::schema::Schema;
+use norn_expr::schema::{Schema, fold_step_schemas};
+use norn_ir::{
+    JsonValue,
+    jdm::{FoldOrderKind, OrderedFold},
+};
+use std::collections::BTreeSet;
 use zen_engine::{
     Variable,
     meter::{Meter, cost},
@@ -11,7 +16,9 @@ use zen_engine::{
 use crate::convert::from_variable;
 
 #[derive(Debug, Default)]
-pub(crate) struct StepContracts(BTreeMap<String, (Schema, Schema)>);
+pub(crate) struct StepContracts {
+    pub(crate) schemas: BTreeMap<String, (Schema, Schema)>,
+}
 
 impl StepContracts {
     pub(crate) fn insert_fold(
@@ -20,6 +27,11 @@ impl StepContracts {
         helper: &norn_ir::RuleRoot,
         fold: &norn_ir::jdm::OrderedFold,
     ) -> Result<(), crate::AdmissionError> {
+        validate_fold(fold).map_err(|error| crate::AdmissionError::InvalidSchema {
+            rule_id: helper.rule_id.clone(),
+            path: "orderedFold".into(),
+            reason: error.to_string(),
+        })?;
         let parse = |document, path: &str| {
             Schema::parse(&norn_ir::JsonValue::Object(document), path).map_err(|error| {
                 crate::AdmissionError::InvalidSchema {
@@ -47,7 +59,7 @@ impl StepContracts {
                     .into(),
             });
         }
-        self.0.insert(key.to_owned(), (input, output));
+        self.schemas.insert(key.to_owned(), (input, output));
         Ok(())
     }
 }
@@ -60,7 +72,7 @@ impl DecisionContracts for StepContracts {
         input: bool,
         meter: Option<&Meter>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let Some((before, after)) = self.0.get(key) else {
+        let Some((before, after)) = self.schemas.get(key) else {
             return Ok(());
         };
         let schema = if input { before } else { after };
@@ -86,7 +98,9 @@ mod tests {
             properties: BTreeMap::from([("n".into(), Schema::Integer)]),
             required: ["n".into()].into(),
         };
-        let contracts = StepContracts(BTreeMap::from([("step".into(), (record.clone(), record))]));
+        let contracts = StepContracts {
+            schemas: BTreeMap::from([("step".into(), (record.clone(), record))]),
+        };
         let meter = Meter::new(100);
         let valid = to_variable(&Value::object([("n", Value::from(1))])).unwrap();
         for input in [true, false] {
@@ -112,4 +126,43 @@ mod tests {
                 .is_err()
         );
     }
+}
+
+pub(crate) fn validate_fold(f: &OrderedFold) -> Result<(), Box<dyn std::error::Error>> {
+    fold_step_schemas(f).map_err(|e| e.reason)?;
+    if f.semantics_version != "1.0"
+        || f.arithmetic.scale > 18
+        || !(1..=4096).contains(&f.max_items)
+        || !(1..=1_048_576).contains(&f.max_accumulator_bytes)
+    {
+        return Err("invalid fold profile or bounds".into());
+    }
+    let item =
+        Schema::parse(&JsonValue::Object(f.item_schema.clone()), "item").map_err(|e| e.reason)?;
+    let mut keys = BTreeSet::new();
+    for key in &f.order {
+        let typed = matches!(
+            (
+                key.kind,
+                item.properties().and_then(|p| p.get(&key.property))
+            ),
+            (FoldOrderKind::String, Some(Schema::String(_)))
+                | (FoldOrderKind::Integer, Some(Schema::Integer))
+        );
+        if !typed
+            || !item.required().is_some_and(|r| r.contains(&key.property))
+            || !keys.insert(&key.property)
+        {
+            return Err("invalid fold order key".into());
+        }
+    }
+    if f.identity.trim().is_empty()
+        || !f
+            .order
+            .last()
+            .is_some_and(|k| k.property == f.identity && k.kind == FoldOrderKind::String)
+    {
+        return Err("fold order requires a final string identity".into());
+    }
+    Ok(())
 }

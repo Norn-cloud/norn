@@ -132,13 +132,12 @@ impl AdmittedDecision {
                 })?;
                 let sub_graph = decision_graph(sub, RuleContractV2::SubDecision)?;
                 for node in &graph.nodes {
-                    if let JdmNode::DecisionNode { content, .. } = node {
-                        if content.key == key {
-                            if let Some(fold) = &content.ordered_fold {
-                                refuse_nested_folds(sub, sub_decisions, 0)?;
-                                contracts.insert_fold(key, sub, fold)?;
-                            }
-                        }
+                    if let JdmNode::DecisionNode { content, .. } = node
+                        && content.key == key
+                        && let Some(fold) = &content.ordered_fold
+                    {
+                        refuse_nested_folds(sub, sub_decisions, 0)?;
+                        contracts.insert_fold(key, sub, fold)?;
                     }
                 }
                 if expanded.get(key).is_some_and(|seen| *seen >= child_depth) {
@@ -877,35 +876,18 @@ fn refuse_nested_folds(
         });
     }
     let graph = decision_graph(rule, RuleContractV2::SubDecision)?;
+    if !norn_expr::schema::fold_step_graph_supported(graph) {
+        return Err(invalid_schema(
+            &rule.rule_id,
+            "orderedFold",
+            "unsupported nested step graph",
+        ));
+    }
     for node in &graph.nodes {
-        let unsupported = match node {
-            JdmNode::DecisionNode { content, .. } => {
-                content.ordered_fold.is_some()
-                    || content.execution_mode == Some(JdmExecutionMode::Loop)
-            }
-            JdmNode::ExpressionNode { content, .. } => {
-                content.execution_mode == Some(JdmExecutionMode::Loop)
-            }
-            JdmNode::DecisionTableNode { content, .. } => {
-                content.execution_mode == Some(JdmExecutionMode::Loop)
-            }
-            JdmNode::InputNode { .. }
-            | JdmNode::OutputNode { .. }
-            | JdmNode::SwitchNode { .. }
-            | JdmNode::FunctionNode { .. }
-            | JdmNode::CustomNode { .. } => false,
-        };
-        if unsupported {
-            return Err(invalid_schema(
-                &rule.rule_id,
-                "orderedFold",
-                "nested folds and loop mode are unsupported",
-            ));
-        }
-        if let JdmNode::DecisionNode { content, .. } = node {
-            if let Some(child) = closure.get(&content.key) {
-                refuse_nested_folds(child, closure, depth.saturating_add(1))?;
-            }
+        if let JdmNode::DecisionNode { content, .. } = node
+            && let Some(child) = closure.get(&content.key)
+        {
+            refuse_nested_folds(child, closure, depth.saturating_add(1))?;
         }
     }
     Ok(())
