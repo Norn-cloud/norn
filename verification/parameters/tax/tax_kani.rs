@@ -12,6 +12,18 @@ fn exact_tax_on_one_hundred_dollars() {
     let rate = rust_decimal::Decimal::from_parts(percent, 0, 0, false, 2);
     let tax = net.checked_mul(rate).expect("bounded tax cannot overflow");
     let gross = net.checked_add(tax).expect("bounded gross cannot overflow");
-    assert_eq!(tax, rust_decimal::Decimal::from(percent));
-    assert_eq!(gross, rust_decimal::Decimal::from(100 + percent));
+    let factor = |scale| match scale {
+        0 => 1_i128,
+        1 => 10,
+        2 => 100,
+        _ => {
+            assert!(false, "bounded arithmetic cannot increase scale");
+            0
+        }
+    };
+    assert_eq!(tax.mantissa(), i128::from(percent) * factor(tax.scale()));
+    assert_eq!(
+        gross.mantissa(),
+        i128::from(100 + percent) * factor(gross.scale())
+    );
 }
