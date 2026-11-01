@@ -102,3 +102,17 @@ Aggregate path-work, member-copy and byte limits refuse incomplete output.
 Generated orderings preserve instances; empty sets establish no non-vacuity.
 App/pack resolution awaits shared instance IR. Kani is infeasible for this
 allocated admission/expression/digest pipeline; correspondence is sampled.
+
+## B3 retained authority construction
+
+LAYER-AUTHORITY-1 constructs checked retained input only from ordered exact
+source documents and their retained admission receipts. Each layer is rechecked
+against already verified predecessors and `verify_admission_receipt` must bind
+the same candidate, base and limits. Missing, reordered, duplicated or forged
+receipts, edited envelopes and candidate-repaired bases refuse. The authority
+identity retains ordered exact-source/receipt digests plus registry and limits;
+Norn1 receipt identity never substitutes for exact source identity. This cut
+does not permit flat multilayer challenges or grant proof/runtime authority.
+LAYERS-CHAIN/FORGED/EXACT tests and generated receipt alterations check the
+production constructor. Kani cannot execute its allocated JSON/admission/hash
+pipeline; bounded cardinality and byte limits are checked before construction.
