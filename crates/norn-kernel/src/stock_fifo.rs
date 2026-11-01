@@ -65,7 +65,6 @@ pub fn allocate_fifo(
     layers: &[FifoLayer],
     movement: &FifoMovement,
 ) -> Result<FifoResult, FifoError> {
-    let invalid = || FifoError::Invalid;
     if layers.iter().any(|layer| {
         layer.quantity == 0 || layer.quantity > MAX_RECEIPT_QUANTITY || layer.receipt.is_empty()
     }) {
@@ -96,8 +95,8 @@ pub fn allocate_fifo(
             let mut after = Vec::new();
             for layer in layers {
                 let taken = remaining.min(layer.quantity);
-                let value = share(taken, layer).ok_or_else(invalid)?;
-                remaining -= taken;
+                let value = share(taken, layer).ok_or(FifoError::Invalid)?;
+                remaining = remaining.checked_sub(taken).ok_or(FifoError::Invalid)?;
                 if taken > 0 {
                     allocations.push(FifoLayer {
                         receipt: layer.receipt.clone(),
@@ -108,8 +107,11 @@ pub fn allocate_fifo(
                 if taken < layer.quantity {
                     after.push(FifoLayer {
                         receipt: layer.receipt.clone(),
-                        quantity: layer.quantity - taken,
-                        value: layer.value - value,
+                        quantity: layer
+                            .quantity
+                            .checked_sub(taken)
+                            .ok_or(FifoError::Invalid)?,
+                        value: layer.value.checked_sub(value).ok_or(FifoError::Invalid)?,
                     });
                 }
             }
