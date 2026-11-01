@@ -596,6 +596,10 @@ def workflow_context_canaries(source: str) -> None:
                 return
             raise AssertionError(f"workflow context mutation passed: {label}")
 
+        def action_step(document: dict[str, Any], job: str, action: str) -> dict[str, Any]:
+            return next(step for step in document["jobs"][job]["steps"]
+                        if step.get("uses", "").startswith(action + "@"))
+
         runner = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
         for name in ("core", "plan", "test", "phase", "full", "trusted-policy"):
             unsafe = ["self-hosted", ["self-hosted", "norn-merge"],
@@ -629,14 +633,14 @@ def workflow_context_canaries(source: str) -> None:
                                ("path", "other-checkout"), ("persist-credentials", True),
                                ("persist-credentials", 0), ("fetch-depth", False)):
                 document = copy.deepcopy(workflow)
-                document["jobs"][name]["steps"][0]["with"][key] = value
+                action_step(document, name, "actions/checkout")["with"][key] = value
                 rejected(f"{name} checkout {key}", document)
             for key in ("BASH_ENV", "BASH_FUNC_exit%%", "LD_PRELOAD", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE"):
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
                 rejected(f"{name} step environment {key}", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["test"]["steps"][2]["with"]["bun-version"] = "latest"
+        action_step(document, "test", "oven-sh/setup-bun")["with"]["bun-version"] = "latest"
         rejected("altered preparation action inputs", document)
         for location in ("workflow", "job", "step"):
             document = copy.deepcopy(workflow)
@@ -654,7 +658,9 @@ def workflow_context_canaries(source: str) -> None:
         document["jobs"]["test"]["steps"].insert(-1, {"run": "echo NORN_CI_PACKAGES=norn-canonical >> $GITHUB_ENV"})
         rejected("test preparation can override plan inputs", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["core"]["steps"].append(document["jobs"]["core"]["steps"].pop(0))
+        checkout = action_step(document, "core", "actions/checkout")
+        document["jobs"]["core"]["steps"].remove(checkout)
+        document["jobs"]["core"]["steps"].append(checkout)
         rejected("candidate checkout after the gate", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["phase"]["env"]["NORN_CI_BASE"] = "HEAD"
