@@ -240,12 +240,12 @@ fn map_members_refuses_duplicates_unknown_members_kinds_and_transforms() {
                     .first_mut()
                     .expect("binding")
                     .target
-                    .artifact_id = "toy.unknown".to_owned()
+                    .artifact_id = "toy.unknown".to_owned();
             }
             3 => invalid.members.get_mut(1).expect("property").target = first.target,
             _ => {
                 invalid.members.first_mut().expect("binding").transform =
-                    Some(norn_ir::ZenExpression("input".to_owned()))
+                    Some(norn_ir::ZenExpression("input".to_owned()));
             }
         }
         assert!(
