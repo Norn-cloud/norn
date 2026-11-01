@@ -372,14 +372,29 @@ fn validate_action_slice(
             ));
         }
         let source_depth = match &entry.key {
-            SliceKey::Parameter { .. } => {
-                diagnostics.push(invalid_diagnostic(
-                    ACTION_CODE,
-                    "parameter slice execution is not qualified in this cut",
-                    format!("{path}.key"),
-                    artifact_id,
-                ));
-                0
+            SliceKey::Parameter {
+                from,
+                effective_at,
+                default_from,
+                ..
+            } => {
+                let earlier = slice.iter().take(index).find(|prior| prior.name == *from);
+                let source_ok = earlier
+                    .is_some_and(|prior| prior.is_list() && prior.object_type == entry.object_type);
+                let default_ok = default_from.as_ref().is_none_or(|name| {
+                    slice.iter().take(index).any(|prior| {
+                        prior.name == *name
+                            && !prior.is_list()
+                            && prior.object_type == entry.object_type
+                    })
+                });
+                let time_ok =
+                    action_input_field_type(payload.get("inputSchema"), effective_at.as_str())
+                        == Some(Type::String);
+                if !source_ok || !default_ok || !time_ok {
+                    diagnostics.push(invalid_diagnostic(ACTION_CODE, "parameter requires an earlier same-type list, a string effective instant and an optional earlier same-type default", format!("{path}.key"), artifact_id));
+                }
+                *link_depths.get(from).unwrap_or(&0)
             }
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore

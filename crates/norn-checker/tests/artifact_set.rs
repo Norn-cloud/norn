@@ -625,7 +625,7 @@ proptest::proptest! {
 }
 
 #[test]
-fn parameter_slice_contract_refuses_unqualified_execution() {
+fn parameter_slice_contract_refuses_missing_source() {
     let mut case = read_json(&fixtures().join("ir/artifact-set/valid-retail-set.case.json"));
     let mut action = read_json(&fixtures().join("ir/retail-reorder.action.json"));
     action["payload"]["slice"] = json!([{"name":"tax", "objectType":"retail.Sku", "key":{"parameter":{"from":"rates","settingKey":"tax","effectiveAt":"effectiveAt","precedence":[{}]}}}]);

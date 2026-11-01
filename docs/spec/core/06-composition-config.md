@@ -30,7 +30,7 @@ Source-record mappings and term correspondence stay distinct from law interpreta
 
 `SliceKey::Parameter {from, settingKey, effectiveAt, precedence: Vec<ScopeRef>, defaultFrom?}` projects one numeric setting from an earlier complete authorized link-list slice. `effectiveAt` names the action's input timestamp; `defaultFrom`, when present, names an earlier single-object setting slice. Scope ordering is explicit and closed; no aliases or globals are inferred. Candidate data and link membership stay in the transaction read set.
 
-The initial native numeric-setting fact profile uses `settingKey`, exact numeric `value`, `effectiveFrom`, nullable `effectiveTo`, `reviewState`, and five present nullable scope fields named as `ScopeRef`. It projects to the existing `SettingRoot`; source facts are changed only by ordinary governed actions. The binding contract alone refuses execution until the runtime projection and receipt pin are qualified; rule bindings remain unsupported.
+The initial native numeric-setting fact profile uses `settingKey`, exact numeric `value`, `effectiveFrom`, nullable `effectiveTo`, `reviewState`, and five present nullable scope fields named as `ScopeRef`. It projects to the existing `SettingRoot`; source facts are changed only by ordinary governed actions. PARAM-PIN-1: every candidate fact and source membership is fenced by the ordinary action transaction. The selected fact identity and revision are retained as `parameterReads` on the immutable action receipt. Exact replay returns that original pin; rule bindings remain unsupported.
 
 ### Initial overlay analysis profile
 
