@@ -480,10 +480,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         Tier::T2,
         "executable boundary \"{boundary}\" is retired: inline custom execution is not admitted; move the code into a pool Function invoked through perform",
     ),
-    entry(
+    introduced(
         "definition.text.not_nfc",
         Tier::T0,
         "definition text at {path} must already be Unicode NFC",
+        "0.2.0",
     ),
     entry(
         "derived.validation.incremental_not_supported",

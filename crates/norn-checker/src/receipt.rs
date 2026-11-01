@@ -304,7 +304,6 @@ pub struct ReceiptSources {
     base: Vec<ArtifactEnvelope>,
     identity: ArtifactSetRef,
 }
-
 impl ReceiptSources {
     /// Prepare semantic sources without projecting numbers through f64.
     /// # Errors
@@ -323,6 +322,10 @@ impl ReceiptSources {
         &'a self,
         context: &EntityArtifactSetContext<'a>,
     ) -> Result<EntityArtifactSetContext<'a>, ReceiptError> {
+        for artifact in context.base {
+            crate::layout::normalize_artifact(artifact)
+                .map_err(|errors| invalid_receipt(format!("{errors:?}")))?;
+        }
         if ArtifactSetRef::of(&[], &self.base)? != ArtifactSetRef::of(&[], context.base)? {
             return Err(invalid_receipt("receipt base/context mismatch"));
         }
@@ -332,7 +335,6 @@ impl ReceiptSources {
         })
     }
 }
-
 /// Check `artifacts` against `context` ([`crate::check_artifact_set`]) under
 /// `limits`, derive the set's type environment when the set is clean, and
 /// issue the [`CheckReceipt`]. See the module docs.
