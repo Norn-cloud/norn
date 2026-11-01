@@ -450,9 +450,11 @@ fn law_paths(
             let mut resolved = Vec::new();
             for name in path {
                 let reference = owners.get(name)?;
-                work.bytes = work
-                    .bytes
-                    .saturating_add(norn_canonical::serialize_json_verbatim(reference).ok()?.len());
+                work.bytes = work.bytes.saturating_add(
+                    norn_canonical::serialize_json_verbatim(reference)
+                        .ok()?
+                        .len(),
+                );
                 if work.bytes > 8_388_608 {
                     return None;
                 }
