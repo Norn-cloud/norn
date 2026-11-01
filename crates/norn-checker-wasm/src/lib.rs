@@ -243,55 +243,54 @@ pub fn check_artifact_set_json(
         tenant_id: &tenant.tenant_id,
         namespace: &tenant.namespace,
     });
-    let output = if let Err(findings) = decode_envelopes(&artifacts) {
-        json!({
+    if let Err(findings) = decode_envelopes(&artifacts) {
+        return Ok(json!({
             "format": CHECK_FORMAT,
             "admitted": false,
             "diagnostics": diagnostics_to_json(&findings),
             "receipt": null,
             "receiptSha256": null,
         })
-    } else {
-        let receipt_error = |error: &dyn fmt::Display| AbiError::Receipt(error.to_string());
-        let sources =
-            RuntimeValue::from_json_text(artifacts_json).map_err(|error| receipt_error(&error))?;
-        let raw_context =
-            RuntimeValue::from_json_text(context_json).map_err(|error| receipt_error(&error))?;
-        let base = raw_context
-            .as_object()
-            .and_then(|object| object.get("base"))
-            .and_then(RuntimeValue::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let checked = check_artifact_sources_with_receipt(
-            sources
-                .as_array()
-                .ok_or_else(|| invalid("artifacts", "expected array"))?,
-            base,
-            &context.registry,
-            tenant,
-            &limits,
-            context.flow_source_map.as_ref(),
-        )
+        .to_string());
+    }
+    let receipt_error = |error: &dyn fmt::Display| AbiError::Receipt(error.to_string());
+    let sources =
+        RuntimeValue::from_json_text(artifacts_json).map_err(|error| receipt_error(&error))?;
+    let raw_context =
+        RuntimeValue::from_json_text(context_json).map_err(|error| receipt_error(&error))?;
+    let base = raw_context
+        .as_object()
+        .and_then(|object| object.get("base"))
+        .and_then(RuntimeValue::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let checked = check_artifact_sources_with_receipt(
+        sources
+            .as_array()
+            .ok_or_else(|| invalid("artifacts", "expected array"))?,
+        base,
+        &context.registry,
+        tenant,
+        &limits,
+        context.flow_source_map.as_ref(),
+    )
+    .map_err(|error| receipt_error(&error))?;
+    let bytes = checked
+        .receipt
+        .canonical_json()
         .map_err(|error| receipt_error(&error))?;
-        let bytes = checked
-            .receipt
-            .canonical_json()
-            .map_err(|error| receipt_error(&error))?;
-        let receipt: Value =
-            serde_json::from_slice(&bytes).map_err(|error| receipt_error(&error))?;
-        let sha256 = checked
-            .receipt
-            .content_sha256()
-            .map_err(|error| receipt_error(&error))?;
-        json!({
-            "format": CHECK_FORMAT,
-            "admitted": checked.receipt.admitted,
-            "diagnostics": diagnostics_to_json(&checked.diagnostics),
-            "receipt": receipt,
-            "receiptSha256": sha256,
-        })
-    };
+    let receipt: Value = serde_json::from_slice(&bytes).map_err(|error| receipt_error(&error))?;
+    let sha256 = checked
+        .receipt
+        .content_sha256()
+        .map_err(|error| receipt_error(&error))?;
+    let output = json!({
+        "format": CHECK_FORMAT,
+        "admitted": checked.receipt.admitted,
+        "diagnostics": diagnostics_to_json(&checked.diagnostics),
+        "receipt": receipt,
+        "receiptSha256": sha256,
+    });
     Ok(output.to_string())
 }
 

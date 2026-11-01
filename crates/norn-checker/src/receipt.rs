@@ -359,13 +359,20 @@ pub fn verify_admission_receipt_sources(
     base: &[RuntimeValue],
     limits: &ResourceLimitProfile,
 ) -> Result<ReceiptVersion, ReceiptError> {
-    let (artifacts, candidates) = source_refs(artifacts)?;
-    let (base, installed) = source_refs(base)?;
+    let (_, candidates) = source_refs(artifacts)?;
+    let (_, installed) = source_refs(base)?;
+    let original = |sources: &[RuntimeValue]| {
+        sources
+            .iter()
+            .map(norn_ir::runtime::decode)
+            .collect::<Result<Vec<ArtifactEnvelope>, _>>()
+            .map_err(invalid_receipt)
+    };
     verify_receipt(
         stored,
         expected_sha256,
-        &artifacts,
-        &base,
+        &original(artifacts)?,
+        &original(base)?,
         limits,
         ArtifactSetRef::from_refs(candidates, installed)?,
     )
@@ -377,18 +384,23 @@ fn source_refs(
     let mut artifacts = Vec::with_capacity(sources.len());
     let mut refs = Vec::with_capacity(sources.len());
     for source in sources {
-        let prepared = crate::layout::prepare_artifact_source(source.clone())
-            .map_err(|errors| invalid_receipt(format!("invalid artifact source: {errors:?}")))?;
-        let bytes = prepared
-            .source
+        let (artifact, semantic_source) =
+            match crate::layout::prepare_artifact_source(source.clone()) {
+                Ok(prepared) => (prepared.artifact, prepared.source),
+                Err(_) => (
+                    norn_ir::runtime::decode(source).map_err(invalid_receipt)?,
+                    source.clone(),
+                ),
+            };
+        let bytes = semantic_source
             .canonical_json()
             .map_err(|error| invalid_receipt(error.to_string()))?;
         refs.push(ArtifactRef {
-            artifact_id: prepared.artifact.artifact_id.clone(),
-            version: prepared.artifact.version.clone(),
+            artifact_id: artifact.artifact_id.clone(),
+            version: artifact.version.clone(),
             sha256: RECEIPT_HASH_PROFILE.hash_canonical_bytes(&bytes),
         });
-        artifacts.push(norn_ir::runtime::decode(source).map_err(invalid_receipt)?);
+        artifacts.push(artifact);
     }
     Ok((artifacts, refs))
 }

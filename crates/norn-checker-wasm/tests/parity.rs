@@ -694,3 +694,21 @@ fn widget_parity_corpus_preserves_keys_selections_and_display_values() {
         }
     }
 }
+
+#[test]
+fn malformed_inline_layout_remains_an_admission_finding() {
+    let mut artifact = json_of(&read("fixtures/ir/retail-reorder-routing.rule.json"));
+    artifact["payload"]["graph"]["nodes"][0]["position"] = serde_json::json!("invalid");
+    let output =
+        check_artifact_set_json(&format!("[{artifact}]"), "null").expect("diagnostic response");
+    let output = json_of(&output);
+    assert_eq!(output["admitted"], false);
+    assert_eq!(output["receipt"]["admitted"], false);
+    assert!(
+        output["diagnostics"]["diagnostics"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .any(|finding| finding["code"] == "layout.validation.invalid_inline_field")
+    );
+}
