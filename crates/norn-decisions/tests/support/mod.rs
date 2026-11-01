@@ -226,6 +226,16 @@ pub(crate) fn check_fixture(path: &Path, failures: &mut Vec<String>) -> usize {
 /// Compiler-generated RuleIR; the authoring tests check source/golden drift.
 pub(crate) fn generated_rules(fixture: &str) -> BTreeMap<String, RuleRoot> {
     let artifacts = read_json(&repo_root().join(fixture));
-    artifacts.as_array().unwrap().iter().filter(|a| a["kind"] == "rule")
-        .map(|a| (a["artifactId"].as_str().unwrap().to_owned(), rule(&a["payload"]))).collect()
+    artifacts
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| a["kind"] == "rule")
+        .map(|a| {
+            (
+                a["artifactId"].as_str().unwrap().to_owned(),
+                rule(&a["payload"]),
+            )
+        })
+        .collect()
 }
