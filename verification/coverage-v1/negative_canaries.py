@@ -20,7 +20,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 GATES = Path(__file__).with_name("promoted-gates.json")
-COVERAGE = Path(__file__).with_name("coverage.json")
+COVERAGE = Path(__file__).with_name("manifest")
 VALIDATOR = Path(__file__).with_name("validate.py")
 WRITER = ROOT / "scripts/write-verification-result.py"
 RESULT_VALIDATOR = Path(__file__).with_name("validate_result.py")
@@ -47,6 +47,7 @@ VERIFICATION_TOOL_ROOT = Path(
 QUINT = VERIFICATION_TOOL_ROOT / "bin/quint"
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import coverage_manifest  # noqa: E402
 import quint_apalache  # noqa: E402  (shared Quint/Apalache execution policy)
 
 
@@ -128,15 +129,62 @@ def expect_manifest_rejection(label: str, mutate: Callable[[dict[str, Any]], Non
 
 
 def expect_coverage_rejection(label: str, mutate: Callable[[dict[str, Any]], None]) -> None:
-    document = json.loads(COVERAGE.read_text(encoding="utf-8"))
+    document = coverage_manifest.load(COVERAGE)
     mutate(document)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as candidate:
-        json.dump(document, candidate)
-        candidate.flush()
-        expect_coverage_validator_rejection(
-            label,
-            coverage_path=Path(candidate.name),
-        )
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "manifest"
+        coverage_manifest.write(document, candidate)
+        expect_coverage_validator_rejection(label, coverage_path=candidate)
+
+
+def coverage_layout_canaries() -> None:
+    """Each refusal fires through the per-subsystem files a pull request edits."""
+    document = coverage_manifest.load(COVERAGE)
+
+    def rejects(label: str, expected: str, arrange: Callable[[Path], object]) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = Path(directory) / "manifest"
+            coverage_manifest.write(document, candidate)
+            arrange(candidate)
+            error = expect_coverage_validator_rejection(label, coverage_path=candidate)
+        if expected not in error:
+            raise AssertionError(f"{label} failed for an unexpected reason: {error}")
+        print(f"coverage layout canary refused {label}: {error[:160]}")
+
+    def edit(name: str, change: Callable[[dict[str, Any]], object]) -> Callable[[Path], object]:
+        def arrange(candidate: Path) -> None:
+            path = candidate / "subsystems" / f"{name}.json"
+            body = json.loads(path.read_text(encoding="utf-8"))
+            change(body)
+            path.write_text(json.dumps(body), encoding="utf-8")
+        return arrange
+
+    def wrong_status(body: dict[str, Any]) -> None:
+        body["obligationClaims"][0]["runtime"] = "implementation_proven"
+
+    rejects("missing source enrollment", "exact source enrollment mismatch",
+            edit("ontology", lambda body: body["sourceFiles"].pop()))
+    rejects("claim status outside the vocabulary", "implementation_proven", edit("ontology", wrong_status))
+    rejects("unknown subsystem", "mandatory subsystem mismatch",
+            lambda c: (c / "subsystems/ontology.json").rename(c / "subsystems/analytics-projection.json"))
+    def drop_cala_boundary(candidate: Path) -> None:
+        # Keep its sources enrolled elsewhere so the mandatory-set check is what fires.
+        dropped = candidate / "subsystems/cala-boundary.json"
+        sources = json.loads(dropped.read_text(encoding="utf-8"))["sourceFiles"]
+        edit("ontology", lambda body: body["sourceFiles"].extend(sources))(candidate)
+        dropped.unlink()
+
+    rejects("missing mandatory subsystem", "mandatory subsystem mismatch", drop_cala_boundary)
+    rejects("subsystem file claims an id", "drop the id field",
+            edit("ontology", lambda body: body.update(id="ontology")))
+    rejects("index lists subsystems", "must not list subsystems",
+            lambda c: (c / "index.json").write_text(json.dumps({**json.loads((c / "index.json").read_text()), "subsystems": []})))
+    rejects("stray coverage file", "unknown coverage entries", lambda c: (c / "notes.json").write_text("{}"))
+    rejects("misnamed subsystem file", "unknown subsystem files", lambda c: (c / "subsystems/Ontology.json").write_text("{}"))
+    rejects("symlinked subsystem file", "not a regular file", lambda c: (
+        (c / "subsystems/ontology.json").rename(c.parent / "ontology.real"),
+        (c / "subsystems/ontology.json").symlink_to(c.parent / "ontology.real"),
+    ))
 
 
 def manifest_canaries() -> None:
@@ -176,14 +224,14 @@ def manifest_canaries() -> None:
         gate = next(item for item in document["gates"] if item["command"].startswith("cargo "))
         original_command = gate["command"]
         gate["command"] = original_command.replace(" --locked", "", 1) + suffix
-        coverage = COVERAGE.read_text(encoding="utf-8").replace(
+        coverage = json.loads(json.dumps(coverage_manifest.load(COVERAGE)).replace(
             json.dumps(original_command), json.dumps(gate["command"])
-        )
+        ))
         with tempfile.TemporaryDirectory() as directory:
             gate_path = Path(directory) / "gates.json"
-            coverage_path = Path(directory) / "coverage.json"
+            coverage_path = Path(directory) / "manifest"
             gate_path.write_text(json.dumps(document), encoding="utf-8")
-            coverage_path.write_text(coverage, encoding="utf-8")
+            coverage_manifest.write(coverage, coverage_path)
             diagnostic = expect_coverage_validator_rejection(
                 label, gate_manifest_source=gate_path, coverage_path=coverage_path
             )
@@ -313,7 +361,7 @@ def central_obligation_closure_canaries() -> None:
         "norn_central_obligation_closure_canary", VALIDATOR
     )
     obligations = json.loads(CENTRAL_OBLIGATIONS.read_text(encoding="utf-8"))
-    coverage = json.loads(COVERAGE.read_text(encoding="utf-8"))
+    coverage = coverage_manifest.load(COVERAGE)
     gates = json.loads(GATES.read_text(encoding="utf-8"))
     registry_ids = frozenset(item["id"] for item in obligations["obligations"])
     if registry_ids != CANONICAL_CENTRAL_OBLIGATION_IDS:
@@ -335,12 +383,12 @@ def central_obligation_closure_canaries() -> None:
         with tempfile.TemporaryDirectory() as directory:
             candidate_root = Path(directory)
             obligation_path = candidate_root / "obligations.json"
-            coverage_path = candidate_root / "coverage.json"
+            coverage_path = candidate_root / "manifest"
             gate_path = candidate_root / "promoted-gates.json"
             obligation_path.write_text(
                 json.dumps(mutated_obligations), encoding="utf-8"
             )
-            coverage_path.write_text(json.dumps(mutated_coverage), encoding="utf-8")
+            coverage_manifest.write(mutated_coverage, coverage_path)
             gate_path.write_text(json.dumps(mutated_gates), encoding="utf-8")
             validators = [
                 (
@@ -422,10 +470,10 @@ def central_obligation_closure_canaries() -> None:
     with tempfile.TemporaryDirectory() as directory:
         candidate_root = Path(directory)
         demoted_path = candidate_root / "demoted-central.json"
-        coverage_path = candidate_root / "coverage.json"
+        coverage_path = candidate_root / "manifest"
         gate_path = candidate_root / "promoted-gates.json"
         demoted_path.write_text(json.dumps(demoted_registry), encoding="utf-8")
-        coverage_path.write_text(json.dumps(demoted_coverage), encoding="utf-8")
+        coverage_manifest.write(demoted_coverage, coverage_path)
         gate_path.write_text(json.dumps(demoted_gates), encoding="utf-8")
         previous = os.environ.get("NORN_VERIFICATION_CENTRAL_OBLIGATIONS")
         os.environ["NORN_VERIFICATION_CENTRAL_OBLIGATIONS"] = str(demoted_path)
@@ -470,7 +518,7 @@ def core_physics_closure_canaries() -> None:
     removed = "INV-CORE-COMMITMENT-COMPLETION"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     registry["obligations"] = [item for item in registry["obligations"] if item["id"] != removed]
-    coverage = json.loads(COVERAGE.read_text(encoding="utf-8"))
+    coverage = coverage_manifest.load(COVERAGE)
     for subsystem in coverage["subsystems"]:
         if subsystem["id"] == "core-physics":
             subsystem["obligations"].remove(removed)
@@ -479,9 +527,9 @@ def core_physics_closure_canaries() -> None:
             ]
     with tempfile.TemporaryDirectory() as directory:
         candidate_registry = Path(directory) / "obligations.json"
-        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_coverage = Path(directory) / "manifest"
         candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
-        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        coverage_manifest.write(coverage, candidate_coverage)
         message = expect_coverage_validator_rejection(
             "coordinated core-physics law deletion",
             coverage_path=candidate_coverage,
@@ -497,9 +545,9 @@ def core_physics_closure_canaries() -> None:
             item["priority"] = "P1"
     with tempfile.TemporaryDirectory() as directory:
         candidate_registry = Path(directory) / "obligations.json"
-        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_coverage = Path(directory) / "manifest"
         candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
-        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        coverage_manifest.write(coverage, candidate_coverage)
         message = expect_coverage_validator_rejection(
             "core-physics law demotion and coverage removal",
             coverage_path=candidate_coverage,
@@ -1261,8 +1309,8 @@ def workspace_identity_canaries() -> None:
 
 def evidence_inventory_canaries() -> None:
     writer = load_module("norn_write_verification_result_evidence_canary", WRITER)
-    coverage_path = ROOT / "verification/coverage-v1/coverage.json"
-    coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+    coverage_path = coverage_manifest.COVERAGE
+    coverage = coverage_manifest.load(coverage_path)
     paths = set(writer.evidence_paths(coverage, coverage_path, []))
     selector_binder = "scripts/validate-executed-test-selectors.py"
     if selector_binder not in paths:
@@ -1272,6 +1320,8 @@ def evidence_inventory_canaries() -> None:
     helper = "scripts/verification_attestation.py"
     if helper not in paths:
         raise AssertionError("shared attestation helper is absent from content-addressed evidence")
+    if "scripts/coverage_manifest.py" not in paths:
+        raise AssertionError("coverage manifest loader is absent from content-addressed evidence")
 
     result_validator = load_module("norn_validate_result_inventory_canary", RESULT_VALIDATOR)
     result_validator.reconcile_evidence_paths(paths, set(paths))
@@ -1294,6 +1344,7 @@ def main() -> int:
     if len(sys.argv) != 1:
         raise SystemExit("usage: negative_canaries.py")
     manifest_canaries()
+    coverage_layout_canaries()
     central_obligation_closure_canaries()
     core_physics_closure_canaries()
     jewelry_closure_canaries()
