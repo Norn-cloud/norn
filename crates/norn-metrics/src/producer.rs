@@ -138,6 +138,34 @@ mod tests {
     fn nonfinite_negative_and_unrepresentable_scores_refuse() {
         for value in [f64::NAN, f64::INFINITY, -1.0, f64::MAX] { assert!(nanos(value).is_err()); }
     }
+    #[test]
+    fn actual_report_and_late_evidence_assessment_are_distinct() {
+        use crate::temporal::{TemporalRow, TemporalValue};
+        let root = std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR").expect("typed fixtures");
+        let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_slice(&std::fs::read(std::path::Path::new(&root).join("metric-demand.json")).expect("fixture")).expect("artifacts");
+        let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts);
+        let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0).expect("plan");
+        let value = |n: i32, at| TemporalValue { value: norn_ir::RuntimeValue::from_json_text(n.to_string()).expect("number"), valid_at: at, recorded_at: at, source: format!("unit:{n}:{at}") };
+        let rows: Vec<_> = [4,4,8,8,12,14,16].into_iter().enumerate().map(|(i,y)| {
+            let x = i32::try_from(i).expect("index") + 1; let at = i64::from(x) * 1_000_000;
+            TemporalRow { key: format!("unit-{i}"), at, features: vec![value(x,at)], outcome: value(y,at+1000) }
+        }).collect();
+        let digest = crate::host::implementation_digest().expect("source");
+        let mut export = ForecastExport { tenant:"unit", world:"main", plan:&plan, rows:&rows, version:1,
+            source_digest:digest.clone(), source_head:42, as_of:8_000_000, complete:true, quarantine_count:0, fresh:true,
+            assumptions_digest:digest.clone(), remedy_digest:digest, frontier_age_ms:0 };
+        let (input, _) = export.input(6_000_000).expect("input");
+        let report = prepare_forecast(&export, &input).expect("report");
+        assert!(report.report.is_some()); assert_eq!(report.rmse_nanos, Some(800_000_000));
+        assert_eq!((report.training_rows, report.holdout_rows), (5,2));
+        let mut late = rows.clone();
+        for row in &mut late { for feature in &mut row.features { feature.recorded_at = 8_000_000; } row.outcome.recorded_at = 8_000_000; }
+        export.rows = &late;
+        let (input,_) = export.input(6_000_000).expect("late input");
+        let refused = prepare_forecast(&export, &input).expect("assessment");
+        assert!(refused.temporal_leakage); assert_eq!((refused.late_features,refused.late_training_labels), (7,5));
+        assert!(refused.report.is_none() && refused.rmse_nanos.is_none());
+    }
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(32))]
         #[test]
