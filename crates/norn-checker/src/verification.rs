@@ -466,63 +466,16 @@ pub fn effective_law_instances(
     }
     let mut out = Vec::new();
     let mut bytes = 0usize;
+    let projection = LawProjection {
+        catalog: &catalog,
+        owners: &owners,
+        edges: &edges,
+        digests: &digests,
+        base: context.base,
+        budget,
+    };
     for artifact in pool.iter().filter(|a| a.kind() == ArtifactKind::Law) {
-        let law = decode(artifact).map_err(|detail| {
-            vec![finding(
-                codes::INVALID_DOCUMENT,
-                artifact,
-                "/payload",
-                detail,
-            )]
-        })?;
-        let membership = matches!(law.scope.root, LawRoot::App(_) | LawRoot::Pack(_))
-            .then(|| retained_law_membership(artifact, context.base, budget))
-            .transpose()?;
-        let origin = owners.get(&law.subject).ok_or_else(refused)?;
-        let targets = catalog.target_types(&law.subject).ok_or_else(refused)?;
-        if let Some(membership) = &membership {
-            let scoped = |at: &norn_ir::definition_catalog::MemberRef| {
-                membership.contains_key(&norn_ir::definition_catalog::ArtifactKey {
-                    artifact_id: at.artifact_id.clone(),
-                    version: at.version.clone(),
-                })
-            };
-            if !scoped(origin)
-                && !targets
-                    .iter()
-                    .filter_map(|name| owners.get(name))
-                    .any(scoped)
-            {
-                return Err(refused());
-            }
-        }
-        for target in targets {
-            let subject = owners.get(&target).ok_or_else(refused)?;
-            let paths = law_paths(
-                &law.subject,
-                &target,
-                &edges,
-                &owners,
-                budget,
-                &mut path_work,
-            )
-            .ok_or_else(refused)?;
-            let mut instance = law_instance(artifact, &law, subject, origin, paths, &digests)
-                .ok_or_else(refused)?;
-            let groups = contained_paths(membership.as_ref(), subject);
-            for instance_paths in groups {
-                instance.instance_paths = instance_paths;
-                bytes = bytes.saturating_add(
-                    serde_json::to_vec(&instance)
-                        .map_err(|_error| refused())?
-                        .len(),
-                );
-                if bytes > 8_388_608 || out.len() >= budget.max_nodes {
-                    return Err(refused());
-                }
-                out.push(instance.clone());
-            }
-        }
+        projection.append(artifact, &mut out, &mut bytes, &mut path_work)?;
     }
     out.sort_by_cached_key(|a| {
         (
@@ -559,6 +512,94 @@ fn contained_paths(
         }
     }
     grouped.into_values().collect()
+}
+
+struct LawProjection<'a> {
+    catalog: &'a EffectiveCatalog,
+    owners: &'a LawOwners,
+    edges: &'a LawEdges,
+    digests: &'a LawDigests<'a>,
+    base: &'a [ArtifactEnvelope],
+    budget: Budget,
+}
+
+impl LawProjection<'_> {
+    fn append(
+        &self,
+        artifact: &ArtifactEnvelope,
+        out: &mut Vec<norn_ir::verification::EffectiveLawInstance>,
+        bytes: &mut usize,
+        path_work: &mut LawPathWork,
+    ) -> Result<(), Vec<Diagnostic>> {
+        let refused = || {
+            vec![finding(
+                codes::CLOSURE_REFUSED,
+                artifact,
+                "/payload",
+                "effective law paths exceed their budget or are incomplete",
+            )]
+        };
+        let law = decode(artifact).map_err(|detail| {
+            vec![finding(
+                codes::INVALID_DOCUMENT,
+                artifact,
+                "/payload",
+                detail,
+            )]
+        })?;
+        let membership = matches!(law.scope.root, LawRoot::App(_) | LawRoot::Pack(_))
+            .then(|| retained_law_membership(artifact, self.base, self.budget))
+            .transpose()?;
+        let origin = self.owners.get(&law.subject).ok_or_else(refused)?;
+        let targets = self
+            .catalog
+            .target_types(&law.subject)
+            .ok_or_else(refused)?;
+        if let Some(membership) = &membership {
+            let scoped = |at: &norn_ir::definition_catalog::MemberRef| {
+                membership.contains_key(&norn_ir::definition_catalog::ArtifactKey {
+                    artifact_id: at.artifact_id.clone(),
+                    version: at.version.clone(),
+                })
+            };
+            if !scoped(origin)
+                && !targets
+                    .iter()
+                    .filter_map(|name| self.owners.get(name))
+                    .any(scoped)
+            {
+                return Err(refused());
+            }
+        }
+        for target in targets {
+            let subject = self.owners.get(&target).ok_or_else(refused)?;
+            let paths = law_paths(
+                &law.subject,
+                &target,
+                self.edges,
+                self.owners,
+                self.budget,
+                path_work,
+            )
+            .ok_or_else(refused)?;
+            let mut instance = law_instance(artifact, &law, subject, origin, paths, self.digests)
+                .ok_or_else(refused)?;
+            let groups = contained_paths(membership.as_ref(), subject);
+            for instance_paths in groups {
+                instance.instance_paths = instance_paths;
+                *bytes = bytes.saturating_add(
+                    serde_json::to_vec(&instance)
+                        .map_err(|_error| refused())?
+                        .len(),
+                );
+                if *bytes > 8_388_608 || out.len() >= self.budget.max_nodes {
+                    return Err(refused());
+                }
+                out.push(instance.clone());
+            }
+        }
+        Ok(())
+    }
 }
 
 type LawDigests<'a> = BTreeMap<(&'a str, &'a str), String>;
@@ -722,13 +763,12 @@ impl LawContext<'_> {
             ));
             return;
         };
-        if matches!(law.scope.root, LawRoot::Pack(_)) {
-            if let Err(findings) =
+        if matches!(law.scope.root, LawRoot::Pack(_))
+            && let Err(findings) =
                 retained_law_membership(artifact, self.base, RETAINED_SCOPE_BUDGET)
-            {
-                out.extend(findings);
-                return;
-            }
+        {
+            out.extend(findings);
+            return;
         }
         if let Some(interface) = self
             .layer
@@ -877,12 +917,11 @@ impl LawContext<'_> {
         interface: &norn_ir::InterfaceDef,
         out: &mut Vec<Diagnostic>,
     ) {
-        if matches!(law.scope.root, LawRoot::App(_) | LawRoot::Pack(_)) {
-            if let Err(findings) =
+        if matches!(law.scope.root, LawRoot::App(_) | LawRoot::Pack(_))
+            && let Err(findings) =
                 retained_law_membership(artifact, self.base, RETAINED_SCOPE_BUDGET)
-            {
-                out.extend(findings);
-            }
+        {
+            out.extend(findings);
         }
         self.check_scope_bindings(law, artifact, out);
         let owners = interface
