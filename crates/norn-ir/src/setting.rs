@@ -246,7 +246,7 @@ impl JsonSchema for SettingRoot {
     }
 }
 
-/// The JSON type of a setting's `value`.
+/// The setting value kind; numbers use exact decimal-string literals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingValueType {
