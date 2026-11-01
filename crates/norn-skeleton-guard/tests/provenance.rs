@@ -6,7 +6,7 @@
     reason = "synthetic policy fixtures"
 )]
 
-use norn_skeleton_guard::ci::provenance::{self, MANIFEST};
+use norn_skeleton_guard::ci::provenance::{self, CONTROL, MANIFEST, RECORDS};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
@@ -67,13 +67,21 @@ impl Fixture {
         json!({"id":"toy-upstream","revision":"1.2.3","evidence":self.reference(path)})
     }
     fn save(&self) {
+        if self.root().join(CONTROL).exists() {
+            fs::remove_dir_all(self.root().join(CONTROL)).unwrap();
+        }
         self.write(
             MANIFEST,
-            &serde_json::to_vec(
-                &json!({"version":1,"software_sources":self.software,"artifacts":self.records}),
-            )
-            .unwrap(),
+            &serde_json::to_vec(&json!({"version":2,"software_sources":self.software})).unwrap(),
         );
+        for record in &self.records {
+            let mut body = record.clone();
+            let path = body.as_object_mut().unwrap().remove("path").unwrap();
+            self.write(
+                &format!("{RECORDS}{}.json", path.as_str().unwrap()),
+                &serde_json::to_vec(&body).unwrap(),
+            );
+        }
     }
     fn report(&self) -> provenance::Report {
         self.save();
@@ -142,8 +150,57 @@ fn unknown_ambiguous_and_cyclic_ancestry_fails_closed() {
     f.derived("a", "b", "generated");
     f.derived("b", "a", "generated");
     f.rejects("cyclic ancestry");
-    f.records.push(f.records[0].clone());
-    f.rejects("duplicate artifact");
+}
+
+/// #121: each refusal the single manifest gave survives per-file records.
+#[test]
+fn per_file_records_refuse_wrong_hash_missing_and_unlisted() {
+    let mut f = Fixture::new();
+    let i = f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.passes();
+    f.records[i]["sha256"] = json!("0".repeat(64));
+    f.rejects("content hash drift");
+    let mut f = Fixture::new();
+    f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.save();
+    fs::remove_file(f.root().join(format!("{RECORDS}crates/a/src/lib.rs.json"))).unwrap();
+    let r = provenance::check_distribution(f.root());
+    assert!(r.rejected_paths["crates/a/src/lib.rs"][0].contains("missing shipped-artifact"));
+    let mut f = Fixture::new();
+    f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.save();
+    fs::remove_file(f.root().join("crates/a/src/lib.rs")).unwrap();
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.rejected_paths["crates/a/src/lib.rs"]
+            .iter()
+            .any(|e| e.contains("missing artifact"))
+    );
+    let f = Fixture::new();
+    f.save();
+    for stray in [
+        format!("{CONTROL}extra.json"),
+        format!("{RECORDS}LICENSE.yaml"),
+    ] {
+        f.write(&stray, b"{}");
+        let r = provenance::check_distribution(f.root());
+        assert!(
+            r.rejected_paths[&stray]
+                .iter()
+                .any(|e| e.contains("unknown provenance control"))
+        );
+        fs::remove_file(f.root().join(&stray)).unwrap();
+    }
+    // The path is the record's file name, never a field it can claim.
+    f.write(
+        &format!("{RECORDS}LICENSE.json"),
+        &serde_json::to_vec(&f.records[0]).unwrap(),
+    );
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.rejected_paths[&format!("{RECORDS}LICENSE.json")][0]
+            .contains("malformed provenance record")
+    );
 }
 
 #[test]
@@ -413,7 +470,6 @@ fn strict_records_reject_unknown_fields_categories_origins_and_directory_claims(
         ("category", json!("unknown")),
         ("origin", json!("unknown")),
         ("bypass", json!(true)),
-        ("path", json!("folder/../LICENSE")),
     ] {
         let mut f = Fixture::new();
         f.records[0][field] = value;
@@ -552,6 +608,128 @@ fn trusted_policy_preserves_retained_core_obligations() {
         errors
             .iter()
             .any(|error| error.contains("retained core obligations were removed")),
+        "{errors:?}"
+    );
+}
+
+/// Move the fixture's coverage to the per-subsystem layout, as the codemod does.
+fn split_coverage(candidate: &mut Fixture, subsystems: &[(&str, &[u8])]) {
+    let monolith = "verification/coverage-v1/coverage.json";
+    candidate
+        .records
+        .retain(|record| record["path"] != monolith);
+    fs::remove_file(candidate.root().join(monolith)).unwrap();
+    candidate.add(
+        "verification/coverage-v1/manifest/index.json",
+        b"{}",
+        "code",
+    );
+    for (id, body) in subsystems {
+        candidate.add(
+            &format!("verification/coverage-v1/manifest/subsystems/{id}.json"),
+            body,
+            "code",
+        );
+    }
+    candidate.save();
+    index_fixture(candidate);
+}
+
+fn retained_errors(candidate: &Fixture, base: &Fixture) -> Vec<String> {
+    norn_skeleton_guard::ci::run(candidate.root(), base.root())
+}
+
+#[test]
+fn trusted_policy_reads_per_subsystem_coverage_against_a_monolith_base() {
+    let base = policy_fixture();
+    let mut candidate = policy_fixture();
+    split_coverage(
+        &mut candidate,
+        &[(
+            "quantity-ledger",
+            br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        )],
+    );
+    let errors = retained_errors(&candidate, &base);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(retained_errors(&candidate, &candidate).is_empty());
+}
+
+#[test]
+fn trusted_policy_refuses_per_subsystem_coverage_that_drops_obligations() {
+    let base = policy_fixture();
+    for subsystems in [
+        &[("quantity-ledger", &br#"{"obligations":[]}"#[..])][..],
+        &[(
+            "other",
+            &br#"{"obligations":["synthetic-preserved-obligation"]}"#[..],
+        )][..],
+    ] {
+        let mut candidate = policy_fixture();
+        split_coverage(&mut candidate, subsystems);
+        let errors = retained_errors(&candidate, &base);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error
+                    .contains("quantity-ledger: retained core obligations were removed")),
+            "{errors:?}"
+        );
+    }
+}
+
+#[test]
+fn trusted_policy_refuses_both_coverage_layouts_and_stray_entries() {
+    let base = policy_fixture();
+    let mut both = policy_fixture();
+    both.add(
+        "verification/coverage-v1/manifest/subsystems/quantity-ledger.json",
+        br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        "code",
+    );
+    both.save();
+    index_fixture(&both);
+    let errors = retained_errors(&both, &base);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("both verification/coverage-v1/coverage.json")),
+        "{errors:?}"
+    );
+    let index = "verification/coverage-v1/manifest/index.json";
+    let mut headless = policy_fixture();
+    split_coverage(&mut headless, &[]);
+    headless.records.retain(|record| record["path"] != index);
+    fs::remove_file(headless.root().join(index)).unwrap();
+    headless.save();
+    index_fixture(&headless);
+    let errors = retained_errors(&headless, &base);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("manifest/index.json is missing")),
+        "{errors:?}"
+    );
+    let mut stray = policy_fixture();
+    split_coverage(
+        &mut stray,
+        &[(
+            "quantity-ledger",
+            br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        )],
+    );
+    stray.add(
+        "verification/coverage-v1/manifest/subsystems/notes.txt",
+        b"synthetic",
+        "code",
+    );
+    stray.save();
+    index_fixture(&stray);
+    let errors = retained_errors(&stray, &base);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("unknown entry notes.txt")),
         "{errors:?}"
     );
 }

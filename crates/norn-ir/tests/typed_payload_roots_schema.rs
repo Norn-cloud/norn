@@ -390,6 +390,17 @@ fn policy_and_business_pack_schemas_are_their_typed_forms() {
                     ][..],
                 ),
                 (
+                    "OntologyLinkRoot",
+                    &[
+                        "packId",
+                        "packVersion",
+                        "packKind",
+                        "fromPack",
+                        "toPack",
+                        "correspondences",
+                    ][..],
+                ),
+                (
                     "CompositionPackRoot",
                     &["packId", "packVersion", "artifacts"][..],
                 ),
