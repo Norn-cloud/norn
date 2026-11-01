@@ -251,6 +251,16 @@ pub fn check_action_firing(
             at("lifecycle"),
         )];
     };
+    if object_type
+        .property(property)
+        .is_some_and(crate::EffectiveProperty::protected)
+    {
+        return vec![error(
+            codes::TARGET_NOT_WRITABLE,
+            format!("{property:?} of {name:?} is protected; only rules may change it"),
+            at("lifecycle"),
+        )];
+    }
     let Some(current) = values.get(property).and_then(JsonValue::as_string) else {
         return vec![error(
             UNDECLARED_WRITE,
@@ -874,6 +884,20 @@ impl Defined<'_> {
             findings.extend(transition_findings(
                 action, kind, lifecycles, lifecycle, transition,
             ));
+            if self
+                .effective_object_type
+                .as_ref()
+                .and_then(|view| view.as_ref().ok())
+                .and_then(|view| view.property(lifecycle.as_str()))
+                .is_some_and(crate::EffectiveProperty::protected)
+            {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!("{lifecycle:?} is protected; only rules may change it"),
+                    action,
+                    "/payload/effectProgram/lifecycle",
+                ));
+            }
         }
         if let (
             ActionEffectProgram::UpsertInputObject {
