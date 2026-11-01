@@ -52,3 +52,25 @@ freshness check, so competing requests cannot both initialize the cell.
 Correspondence: `definitions_install::host_provision_atomic_at_every_storage_boundary`
 injects errors and abrupt subprocess exit after every SQL operation, before
 commit and after commit, then reopens, retries and checks conflicting retries.
+
+
+HOST-FIXTURE-BOOTSTRAP: the fixture executable combines exact artifact arrays,
+checks and atomically installs the complete SalesOrder/stock set into a new
+in-memory tenant on every start. It binds loopback port 4174. Bearer authentication
+removes caller actor headers and supplies a fixed read principal only after a
+credential match; anonymous, incorrect-token and spoofed-actor requests deny.
+Correspondence: the example's authentication matrix and a real TCP Boat smoke
+that compiles stock, starts the command and checks both namespaces via `/v1/defs`.
+
+From the repository root (fixture sources require #147 and #227):
+
+```sh
+mkdir -p ~/.cache/agent-scratch/norn-demo-host && bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/stock --org org_demo --env dev --out ~/.cache/agent-scratch/norn-demo-host/stock.json && NORN_DEMO_TOKEN=local-demo cargo run --locked -p norn-api --example fixture-server -- fixtures/engine-alpha/sales-order.definitions.json ~/.cache/agent-scratch/norn-demo-host/stock.json
+```
+
+Read with `Authorization: Bearer local-demo` at
+`http://127.0.0.1:4174/v1/defs?orgId=org_demo&environmentId=dev`.
+The environment credential is local fixture configuration. This host exposes
+definition reads; actions and subscriptions remain the adapter lane's scope.
+HOST-MODEL-DEFAULT-SNAPSHOT remains unclaimed: numeric JSON object defaults use
+the legacy floating-point IR and need a shared representation migration.

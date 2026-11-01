@@ -26,5 +26,9 @@ utoipa = "5.4.0"
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }
 
+[[example]]
+name = "fixture-server"
+required-features = ["native", "http-host"]
+
 [lints]
 workspace = true
