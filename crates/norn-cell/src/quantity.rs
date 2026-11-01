@@ -91,10 +91,13 @@ fn boundary_event(boundary: FormatBoundary) -> Result<norn_ir::RuntimeValue, Cel
 
 // The first typed receipt establishes the boundary. This indexed seek never
 // walks ordinary events, even if a legacy cell has many marker-shaped events.
-const BOUNDARY_SQL: &str = r#"SELECT json_extract("receipt", '$.firstEventSeq'), "commit_seq" FROM "_norn_receipt"
+const BOUNDARY_SQL: &str = r#"SELECT * FROM (
+    SELECT json_extract("receipt", '$.firstEventSeq') AS first_seq, "commit_seq" FROM "_norn_receipt"
     WHERE json_extract("receipt", '$.quantity.version')='norn.quantity.commit/2'
-    AND json_extract("receipt", '$.firstEventSeq')>0
-    ORDER BY json_extract("receipt", '$.firstEventSeq') LIMIT 1"#;
+    UNION ALL
+    SELECT json_extract("receipt", '$.firstEventSeq'), "commit_seq" FROM "_norn_receipt"
+    WHERE json_type("receipt", '$.quantity')='array'
+    ) WHERE first_seq>0 ORDER BY first_seq LIMIT 1"#;
 
 // Called only after the event chain and receipt tiling have verified. Neither
 // the metadata pointer nor surviving quantity projections choose this boundary.
@@ -220,7 +223,16 @@ pub(crate) fn validate_boundary<S: SqlEngine>(
     {
         return Err(QuantityError::Corrupt.into());
     }
-    transition_request(engine, &evidence.0, evidence.4)?;
+    transition_request(
+        engine,
+        &evidence.0,
+        evidence.4,
+        &receipt
+            .quantity
+            .as_ref()
+            .ok_or(QuantityError::Corrupt)?
+            .ledger_id,
+    )?;
     Ok(())
 }
 
@@ -513,11 +525,11 @@ pub fn posting<S: SqlEngine>(
         params![world, ledger, id], |row| {
             let stored: QuantityPosting = decode(&row.get::<String>(0)?)?;
             let link: Option<String> = row.get(1)?;
-            let request = transition_request(engine, world, row.get(2)?)?;
+            let request = transition_request(engine, world, row.get(2)?, ledger)?;
             let (posting_id, expected_link) = posting_identity(&request).ok_or(QuantityError::Corrupt)?;
             if request.ledger_id != ledger
                 || posting_id != id
-                || receipt_evidence(engine, world, to_u64(row.get(2)?, "quantity posting commit")?)?.quantity_result.as_ref().map(|result| result.version) != Some(to_u64(row.get(3)?, "quantity posting version")?)
+                || receipt_evidence(engine, world, to_u64(row.get(2)?, "quantity posting commit")?)?.quantity_result(ledger).map(|result| result.version) != Some(to_u64(row.get(3)?, "quantity posting version")?)
                 || stored.reverses.as_deref() != expected_link
                 || stored.reverses != link
             {
@@ -625,10 +637,10 @@ fn latest_transition<S: SqlEngine>(
     )?;
     seq.map(|seq| {
         Ok((
-            transition_request(engine, world, seq)?,
+            transition_request(engine, world, seq, ledger)?,
             receipt_evidence(engine, world, to_u64(seq, "quantity receipt")?)?.logical_time,
             receipt_evidence(engine, world, to_u64(seq, "quantity receipt")?)?
-                .quantity_result
+                .quantity_result(ledger)
                 .ok_or(QuantityError::Corrupt)?
                 .version,
         ))
@@ -683,7 +695,7 @@ fn verified_reversed<S: SqlEngine>(
         [] if projected.is_none() => Ok(false),
         [values] => {
             let commit_seq: i64 = SqlRow(values.clone()).get(0)?;
-            let request = transition_request(engine, world, commit_seq)?;
+            let request = transition_request(engine, world, commit_seq, ledger)?;
             let Some((id, Some(link))) = posting_identity(&request) else {
                 return Err(QuantityError::Corrupt.into());
             };
@@ -946,6 +958,13 @@ pub(crate) fn verify_replay<S: SqlEngine>(
     batch: &CommitBatch,
     request: &QuantityRequest,
 ) -> Result<(), CellError> {
+    verify_request_replay(engine, batch, request)
+}
+fn verify_request_replay<S: SqlEngine>(
+    engine: &S,
+    batch: &CommitBatch,
+    request: &QuantityRequest,
+) -> Result<(), CellError> {
     clock_floor(engine)?;
     let current = ledger_projection(engine, &batch.world, &request.ledger_id)?
         .ok_or(QuantityError::Corrupt)?;
@@ -983,8 +1002,7 @@ pub(crate) fn verify_replay<S: SqlEngine>(
     }
     let result = prior
         .body
-        .quantity_result
-        .as_ref()
+        .quantity_result(&request.ledger_id)
         .ok_or(QuantityError::Corrupt)?;
     if let Some((id, expected)) = &result.posting
         && posting(engine, &batch.world, &request.ledger_id, id)?.as_ref() != Some(expected)
@@ -1022,7 +1040,7 @@ fn verify_pack<S: SqlEngine>(
     pack: &norn_ir::quantity_ledger::LedgerPackIr,
     unrestricted: &[String],
 ) -> Result<(), CellError> {
-    let event = transition_request(engine, world, defined_at)?;
+    let event = transition_request(engine, world, defined_at, ledger)?;
     if event.ledger_id != ledger {
         return Err(QuantityError::Corrupt.into());
     }
@@ -1075,28 +1093,53 @@ fn transition_request<S: SqlEngine>(
     engine: &S,
     world: &str,
     commit_seq: i64,
+    ledger: &str,
 ) -> Result<QuantityRequest, CellError> {
+    transition_requests(engine, world, commit_seq)?
+        .iter()
+        .find(|request| request.ledger_id == ledger)
+        .cloned()
+        .ok_or_else(|| QuantityError::Corrupt.into())
+}
+fn transition_requests<S: SqlEngine>(
+    engine: &S,
+    world: &str,
+    commit_seq: i64,
+) -> Result<Vec<QuantityRequest>, CellError> {
     let receipt = receipt_evidence(engine, world, to_u64(commit_seq, "quantity commit seq")?)?;
-    let request = receipt.quantity.as_ref().ok_or(QuantityError::Corrupt)?;
-    let seq = receipt
-        .first_event_seq
-        .checked_add(receipt.event_count)
-        .and_then(|end| end.checked_sub(1))
-        .ok_or(QuantityError::Corrupt)?;
-    let (event, prev, hash): (String, String, String) = engine.query_optional(
-        r#"SELECT "event", "prev_hash", "hash" FROM "_norn_ledger" WHERE "seq"=?1 AND "commit_seq"=?2 AND "world"=?3"#,
-        params![to_i64(seq, "quantity transition seq")?, commit_seq, world],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    )?.ok_or(QuantityError::Corrupt)?;
-    let event = norn_ir::RuntimeValue::from_json_text(&event)?;
-    if receipt.event_count == 0
-        || event != transition_event(request)?
-        || entry_hash(seq, receipt.commit_seq, world, &event, &prev)? != hash
-        || hash != receipt.ledger_head
-    {
+    let requests = std::slice::from_ref(receipt.quantity.as_ref().ok_or(QuantityError::Corrupt)?);
+    let count = u64::try_from(requests.len()).map_err(|_range| QuantityError::Corrupt)?;
+    if count == 0 || count > 100 || receipt.event_count < count {
         return Err(QuantityError::Corrupt.into());
     }
-    Ok(request.clone())
+    let start = receipt
+        .first_event_seq
+        .checked_add(receipt.event_count)
+        .and_then(|end| end.checked_sub(count))
+        .ok_or(QuantityError::Corrupt)?;
+    let mut previous = None;
+    for (index, request) in requests.iter().enumerate() {
+        let seq = start
+            .checked_add(u64::try_from(index).map_err(|_range| QuantityError::Corrupt)?)
+            .ok_or(QuantityError::Corrupt)?;
+        let (event, prev, hash): (String, String, String) = engine.query_optional(
+            r#"SELECT "event", "prev_hash", "hash" FROM "_norn_ledger" WHERE "seq"=?1 AND "commit_seq"=?2 AND "world"=?3"#,
+            params![to_i64(seq, "quantity transition seq")?, commit_seq, world],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?.ok_or(QuantityError::Corrupt)?;
+        let event = norn_ir::RuntimeValue::from_json_text(&event)?;
+        if event != transition_event(request)?
+            || previous.as_ref().is_some_and(|prior| prior != &prev)
+            || entry_hash(seq, receipt.commit_seq, world, &event, &prev)? != hash
+        {
+            return Err(QuantityError::Corrupt.into());
+        }
+        previous = Some(hash);
+    }
+    if previous.as_ref() != Some(&receipt.ledger_head) {
+        return Err(QuantityError::Corrupt.into());
+    }
+    Ok(requests.to_vec())
 }
 
 fn verify_reservation<S: SqlEngine>(
@@ -1113,7 +1156,7 @@ fn verify_reservation<S: SqlEngine>(
         r#"SELECT "created_at", "commit_seq", "version" FROM "_norn_quantity_reservation" WHERE "world"=?1 AND "ledger"=?2 AND "id"=?3"#,
         params![world, ledger, id], |row| Ok((row.get::<i64>(0)?, row.get::<i64>(1)?, to_u64(row.get(2)?, "quantity reservation version")?)),
     )?;
-    let original = transition_request(engine, world, created_at)?;
+    let original = transition_request(engine, world, created_at, ledger)?;
     if original.ledger_id != ledger {
         return Err(QuantityError::Corrupt.into());
     }
@@ -1137,15 +1180,10 @@ fn verify_reservation<S: SqlEngine>(
         world,
         to_u64(updated_at, "quantity reservation commit")?,
     )?;
-    if latest
-        .quantity
-        .as_ref()
-        .is_none_or(|request| request.ledger_id != ledger)
-        || latest.quantity_result.as_ref().is_none_or(|result| {
-            result.version != recorded_version
-                || result.reservation.as_ref() != Some(&(id.to_owned(), reservation.clone()))
-        })
-        || recorded_version > state.version
+    if latest.quantity_result(ledger).is_none_or(|result| {
+        result.version != recorded_version
+            || result.reservation.as_ref() != Some(&(id.to_owned(), reservation.clone()))
+    }) || recorded_version > state.version
     {
         return Err(QuantityError::Corrupt.into());
     }
@@ -1167,15 +1205,14 @@ fn verify_original<S: SqlEngine>(
         r#"SELECT "commit_seq", "version" FROM "_norn_quantity_posting" WHERE "world"=?1 AND "ledger"=?2 AND "id"=?3"#,
         params![world, ledger, id], |row| Ok((row.get::<i64>(0)?, to_u64(row.get(1)?, "quantity posting version")?)),
     )?;
-    let request = transition_request(engine, world, commit_seq)?;
+    let request = transition_request(engine, world, commit_seq, ledger)?;
     if request.ledger_id != ledger
         || receipt_evidence(
             engine,
             world,
             to_u64(commit_seq, "quantity posting commit")?,
         )?
-        .quantity_result
-        .as_ref()
+        .quantity_result(ledger)
         .map(|result| result.version)
             != Some(recorded_version)
         || recorded_version > state.version
@@ -1188,7 +1225,7 @@ fn verify_original<S: SqlEngine>(
         to_u64(commit_seq, "quantity posting commit")?,
     )?;
     if original.reverses.is_some()
-        || receipt.quantity_result.as_ref().is_none_or(|result| {
+        || receipt.quantity_result(ledger).is_none_or(|result| {
             result.posting.as_ref() != Some(&(id.to_owned(), original.clone()))
         })
     {
