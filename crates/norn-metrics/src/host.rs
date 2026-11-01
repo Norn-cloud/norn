@@ -115,7 +115,7 @@ pub fn manifest() -> Result<FunctionManifest, CanonicalJsonError> {
         output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary")?,
         error_schema: schema::<ForecastFailure>("core.analytics.ForecastFailure")?,
         implementation: Implementation { format: ImplementationFormat::Host, digest: implementation.clone(),
-            entry_point: "norn_metrics::host::forecast".into(),
+            entry_point: "norn_metrics::analysis::forecast".into(),
             locator: Some(format!("{}/{}@{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"), implementation)) },
         dependency_closure: Some(closure),
         runtime: RuntimeIdentity { id: env!("CARGO_PKG_NAME").into(), version: env!("CARGO_PKG_VERSION").into(), digest: implementation },
