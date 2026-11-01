@@ -463,6 +463,7 @@
     "tools/norn-ts/fixtures/stock/stock.source.ts",
     "tools/norn-ts/test/stock-definitions.test.ts",
     "crates/norn-checker/src/obligations/induction.rs",
-    "crates/norn-cell/tests/query_lineage.rs"
+    "crates/norn-cell/tests/query_lineage.rs",
+    "crates/norn-cell/tests/query_fanout.rs"
   ]
 }
