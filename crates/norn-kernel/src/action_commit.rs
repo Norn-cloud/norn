@@ -1006,17 +1006,10 @@ where
         return Err(ActionRefusal::UnsupportedEffect { action_id: call.action.action_id.clone() });
     }
     let action = call.action;
-    let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
-    else {
-        return Err(ActionRefusal::InvalidInput {
-            field: object_id_field.to_owned(),
-        });
+    let Some(object_id) = preparation.effective_input.get(object_id_field)
+        .and_then(JsonValue::as_str).filter(|id| !id.trim().is_empty()) else {
+        return Err(ActionRefusal::InvalidInput { field: object_id_field.to_owned() });
     };
-    if object_id.trim().is_empty() {
-        return Err(ActionRefusal::InvalidInput {
-            field: object_id_field.to_owned(),
-        });
-    }
     let object_type = call
         .object_type
         .clone()
@@ -1024,7 +1017,7 @@ where
 
     let target = FactKey {
         object_type: object_type.clone(),
-        key: object_id.clone(),
+        key: object_id.to_owned(),
     };
     let state = authorize_target(
         host,
@@ -1074,7 +1067,7 @@ where
     } = receipt_changes(host, catalog, call, &preparation.effective_input, &target)?;
     let change = FactChange::Transition {
         object_type,
-        key: object_id.clone(),
+        key: object_id.to_owned(),
         lifecycle: lifecycle.clone(),
         transition: transition.clone(),
     };
