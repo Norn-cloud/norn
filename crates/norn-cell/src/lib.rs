@@ -30,6 +30,7 @@
 //!   commit consumes.
 
 mod codec;
+pub mod compute;
 pub mod engine;
 pub mod error;
 pub mod export;

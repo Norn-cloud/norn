@@ -38,3 +38,15 @@ Native scenarios cover 98%/97.5%, signed ties, zero/range refusals, weekly bucke
 Kani includes the production module: full-width sum/ratio safety, zero-divisor refusal, and exhaustive i16 numerators with signed 128 divisors (nearest, tie-away and sign correspondence).
 The broader symbolic i16-divisor correspondence attempt timed out at 600 seconds; it is not counted as proof. Functional ratio evidence remains bounded; no universal arithmetic theorem is claimed.
 Storage/frontier enforcement and #353 cell-fixture correspondence follow in the next G2 cut. IVM and governed-read qualification remain separate cuts.
+
+## G2 result envelope
+
+The QUERY-ENGINE-1 envelope retains exact decimal totals and per-object-version
+contributions, declared source-partition cursor vectors, watermarks, scope and
+population/epoch/mapping pins. Null denotes an unavailable ratio, never invented
+zero. `known_as_of` is an actual knowledge revision; an effective cutoff alone
+is not a historical-knowledge API. This cut adds data contracts only: the
+producer must validate pins, complete reads and freshness. Exact transport and
+opaque cursor separation have conformance tests. There is no new handwritten
+pure function or arithmetic primitive requiring another proptest/Kani harness;
+the producing evaluator and existing arithmetic kernel own that evidence.
