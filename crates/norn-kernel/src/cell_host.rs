@@ -838,6 +838,9 @@ pub enum CommitError<X> {
     /// A version or the ledger sequence would overflow.
     #[error("fact version or ledger sequence overflow")]
     Overflow,
+    /// A closed quantity operation refused the whole transaction.
+    #[error("quantity posting refused: {0}")]
+    Quantity(#[source] crate::quantity::QuantityError),
     /// The host failed; nothing was applied.
     #[error("cell host failure")]
     Host(#[source] X),
@@ -875,6 +878,7 @@ impl<X> CommitError<X> {
             Self::ObservationAuthorization => "commit.observation_authorization",
             Self::EventLimitExceeded { .. } => "commit.event_limit",
             Self::Overflow => "commit.overflow",
+            Self::Quantity(_) => "quantity.refused",
             Self::Host(_) => "commit.host",
         }
     }

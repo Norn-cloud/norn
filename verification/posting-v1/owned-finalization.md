@@ -116,5 +116,16 @@ reserve the full ceiling beside non-event work; planning refuses a candidate
 that would cross it before any publication. Boundary conformance covers 255+1,
 256+1 and exact non-event reserve. No checkpoint or unbounded-history claim.
 
+## Closed output and quantity contract
+
+POST-OUTPUT-SCHEMA: typed Rust definitions declare StockEvent and GLLeg immutable, all stored output fields protected, and the Partition witness protected but mutable. GLLeg declares the shared balanced-accounting admission. Definitions grant no seal.
+POST-QUANTITY-PACK: a unit-pinned, scale-six pack has exactly receipt/delivery and stock/external-source/external-destination accounts. Only external-source is unrestricted; no caller chooses templates, signed legs or unit precision.
+`post_quantity_pack_native_read_and_reopen` exercises real native definition,
+posting and verified reads across durable reopen. This is quantity configuration
+conformance, not CP1-engine acceptance or stock action publication.
+POST-QUANTITY-REFUSAL: quantity refusals survive the atomic host/decision/action
+transport with stable code, category and redacted internal messages. No generic
+Post action API is activated; the parked generic posting branch stays parked.
+
 POST-QUANTITY-SNAPSHOT: all quantity reconstruction reads share one adapter-owned SQLite read snapshot, reusing an existing transaction; refusal releases a newly owned snapshot. SQL transaction-control guards remain unchanged.
 POST-CATALOG-ORDER: extension and property-type order does not change the schema pin. Conformance reverses both lists and checks the same pin.

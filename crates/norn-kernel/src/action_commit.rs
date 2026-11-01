@@ -4049,6 +4049,7 @@ fn precondition_read_refusal<X>(
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::Quantity(_)
         | CommitError::Host(_) => None,
     };
     let stale_link = match error {
@@ -4081,6 +4082,7 @@ fn precondition_read_refusal<X>(
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::Quantity(_)
         | CommitError::Host(_) => None,
     };
     if let Some(key) = stale_fact {
@@ -4199,6 +4201,7 @@ where
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::Quantity(_)
         | CommitError::Host(_)) => return DecisionRefusal::from_commit(error),
     };
     let refusal = DecisionRefusal::InvariantViolation {
