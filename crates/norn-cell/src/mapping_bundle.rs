@@ -64,10 +64,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let payload = raw.get("payload").ok_or_else(mismatch)?;
         let payload_text = serde_json::to_string(payload)?;
         if norn_ir::canonical::HashProfile::Norn1.hash_json(&payload_text)? != field("payload_digest")? { return Err(mismatch()); }
-        let compiled = compile_mapping_artifact(mapping, &artifacts, &[]).map_err(|_| mismatch())?;
         let source_document = SourceDocument::from_json(&input.dataset, &payload_text, None)?;
         let (records, diagnostics) = if field("kind")? == "upsert" {
-            match compiled.apply(&[source_document], &input.recorded_at) {
+            match compile_mapping_artifact(mapping, &artifacts, &[]).and_then(|compiled| compiled.apply(&[source_document], &input.recorded_at)) {
                 Ok(records) => (records, Vec::new()),
                 Err(diagnostics) => (Vec::new(), diagnostics.into_iter().map(|d| norn_ir::runtime::encode(&d.to_json()).map_err(CellError::Encoding)).collect::<Result<Vec<_>, _>>()?),
             }
