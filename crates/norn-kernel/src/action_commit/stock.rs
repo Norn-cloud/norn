@@ -884,7 +884,10 @@ mod tests {
                 } if object_type.as_str() == "stock.GLLeg" => {
                     Some(norn_ir::runtime::decode(values.get("leg").unwrap()).unwrap())
                 }
-                _ => None,
+                norn_ir::FactChange::Create { .. }
+                | norn_ir::FactChange::Set { .. }
+                | norn_ir::FactChange::Delete { .. }
+                | norn_ir::FactChange::Transition { .. } => None,
             })
             .collect();
         assert_eq!(
