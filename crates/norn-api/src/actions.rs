@@ -58,7 +58,7 @@ impl ActionAuthorizer for Policy<'_> {
 /// Scope, policy, revision, argument and kernel refusals change no business state.
 #[utoipa::path(post, path = "/v1/actions", request_body = ActionRequest,
     params(("x-norn-org-id" = String, Header, description = "Explicit organization"), ("x-norn-environment-id" = String, Header, description = "Explicit environment")),
-    responses((status = 200, body = ActionResponse), (status = 403, body = crate::refusal::Refusal), (status = 409, body = crate::refusal::Refusal), (status = 422, body = crate::refusal::Refusal)))]
+    responses((status = 200, body = ActionResponse), (status = 400, body = crate::refusal::Refusal), (status = 403, body = crate::refusal::Refusal), (status = 404, body = crate::refusal::Refusal), (status = 409, body = crate::refusal::Refusal), (status = 422, body = crate::refusal::Refusal), (status = 429, body = crate::refusal::Refusal), (status = 500, body = crate::refusal::Refusal)))]
 pub fn call_action_in_epoch<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &DefinitionsQuery,
