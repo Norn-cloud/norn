@@ -2941,7 +2941,6 @@ mod cp1_stock {
     };
     use norn_kernel::action_commit::stock::prepare_stock_snapshot;
     use norn_kernel::stock_posting::{stock_output_types, stock_quantity_pack};
-
     struct Reads;
     impl ActionAuthorizer for Reads {
         fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
