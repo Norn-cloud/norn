@@ -362,37 +362,6 @@ pub fn check_artifact_set_with_receipt(
     )
 }
 
-/// Verify a retained receipt against exact candidate and base source bytes.
-/// Historical formats retain their versioned floating-point hash contract.
-///
-/// # Errors
-/// As [`verify_admission_receipt`], or if a source cannot be prepared.
-pub fn verify_admission_receipt_sources(
-    stored: &str,
-    expected_sha256: &str,
-    artifacts: &[RuntimeValue],
-    base: &[RuntimeValue],
-    limits: &ResourceLimitProfile,
-) -> Result<ReceiptVersion, ReceiptError> {
-    let (_, candidates) = source_refs(artifacts)?;
-    let (_, installed) = source_refs(base)?;
-    let original = |sources: &[RuntimeValue]| {
-        sources
-            .iter()
-            .map(norn_ir::runtime::decode)
-            .collect::<Result<Vec<ArtifactEnvelope>, _>>()
-            .map_err(invalid_receipt)
-    };
-    verify_receipt(
-        stored,
-        expected_sha256,
-        &original(artifacts)?,
-        &original(base)?,
-        limits,
-        Some(ArtifactSetRef::from_refs(candidates, installed)?),
-    )
-}
-
 fn source_refs(
     sources: &[RuntimeValue],
 ) -> Result<(Vec<ArtifactEnvelope>, Vec<ArtifactRef>), ReceiptError> {
@@ -681,6 +650,37 @@ pub fn verify_admission_receipt(
     limits: &ResourceLimitProfile,
 ) -> Result<(), ReceiptError> {
     verify_receipt(stored, expected_sha256, artifacts, base, limits, None).map(drop)
+}
+
+/// Verify a retained receipt against exact candidate and base source bytes.
+/// Historical formats retain their versioned floating-point hash contract.
+///
+/// # Errors
+/// As [`verify_admission_receipt`], or if a source cannot be prepared.
+pub fn verify_admission_receipt_sources(
+    stored: &str,
+    expected_sha256: &str,
+    artifacts: &[RuntimeValue],
+    base: &[RuntimeValue],
+    limits: &ResourceLimitProfile,
+) -> Result<ReceiptVersion, ReceiptError> {
+    let (_, candidates) = source_refs(artifacts)?;
+    let (_, installed) = source_refs(base)?;
+    let original = |sources: &[RuntimeValue]| {
+        sources
+            .iter()
+            .map(norn_ir::runtime::decode)
+            .collect::<Result<Vec<ArtifactEnvelope>, _>>()
+            .map_err(invalid_receipt)
+    };
+    verify_receipt(
+        stored,
+        expected_sha256,
+        &original(artifacts)?,
+        &original(base)?,
+        limits,
+        Some(ArtifactSetRef::from_refs(candidates, installed)?),
+    )
 }
 
 fn verify_receipt(
