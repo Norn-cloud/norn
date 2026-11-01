@@ -1314,3 +1314,45 @@ fn fold_order_is_numeric_with_identity_ties_and_independent_of_enumeration() {
         );
     }
 }
+
+#[test]
+fn ambiguous_fold_namespaces_and_nested_loops_refuse_at_admission() {
+    let mut nested = fifo_fold();
+    if let norn_ir::JdmNode::ExpressionNode { content, .. } = &mut nested
+        .1
+        .get_mut("example.step")
+        .unwrap()
+        .graph
+        .as_mut()
+        .unwrap()
+        .nodes[1]
+    {
+        content.execution_mode = Some(norn_ir::jdm::JdmExecutionMode::Loop);
+    }
+    assert!(matches!(
+        AdmittedDecision::admit(&nested.0, &nested.1, binding()),
+        Err(AdmissionError::InvalidSchema { .. })
+    ));
+    let (mut parent, mut subs) = fifo_fold();
+    parent.contract = Some(norn_ir::RuleContractV2::SubDecision);
+    let mut other = parent.clone();
+    other.rule_id = "example.shared".into();
+    parent.rule_id = "example.shared".into();
+    subs.insert("example.parentA".into(), parent);
+    subs.insert("example.parentB".into(), other);
+    let mut root = commands_rule("example.root", &closed(&json!({})), "[]");
+    root["graph"]["nodes"][1] =
+        json!({"id":"x","name":"x","type":"decisionNode","content":{"key":"example.parentA"}});
+    root["graph"]["nodes"].as_array_mut().unwrap().insert(
+        2,
+        json!({"id":"y","name":"y","type":"decisionNode","content":{"key":"example.parentB"}}),
+    );
+    root["graph"]["edges"][1]["targetId"] = json!("y");
+    root["graph"]["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"ey","sourceId":"y","targetId":"out"}));
+    assert!(
+        matches!(AdmittedDecision::admit(&rule(&root),&subs,binding()),Err(AdmissionError::InvalidSchema { reason,.. }) if reason.contains("ambiguous fold"))
+    );
+}
