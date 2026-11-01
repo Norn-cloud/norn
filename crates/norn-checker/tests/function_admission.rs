@@ -720,3 +720,35 @@ fn function_admission_requires_named_placements_and_bounded_fuel() {
         );
     }
 }
+
+#[test]
+fn host_function_requires_exact_crate_version_and_source_pin() {
+    let mut host = manifest("effectful");
+    host.implementation.format = ImplementationFormat::Host;
+    host.runtime.id = "fixture-host".into(); host.runtime.version = "0.1.0".into();
+    host.implementation.locator = Some(format!("fixture-host/0.1.0@{}", host.implementation.digest));
+    admit(&host);
+    for locator in [None, Some(format!("fixture-host/0.2.0@{}",host.implementation.digest))] {
+        let mut invalid = host.clone(); invalid.implementation.locator = locator;
+        assert!(manifest_findings(&invalid).iter().any(|finding| finding.code.as_str() == codes::MUTABLE_IDENTITY));
+    }
+    let mut qualified = manifest("wasm"); qualified.implementation.format = ImplementationFormat::Host;
+    assert!(manifest_findings(&qualified).iter().any(|finding| finding.code.as_str() == codes::PROFILE_MISMATCH));
+    host.cache = CachePolicy::ActionCache;
+    assert!(manifest_findings(&host).iter().any(|finding| finding.code.as_str() == codes::UNCACHEABLE_PROFILE));
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn host_pin_roundtrip_and_version_change_refusal(name in "host_[a-z]{1,10}", version in 0u16..500) {
+        let mut host = manifest("effectful"); host.implementation.format = ImplementationFormat::Host;
+        host.runtime.id = name.clone(); host.runtime.version = format!("1.{version}.0");
+        host.implementation.locator = Some(format!("{}/{}@{}",name,host.runtime.version,host.implementation.digest));
+        proptest::prop_assert!(manifest_findings(&host).is_empty());
+        let encoded = serde_json::to_string(&host).expect("encode");
+        proptest::prop_assert_eq!(decode_function_manifest(&encoded).expect("decode"),host.clone());
+        host.runtime.version.push_str("-changed");
+        proptest::prop_assert!(!manifest_findings(&host).is_empty());
+    }
+}
