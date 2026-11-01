@@ -5,7 +5,7 @@ const NullableScope = Schema.NullOr(Schema.String)
 export const SettingFields = Schema.Struct({
   id: Schema.String, settingKey: Schema.String, value: Norn.decimal(4),
   effectiveFrom: Norn.timestamp("utc"), effectiveTo: Schema.NullOr(Norn.timestamp("utc")),
-  reviewState: Schema.Literal("approved", "active", "draft"),
+  reviewState: Schema.Literal("approved"),
   orgId: NullableScope, tenantId: NullableScope, workspaceId: NullableScope,
   environmentId: NullableScope, businessUnitId: NullableScope,
 })
@@ -16,8 +16,8 @@ export const Registry = Norn.type({
   links: [{ id: "settings", target: Setting, cardinality: { to: "many", from: "many" } }],
 })
 export const Probe = Norn.type({ name: "demo.ParameterProbe", title: "Probe", version: "1.0.0", properties: Schema.Struct({ id: Schema.String, value: Norn.decimal(4) }), identity: [{ name: "primary", properties: ["id"] }] })
-const Input = Schema.Struct({ id: Schema.String, registry: Schema.String, value: Norn.decimal(4), effectiveAt: Norn.timestamp("utc") })
-const Context = Schema.Struct({ input: Input, slice: Schema.Struct({ selected: SettingFields }) })
+const Input = Schema.Struct({ id: Schema.String, registry: Schema.String, value: Schema.Finite, effectiveAt: Schema.String })
+const Context = Schema.Struct({ input: Input, slice: Schema.Struct({ selected: Schema.Struct({ value: Schema.Finite }) }) })
 export const RecordProbe = Norn.action({
   id: "demo.parameter.probe", title: "Record parameter probe", version: "1.0.0",
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
