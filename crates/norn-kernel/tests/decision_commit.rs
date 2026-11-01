@@ -695,10 +695,21 @@ fn decision_refuses_transition_from_wrong_state() {
         &output,
         "lifecycle.validation.undeclared_write",
     );
+    let wire = norn_kernel::Refusable::refusal(&refusal);
+    assert_eq!(
+        serde_json::to_value(&wire.reason.as_ref().unwrap().values["allowed"]).unwrap(),
+        json!(["submitted"])
+    );
+    assert_eq!(
+        serde_json::to_value(&wire.reason.as_ref().unwrap().values["current"]).unwrap(),
+        json!("draft")
+    );
+    assert!(!wire.message.contains("Some("));
     assert_eq!(
         refusal,
         DecisionRefusal::NotFromState {
-            key: so1,
+            lifecycle: "status".into(),
+            key: Box::new(so1),
             transition: "approve".into(),
             current: Some("draft".into()),
             from: vec!["submitted".into()],
