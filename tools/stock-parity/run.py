@@ -35,7 +35,10 @@ if __name__ == '__main__':
             result['initial'] = checkpoint(driver, -1, [])
             for index, step in enumerate(trace['steps']):
                 attempts = driver.step(step)
-                result['checkpoints'].append(checkpoint(driver, index, attempts))
+                pending = dict(step=index, attempts=attempts, status='unsupported', stock=[], gl=[], documents=[])
+                result['checkpoints'].append(pending)
+                pending.update(checkpoint(driver, index, attempts))
+                pending.pop('status')
         except Exception as error:
             result.update(status='unsupported', reason=type(error).__name__ + ': incomplete oracle execution')
         results.append(result)

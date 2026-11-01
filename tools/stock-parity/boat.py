@@ -7,8 +7,8 @@ from threading import Timer
 import hashlib
 
 
-def boat(*args):
-    return subprocess.check_output(['boat', *args], text=True, timeout=900)
+def boat(*args, timeout=900):
+    return subprocess.check_output(['boat', *args], text=True, timeout=timeout)
 
 
 def main():
@@ -17,11 +17,12 @@ def main():
     parser.add_argument('--source', type=pathlib.Path, required=True, help='Committed source archive')
     parser.add_argument('--traces', type=pathlib.Path, required=True, help='Validated stock-trace/1 JSON array')
     parser.add_argument('--output', type=pathlib.Path, required=True)
+    parser.add_argument('--acceptance', choices=('smoke', 'lifecycle'), default='smoke')
     args = parser.parse_args()
     limits = json.loads(boat('limits', '--json'))
     if not limits['canStart'] or limits['starts']['day']['remaining'] < 1:
         raise SystemExit('Boat start budget unavailable')
-    vm = None
+    vm, completed, dump_expected = None, False, False
     try:
         # Stream creation events so cleanup also covers a failure after allocation.
         with subprocess.Popen(['boat', 'new', '--json', '--from', args.snapshot, '--type', 'default',
@@ -56,19 +57,31 @@ PY
 bash /home/user/parity-source/tools/stock-parity/boot.sh
 cd /home/user/parity-source/tools/stock-parity
 python3 run.py /home/user/traces.json /home/user/results.json
-python3 check_smoke.py /home/user/results.json
-'''.replace('DIGEST', digest)
-        result = json.loads(boat('exec', vm, '--json', '--timeout', '600', '--', 'bash', '-lc', command))
-        if not result.get('success'):
-            raise RuntimeError('Oracle batch incomplete; inspect disposable VM logs before cleanup')
-        boat('scp', f'{vm}:/home/user/results.json', str(args.output))
+python3 CHECKER /home/user/results.json
+'''.replace('DIGEST', digest).replace('CHECKER', {'smoke': 'check_smoke.py',
+            'lifecycle': 'lifecycle.py'}[args.acceptance])
+        seconds = 1800 if args.acceptance == 'lifecycle' else 600
+        dump_expected = True
+        result = json.loads(boat('exec', vm, '--json', '--timeout', str(seconds), '--', 'bash', '-lc', command,
+                                 timeout=seconds + 60))
+        completed = bool(result.get('success'))
+        if not completed:
+            raise RuntimeError('Oracle batch incomplete; inspect retained dump when available')
     finally:
         if vm:
-            boat('delete', vm, '--yes')
-            check = subprocess.run(['boat', 'info', vm, '--json'], capture_output=True, text=True, timeout=60)
-            if check.returncode == 0 or not any(t in (check.stdout + check.stderr).lower()
-                                                 for t in ('404', 'not_found', 'not found')):
-                raise RuntimeError('VM deletion was not verified')
+            try:
+                if dump_expected:
+                    try:
+                        boat('scp', f'{vm}:/home/user/results.json', str(args.output), timeout=60)
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                        if completed:
+                            raise
+            finally:
+                boat('delete', vm, '--yes')
+                check = subprocess.run(['boat', 'info', vm, '--json'], capture_output=True, text=True, timeout=60)
+                if check.returncode == 0 or not any(t in (check.stdout + check.stderr).lower()
+                                                     for t in ('404', 'not_found', 'not found')):
+                    raise RuntimeError('VM deletion was not verified')
 
 
 if __name__ == '__main__':

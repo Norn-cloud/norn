@@ -1,4 +1,4 @@
-"""First oracle checkpoint: serial receipt and delivery through document REST."""
+"""Serial stock lifecycle through public document REST."""
 from rest import NativeError
 from decimal import Decimal
 
@@ -13,21 +13,45 @@ class Driver:
             raise ValueError('Concurrent traces are outside this checkpoint')
         command, f = step['command'], self.f
         op, key = command['operation'], command['requestId']
-        if op['kind'] not in ('receipt', 'delivery') or key in self.docs:
-            raise ValueError('Checkpoint supports fresh receipts and deliveries only')
+        if op['kind'] not in ('receipt', 'delivery', 'transfer', 'return', 'cancel') or key in self.docs:
+            raise ValueError('Checkpoint supports fresh serial stock lifecycle commands only')
         date, time = command['effectiveAt'].removesuffix('Z').split('T')
+        result = dict(attempt=0, requestId=key, nativeId=None, outcome='accepted',
+                      nativeCode=None, reason=None, completionOrder=0)
+        if op['kind'] == 'cancel':
+            target = self.docs[op['target']]
+            result['nativeId'] = target['name']
+            try:
+                self.api.cancel(target['doctype'], target['name'])
+            except NativeError as error:
+                result.update(outcome='refused', nativeCode=error.code, reason=error.code)
+            return [result]
         receipt = op['kind'] == 'receipt'
         doctype = 'Purchase Receipt' if receipt else 'Delivery Note'
         doc = dict(company=f['company'], posting_date=date, posting_time=time, set_posting_time=1,
                    currency='USD', conversion_rate=1,
                    items=[dict(item_code=f['item'], qty=Decimal(op['quantity']), rate=Decimal(op.get('rate', '1')),
-                               warehouse=f['warehouses'][op['warehouse']], uom='Unit', stock_uom='Unit',
+                               warehouse=f['warehouses'][op.get('warehouse', op.get('from', 'a'))], uom='Unit', stock_uom='Unit',
                                conversion_factor=1, expense_account=f['accounts']['cogs'])])
-        if not receipt:
+        if op['kind'] == 'transfer':
+            doctype = 'Stock Entry'
+            doc['stock_entry_type'] = 'Material Transfer'
+            line = doc['items'][0]
+            line.pop('warehouse')
+            line.update(s_warehouse=f['warehouses'][op['from']], t_warehouse=f['warehouses'][op['to']])
+        if op['kind'] == 'return':
+            target = self.docs[op['delivery']]
+            if target['doctype'] != 'Delivery Note':
+                raise ValueError('Return requires a Delivery Note reference')
+            target = self.api.get(target['doctype'], target['name'])
+            doc.update(is_return=1, return_against=target['name'])
+            line = doc['items'][0]
+            line.update(qty=-Decimal(op['quantity']), warehouse=target['items'][0]['warehouse'],
+                        dn_detail=target['items'][0]['name'], rate=target['items'][0]['rate'])
+        if doctype == 'Delivery Note':
             doc.update(selling_price_list='Parity Selling', price_list_currency='USD', plc_conversion_rate=1)
-        doc['supplier' if receipt else 'customer'] = f['supplier' if receipt else 'customer']
-        result = dict(attempt=0, requestId=key, nativeId=None, outcome='accepted',
-                      nativeCode=None, reason=None, completionOrder=0)
+        if doctype != 'Stock Entry':
+            doc['supplier' if receipt else 'customer'] = f['supplier' if receipt else 'customer']
         try:
             self.docs[key] = self.api.create(doctype, **doc)
             result['nativeId'] = self.docs[key]['name']

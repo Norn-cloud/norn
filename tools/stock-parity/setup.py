@@ -13,6 +13,11 @@ def ensure(api, doctype, identity, **fields):
 
 
 def provision(api, trace):
+    jobs = list(api.rows('Scheduled Job Type', {'method': ['like', '%repost_item_valuation.%']}, ['name']))
+    if not jobs:
+        raise ValueError('Native valuation jobs unavailable')
+    for job in jobs:
+        api.update('Scheduled Job Type', job['name'], frequency='Cron', cron_format='* * * * *', stopped=0)
     suffix = uuid.uuid4().hex[:10]
     company = 'Parity ' + suffix
     ensure(api, 'Currency', 'USD', currency_name='USD', enabled=1, fraction='Cent', fraction_units=100)
@@ -30,6 +35,7 @@ def provision(api, trace):
     ensure(api, 'Price List', 'Parity Selling', price_list_name='Parity Selling',
            currency='USD', selling=1, enabled=1)
     ensure(api, 'Warehouse Type', 'Transit', name='Transit')
+    ensure(api, 'Stock Entry Type', 'Material Transfer', name='Material Transfer', purpose='Material Transfer')
     api.create('Company', company_name=company, abbr=suffix, default_currency='USD',
                country='United States', chart_of_accounts='Standard', enable_perpetual_inventory=1)
     accounts = list(api.rows('Account', {'company': company}, ['name', 'account_type', 'is_group', 'root_type']))

@@ -2398,6 +2398,7 @@
         "tools/stock-parity/boot.sh",
         "tools/stock-parity/check_smoke.py",
         "tools/stock-parity/driver.py",
+        "tools/stock-parity/lifecycle.py",
         "tools/stock-parity/extract.py",
         "tools/stock-parity/rest.py",
         "tools/stock-parity/run.py",
