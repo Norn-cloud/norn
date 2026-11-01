@@ -700,7 +700,14 @@ impl Rows {
             return;
         };
         for map in &mapping.maps {
-            let Some(admitted) = admission.declared_by(&map.target.entity) else {
+            let version = artifact
+                .dependencies
+                .iter()
+                .find(|dependency| {
+                    dependency.required && dependency.artifact_id == map.target.entity
+                })
+                .and_then(|dependency| dependency.version.as_deref());
+            let Some(admitted) = admission.declared_by(&map.target.entity, version) else {
                 continue;
             };
             let lineage = PinnedType::lineage(admitted, admission);
