@@ -167,7 +167,7 @@ pub const CRATES: &[CrateRule] = &[
     ),
     r0(
         "norn-api",
-        &["norn-ir"],
+        &["norn-ir", "norn-checker"],
         &["http", "serde", "serde_json", "utoipa"],
     ),
     rule(

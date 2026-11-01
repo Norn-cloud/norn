@@ -23,3 +23,23 @@ server or store. Transport adapters will map `Refusal.status` to their response.
 Correspondence: `tests/host_perimeter.rs` covers these properties and exact JSON.
 Denial-before-store-read and default-deny authorization belong to the host wiring
 slice; the perimeter itself performs no IO.
+
+## Definition projection contract (slice 1b)
+
+`defs::Admitted` retains the host's definition data; `install::defs_response`
+projects it. These infrastructure types do not install or serve definitions.
+The host admission and authorized GET path follow in the next slice.
+
+- HOST-IDENTITY: envelopes, layout and flow source maps use canonical IR types.
+- HOST-WIRE: preserve the existing definition response fields, camelCase
+  revisions, empty arrays and omission of an absent flow source map.
+- HOST-EXACT: artifacts are raw JSON decoded directly from the admitted canonical
+  source array, never reserialized through floating-point JSON values.
+- HOST-RECEIPT: copy the checker receipt and hash unchanged; derive base artifact
+  ids and the optional source map from that same receipt. Invalid receipt shape
+  or malformed source text refuses opaquely with `host.error`.
+
+Correspondence: `tests/definition_projection.rs` checks synthetic checker receipts,
+key-order independence, semantic changes, exact large integers and scale-28
+boundaries. Numeric admission refusal, scope admission, installed-revision binding
+and the definition epoch are host-wiring obligations, not projection guarantees.

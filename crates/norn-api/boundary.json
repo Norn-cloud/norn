@@ -2,6 +2,7 @@
   "name": "norn-api",
   "ring": "Zero",
   "allowed_norn": [
+    "norn-checker",
     "norn-ir"
   ],
   "dev_only_norn": [],
