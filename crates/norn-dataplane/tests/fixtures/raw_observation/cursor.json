@@ -18,7 +18,8 @@
     "cursor": {
       "doctype": "Sales Order",
       "modified": "2026-10-01 09:30:00.100000",
-      "name": "SO-0001"
+      "name": "SO-0001",
+      "feed": "documents"
     },
     "pipeline_version": "norn-dataplane.frappe-sweep/1"
   },
