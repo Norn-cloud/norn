@@ -5,6 +5,7 @@
 )]
 use norn_cell::compute::{Frontier, Member, QueryRow};
 use norn_ir::{Decimal, RuntimeValue};
+mod query_support;
 use std::collections::BTreeMap;
 
 #[test]
@@ -50,5 +51,16 @@ fn source_frontier_keeps_connector_partitions_and_opaque_cursors_separate() {
     assert_eq!(
         serde_json::from_str::<Frontier>(&wire).expect("decode"),
         frontier
+    );
+}
+
+#[test]
+fn declared_scrap_yield_fixture_admits_with_the_pinned_result_context() {
+    let (_, plan, context) = query_support::fixture();
+    assert_eq!(plan.grain().as_str(), "demo.Conversion");
+    let wire = serde_json::to_string(&context).expect("context");
+    assert_eq!(
+        serde_json::from_str::<norn_cell::compute::QueryContext>(&wire).expect("decode"),
+        context
     );
 }

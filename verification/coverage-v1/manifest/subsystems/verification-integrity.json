@@ -121,6 +121,7 @@
     "crates/norn-cell/tests/quantity_refusal_boundary.rs",
     "crates/norn-cell/tests/quantity_reservations.rs",
     "crates/norn-cell/tests/quantity_support/mod.rs",
+    "crates/norn-cell/tests/query_support/mod.rs",
     "crates/norn-cell/tests/query_envelope.rs",
     "crates/norn-cell/tests/reactive_query.rs",
     "crates/norn-cell/tests/recovery.rs",
