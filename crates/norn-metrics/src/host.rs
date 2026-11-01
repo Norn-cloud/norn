@@ -28,6 +28,7 @@ pub struct ForecastInput {
 /// Typed summary accepted by a governed publication action.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools, reason = "receipt schema carries independent source-quality and diagnostic facts") ]
 pub struct ForecastSummary {
     /// Input export version.
     pub table_version: String,
