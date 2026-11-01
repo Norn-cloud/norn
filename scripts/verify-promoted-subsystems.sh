@@ -564,6 +564,17 @@ run_gate fast quantity-reservation-lean \
 run_gate fast jewelry-fine-metal-lean \
   "lean -DwarningAsError=true verification/jewelry-v1/FineMetal.lean" command \
   lean -DwarningAsError=true verification/jewelry-v1/FineMetal.lean
+run_gate fast jewelry-refining-typecheck \
+  "quint typecheck verification/jewelry-v1/refining.qnt" \
+  "" quint typecheck verification/jewelry-v1/refining.qnt
+run_gate fast jewelry-refining-quint \
+  "quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved lossValued recordsAligned custodyIsolated refusedIsNoop --max-steps 4" \
+  "target/verification-results/jewelry-refining-quint.json" \
+  quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved lossValued recordsAligned custodyIsolated refusedIsNoop --max-steps 4 \
+    --out "$result_root/jewelry-refining-quint.json"
+run_gate fast jewelry-refining-canaries \
+  "quint test verification/jewelry-v1/refining.qnt --backend rust --match .*Test --max-samples 1 --seed 1" \
+  "" quint test verification/jewelry-v1/refining.qnt --backend rust --match '.*Test' --max-samples 1 --seed 1
 run_gate fast quantity-batch-quint-typecheck \
   "quint typecheck verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt" \
   command \
