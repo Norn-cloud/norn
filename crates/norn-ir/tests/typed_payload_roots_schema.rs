@@ -778,6 +778,9 @@ proptest::proptest! {
         let payload = ArtifactPayload::from_kind_json(&ArtifactKind::DefinedConcept,
             serde_json::from_value(root.clone()).expect("IR JSON")).expect("payload");
         proptest::prop_assert_eq!(payload.kind(), ArtifactKind::DefinedConcept);
-        proptest::prop_assert_eq!(serde_json::to_value(payload.to_json_value()).expect("wire"), root);
+        let canonical = norn_canonical::canonical_json_of(&payload.to_json_value()).expect("canonical wire");
+        proptest::prop_assert_eq!(&canonical, &norn_canonical::canonical_json_of(&root).expect("canonical declaration"));
+        let decoded: norn_ir::DefinedConceptRoot = serde_json::from_slice(&canonical).expect("typed canonical root");
+        proptest::prop_assert_eq!(decoded.bounds, norn_ir::ResourceLimitProfile::norn_limits_v1());
     }
 }
