@@ -1845,7 +1845,7 @@ impl QuantityFixture for SqliteCell<String, String, String> {
                 .quantity_balance_versions("main", &request)
                 .map_err(norn_kernel::CommitError::Host)?;
         }
-        self.commit_with_quantity(commit, &request, key)
+        self.commit_with_partition_postings(commit, std::slice::from_ref(&request), key)
     }
 
     fn commit_quantity_fenced(
@@ -2614,4 +2614,122 @@ async fn post_atomic_partitions_refusal_retry_reopen_restore() {
         head,
         restored.read().verify_ledger().expect("restored chain")
     );
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one native atomic-proposal conformance history"
+)]
+fn post_partition_plan_fences_absences_and_commits_all_effects_once() {
+    use norn_kernel::{CellHost, CommitError, FactExpectation};
+    let mut cell = initialized(10);
+    let mut definition = define();
+    definition.ledger_id = "destination".into();
+    cell.commit_quantity_fenced(&definition, "define-destination")
+        .expect("define");
+    let mut funding = post(0, "fund", "fund", 10);
+    funding.ledger_id = "destination".into();
+    cell.commit_quantity_fenced(&funding, "fund-destination")
+        .expect("fund");
+    let marker = |id: &str| FactWrite {
+        key: FactKey::new("fixture.Marker", id),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: BTreeMap::from([(
+                "label".into(),
+                norn_ir::RuntimeValue::String("atomic".into()),
+            )]),
+        },
+    };
+    let absent = FactKey::new("fixture.Marker", "empty-partition");
+    let mut proposal = CellCommit::empty();
+    proposal.reads.push(FactExpectation {
+        key: absent.clone(),
+        expected: FactVersion::ABSENT,
+    });
+    proposal.writes.push(marker("result"));
+    proposal.events.push("atomic".into());
+    proposal.effects = effects();
+    let mut postings = vec![
+        post(0, "consume", "ship", 6),
+        post(0, "consume", "ship", 11),
+    ];
+    postings.last_mut().expect("destination").ledger_id = "destination".into();
+    for posting in &mut postings {
+        posting.balance_versions = cell
+            .store()
+            .read()
+            .quantity_balance_versions("main", posting)
+            .expect("complete fences");
+    }
+    let mut competitor = CellCommit::empty();
+    competitor.writes.push(marker("empty-partition"));
+    CellHost::commit(&mut cell, competitor).expect("competing empty-partition creation");
+    let before = cell.store().read().dump().expect("before");
+    assert!(
+        matches!(CellHost::commit_action_quantity(&mut cell, proposal.clone(), &postings, "stale-fact"), Err(CommitError::Conflict { key, .. }) if key == absent),
+        "POST-PARTITION-FENCES absence"
+    );
+    assert_eq!(before, cell.store().read().dump().expect("unchanged"));
+    proposal.reads.clear();
+    assert!(
+        matches!(
+            CellHost::commit_action_quantity(
+                &mut cell,
+                proposal.clone(),
+                &postings,
+                "later-refusal"
+            ),
+            Err(CommitError::Quantity(
+                QuantityError::InsufficientAvailable { .. }
+            ))
+        ),
+        "POST-ATOMIC-PARTITIONS later quantity refusal"
+    );
+    assert_eq!(
+        before,
+        cell.store().read().dump().expect("all effects unchanged")
+    );
+    postings.last_mut().expect("destination").operation = post(0, "consume", "ship", 6).operation;
+    let first =
+        CellHost::commit_action_quantity(&mut cell, proposal.clone(), &postings, "whole-proposal")
+            .expect("POST-ATOMIC-PARTITIONS");
+    let committed = cell.store().read().dump().expect("committed");
+    assert_eq!(
+        first,
+        CellHost::commit_action_quantity(&mut cell, proposal, &postings, "whole-proposal")
+            .expect("POST-GROUP-IDENTITY")
+    );
+    assert_eq!(
+        committed,
+        cell.store().read().dump().expect("retry unchanged")
+    );
+    assert_eq!(cell.pending_commands().expect("outbox").len(), 1);
+    assert_eq!(cell.pending_timers().expect("timers").len(), 1);
+    assert_eq!(
+        first.written.len(),
+        1,
+        "business output joins the quantity group"
+    );
+    for posting in &postings {
+        let balance = cell
+            .store()
+            .read()
+            .quantity_balance(
+                "main",
+                &posting.ledger_id,
+                &QuantityKey {
+                    account: "lot".into(),
+                    unit: "item".into(),
+                    layer: "physical".into(),
+                },
+            )
+            .expect("balance");
+        assert_eq!(balance.posted, "4");
+    }
+    cell.store()
+        .read()
+        .verify_ledger()
+        .expect("complete native journal");
 }
