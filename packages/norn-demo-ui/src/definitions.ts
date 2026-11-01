@@ -135,16 +135,16 @@ function tree(value: unknown): string {
   return text(String(value))
 }
 
-function transitionActions(entries: readonly DefinitionEntry[], entity: string, property: string, transition: string): string[] {
+function transitionActions(entries: readonly DefinitionEntry[], entity: Metadata, property: string, transition: string): string[] {
   return entries.flatMap(({ metadata, definition }) => {
     if (definition?.kind !== "action") return []
     const effect = definition.payload.effectProgram
-    return effect?.kind === "fire_transition" && effect.entityArtifactId === entity && effect.lifecycle === property && effect.transition === transition
+    return effect?.kind === "fire_transition" && effect.entityArtifactId === entity.artifactId && effect.entityArtifactVersion === entity.version && effect.lifecycle === property && effect.transition === transition
       ? [metadata.name] : []
   })
 }
 
-function lifecycleView(object: Schemas["NornIrObjectTypeDef"], entity: string, entries: readonly DefinitionEntry[]): string {
+function lifecycleView(object: Schemas["NornIrObjectTypeDef"], entity: Metadata, entries: readonly DefinitionEntry[]): string {
   return (object.lifecycles ?? []).map((cycle) => {
     const property = object.properties?.find((item) => item.id === cycle.property)
     const states = property?.type.kind === "enum" ? property.type.values.map((value) => value.value) : []
@@ -173,7 +173,7 @@ function describe({ metadata, definition }: DefinitionEntry, entries: readonly D
         ${object.extends ? `<p>Extends ${text(object.extends)}</p>` : ""}
         <h3>Properties</h3><table><thead><tr><th>Name</th><th>Type / unit</th><th>Derivation</th></tr></thead><tbody>${(object.properties ?? []).map((property) => `<tr><td>${escape(property.id)}</td><td>${escape(typeLabel(property.type))}</td><td>${property.computed ? text(property.computed) : ""}</td></tr>`).join("")}</tbody></table>
         ${list("Relationships", (object.links ?? []).map((link) => `${text(link.id)} → ${text(link.target)} · ${escape(link.cardinality.from)}:${escape(link.cardinality.to)}${link.cardinality.required ? " · required" : ""}`))}
-        ${lifecycleView(object, metadata.artifactId, entries)}
+        ${lifecycleView(object, metadata, entries)}
         ${list("Invariants", (object.invariants ?? []).map((law) => `${text(law.id)} · ${escape(law.message)} — ${text(law.expression)}`))}${dependencies}`
     }
     case "action": {
