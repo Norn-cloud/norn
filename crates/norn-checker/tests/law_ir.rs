@@ -88,6 +88,7 @@ fn law_interface_and_empty_validate_the_declared_contract_without_vacuous_eviden
 #[test]
 fn law_interface_missing_subject_and_unpinned_contract_refuse() {
     let (mut artifact, _) = interface_case(false, "self.total_amount >= 0");
+    artifact.dependencies.clear();
     assert!(
         run(vec![serde_json::to_value(&artifact).expect("wire")], &[])
             .contains(&codes::UNKNOWN_BINDING.to_owned())
