@@ -138,6 +138,28 @@ mod tests {
     }
 
     #[test]
+    fn profiled_identity_negation_and_nested_outputs_require_exact_inputs() {
+        use crate::{compile_expression, meter::Meter, vm::VM, Variable};
+        let mut vm = VM::new();
+        vm.set_meter(Some(Meter::new(1000).with_arithmetic(ScaledArithmetic {
+            scale: 2,
+            rounding: Rounding::Refuse,
+        })));
+        for source in ["x", "-x", "{nested:[x]}"] {
+            let context = |n: &str| {
+                Variable::from_object(
+                    [(Variable::key("x"), Variable::Number(n.parse().unwrap()))]
+                        .into_iter()
+                        .collect(),
+                )
+            };
+            let expression = compile_expression(source).unwrap();
+            assert!(expression.evaluate_with(context("0.001"), &mut vm).is_err());
+            assert!(expression.evaluate_with(context("0.01"), &mut vm).is_ok());
+        }
+    }
+
+    #[test]
     fn exact_operations_and_refusal_boundaries() {
         for (op, a, b, result) in [
             ("Add", "0.1", "0.2", "0.3"),
