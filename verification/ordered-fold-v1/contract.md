@@ -144,3 +144,8 @@ FOLD-VM-BOUNDARY: a profiled VM checks numeric leaves in its base scope, locals
 and complete result, including identity/negation and nested records/lists. The
 iterative walk charges nodes and pending children before allocating traversal
 work. No caller can attach a profile and pass excess-precision values through.
+
+FOLD-ORACLE-REFUSALS: the allocation fixture declares positive demand, positive
+source quantities, nonnegative source values and complete satisfaction of demand.
+Oversell, zero/negative requests and malformed source amounts refuse through the
+declared schema/output guards; none is a privileged evaluator condition.
