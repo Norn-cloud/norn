@@ -122,47 +122,50 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 ORDER BY seq LIMIT 64"),
                 params![world, object_type, key, after],
             )?;
-            if sequences.is_empty() { break; }
-        for values in sequences {
-            let seq: i64 = crate::engine::SqlRow(values).get(0)?;
-            after = seq;
-            if let Some(event) =
-                self.verified_finding_at(crate::read::to_u64(seq, "finding sequence")?)?
-            {
-                let mut finding: DataQualityFinding = norn_ir::runtime::decode(
-                    event
-                        .get("fact")
-                        .ok_or(CellError::OutOfRange("finding fact"))?,
-                )
-                .map_err(CellError::Encoding)?;
-                if seen.insert(finding.id.clone()) {
-                    if let Some(record) = &current {
-                        let probe = finding.clone().with_evidence_digest(format!(
-                            "sha256:{}",
-                            crate::codec::hash_json(&record.values)?
-                        ))?;
-                        if !norn_kernel::snapshot_observe::verify_finding_values(
-                            &catalog,
-                            &FactKey::new(object_type, key),
-                            &record.values,
-                            &probe,
-                        )
-                        .map_err(|error| CellError::DefinitionReceiptInvalid(error.to_string()))?
-                        {
-                            finding.status = if catalog
-                                .classify_data_quality_rule(&finding.rule_ref)?
-                                == norn_kernel::DataQualityRuleClassification::Unverified
-                            {
-                                DataQualityFindingStatus::Superseded
-                            } else {
-                                DataQualityFindingStatus::Resolved
-                            };
+            if sequences.is_empty() {
+                break;
+            }
+            for values in sequences {
+                let seq: i64 = crate::engine::SqlRow(values).get(0)?;
+                after = seq;
+                if let Some(event) =
+                    self.verified_finding_at(crate::read::to_u64(seq, "finding sequence")?)?
+                {
+                    let mut finding: DataQualityFinding = norn_ir::runtime::decode(
+                        event
+                            .get("fact")
+                            .ok_or(CellError::OutOfRange("finding fact"))?,
+                    )
+                    .map_err(CellError::Encoding)?;
+                    if seen.insert(finding.id.clone()) {
+                        if let Some(record) = &current {
+                            let probe = finding.clone().with_evidence_digest(format!(
+                                "sha256:{}",
+                                crate::codec::hash_json(&record.values)?
+                            ))?;
+                            if !norn_kernel::snapshot_observe::verify_finding_values(
+                                &catalog,
+                                &FactKey::new(object_type, key),
+                                &record.values,
+                                &probe,
+                            )
+                            .map_err(|error| {
+                                CellError::DefinitionReceiptInvalid(error.to_string())
+                            })? {
+                                finding.status = if catalog
+                                    .classify_data_quality_rule(&finding.rule_ref)?
+                                    == norn_kernel::DataQualityRuleClassification::Unverified
+                                {
+                                    DataQualityFindingStatus::Superseded
+                                } else {
+                                    DataQualityFindingStatus::Resolved
+                                };
+                            }
                         }
+                        findings.push(finding);
                     }
-                    findings.push(finding);
                 }
             }
-        }
         }
         Ok(findings)
     }
@@ -215,7 +218,9 @@ pub(crate) fn deduplicate<E: SqlEngine>(
                     &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.id') = ?2 AND commit_seq < ?3 AND seq > ?4 ORDER BY seq LIMIT 64"),
                     params![&batch.world, &finding.id, to_i64(before_commit, "finding cutoff")?, after],
                 )?;
-                if rows.is_empty() { break; }
+                if rows.is_empty() {
+                    break;
+                }
                 for values in rows {
                     after = crate::engine::SqlRow(values).get(0)?;
                     if reader
@@ -226,7 +231,9 @@ pub(crate) fn deduplicate<E: SqlEngine>(
                         break;
                     }
                 }
-                if known { break; }
+                if known {
+                    break;
+                }
             }
         }
         if !known {
