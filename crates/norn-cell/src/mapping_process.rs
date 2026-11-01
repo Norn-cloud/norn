@@ -58,7 +58,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 || !record.cleared_links.is_empty()
                 || record.invocations.len() != 1
             {
-                return Err(CellError::Encoding("CP2 bundle processing requires property/lifecycle mappings; relation evidence is retained".into()));
+                return Err(CellError::UnsupportedMappingProfile);
             }
             let key = FactKey::new(record.object_type.as_str(), &record.key);
             let slice =

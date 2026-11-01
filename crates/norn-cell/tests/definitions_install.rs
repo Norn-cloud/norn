@@ -5736,3 +5736,20 @@ fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics(
         .recheck_mapping_bundle(&bundle)
         .expect("same diagnostics at processing");
 }
+
+#[test]
+fn mapping_bundle_refuses_mismatched_delivery_identity_without_consumption() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut source = mapping_bundle_store(&dir.path().join("source.sqlite"));
+    let (id, _) = source.inject_mapping_bundle(&bundle_raw("MEAS-1", "1.20"), &bundle_input()).expect("bundle");
+    let pending = source.read().pending_observations().expect("inbox");
+    let mut observed: norn_kernel::Observed<Value> = norn_ir::runtime::decode(&pending[0].observed).expect("envelope");
+    observed.id.0 = "other-delivery".into();
+    let mut store = mapping_bundle_store(&dir.path().join("target.sqlite"));
+    store.inject(&id, &norn_ir::runtime::encode(&observed).expect("payload")).expect("untrusted stored envelope");
+    store.inject("other-delivery", &norn_ir::runtime::encode(&observed).expect("other payload")).expect("other inbox row");
+    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    assert!(matches!(cell.process_mapping_bundle(&id), Err(CellError::MappingBundleMismatch)));
+    assert_eq!(cell.store().read().pending_observations().expect("inbox").len(), 2);
+    assert!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("fact").is_none());
+}
