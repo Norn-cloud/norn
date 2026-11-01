@@ -1064,7 +1064,7 @@ where
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
-    let (receipt, mut changes) =
+    let ReceiptChanges { reference: receipt, facts: mut changes } =
         receipt_changes(host, catalog, call, &preparation.effective_input, &target)?;
     let change = FactChange::Transition {
         object_type,
