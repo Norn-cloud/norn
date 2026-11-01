@@ -479,13 +479,13 @@ pub static REGISTRY: &[CodeEntry] = &[
     introduced(
         "controls.validation.refuted",
         Tier::T3,
-        "Concrete duty separation counterexample",
+        "Finite-model duty separation counterexample",
         "0.2.0",
     ),
     introduced(
         "controls.validation.witness_required",
         Tier::T3,
-        "Concrete availability witness required",
+        "Kernel availability witness required",
         "0.2.0",
     ),
     entry(
