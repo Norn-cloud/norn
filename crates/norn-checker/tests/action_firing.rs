@@ -154,7 +154,10 @@ fn receipt_effect_admits_reference_and_writer_closure_but_refuses_invalid_bindin
     entity["payload"]["objectType"]["properties"]
         .as_array_mut()
         .expect("properties")
-        .extend([serde_json::json!({"id":"customer", "type":{"kind":"text"}}), serde_json::json!({"id":"receipt_digest", "type":{"kind":"text"}})]);
+        .extend([
+            serde_json::json!({"id":"customer", "type":{"kind":"text"}}),
+            serde_json::json!({"id":"receipt_digest", "type":{"kind":"text"}}),
+        ]);
     let mut action =
         read_json(&fixtures().join("ir/commerce-sales-order-submit-invoice.action.json"));
     action["payload"]["inputSchema"]["properties"]["receipt"] =
@@ -182,7 +185,13 @@ fn receipt_effect_admits_reference_and_writer_closure_but_refuses_invalid_bindin
         )
     };
     assert!(check(&action).is_empty(), "{:?}", check(&action));
-    for target in ["status", "missing", "_norn_private", "so_number", "receipt_digest"] {
+    for target in [
+        "status",
+        "missing",
+        "_norn_private",
+        "so_number",
+        "receipt_digest",
+    ] {
         let mut invalid = action.clone();
         invalid["payload"]["effectProgram"]["acceptReceipt"]["resultBindings"] =
             serde_json::json!({target:"customer"});
@@ -203,7 +212,8 @@ fn receipt_effect_admits_reference_and_writer_closure_but_refuses_invalid_bindin
         })
         .expect("generated undeclared receipt targets always refuse");
     let mut identity = action.clone();
-    identity["payload"]["effectProgram"]["acceptReceipt"]["digestProperty"] = serde_json::json!("so_number");
+    identity["payload"]["effectProgram"]["acceptReceipt"]["digestProperty"] =
+        serde_json::json!("so_number");
     assert!(!check(&identity).is_empty());
     let mut body = action.clone();
     body["payload"]["inputSchema"]["properties"]["receipt"] =
