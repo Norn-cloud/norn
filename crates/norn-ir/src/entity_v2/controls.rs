@@ -58,6 +58,16 @@ pub enum Reachability {
     Unreachable,
 }
 
+/// One candidate model step, with unambiguous action and singleton-role identities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ControlStep {
+    /// Exact action identity.
+    pub action: String,
+    /// Singleton role used by the model.
+    pub role: String,
+}
+
 /// One deterministic controls verdict carried beside ordinary diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -73,7 +83,7 @@ pub struct ControlVerdict {
     pub reachability: Reachability,
     /// Candidate counterexample steps, including the unrestricted prefix.
     /// These are model evidence only until kernel admission and commit replay them.
-    pub trace: Vec<String>,
+    pub trace: Vec<ControlStep>,
     /// Evidence scope or reason the check remains unresolved.
     pub explanation: String,
 }
@@ -85,7 +95,7 @@ struct ControlVerdictWire {
     actions: Vec<String>,
     verdict: ControlStatus,
     reachability: Reachability,
-    trace: Vec<String>,
+    trace: Vec<ControlStep>,
     explanation: String,
 }
 
