@@ -67,3 +67,5 @@ The unchanged #353 CSV is a generated numerical fixture, not authenticated
 training knowledge. Native cell scenarios cover 98%/97.5%, immutable prior
 results, exact contribution membership, unavailable zero-input ratios and
 visibility/quarantine separation. Governing commit-read qualification follows G4.
+
+G3 aggregate mechanism (COMPUTE-DETERMINISTIC-1 / QUERY-ENGINE-1): cell recompute and delta maintenance share exact signed contribution adjustment. Retraction reverses an admitted addition without rounding; only the final ratio rounds. A generated sequence/reverse-sequence property and production arithmetic Kani retraction harness qualify this primitive. Receipt-driven maintenance and restart correspondence are the next cut; no IVM qualification is claimed here.

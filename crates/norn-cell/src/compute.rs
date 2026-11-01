@@ -218,6 +218,35 @@ impl<E: SqlEngine> CellStore<E> {
     }
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct Totals(BTreeMap<String, Vec<i128>>);
+impl Totals {
+    pub(crate) fn adjust(&mut self, value: &Contribution, retract: bool) -> Result<(), CellError> {
+        let key = bucket_key(value)?;
+        let totals = self
+            .0
+            .entry(key)
+            .or_insert_with(|| vec![0; value.amounts.len()]);
+        for (total, amount) in totals.iter_mut().zip(&value.amounts) {
+            let amount = amount.unwrap_or(0);
+            let delta = if retract {
+                amount
+                    .checked_neg()
+                    .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?
+            } else {
+                amount
+            };
+            *total =
+                math::add(*total, delta).ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+        }
+        Ok(())
+    }
+}
+fn bucket_key(value: &Contribution) -> Result<String, CellError> {
+    String::from_utf8(value.bucket.canonical_json()?)
+        .map_err(|e| CellError::Encoding(e.to_string()))
+}
+
 pub(crate) fn materialize(
     plan: &QuestionPlan,
     context: QueryContext,
@@ -226,22 +255,41 @@ pub(crate) fn materialize(
     definition_pin: String,
     contributions: &Contributions,
 ) -> Result<QueryResult, CellError> {
+    let mut totals = Totals::default();
+    for (_, value) in contributions.values() {
+        totals.adjust(value, false)?;
+    }
+    finish(
+        plan,
+        context,
+        revision,
+        query_pin,
+        definition_pin,
+        contributions,
+        &totals,
+    )
+}
+
+pub(crate) fn finish(
+    plan: &QuestionPlan,
+    context: QueryContext,
+    revision: LedgerHead,
+    query_pin: String,
+    definition_pin: String,
+    contributions: &Contributions,
+    totals: &Totals,
+) -> Result<QueryResult, CellError> {
     type Bucket = (RuntimeValue, Vec<i128>, BTreeMap<String, Member>);
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();
     for (id, (version, contribution)) in contributions {
-        let key = String::from_utf8(contribution.bucket.canonical_json()?)
-            .map_err(|e| CellError::Encoding(e.to_string()))?;
-        let bucket = grouped.entry(key).or_insert_with(|| {
+        let key = bucket_key(contribution)?;
+        let bucket = grouped.entry(key.clone()).or_insert_with(|| {
             (
                 contribution.bucket.clone(),
-                vec![0; plan.sums().len()],
+                totals.0.get(&key).cloned().unwrap_or_default(),
                 BTreeMap::new(),
             )
         });
-        for (total, amount) in bucket.1.iter_mut().zip(&contribution.amounts) {
-            *total = math::add(*total, amount.unwrap_or(0))
-                .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
-        }
         let amounts = contribution
             .amounts
             .iter()
@@ -325,4 +373,23 @@ pub(crate) fn materialize(
         complete,
         context,
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "bounded delta property assertions")]
+mod tests {
+    use super::*;
+    proptest::proptest! {
+        #[test]
+        fn delta_retraction_restores_exact_totals(values in proptest::collection::vec(proptest::option::of(proptest::num::i32::ANY), 0..100)) {
+            let mut totals = Totals::default();
+            for value in &values {
+                totals.adjust(&Contribution { bucket: RuntimeValue::Null, amounts: vec![value.map(i64::from)] }, false).expect("bounded add");
+            }
+            for value in values.iter().rev() {
+                totals.adjust(&Contribution { bucket: RuntimeValue::Null, amounts: vec![value.map(i64::from)] }, true).expect("bounded retract");
+            }
+            proptest::prop_assert!(totals.0.values().all(|sums| sums.iter().all(|sum| *sum == 0)));
+        }
+    }
 }
