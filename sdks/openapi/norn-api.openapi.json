@@ -1745,11 +1745,15 @@
         "description": "Supported stock operations; templates are selected by the kernel.",
         "enum": [
           "receipt",
-          "delivery"
+          "delivery",
+          "custodyReceipt",
+          "custodyReturn"
         ],
         "x-enumDescriptions": [
           "Receive at the owned line's acquisition cost.",
-          "Deliver at the authoritative stock cost."
+          "Deliver at the authoritative stock cost.",
+          "Receive customer metal without company valuation.",
+          "Return customer metal without company valuation."
         ]
       },
       "NornIrActionStockPost": {
@@ -1775,11 +1779,15 @@
             "description": "The closed stock operation.",
             "enum": [
               "receipt",
-              "delivery"
+              "delivery",
+              "custodyReceipt",
+              "custodyReturn"
             ],
             "x-enumDescriptions": [
               "Receive at the owned line's acquisition cost.",
-              "Deliver at the authoritative stock cost."
+              "Deliver at the authoritative stock cost.",
+              "Receive customer metal without company valuation.",
+              "Return customer metal without company valuation."
             ]
           },
           "partition": {
@@ -8536,6 +8544,10 @@
             },
             "description": "Declared keys. Each is unique among the type's live objects within one\ntenant scope and world, enforced at commit. Omitted when empty: every\nobject always has its kernel-assigned object id, and a type need not\ndeclare a business key."
           },
+          "immutable": {
+            "type": "boolean",
+            "description": "Append-only: existing instances cannot be changed or deleted. Inherited."
+          },
           "implements": {
             "type": "array",
             "items": {
@@ -9400,6 +9412,10 @@
               "$ref": "#/components/schemas/NornIrMarkingId"
             },
             "description": "Classification markings declared on this property. Markings from\nproperty types, interfaces, supertypes, and computed inputs are unioned\nby the checker and cannot be removed by narrowing. Omitted when empty."
+          },
+          "protected": {
+            "type": "boolean",
+            "description": "System-maintained: declared rules may write it, actions may not."
           },
           "type": {
             "$ref": "#/components/schemas/NornIrPropertyType",

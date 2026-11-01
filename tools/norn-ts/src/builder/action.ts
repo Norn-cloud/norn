@@ -29,7 +29,7 @@ export interface ActionCreateLink {
 }
 
 export interface StockPost {
-  readonly operation: "receipt" | "delivery"
+  readonly operation: "receipt" | "delivery" | "custodyReceipt" | "custodyReturn"
   readonly collection: string
   readonly partition: { readonly item: ReadonlyArray<string>; readonly warehouse: ReadonlyArray<string> }
   readonly accounts: { readonly stock: ReadonlyArray<string>; readonly srbnb: ReadonlyArray<string>; readonly cogs: ReadonlyArray<string> }

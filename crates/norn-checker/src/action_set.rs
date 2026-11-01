@@ -2129,6 +2129,21 @@ fn stock_post_findings(
         for (path, owner) in [(&post.partition.item, "stock.Item"), (&post.partition.warehouse, "stock.Warehouse")] {
             if !model.effective_object_type_named(resolve(path)?)?.lineage.iter().any(|n| n.as_str() == owner) { return None; }
         }
+        if matches!(post.operation, norn_ir::ActionStockOperation::CustodyReceipt | norn_ir::ActionStockOperation::CustodyReturn) {
+            let lot_name = resolve(&post.partition.item)?;
+            let lot = model.effective_object_type_named(lot_name)?;
+            let lot_owner = model.link_target(lot_name, "custody_owner")?;
+            if !model.effective_object_type_named(lot_owner)?.lineage.iter().any(|n| n.as_str() == "stock.Party") { return None; }
+            let ownership = lot.properties.iter().find(|p| p.id.as_str() == "ownership")?;
+            if ownership.nullable || ownership.computed || !matches!(ownership.kind, crate::entity_instance::EffectiveKind::Base(norn_ir::PropertyType::Text { .. } | norn_ir::PropertyType::Enum { .. })) { return None; }
+            if !lot.lineage.iter().any(|n| n.as_str() == "jewelry.MetalLot") { return None; }
+            let owner = model.stock_link_target(object_kind, &["owner".into()])?;
+            if !model.effective_object_type_named(owner)?.lineage.iter().any(|n| n.as_str() == "stock.Party") { return None; }
+            for id in ["gross_micrograms", "purity_numerator", "fine_ticks"] {
+                let field = lot.properties.iter().find(|p| p.id.as_str() == id)?;
+                if field.nullable || field.computed || !matches!(field.kind, crate::entity_instance::EffectiveKind::Base(norn_ir::PropertyType::Decimal { scale, .. }) if scale.0 == 0) { return None; }
+            }
+        }
         for (path, owner) in [
             (&post.accounts.stock, "stock.Warehouse"),
             (&post.accounts.srbnb, "stock.Company"),

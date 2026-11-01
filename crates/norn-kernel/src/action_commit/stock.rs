@@ -55,6 +55,8 @@ pub struct StockPartitionInput {
     pub uom: String,
     /// Immutable posting configuration/UOM pin checked against prior history.
     pub binding_pin: String,
+    /// Canonical custody party; absent for company inventory.
+    pub owner: Option<FactKey>,
 }
 
 /// Read-only proposal inputs. These values grant no write authority.
@@ -204,7 +206,14 @@ impl<H: CellHost + ?Sized> Reader<'_, '_, '_, H> {
             key = target.clone();
             self.fact(&key)?;
         }
-        Ok(key)
+        let model = crate::CommitModel::new(self.context.catalog);
+        let canonical = model.canonical(&key);
+        self.snapshot
+            .facts
+            .keys()
+            .find(|candidate| model.canonical(candidate) == canonical)
+            .cloned()
+            .ok_or_else(|| invalid("missing concrete master snapshot"))
     }
 
     fn account(
@@ -374,6 +383,61 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
         if text(&reader.fact(&item)?, "valuation_method")? != "fifo" {
             return Err(invalid("CP1 requires FIFO valuation"));
         }
+        let lot = reader.fact(&item)?;
+        let is_metal = model.is_a(
+            &item.object_type,
+            &ObjectTypeName("jewelry.MetalLot".into()),
+        );
+        let custody = matches!(
+            binding.operation,
+            norn_ir::ActionStockOperation::CustodyReceipt
+                | norn_ir::ActionStockOperation::CustodyReturn
+        );
+        let mut owner = None;
+        if is_metal {
+            let ownership = text::<H::Error>(&lot, "ownership")?;
+            if ownership == "custody" && !custody {
+                return Err(ActionRefusal::StockPosting(StockPostError::CustodySale));
+            }
+            if !["custody", "company"].contains(&ownership.as_str()) {
+                return Err(invalid("metal ownership must be company or custody"));
+            }
+            if custody {
+                if ownership != "custody" {
+                    return Err(invalid("custody posting requires customer-owned metal"));
+                }
+                let party = reader.path(&item, &["custody_owner".into()])?;
+                if model.canonical(&party)
+                    != model.canonical(&reader.path(&target, &["owner".into()])?)
+                {
+                    return Err(invalid("custody voucher owner differs from lot owner"));
+                }
+                owner = Some(model.canonical(&party));
+            }
+            let integer = |name: &str| -> Result<i128, ActionRefusal<H::Error>> {
+                let Some(JsonValue::Number(n)) = lot.get(name) else {
+                    return Err(ActionRefusal::StockPosting(StockPostError::Purity));
+                };
+                n.canonical()
+                    .parse::<i128>()
+                    .map_err(|_parse| ActionRefusal::StockPosting(StockPostError::Purity))
+            };
+            let gross = integer("gross_micrograms")?;
+            let purity = integer("purity_numerator")?;
+            if gross <= 0 || !(1..=24_000_000).contains(&purity) {
+                return Err(ActionRefusal::StockPosting(StockPostError::Purity));
+            }
+            let fine = gross
+                .checked_mul(purity)
+                .ok_or(ActionRefusal::StockPosting(StockPostError::Overflow))?;
+            norn_ir::runtime::Decimal::parse(&fine.to_string())
+                .map_err(|_range| ActionRefusal::StockPosting(StockPostError::Overflow))?;
+            if fine != integer("fine_ticks")? {
+                return Err(ActionRefusal::StockPosting(StockPostError::Purity));
+            }
+        } else if custody {
+            return Err(invalid("custody posting requires a metal lot"));
+        }
         let accounts = [
             reader.account(&key, &binding.accounts.stock)?,
             reader.account(&key, &binding.accounts.srbnb)?,
@@ -393,6 +457,8 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
                 &bindings.currency,
                 &bindings.layer,
                 &uom,
+                &owner,
+                is_metal.then_some(&lot),
             ),
         )
         .map_err(|_encoding| invalid("invalid stock binding pin"))?;
@@ -407,13 +473,16 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
                 bindings,
                 binding_pin,
                 uom,
+                owner,
             });
         partition.lines.push(StockPostLine {
             id: id.clone(),
             quantity: millionths(&values, "quantity")?,
             unit_cost: match binding.operation {
                 norn_ir::ActionStockOperation::Receipt => Some(millionths(&values, "rate")?),
-                norn_ir::ActionStockOperation::Delivery => None,
+                norn_ir::ActionStockOperation::CustodyReceipt => Some(0),
+                norn_ir::ActionStockOperation::Delivery
+                | norn_ir::ActionStockOperation::CustodyReturn => None,
             },
         });
     }
@@ -666,7 +735,7 @@ pub fn plan_stock_effects<X>(
             "id" => event.id, "partition_id" => partition.witness.key,
             "ordinal" => partition.history.len().saturating_add(index), "operation" => operation,
             "quantity" => stock_decimal(quantity)?, "value" => stock_decimal(value)?,
-            "allocations" => stock_json(&event.allocations)?, "voucher_id" => target.key,
+            "allocations" => stock_json(&event.allocations)?, "owner" => stock_json(partition.owner.as_ref().unwrap_or(&partition.masters[0]))?, "voucher_id" => target.key,
             "line_id" => line.id, "effective_at" => effective,
         ) else {
             return Err(stock_invalid("invalid stock event object"));
@@ -702,7 +771,7 @@ pub fn plan_stock_effects<X>(
         .ok_or_else(|| stock_invalid("stock partition total overflow"))?;
     let V::Object(values) = norn_ir::runtime_object! (
         "id" => partition.witness.key, "event_count" => partition.history.len().saturating_add(plan.events.len()),
-        "binding_pin" => partition.binding_pin, "quantity" => stock_decimal(quantity)?, "value" => stock_decimal(value)?,
+        "binding_pin" => partition.binding_pin, "owner" => stock_json(partition.owner.as_ref().unwrap_or(&partition.masters[0]))?, "quantity" => stock_decimal(quantity)?, "value" => stock_decimal(value)?,
         "layers" => stock_json(&plan.layers)?, "effective_at" => effective,
     ) else {
         return Err(stock_invalid("invalid stock witness object"));
@@ -734,7 +803,7 @@ pub fn plan_stock_effects<X>(
             values,
         });
     }
-    for leg in &plan.gl {
+    for leg in plan.gl.iter().filter(|_| partition.owner.is_none()) {
         let V::Object(values) = norn_ir::runtime_object! ( "id" => leg.leg_id, "journal_id" => posting_id, "leg" => stock_json(leg)? )
         else {
             return Err(stock_invalid("invalid GL object"));
@@ -788,16 +857,19 @@ pub(super) fn prepare_stock_commit<H: CellHost + ?Sized>(
     for link in &snapshot.links {
         super::record_action_link_read(links, &link.source, &link.link, link.targets.clone())?;
     }
-    let operation = match call
-        .action
-        .stock_post
-        .as_ref()
-        .ok_or_else(|| invalid("missing stock rule"))?
-        .operation
-    {
-        norn_ir::ActionStockOperation::Receipt => StockPostOperation::Receipt,
-        norn_ir::ActionStockOperation::Delivery => StockPostOperation::Delivery,
-    };
+    let operation =
+        match call
+            .action
+            .stock_post
+            .as_ref()
+            .ok_or_else(|| invalid("missing stock rule"))?
+            .operation
+        {
+            norn_ir::ActionStockOperation::Receipt
+            | norn_ir::ActionStockOperation::CustodyReceipt => StockPostOperation::Receipt,
+            norn_ir::ActionStockOperation::Delivery
+            | norn_ir::ActionStockOperation::CustodyReturn => StockPostOperation::Delivery,
+        };
     let posting_id = norn_ir::canonical::domain_hash_hex(
         b"stock.posting/1\0",
         &(&call.action.action_id, call.idempotency_key.as_bytes()),
@@ -876,6 +948,7 @@ mod tests {
             accounts: ["stock".into(), "srbnb".into(), "cogs".into()],
             witness: FactKey::new("stock.Partition", "p"),
             binding_pin: "pin".into(),
+            owner: None,
             uom: "ea".into(),
             history: vec![FifoMovement::Receipt(FifoLayer {
                 receipt: "prior".into(),

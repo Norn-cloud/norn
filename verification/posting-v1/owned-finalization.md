@@ -155,3 +155,18 @@ conformance scenario for this join; surface acceptance is separate.
 POST-STORE-BIND-BEFORE-FIRST-COMMIT pins scope before draft setup so every export record has one identity. POST-CP1-ENGINE: file-backed commit_action receives 2 @ 10 + 3 @ 20 (Dr stock 80 / Cr SRBNB 80), delivers 4 (Dr COGS 60 / Cr stock 60), leaving 1 worth 20; POST-QUANTITY reads the committed quantity.
 POST-OVERDELIVERY refuses 2 with a readable reason and POST-NO-WRITES. POST-RETRY / POST-CONFLICTING-RETRY check identical and changed calls; POST-RETRY-READ-AUTHZ checks current authorization.
 POST-REOPEN preserves state/chain. POST-REAL-REPLAY rebuilds the export through typed restore and compares complete state and ledger head. These are tested execution claims; surface parity is separate.
+
+
+## Single-partition customer metal (#216, #232, #243, #263)
+
+JEWELRY-CUSTODY-ISOLATION: closed stockPost operations `custodyReceipt` and `custodyReturn` require a jewelry.MetalLot and a voucher owner. The linked custody_owner must equal that owner. The lot's canonical item identity selects its partition; its owner and complete authoritative metadata are pinned in the partition's binding hash. Owner/purity reassignment after a first posting refuses, including after an empty return. Company receipt/delivery cannot consume a custody lot.
+
+JEWELRY-CUSTODY-ADMISSION: custody stock bindings require a declared custody_owner link to a stock.Party and a stored non-null text or enum ownership member. The link may be optional for company lots; a custody operation still requires its actual named owner at runtime. Missing runtime-required members refuse definition admission.
+
+JEWELRY-NAMED-OWNER: custody requires a non-null named party. Events and the partition record that canonical FactKey. Company inventory records its canonical company FactKey as owner; null is never a published owner.
+
+JEWELRY-ZERO-COMPANY: custody receipt creates zero-value FIFO layers; return consumes those layers. Both use the existing conserved quantity templates and sealed commit join, emitting no GL facts. Caller rates cannot confer company value on customer metal. No parallel posting adapter is introduced.
+
+JEWELRY-EXACT-INPUT: the #263 normalization boundary supplies positive integer gross_micrograms and purity_numerator in 1..24,000,000. The kernel recomputes fine ticks with checked multiplication bounded by runtime Decimal's 96-bit integer maximum (79,228,162,514,264,337,593,543,950,335) and requires exact agreement with fine_ticks. It never rounds or accepts a caller's asserted product. JEWELRY-DECIMAL-BOUNDARY accepts floor(MAX / numerator) and refuses one gross microgram more with stock.arithmetic_overflow, before comparing the asserted product. Fine-mass sums in refining must obey the same bound; refining remains deferred to the shared multi-partition join.
+
+JEWELRY-REFUSAL-NOOP: custody sale returns stock.custody_sale_refused with a readable reason; invalid purity/product returns stock.purity_refused and multiplication overflow returns stock.arithmetic_overflow. Each refuses before publication of lifecycle, quantity, events, GL, links or idempotency receipts. These correspond to custodyIsolated / custody asset preservation and refusedIsNoop / refused_is_noop; runtime correspondence is acceptance evidence, not a promotion of the bounded reference proofs to FIFO valuation proofs.

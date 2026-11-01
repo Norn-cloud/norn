@@ -566,6 +566,16 @@
           "description": "Deliver at the authoritative stock cost.",
           "type": "string",
           "const": "delivery"
+        },
+        {
+          "description": "Receive customer metal without company valuation.",
+          "type": "string",
+          "const": "custodyReceipt"
+        },
+        {
+          "description": "Return customer metal without company valuation.",
+          "type": "string",
+          "const": "custodyReturn"
         }
       ]
     },

@@ -719,7 +719,7 @@ export interface components {
          * @description Supported stock operations; templates are selected by the kernel.
          * @enum {string}
          */
-        NornIrActionStockOperation: "receipt" | "delivery";
+        NornIrActionStockOperation: "receipt" | "delivery" | "custodyReceipt" | "custodyReturn";
         /** @description Receipt/delivery declaration; paths start at an owned voucher line. */
         NornIrActionStockPost: {
             /** @description Link paths ending in text account identities on admitted masters. */
@@ -730,7 +730,7 @@ export interface components {
              * @description The closed stock operation.
              * @enum {string}
              */
-            operation: "receipt" | "delivery";
+            operation: "receipt" | "delivery" | "custodyReceipt" | "custodyReturn";
             /** @description Link paths selecting the item and warehouse masters. */
             partition: components["schemas"]["NornIrStockPartitionPaths"];
         };
@@ -3368,6 +3368,8 @@ export interface components {
              *     declare a business key.
              */
             identity?: components["schemas"]["NornIrKeySpec"][];
+            /** @description Append-only: existing instances cannot be changed or deleted. Inherited. */
+            immutable?: boolean;
             /**
              * @description Interfaces the type implements, in addition to those its supertypes
              *     implement. Omitted when empty.
@@ -3759,6 +3761,8 @@ export interface components {
              *     by the checker and cannot be removed by narrowing. Omitted when empty.
              */
             markings?: components["schemas"]["NornIrMarkingId"][];
+            /** @description System-maintained: declared rules may write it, actions may not. */
+            protected?: boolean;
             /** @description The value kind: inline, or a shared property type through `ref`. */
             type: components["schemas"]["NornIrPropertyType"];
         };

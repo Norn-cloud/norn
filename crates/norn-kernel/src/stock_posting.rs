@@ -72,6 +72,12 @@ pub enum StockPostError {
     /// Exact arithmetic exceeds the representable range.
     #[error("stock posting arithmetic overflow")]
     Overflow,
+    /// Customer metal cannot become company stock.
+    #[error("customer-owned metal cannot be delivered as company stock")]
+    CustodySale,
+    /// Authoritative fine-metal inputs must be exact and agree.
+    #[error("invalid exact purity or fine mass")]
+    Purity,
     /// History or a movement failed the shared FIFO contract.
     #[error(transparent)]
     Fifo(#[from] FifoError),
@@ -348,6 +354,7 @@ pub fn stock_output_types() -> Vec<norn_ir::ObjectTypeDef> {
         vec![
             property("id", text.clone()),
             property("partition_id", text.clone()),
+            property("owner", json.clone()),
             property("ordinal", PropertyType::Integer {}),
             property(
                 "operation",
@@ -381,6 +388,7 @@ pub fn stock_output_types() -> Vec<norn_ir::ObjectTypeDef> {
             property("id", text.clone()),
             property("event_count", PropertyType::Integer {}),
             property("binding_pin", text.clone()),
+            property("owner", json.clone()),
             property("quantity", decimal.clone()),
             property("value", decimal),
             property("layers", json.clone()),
