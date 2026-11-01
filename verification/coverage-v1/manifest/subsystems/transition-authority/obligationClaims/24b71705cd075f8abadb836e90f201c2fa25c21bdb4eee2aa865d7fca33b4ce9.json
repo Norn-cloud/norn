@@ -7,27 +7,15 @@
     "proof": "partial",
     "residual": "Rust rejects open or unsupported EntityIR mutationAuthority descriptors and noncanonical semantic objectKind identities containing whitespace, control characters, or wildcards. Both the versioned ActionIR path and the legacy generic store path reject domain-owned objects before publication. Every legacy mutation is checked against the scoped Active semantic owner before fresh publication or idempotent-result return, including unpinned, unresolved-pinned, and resolved Draft, Proposed, or historical aliases; a resolved pin must additionally match its exact declared objectKind and admit the generic source. The legacy runtime independently revalidates canonical object-kind syntax. Governed catalog transition checks prevent owner/objectKind changes, duplicate semantic owners, or untyped retirement, and the typed authority/source mapping is exhaustively tested across all 36 current pairs. Quint checks generic/domain separation and Lean proves independent reference semantics, but descriptor parsing, active-artifact lookup, whole-store write-path completeness, storage atomicity, and domain-internal invariants are not implementation-proved. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
     "evidence": {
-      "runtime": [],
-      "model": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
-          "command": "quint verify verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt --backend apalache --invariants typeOk genericNeverCommitsDomainOwned domainNeverCommitsGenericOwned domainCommitMatchesExactOwner rejectionIsNoOp --max-steps 8",
-          "selectors": [
-            "invariant:genericNeverCommitsDomainOwned",
-            "invariant:domainCommitMatchesExactOwner"
-          ]
-        }
-      ],
-      "proof": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
-          "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
-          "selectors": [
-            "theorem:generic_action_cannot_mutate_domain_owned_state",
-            "theorem:accepted_domain_commit_has_exact_owner"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entry24b71705cd075f8abadb836e90f201c2fa25c21bdb4eee2aa865d7fca33b4ce9.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry24b71705cd075f8abadb836e90f201c2fa25c21bdb4eee2aa865d7fca33b4ce9.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry24b71705cd075f8abadb836e90f201c2fa25c21bdb4eee2aa865d7fca33b4ce9.evidence.proof"
+      }
     }
   }
 }

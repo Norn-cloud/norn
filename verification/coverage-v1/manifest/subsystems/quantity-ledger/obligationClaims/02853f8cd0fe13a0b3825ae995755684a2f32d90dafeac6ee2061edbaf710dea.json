@@ -7,36 +7,15 @@
     "proof": "partial",
     "residual": "The normalized cell path appends linked exact negations, checks immutable reversal evidence and reconstructs projections at open. Formal quantity authority models remain reference mathematics; no Rust/SQL refinement proof is claimed (#3303).",
     "evidence": {
-      "runtime": [
-        {
-          "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
-          "command": "cargo test --locked -p norn-cell --test quantity_reservations",
-          "selectors": [
-            "test:linked_reversal_is_append_only_and_cannot_repeat_or_reverse_a_reversal",
-            "test:reversal_projection_damage_refuses_reopen_replay_and_second_reversal",
-            "test:reversal_refuses_a_balanced_but_corrupted_original_vector"
-          ]
-        }
-      ],
-      "model": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/models/quantity-authority.qnt",
-          "command": "quint verify verification/stripmine-2026-08-22/models/quantity-authority.qnt --backend apalache --invariants typeOk perUnitLayerConserved atomicAuthorityRecords phaseMatchesCommitCount reversalRestoresBalances noOpPreservesAuthority --max-steps 8",
-          "selectors": [
-            "invariant:reversalRestoresBalances"
-          ]
-        }
-      ],
-      "proof": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
-          "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
-          "selectors": [
-            "theorem:exact_reversal_restores_prior_balances",
-            "theorem:admitted_i128_amount_has_representable_negation"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entry02853f8cd0fe13a0b3825ae995755684a2f32d90dafeac6ee2061edbaf710dea.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry02853f8cd0fe13a0b3825ae995755684a2f32d90dafeac6ee2061edbaf710dea.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry02853f8cd0fe13a0b3825ae995755684a2f32d90dafeac6ee2061edbaf710dea.evidence.proof"
+      }
     }
   }
 }

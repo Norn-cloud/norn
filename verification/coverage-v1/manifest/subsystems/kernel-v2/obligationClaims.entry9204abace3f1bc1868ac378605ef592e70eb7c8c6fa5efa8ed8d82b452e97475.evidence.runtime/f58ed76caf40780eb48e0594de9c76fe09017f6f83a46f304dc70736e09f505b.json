@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "crates/norn-testkit/tests/kernel_quint.rs",
+    "command": "cargo test --locked -p norn-testkit --test kernel_quint",
+    "selectors": {
+      "$entries": "obligationClaims.entry9204abace3f1bc1868ac378605ef592e70eb7c8c6fa5efa8ed8d82b452e97475.evidence.runtime.entryf58ed76caf40780eb48e0594de9c76fe09017f6f83a46f304dc70736e09f505b.selectors"
+    }
+  }
+}

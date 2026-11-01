@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+    "command": "quint verify verification/ontology-v1/models/ontology-mapping-provenance.qnt --backend apalache --invariants typeOk replacementIsDirect replacementPreservesIdentity replacementHasReviewedBoundedProvenance exactlyOneActivePerIdentity rejectedAttemptIsNoOp --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entryab14d6c2e127a53434b52003a6ed8a90fb2aab9a483d52706f074d1041109155.evidence.model.entry85968e4e415230460a957d85c892e696634dadeff25765ed3bd0cf33f9941c18.selectors"
+    }
+  }
+}

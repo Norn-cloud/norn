@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+    "command": "lean -DwarningAsError=true verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entrybf9113d75fa21c27175541a5517b840ea09c472428d7271f35f7b7777f63e2fd.evidence.proof.entry7ff7c4adcae898a83e4e43f0cf618a82383f9f84bfef9285d25ef7adf634c257.selectors"
+    }
+  }
+}

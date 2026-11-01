@@ -7,25 +7,15 @@
     "proof": "deferred",
     "residual": "Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
     "evidence": {
-      "runtime": [
-        {
-          "artifact": "crates/norn-testkit/tests/kernel_quint.rs",
-          "command": "cargo test --locked -p norn-testkit --test kernel_quint",
-          "selectors": [
-            "test:projection_trust_quint_traces"
-          ]
-        }
-      ],
-      "model": [
-        {
-          "artifact": "verification/kernel-v2/models/projection-trust.qnt",
-          "command": "quint verify verification/kernel-v2/models/projection-trust.qnt --backend apalache --invariants invariant --max-steps 8",
-          "selectors": [
-            "invariant:invariant"
-          ]
-        }
-      ],
-      "proof": []
+      "runtime": {
+        "$entries": "obligationClaims.entrycf989837a351434ba81edfa5db36b0317b36cc87d0dff379ece27d2240835300.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entrycf989837a351434ba81edfa5db36b0317b36cc87d0dff379ece27d2240835300.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entrycf989837a351434ba81edfa5db36b0317b36cc87d0dff379ece27d2240835300.evidence.proof"
+      }
     }
   }
 }

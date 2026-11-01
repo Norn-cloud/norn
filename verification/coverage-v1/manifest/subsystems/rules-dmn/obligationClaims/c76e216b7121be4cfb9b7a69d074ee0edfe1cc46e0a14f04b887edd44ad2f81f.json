@@ -7,9 +7,15 @@
     "proof": "deferred",
     "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
     "evidence": {
-      "runtime": [],
-      "model": [],
-      "proof": []
+      "runtime": {
+        "$entries": "obligationClaims.entryc76e216b7121be4cfb9b7a69d074ee0edfe1cc46e0a14f04b887edd44ad2f81f.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryc76e216b7121be4cfb9b7a69d074ee0edfe1cc46e0a14f04b887edd44ad2f81f.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryc76e216b7121be4cfb9b7a69d074ee0edfe1cc46e0a14f04b887edd44ad2f81f.evidence.proof"
+      }
     }
   }
 }

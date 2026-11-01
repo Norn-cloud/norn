@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "crates/norn-checker/tests/ontology_pack.rs",
+    "command": "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+    "selectors": {
+      "$entries": "obligationClaims.entry23616aa875a6ec1c33f8b18143600c4430a57653ec42e2e73ee7bd74a93b4f80.evidence.runtime.entry307346e4315bd28463c022db2f2e6c57f74e9c17fb92d9cf331816cd617cb22c.selectors"
+    }
+  }
+}

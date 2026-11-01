@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/ontology-v1/models/ontology-relation-authority.qnt",
+    "command": "quint verify verification/ontology-v1/models/ontology-relation-authority.qnt --backend apalache --invariants typeOk acceptedVersionWasExact acceptedEndpointsHadExactKinds cardinalityPreserved rejectedAttemptIsNoOp --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entry22d0d2c6e6ab8e82be7216e83b49da96814660b3f07810527f856cede30b1419.evidence.model.entry72b823d7b15441cccbb66845ea19580fa9b8b575b631c154cb00c3e33ea50d68.selectors"
+    }
+  }
+}

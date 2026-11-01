@@ -7,71 +7,15 @@
     "proof": "reference_proved",
     "residual": "Whole checker-admitted packs pin exact ontology, unit/dimension terms and precision in immutable Define receipts on the normalized cell path. Legacy authority/profile state was removed in quantity v2. Formal artifacts remain references; #3303 must establish v2 refinement.",
     "evidence": {
-      "runtime": [
-        {
-          "artifact": "crates/norn-checker/tests/quantity_ledger.rs",
-          "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
-          "selectors": [
-            "test:account_registry_binds_every_leg_to_an_allowed_unit",
-            "test:ontology_artifact_and_unit_dimension_bindings_fail_closed",
-            "test:different_dimensions_cannot_balance_or_substitute_after_sealing"
-          ]
-        },
-        {
-          "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
-          "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
-          "selectors": [
-            "test:ontology_dimension_substitution_never_preserves_pack_or_certificate_identity"
-          ]
-        },
-        {
-          "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
-          "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
-          "selectors": [
-            "test:boundary_hashes_are_versioned_golden_vectors",
-            "test:recomputing_a_tampered_certificate_hash_does_not_forge_checker_agreement"
-          ]
-        },
-        {
-          "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
-          "command": "cargo test --locked -p norn-cell --test quantity_reservations",
-          "selectors": [
-            "test:pack_identity_corruption_cannot_reinterpret_existing_quantities"
-          ]
-        }
-      ],
-      "model": [
-        {
-          "artifact": "verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
-          "command": "quint verify verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt --backend apalache --invariants typeOk certificateRemainsPinned acceptedPostingHasExactBinding differentDimensionCannotSubstitute differentDimensionsCannotBalance --max-steps 8",
-          "selectors": [
-            "invariant:certificateRemainsPinned",
-            "invariant:acceptedPostingHasExactBinding",
-            "invariant:differentDimensionCannotSubstitute",
-            "invariant:differentDimensionsCannotBalance"
-          ]
-        }
-      ],
-      "proof": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
-          "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
-          "selectors": [
-            "harness:partitions_by_unit_and_layer",
-            "harness:equal_values_in_different_units_are_not_balanced"
-          ]
-        },
-        {
-          "artifact": "verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
-          "command": "lean -DwarningAsError=true verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
-          "selectors": [
-            "theorem:different_dimensions_cannot_balance",
-            "theorem:different_units_cannot_balance_without_explicit_identity",
-            "theorem:admitted_substitution_is_exact",
-            "theorem:changing_dimension_rejects_substitution"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entry2aa6092c1a3b54093c65cce227e80481199a83aa01f2f2a5a18b637c5f09f1fe.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry2aa6092c1a3b54093c65cce227e80481199a83aa01f2f2a5a18b637c5f09f1fe.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry2aa6092c1a3b54093c65cce227e80481199a83aa01f2f2a5a18b637c5f09f1fe.evidence.proof"
+      }
     }
   }
 }

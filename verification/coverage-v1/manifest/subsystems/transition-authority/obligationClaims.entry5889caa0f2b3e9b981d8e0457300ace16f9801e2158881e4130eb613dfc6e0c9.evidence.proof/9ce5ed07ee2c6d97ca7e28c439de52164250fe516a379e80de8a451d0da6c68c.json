@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+    "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry5889caa0f2b3e9b981d8e0457300ace16f9801e2158881e4130eb613dfc6e0c9.evidence.proof.entry9ce5ed07ee2c6d97ca7e28c439de52164250fe516a379e80de8a451d0da6c68c.selectors"
+    }
+  }
+}

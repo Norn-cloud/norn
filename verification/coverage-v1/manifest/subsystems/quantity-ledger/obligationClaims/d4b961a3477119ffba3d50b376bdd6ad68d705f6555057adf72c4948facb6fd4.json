@@ -7,27 +7,15 @@
     "proof": "partial",
     "residual": "The production checker and differential/property cases exercise exact checked i128 arithmetic, while Kani proves only one fixed intermediate-overflow vector and a bounded pair domain; no proof covers every admitted bound or production evaluator path.",
     "evidence": {
-      "runtime": [
-        {
-          "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
-          "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
-          "selectors": [
-            "test:balanced_symbolic_expression_with_unsafe_bounds_is_rejected_by_both_checkers",
-            "test:cross_leg_prefix_overflow_is_rejected_by_production_and_independent_oracle"
-          ]
-        }
-      ],
-      "model": [],
-      "proof": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
-          "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
-          "selectors": [
-            "harness:overflow_is_rejected_not_wrapped",
-            "harness:rejects_intermediate_overflow"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entryd4b961a3477119ffba3d50b376bdd6ad68d705f6555057adf72c4948facb6fd4.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryd4b961a3477119ffba3d50b376bdd6ad68d705f6555057adf72c4948facb6fd4.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryd4b961a3477119ffba3d50b376bdd6ad68d705f6555057adf72c4948facb6fd4.evidence.proof"
+      }
     }
   }
 }

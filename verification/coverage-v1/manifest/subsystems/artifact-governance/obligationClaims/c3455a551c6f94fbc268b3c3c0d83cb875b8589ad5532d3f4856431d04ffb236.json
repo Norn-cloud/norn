@@ -7,43 +7,15 @@
     "proof": "partial",
     "residual": "The retained in-memory store and BAC plan/apply path test direct-write rejection, exact active-version selection, trusted-checker receipt binding, and stale competing-plan rejection. No HTTP, Turso, or Postgres adapter is retained. Lean and Quint provide independent references, not Rust refinement or proof that the validator establishes arbitrary semantics. hax/F* prove only the direct-write lifecycle predicate; a proof of complete BAC/storage behavior remains open. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
     "evidence": {
-      "runtime": [],
-      "model": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/models/artifact-promotion.qnt",
-          "command": "quint verify verification/stripmine-2026-08-22/models/artifact-promotion.qnt --backend apalache --invariants typeOk authorityRequiresExactAppliedPlan --max-steps 8",
-          "selectors": [
-            "invariant:authorityRequiresExactAppliedPlan"
-          ]
-        },
-        {
-          "artifact": "verification/stripmine-2026-08-22/models/active-artifact-authority.qnt",
-          "command": "quint verify verification/stripmine-2026-08-22/models/active-artifact-authority.qnt --backend apalache --invariants typeOk activePointerReferencesEnvelope immutableV1History exactlyOneExecutable competingV1PlansCannotBothPublish --max-steps 8",
-          "selectors": [
-            "invariant:activePointerReferencesEnvelope",
-            "invariant:immutableV1History",
-            "invariant:exactlyOneExecutable",
-            "invariant:competingV1PlansCannotBothPublish"
-          ]
-        }
-      ],
-      "proof": [
-        {
-          "artifact": "target/verification-results/artifact-governance-hax/Norn_ir.fst",
-          "command": "scripts/verify-artifact-governance-extraction.sh",
-          "selectors": [
-            "predicate:Norn_ir.direct_artifact_write_allowed"
-          ]
-        },
-        {
-          "artifact": "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst",
-          "command": "scripts/verify-artifact-governance-extraction.sh",
-          "selectors": [
-            "theorem:active_authority_bearing_rejected",
-            "theorem:approved_authority_bearing_rejected"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entryc3455a551c6f94fbc268b3c3c0d83cb875b8589ad5532d3f4856431d04ffb236.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryc3455a551c6f94fbc268b3c3c0d83cb875b8589ad5532d3f4856431d04ffb236.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryc3455a551c6f94fbc268b3c3c0d83cb875b8589ad5532d3f4856431d04ffb236.evidence.proof"
+      }
     }
   }
 }

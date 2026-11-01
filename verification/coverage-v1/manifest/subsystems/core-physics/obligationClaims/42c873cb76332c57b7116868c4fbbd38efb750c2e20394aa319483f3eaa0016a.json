@@ -6,9 +6,15 @@
     "model": "missing",
     "proof": "missing",
     "evidence": {
-      "runtime": [],
-      "model": [],
-      "proof": []
+      "runtime": {
+        "$entries": "obligationClaims.entry42c873cb76332c57b7116868c4fbbd38efb750c2e20394aa319483f3eaa0016a.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry42c873cb76332c57b7116868c4fbbd38efb750c2e20394aa319483f3eaa0016a.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry42c873cb76332c57b7116868c4fbbd38efb750c2e20394aa319483f3eaa0016a.evidence.proof"
+      }
     },
     "residual": "Specified only; the kernel quantity ledger enforces partition conservation (INV-QL-CONSERVATION). Core-pack model and proof are pending."
   }

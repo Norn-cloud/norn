@@ -7,36 +7,15 @@
     "proof": "reference_proved",
     "residual": "The kernel refuses updates and deletes of committed accounting legs, including through an unmarked ancestor type (tested). The reference model has no edit or delete operation; the theorems show every admitted step only prepends. Types without an accounting-leg declaration are not covered.",
     "evidence": {
-      "runtime": [
-        {
-          "artifact": "crates/norn-kernel/tests/accounting_commit.rs",
-          "command": "cargo test --locked -p norn-kernel --test accounting_commit",
-          "selectors": [
-            "test:committed_leg_records_are_create_only_and_cannot_be_deleted",
-            "test:deleting_a_posted_leg_through_its_unmarked_ancestor_is_refused_atomically",
-            "test:updating_a_posted_leg_through_its_unmarked_ancestor_is_refused_atomically"
-          ]
-        }
-      ],
-      "model": [
-        {
-          "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
-          "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
-          "selectors": [
-            "invariant:postedImmutable"
-          ]
-        }
-      ],
-      "proof": [
-        {
-          "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
-          "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
-          "selectors": [
-            "theorem:step_append_only",
-            "theorem:run_append_only"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entry056daf7e0d93821fb8cdc3812268ec98f5d9bbbdf1dcb92cdd58fd9ab45d67eb.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry056daf7e0d93821fb8cdc3812268ec98f5d9bbbdf1dcb92cdd58fd9ab45d67eb.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry056daf7e0d93821fb8cdc3812268ec98f5d9bbbdf1dcb92cdd58fd9ab45d67eb.evidence.proof"
+      }
     }
   }
 }
