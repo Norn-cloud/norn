@@ -86,6 +86,7 @@ it is not a field. A new executable source joins exactly one subsystem's
   while `main` is red only if its own checks are green, every failing check
   fails identically on `main`, each failure has an open issue, and the PR does
   not touch the failing area. Never introduce a new failure.
+- Use `python3 scripts/ci/merge_main.py` to merge `origin/main` and resolve only mechanical provenance, coverage and lockfile conflicts; inspect and commit the result.
 - **Requalify before merging.** Merge the latest `main` into the branch and
   rerun the affected checks. Never force-push shared branches.
 - **Compile wide, test narrow.** Compile and lint the whole workspace
