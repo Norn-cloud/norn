@@ -24,11 +24,9 @@
 //! contract; the convergence view is checked for duplicate and out-of-order
 //! delivery.
 
-
 use norn_dataplane::{
-    ObservationDraft, ObservationError, ObservationKind,
-    RAW_OBSERVATION_CONTRACT, REDACTED, RawObservation, RedactionPolicy, parse_exact_json,
-    raw_observation_schema,
+    ObservationDraft, ObservationError, ObservationKind, RAW_OBSERVATION_CONTRACT, REDACTED,
+    RawObservation, RedactionPolicy, parse_exact_json, raw_observation_schema,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -257,4 +255,3 @@ fn raw_observation_json_schema_matches_the_contract() {
     assert_eq!(required, required_columns);
     assert_eq!(schema["additionalProperties"], json!(false));
 }
-
