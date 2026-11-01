@@ -49,3 +49,6 @@ and decode/JSON round trips must preserve their exact value.
 against the canonical diagnostic adapter, including absence for malformed JSON.
 This narrow harness proves classification and absence of panic, not the
 heap-backed arbitrary-length decimal/JSON parser or evaluator arithmetic.
+
+Run the production-library harness with `cargo kani -p norn-checker --lib
+--harness numeric_refusals_have_the_canonical_code --output-format terse`.

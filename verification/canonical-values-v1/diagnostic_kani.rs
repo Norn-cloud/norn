@@ -1,8 +1,5 @@
 //! VAL-EXACT-1: bounded proof of production numeric-refusal classification.
-#![allow(unexpected_cfgs, reason = "Kani-only verification target")]
-#![cfg(kani)]
-
-use norn_checker::property_codec::{INEXACT, runtime_error_code};
+use super::{INEXACT, runtime_error_code};
 use norn_ir::RuntimeValueError;
 
 #[kani::proof]
