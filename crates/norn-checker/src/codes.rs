@@ -495,6 +495,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     entry(
+        "core.values.inexact",
+        Tier::T1,
+        "value cannot be represented in the shared exact decimal profile",
+    ),
+    entry(
         "customization.validation.invalid_payload",
         Tier::T2,
         "CustomizationIR payload is invalid at {path}: {detail}",

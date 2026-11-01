@@ -11150,8 +11150,7 @@
               {
                 "properties": {
                   "value": {
-                    "type": "number",
-                    "format": "double"
+                    "$ref": "#/components/schemas/NornIrDecimalLiteral"
                   },
                   "valueType": {
                     "enum": [
@@ -11254,7 +11253,7 @@
       },
       "NornIrSettingValueType": {
         "type": "string",
-        "description": "The JSON type of a setting's `value`.",
+        "description": "The setting value kind; numbers use exact decimal-string literals.",
         "enum": [
           "text",
           "number",

@@ -4417,8 +4417,7 @@ export interface components {
             /** @enum {unknown} */
             valueType?: "text";
         } | {
-            /** Format: double */
-            value?: number;
+            value?: components["schemas"]["NornIrDecimalLiteral"];
             /** @enum {unknown} */
             valueType?: "number";
         } | {
@@ -4456,7 +4455,7 @@ export interface components {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
         /**
-         * @description The JSON type of a setting's `value`.
+         * @description The setting value kind; numbers use exact decimal-string literals.
          * @enum {string}
          */
         NornIrSettingValueType: "text" | "number" | "boolean" | "json";

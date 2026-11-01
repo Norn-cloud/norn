@@ -19,7 +19,7 @@
     "settingVersion": "0.1",
     "settingKey": "retail.sku.default_reorder_threshold",
     "valueType": "number",
-    "value": 25,
+    "value": "25",
     "effectiveFrom": "2026-10-01T00:00:00Z",
     "effectiveTo": "2027-01-01T00:00:00Z",
     "supersedes": {
