@@ -572,7 +572,7 @@ export interface components {
          */
         NornIrActionEffectProgramOneOf1: {
             /** @description Bind a host-authenticated Function result before firing the transition. */
-            acceptReceipt?: components["schemas"]["NornIrReceiptAcceptance"] | null;
+            acceptReceipt?: components["schemas"]["NornIrReceiptAcceptance"];
             entityArtifactId: string;
             entityArtifactVersion: string;
             /** @enum {string} */
