@@ -1406,3 +1406,50 @@ fn allocation_declarations_refuse_oversell_nonpositive_and_invalid_source_amount
             .is_err()
     );
 }
+
+#[test]
+fn helper_validation_memo_uses_artifact_identity_instead_of_payload_rule_id() {
+    let (mut left, mut base) = fifo_fold();
+    left.contract = Some(norn_ir::RuleContractV2::SubDecision);
+    left.rule_id = "example.leftParent".into();
+    let mut right = left.clone();
+    right.rule_id = "example.rightParent".into();
+    if let norn_ir::JdmNode::DecisionNode { content, .. } =
+        &mut left.graph.as_mut().unwrap().nodes[1]
+    {
+        content.key = "example.leftStep".into();
+    }
+    if let norn_ir::JdmNode::DecisionNode { content, .. } =
+        &mut right.graph.as_mut().unwrap().nodes[1]
+    {
+        content.key = "example.rightStep".into();
+    }
+    let valid = base.remove("example.step").unwrap();
+    let mut invalid = valid.clone();
+    if let norn_ir::JdmNode::ExpressionNode { content, .. } =
+        &mut invalid.graph.as_mut().unwrap().nodes[1]
+    {
+        content.execution_mode = Some(norn_ir::jdm::JdmExecutionMode::Loop);
+    }
+    let subs = BTreeMap::from([
+        ("example.leftParent".into(), left),
+        ("example.rightParent".into(), right),
+        ("example.leftStep".into(), valid),
+        ("example.rightStep".into(), invalid),
+    ]);
+    let mut root = commands_rule("example.root", &closed(&json!({})), "[]");
+    root["graph"]["nodes"][1] =
+        json!({"id":"x","name":"x","type":"decisionNode","content":{"key":"example.leftParent"}});
+    root["graph"]["nodes"].as_array_mut().unwrap().insert(
+        2,
+        json!({"id":"y","name":"y","type":"decisionNode","content":{"key":"example.rightParent"}}),
+    );
+    root["graph"]["edges"][1]["targetId"] = json!("y");
+    root["graph"]["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"ey","sourceId":"y","targetId":"out"}));
+    assert!(
+        matches!(AdmittedDecision::admit(&rule(&root),&subs,binding()),Err(AdmissionError::InvalidSchema { reason,.. }) if reason.contains("unsupported nested step graph"))
+    );
+}
