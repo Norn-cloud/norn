@@ -1,4 +1,10 @@
 //! Exact JSON admission and deterministic redaction for received observations.
+//!
+//! DP-EXACT-1: parsing refuses numbers or duplicate keys changed by JSON decoding.
+//! DP-REDACT-1: an invalid policy leaves the payload unchanged.
+//! DP-REDACT-2: repeated redaction preserves the payload and sorted outermost
+//! replacement paths, including wildcard overlaps and escaped member names.
+//! Sampled correspondence evidence: `boundary_invariants_conform`.
 
 use std::collections::BTreeSet;
 
@@ -73,13 +79,18 @@ impl RedactionPolicy {
         non_empty("redaction.policy_id", &self.id)?;
         non_empty("redaction.policy_version", &self.version)?;
         let pointers: BTreeSet<&str> = self.pointers.iter().map(String::as_str).collect();
+        let validated = pointers
+            .iter()
+            .map(|pointer| {
+                pointer
+                    .strip_prefix('/')
+                    .ok_or_else(|| ObservationError::InvalidPointer {
+                        pointer: (*pointer).to_owned(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut redacted = BTreeSet::new();
-        for pointer in pointers {
-            let Some(rest) = pointer.strip_prefix('/') else {
-                return Err(ObservationError::InvalidPointer {
-                    pointer: pointer.to_owned(),
-                });
-            };
+        for rest in validated {
             let tokens: Vec<String> = rest.split('/').map(unescape_token).collect();
             redact_at(payload, &tokens, String::new(), &mut redacted);
         }
@@ -89,10 +100,11 @@ impl RedactionPolicy {
         let outermost: Vec<String> = redacted
             .iter()
             .filter(|pointer| {
-                !redacted.iter().any(|ancestor| {
-                    pointer
-                        .strip_prefix(ancestor.as_str())
-                        .is_some_and(|rest| rest.starts_with('/'))
+                !pointer.match_indices('/').any(|(index, _)| {
+                    index > 0
+                        && pointer
+                            .get(..index)
+                            .is_some_and(|prefix| redacted.contains(prefix))
                 })
             })
             .cloned()
@@ -220,4 +232,53 @@ pub enum ObservationError {
     /// JSON encoding failed.
     #[error("raw observation JSON: {0}")]
     Json(#[from] serde_json::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    #[allow(clippy::expect_used, reason = "conformance assertions")]
+    fn boundary_invariants_conform() {
+        for bytes in [br#"{"a":9007199254740993}"#.as_slice(), br#"{"a":1,"a":2}"#] {
+            assert!(parse_exact_json(bytes).is_err());
+        }
+        assert_eq!(
+            parse_exact_json(br#"{"a":42}"#).expect("exact"),
+            json!({"a":42})
+        );
+        let original = json!({"a":{"secret":1},"a/b":{"secret":2},"c":{"secret":3}});
+        for pointers in [vec!["/a", "x"], vec!["/a", ""]] {
+            let policy = RedactionPolicy {
+                id: "policy".into(),
+                version: "1".into(),
+                pointers: pointers.into_iter().map(str::to_owned).collect(),
+            };
+            let mut payload = original.clone();
+            assert!(matches!(
+                policy.apply(&mut payload),
+                Err(ObservationError::InvalidPointer { .. })
+            ));
+            assert_eq!(payload, original);
+        }
+        let policy = RedactionPolicy {
+            id: "policy".into(),
+            version: "1".into(),
+            pointers: vec!["/*/secret".into(), "/a".into(), "/a~1b".into()],
+        };
+        let mut payload = original;
+        let record = policy.apply(&mut payload).expect("redact");
+        assert_eq!(
+            payload,
+            json!({"a":REDACTED,"a/b":REDACTED,"c":{"secret":REDACTED}})
+        );
+        assert_eq!(record.redacted, vec!["/a", "/a~1b", "/c/secret"]);
+        assert_eq!(policy.apply(&mut payload).expect("repeat"), record);
+        assert_eq!(
+            payload,
+            json!({"a":REDACTED,"a/b":REDACTED,"c":{"secret":REDACTED}})
+        );
+    }
 }
