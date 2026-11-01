@@ -527,6 +527,14 @@ fn verbatim_profiles_still_enforce_retained_byte_and_json_safety_limits() {
 
 #[test]
 fn verbatim_source_preserves_existing_json_and_ordinary_receipt_refusals() {
+    use ChallengeError::{Limit, NotAdmitted};
+    let costly = format!("[{}]", vec!["1e400"; 22_000].join(","));
+    for (text, error) in [("{}", NotAdmitted), (costly.as_str(), Limit)] {
+        for (candidate, base) in [(text, "[]"), ("[]", text)] {
+            let refusal = DefinitionSource::parse(candidate, base).err();
+            assert_eq!(refusal, Some(error.clone()));
+        }
+    }
     let mut documents = pool();
     documents[0]["payload"]["extensions"] = json!({"test.unicode/0.1.0":{"é":"value"}});
     let raw = serde_json::to_string(&documents).expect("source");
