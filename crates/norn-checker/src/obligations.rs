@@ -122,9 +122,7 @@ impl DefinitionSource {
             exact_digest,
         })
     }
-}
 
-impl DefinitionSource {
     /// Commitment to the original candidate/base UTF-8 documents.
     #[must_use]
     pub fn exact_digest(&self) -> &str {
@@ -164,6 +162,13 @@ impl RetainedLayers {
         registry: &BTreeSet<norn_ir::PropertyTypeName>,
     ) -> Result<Self, ChallengeError> {
         if layers.is_empty() || layers.len() > 64 {
+            return Err(ChallengeError::Limit);
+        }
+        let registry_bytes = registry
+            .iter()
+            .try_fold(0usize, |bytes, name| bytes.checked_add(name.as_str().len()))
+            .ok_or(ChallengeError::Limit)?;
+        if registry.len() > 16_384 || registry_bytes > 65_536 {
             return Err(ChallengeError::Limit);
         }
         let limits = ResourceLimitProfile::norn_limits_v1();
