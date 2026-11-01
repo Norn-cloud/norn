@@ -167,8 +167,14 @@ fn kernel_refusal(safe: norn_kernel::Refusal) -> Refusal {
 }
 
 #[cfg(feature = "http-host")]
-pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync::Arc<DevHost<E>>> {
+pub(crate) use http_adapter::router;
+
+#[cfg(feature = "http-host")]
+mod http_adapter {
+    use super::{DefinitionsQuery, DevHost, Refusal, SqlEngine, call_action_in_epoch};
     use axum::{extract::State, response::IntoResponse};
+    use serde::{Deserialize, Serialize};
+    use std::collections::BTreeMap;
     type Host<E> = State<std::sync::Arc<DevHost<E>>>;
     #[derive(Deserialize)]
     struct Envelope {
@@ -281,7 +287,10 @@ pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync:
     ) -> axum::response::Response {
         dispatch(host, headers, body, true).await
     }
-    axum::Router::new()
-        .route("/v1/actions", axum::routing::post(api::<E>))
-        .route("/mcp", axum::routing::post(mcp::<E>))
+    pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync::Arc<DevHost<E>>>
+    {
+        axum::Router::new()
+            .route("/v1/actions", axum::routing::post(api::<E>))
+            .route("/mcp", axum::routing::post(mcp::<E>))
+    }
 }
