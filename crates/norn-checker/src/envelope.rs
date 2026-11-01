@@ -3074,7 +3074,14 @@ fn validate_business_pack_payload(
         Some("composition") => {
             reject_unknown_object_fields(
                 payload,
-                &["packId", "packVersion", "packKind", "provides", "artifacts"],
+                &[
+                    "packId",
+                    "packVersion",
+                    "packKind",
+                    "provides",
+                    "artifacts",
+                    "instances",
+                ],
                 "payload",
                 diagnostics,
                 artifact_id,
