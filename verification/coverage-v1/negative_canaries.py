@@ -596,6 +596,28 @@ def workflow_context_canaries(source: str) -> None:
                 return
             raise AssertionError(f"workflow context mutation passed: {label}")
 
+        runner = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
+        for name in ("core", "plan", "test", "phase", "full", "trusted-policy"):
+            unsafe = ["self-hosted", ["self-hosted", "norn-merge"],
+                      "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
+                      runner.replace("github.event_name == 'merge_group' && ", ""),
+                      runner.replace("vars.NORN_MERGE_RUNNER == 'self-hosted' && ", ""),
+                      runner.replace("norn-run-{0}", "norn-run-123"),
+                      runner.replace("github.run_id", "github.event.pull_request.number"),
+                      runner.replace("|| 'ubuntu-24.04'", "|| 'self-hosted'")]
+            for event in ("pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
+                unsafe.append(runner.replace("'merge_group'", repr(event)))
+            if name == "trusted-policy":
+                unsafe.append(runner)
+            for value in unsafe:
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["runs-on"] = value
+                rejected(f"{name} unsafe runner routing", document)
+        document = copy.deepcopy(workflow)
+        for name in ("core", "plan", "test", "phase", "full"):
+            document["jobs"][name]["runs-on"] = runner
+        candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        validator.validate_workflow_integrity([], formal_path=candidate)
         for name in ("core", "plan", "test", "phase"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"].insert(-1, {
