@@ -135,6 +135,7 @@ impl AdmittedDecision {
                     if let JdmNode::DecisionNode { content, .. } = node {
                         if content.key == key {
                             if let Some(fold) = &content.ordered_fold {
+                                refuse_nested_folds(sub, sub_decisions, 0)?;
                                 contracts.insert_fold(key, sub, fold)?;
                             }
                         }
@@ -862,4 +863,50 @@ fn same_up_to_f64(decoded: &JsonValue, source: &RuntimeValue) -> bool {
         }
         _ => false,
     }
+}
+
+fn refuse_nested_folds(
+    rule: &RuleRoot,
+    closure: &BTreeMap<String, RuleRoot>,
+    depth: usize,
+) -> Result<(), AdmissionError> {
+    if depth > MAX_SUB_DECISION_DEPTH {
+        return Err(AdmissionError::SubDecisionBound {
+            depth,
+            size: closure.len(),
+        });
+    }
+    let graph = decision_graph(rule, RuleContractV2::SubDecision)?;
+    for node in &graph.nodes {
+        let unsupported = match node {
+            JdmNode::DecisionNode { content, .. } => {
+                content.ordered_fold.is_some()
+                    || content.execution_mode == Some(JdmExecutionMode::Loop)
+            }
+            JdmNode::ExpressionNode { content, .. } => {
+                content.execution_mode == Some(JdmExecutionMode::Loop)
+            }
+            JdmNode::DecisionTableNode { content, .. } => {
+                content.execution_mode == Some(JdmExecutionMode::Loop)
+            }
+            JdmNode::InputNode { .. }
+            | JdmNode::OutputNode { .. }
+            | JdmNode::SwitchNode { .. }
+            | JdmNode::FunctionNode { .. }
+            | JdmNode::CustomNode { .. } => false,
+        };
+        if unsupported {
+            return Err(invalid_schema(
+                &rule.rule_id,
+                "orderedFold",
+                "nested folds and loop mode are unsupported",
+            ));
+        }
+        if let JdmNode::DecisionNode { content, .. } = node {
+            if let Some(child) = closure.get(&content.key) {
+                refuse_nested_folds(child, closure, depth.saturating_add(1))?;
+            }
+        }
+    }
+    Ok(())
 }

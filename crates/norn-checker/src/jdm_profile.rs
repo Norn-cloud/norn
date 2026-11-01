@@ -1312,7 +1312,7 @@ pub fn check_sub_decision_closures(
                 if let Some(fold) = &content.ordered_fold {
                     if !fold_helper_matches(fold, target) {
                         findings.push(set_finding(codes::ORDERED_FOLD_INVALID,
-                            "fold helper schemas must equal {accumulator, item, index} -> accumulator",
+                            "fold helper schemas must equal {accumulator, item, index} -> accumulator".to_owned(),
                             artifact, &pointer, DiagnosticRemediation::FixDefinition));
                     }
                 }
@@ -1640,7 +1640,8 @@ fn fold_helper_matches(fold: &norn_ir::jdm::OrderedFold, target: &ArtifactEnvelo
     let payload = target.payload.to_json_value();
     let parse = |name| {
         payload
-            .get(name)
+            .as_object()
+            .and_then(|fields| fields.get(name))
             .and_then(|value| norn_expr::schema::Schema::parse(value, name).ok())
     };
     parse("inputSchema") == Some(input) && parse("outputSchema") == Some(output)
