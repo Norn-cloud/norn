@@ -30,7 +30,7 @@ struct Fixture {
 }
 fn catalog(objects: &[ObjectTypeDef]) -> EffectiveCatalog {
     let template: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
-        "../../../../fixtures/ir/metrics/ontology.json"
+        "../../../fixtures/ir/metrics/ontology.json"
     ))
     .expect("artifacts");
     let artifacts: Vec<_> = objects
@@ -72,7 +72,7 @@ fn fixture() -> Fixture {
         .find(|p| p.id.as_str() == "input")
         .expect("value");
     value.id = PropertyId("value".into());
-    value.kind = PropertyType::Decimal {
+    value.property_type = PropertyType::Decimal {
         scale: WholeNumber(3),
         unit: None,
         currency_source: None,
