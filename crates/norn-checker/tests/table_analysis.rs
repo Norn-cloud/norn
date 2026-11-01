@@ -269,3 +269,14 @@ fn noncanonical_intermediate_strings_never_claim_renormalized_semantics() {
         Err(Unknown::NonCanonicalIntermediate)
     );
 }
+
+#[test]
+fn overlap_witness_identity_bytes_are_bounded_before_allocation() {
+    // 20,000 bytes fit individually; two Boolean inputs repeat both matching
+    // and selected identities, exceeding the 65,536-byte result budget.
+    for bytes in [65_536, 20_000] {
+        let mut large = table("collect", &["true", "true"]);
+        large.rules[0].id = "r".repeat(bytes);
+        assert_eq!(analyze_table(&large, &boolean()), Err(Unknown::Limit));
+    }
+}

@@ -31,7 +31,7 @@ fn commit(
         scope: "tenant/dev".into(),
         logical_time: now,
         idempotency_key: Some(key.into()),
-        quantity: Some(quantity.clone()),
+        quantity: Some((quantity.clone()).into()),
         ..CommitBatch::default()
     })
 }
@@ -212,7 +212,9 @@ fn terminal_retries_duplicates_clock_and_live_invalid_subsets_keep_precedence() 
             .body
             .quantity
             .as_ref()
-            .expect("retained request");
+            .expect("retained request")
+            .first()
+            .expect("single");
         let before = store.read().dump().expect("before retry");
         let replay = commit(&mut store, original, "resolve", 0).expect("exact retry");
         assert!(matches!(replay, CommitOutcome::Replayed(_)));
@@ -543,7 +545,7 @@ fn terminal_refusal_preserves_marked_facts_and_quantity_history_rebuild() {
         world: "main".into(),
         scope: "tenant/dev".into(),
         idempotency_key: Some("classified-resolution".into()),
-        quantity: Some(quantity),
+        quantity: Some((quantity).into()),
         writes: vec![FactWriteRow::Put {
             object_type: "fixture.Private".into(),
             key: "private".into(),
@@ -562,7 +564,7 @@ fn terminal_refusal_preserves_marked_facts_and_quantity_history_rebuild() {
     let before = store.read().dump().expect("before refusal");
     let refused = CommitBatch {
         idempotency_key: Some("terminal-marked-write".into()),
-        quantity: Some(request(0, resolution_operation("post", subset(3)))),
+        quantity: Some((request(0, resolution_operation("post", subset(3)))).into()),
         ..mixed
     };
     assert!(matches!(

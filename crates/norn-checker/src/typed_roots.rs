@@ -2436,6 +2436,25 @@ fn check_business_pack_root(
                 "shapes" => norn_ir::OntologyShape,
             }
         );
+    } else if matches!(object.get("packKind"), Some(JsonValue::String(kind)) if kind == "link") {
+        check_root!(
+            norn_ir::OntologyLinkRoot,
+            "ontology_link.validation.invalid_payload",
+            object,
+            diagnostics,
+            artifact_id,
+            members {
+                "packId" => String,
+                "packVersion" => norn_ir::IrVersion01,
+                "packKind" => norn_ir::OntologyLinkKind,
+                "fromPack" => norn_ir::LinkedPack,
+                "toPack" => norn_ir::LinkedPack,
+            }
+            arrays {
+                "correspondences" => norn_ir::TermCorrespondence,
+                "residuals" => norn_ir::LinkResidual,
+            }
+        );
     } else {
         check_root!(
             norn_ir::CompositionPackRoot,
