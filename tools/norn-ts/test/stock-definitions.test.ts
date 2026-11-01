@@ -14,7 +14,7 @@ test("stock schemas and lifecycle compile deterministically", () => {
   const again = compileDefinitions(file, options)
   if (!again.ok) throw new Error(JSON.stringify(again.diagnostics))
   expect(canonicalJson(compiled.artifacts)).toBe(canonicalJson(again.artifacts))
-  expect(compiled.artifacts).toHaveLength(16)
+  expect(compiled.artifacts).toHaveLength(18)
   const voucher = compiled.artifacts.find(value => value && typeof value === "object" && "artifactId" in value && value.artifactId === "stock.Voucher.entity")
   expect(voucher).toMatchObject({ payload: { objectType: { lifecycles: [{
     property: "status", initial: ["draft"], terminal: ["cancelled"], transitions: [
@@ -34,3 +34,23 @@ test.skipIf(!checker)("compiled definitions are admitted by the real checker", (
     expect(result.diagnostics.diagnostics).toEqual([])
     expect(result.admitted).toBe(true)
 }, 60_000)
+
+if (checker) test("POST-BINDING: unresolved, mistyped and open declarations refuse", () => {
+  const compiled = compileDefinitions(file, options)
+  if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
+  const original = JSON.stringify(compiled.artifacts)
+  for (const [before, after] of [
+    ['"warehouse":["destination"]', '"warehouse":["missing"]'],
+    ['"stock":["destination","stock_account"]', '"stock":["item","name"]'],
+    ['"srbnb":["destination","company","srbnb_account"]', '"srbnb":["destination","company","currency"]'],
+    ['"collection":"lines"', '"collection":"missing"'],
+    ['"operation":"receipt"', '"operation":"transfer"'],
+    ['"operation":"receipt"', '"operation":"receipt","templateId":"caller"'],
+    ['"stockPost":{', '"stockPost":null,"unused":{'],
+  ]) {
+    const changed = original.replace(before, after)
+    expect(changed).not.toBe(original)
+    const result = checker.checkArtifactSet(JSON.parse(changed))
+    expect(result.admitted).toBe(false)
+  }
+})

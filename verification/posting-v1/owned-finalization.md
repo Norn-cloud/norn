@@ -28,3 +28,23 @@ remain required. This is execution conformance for the join, not stock/GL
 lowering; POST-VALUE and the remaining POST-ORDER/IDENTITY scenarios still need
 receipt/delivery conformance in part (d). Direct Post and protected rule-output
 admission remain subsequent changes.
+
+## Closed stock binding (P1)
+
+POST-BINDING: `stockPost` is a closed receipt/delivery declaration on an
+idempotent, scoped `status.submit` action. Its collection must be owned by the
+voucher. Item/warehouse paths start at each owned line and traverse 1–4 required
+to-one links to `stock.Item` / `stock.Warehouse`. Account paths end at text
+properties on that warehouse or its company. Missing masters, unresolved links,
+wrong types, nullable accounts, arbitrary operations and template overrides refuse
+admission. The real checker conformance test is `POST-BINDING`.
+
+POST-AUTHORITY / PREPARATION-REQUIRED: admitting a declaration grants no write
+authority. Until kernel preparation and atomic commit are implemented, execution
+returns UnsupportedEffect before any business or idempotency write.
+
+Lane c: IDs are `stock.receipt.submit` and `stock.delivery.submit`; the alpha seam
+is `invoke(surface, action, args, actor)`. Action input is `{ id: voucherId }`;
+scope and idempotency key remain invoke transport metadata. Lines and account
+identities are read from owned manifests and linked masters, never action input.
+P1 is admission evidence only; the genuine alpha acceptance remains P4.

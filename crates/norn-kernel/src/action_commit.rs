@@ -885,6 +885,11 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
+    if action.stock_post.is_some() {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: action.action_id.clone(),
+        });
+    }
     if !action.create_links.is_empty()
         && matches!(
             action.effect_program,

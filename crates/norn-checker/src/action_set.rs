@@ -121,6 +121,8 @@ use crate::{Diagnostic, DiagnosticCode, Span};
 
 /// Stable `artifact_set.action.*` and `artifact_set.entity.*` codes.
 pub mod codes {
+    /// A stock posting binding cannot resolve its owned lines or typed masters.
+    pub const STOCK_POST: &str = "artifact_set.action.stock_post";
     /// A quantity effect or its typed input bindings cannot be admitted.
     pub const QUANTITY_EFFECT: &str = "artifact_set.action.quantity_effect";
     /// A create-only outgoing link lacks its declared authorized target slice.
@@ -279,6 +281,7 @@ fn check_action(
 ) -> Vec<Diagnostic> {
     let mut findings = action_slice_findings(artifact, root, model);
     findings.extend(quantity_effect_findings(artifact, root, model));
+    findings.extend(stock_post_findings(artifact, root, model));
     findings.extend(create_link_findings(artifact, root, model));
     let mut targets: BTreeSet<(&str, WriteChange)> = BTreeSet::new();
     if let Some(program) = &root.effect_program {
@@ -707,6 +710,7 @@ pub(crate) struct Defined<'a> {
     /// Effective forward links, including inherited and extension links:
     /// `(link id, target)`. Unavailable models have no admitted links.
     links: Vec<(String, String)>,
+    required_links: BTreeSet<String>,
 }
 
 impl Defined<'_> {
@@ -1715,6 +1719,16 @@ impl<'a> Model<'a> {
                 }
             };
             let name = object_type.root.object_type.name.0.clone();
+            let required_links = catalog
+                .as_ref()
+                .and_then(|c| c.links_for_object_type(&name))
+                .unwrap_or_default()
+                .iter()
+                .filter(|l| {
+                    l.cardinality.required && l.cardinality.to == norn_ir::Multiplicity::One
+                })
+                .map(|l| l.id.as_str().to_owned())
+                .collect();
             let links = catalog
                 .as_ref()
                 .and_then(|catalog| catalog.links_for_object_type(&name))
@@ -1732,6 +1746,7 @@ impl<'a> Model<'a> {
                 lifecycles,
                 effective_object_type,
                 links,
+                required_links,
             });
         }
         let expression_environment = action_model_environment(artifacts, base, registry);
@@ -2010,4 +2025,98 @@ fn create_link_findings(
         }
     }
     findings
+}
+
+fn stock_post_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    model: &Model<'_>,
+) -> Vec<Diagnostic> {
+    let Some(post) = &root.stock_post else {
+        return Vec::new();
+    };
+    let valid = (|| {
+        let ActionEffectProgram::FireTransition {
+            object_kind,
+            lifecycle,
+            transition,
+            ..
+        } = root.effect_program.as_ref()?
+        else {
+            return None;
+        };
+        if !root.ledgered
+            || !root.idempotent
+            || root.quantity_effect.is_some()
+            || !root.commands.is_empty()
+            || !root.create_links.is_empty()
+            || lifecycle.as_str() != "status"
+            || transition.as_str() != "submit"
+            || !["orgId", "environmentId"]
+                .iter()
+                .all(|s| root.scope_required.iter().any(|r| r == s))
+        {
+            return None;
+        }
+        let parent = model.effective_object_type_named(object_kind)?;
+        let collection = parent
+            .owned_collections
+            .iter()
+            .find(|c| c.id.as_str() == post.collection)?;
+        let line = collection.child_type.as_str();
+        let resolve = |path: &[String]| -> Option<String> {
+            if path.is_empty() || path.len() > 4 {
+                return None;
+            }
+            let mut current = line.to_owned();
+            for id in path {
+                let link = model
+                    .object_type(&current)?
+                    .links
+                    .iter()
+                    .find(|(name, _)| name == id)?;
+                if !model.object_type(&current)?.required_links.contains(id) {
+                    return None;
+                }
+                current.clone_from(&link.1);
+            }
+            model.effective_object_type_named(&current)?;
+            Some(current)
+        };
+        if resolve(&post.partition.item)? != "stock.Item"
+            || resolve(&post.partition.warehouse)? != "stock.Warehouse"
+        {
+            return None;
+        }
+        for (path, owner) in [
+            (&post.accounts.stock, "stock.Warehouse"),
+            (&post.accounts.srbnb, "stock.Company"),
+            (&post.accounts.cogs, "stock.Company"),
+        ] {
+            let (property, links) = path.split_last()?;
+            let name = resolve(links)?;
+            let field = model
+                .effective_object_type_named(&name)?
+                .properties
+                .iter()
+                .find(|p| p.id.as_str() == property)?;
+            if name != owner
+                || field.nullable
+                || field.computed
+                || !matches!(
+                    field.kind,
+                    crate::entity_instance::EffectiveKind::Base(norn_ir::PropertyType::Text { .. })
+                )
+            {
+                return None;
+            }
+        }
+        Some(())
+    })()
+    .is_some();
+    if valid {
+        Vec::new()
+    } else {
+        vec![finding(codes::STOCK_POST, "stockPost requires an idempotent scoped submit, owned lines and required to-one paths to typed item/warehouse/company masters and text accounts".to_owned(), artifact, "/payload/stockPost")]
+    }
 }
