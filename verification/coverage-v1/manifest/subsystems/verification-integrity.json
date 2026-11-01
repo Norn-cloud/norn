@@ -452,6 +452,7 @@
     "verification/stripmine-2026-08-22/scripts/validate.sh",
     "tools/norn-ts/fixtures/definitions/decimal-input.source.ts",
     "tools/norn-ts/fixtures/schema/invalid/decimal-output.ts",
-    "tools/norn-ts/test/decimal-input.test.ts"
+    "tools/norn-ts/test/decimal-input.test.ts",
+    "crates/norn-checker/src/obligations/induction.rs"
   ]
 }
