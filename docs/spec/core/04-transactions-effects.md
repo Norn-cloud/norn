@@ -62,12 +62,8 @@ Present: `crates/norn-ir/src/{decision_output,fact_change,action}.rs`, `crates/n
 ### RECEIPT-EFFECT-1 — reference-only receipt effects
 
 A declared transition may carry `acceptReceipt`: a required string reference input,
-an immutable Function manifest digest, a writable digest property and typed result
-property bindings. The action JSON never supplies the receipt body or result.
-Admission rejects unknown, computed, reserved and lifecycle binding targets. Both
-destinations exclude objectIdField and every effective identity-key component;
-a result destination also cannot equal digestProperty. The normal exact writer
-closure remains required. Catalogs preserve the declaration.
+an immutable Function manifest digest, a writable digest property and typed result bindings. Action JSON never supplies a receipt body or result.
+Admission rejects unknown, computed, reserved and lifecycle binding targets.
+Both destinations exclude objectIdField and every effective identity-key component; a result destination cannot equal digestProperty. The exact writer closure remains required; catalogs preserve the declaration.
 Only the cell host resolves authenticated, scoped evidence; unsupported hosts refuse.
-Execution remains closed until receipt consumption and effects commit atomically,
-with no partial persistence on refusal.
+Execution stays closed until consumption and effects commit atomically, with no partial persistence on refusal.
