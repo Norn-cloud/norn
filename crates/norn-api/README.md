@@ -59,3 +59,7 @@ absent (404), including u64::MAX and the first integer above the SQL seam limit.
 HOST-HTTP-WORKER: synchronous store access and complete retained-set admission
 run on the blocking pool, outside the Tokio request worker; actor/scope admission
 still precedes store reads. HTTP correspondence covers allowed/denied actors.
+
+HOST-CACHE-PRIVATE: all definition HTTP responses, including refusals, declare
+`Cache-Control: no-store`; scope/actor-sensitive results never authorize shared
+cache reuse. The HTTP success/refusal matrices assert the header.
