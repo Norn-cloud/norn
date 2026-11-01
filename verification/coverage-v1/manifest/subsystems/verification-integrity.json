@@ -171,6 +171,7 @@
     "crates/norn-checker/src/lint/smells.rs",
     "crates/norn-checker/src/markings.rs",
     "crates/norn-checker/src/metric.rs",
+    "crates/norn-checker/src/metric/compute.rs",
     "crates/norn-checker/src/metric_interchange.rs",
     "crates/norn-checker/src/naming_series.rs",
     "crates/norn-checker/src/norm_precedence.rs",
@@ -449,6 +450,12 @@
     "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
-    "verification/stripmine-2026-08-22/scripts/validate.sh"
+    "verification/stripmine-2026-08-22/scripts/validate.sh",
+    "tools/norn-ts/fixtures/stock/stock.source.ts",
+    "tools/norn-ts/test/stock-definitions.test.ts",
+    "crates/norn-checker/src/obligations/induction.rs",
+    "scripts/demo/run.sh",
+    "scripts/demo/jewelry.source.ts",
+    "crates/norn-checker/examples/jewelry_demo.rs"
   ]
 }

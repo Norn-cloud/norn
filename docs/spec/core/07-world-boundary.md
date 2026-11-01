@@ -1,0 +1,66 @@
+# Core 07: Controlled world boundary
+
+Purpose [Owner]: integrations are packs of connectors, source ontology, mappings and governed write-back; change feeds and Functions make data engineering first-class. [Common conventions](README.md) apply.
+
+## IR contract
+
+Reuse `ConnectorRoot`, `SourceSchemaIr`, `MappingIr`, mapping evidence/gaps, `FunctionManifest`, invocation/result contracts, `BlobRef`, `RelevantStateToken`, `Command`, `Generation` and `IdempotencyKey`.
+
+| Target record | Required fields |
+|---|---|
+| Feed declaration | connector instance/scope, exact source schema + mapping pins, partitions/cursor ordering, snapshot-to-CDC handoff rule, dedup key, event/recorded-time fields, heartbeat/lag policy, tombstone semantics, declared coverage gaps. |
+| Observation | source event ID, partition/cursor, operation insert/update/delete, source document ref/digest, source effective time, local recorded revision, raw content ref, mapping pins, typed multi-object role links, quality/coverage evidence. |
+| Finding | stable ID from observation + law/version + evaluation context, law ID, reason, offending fields, evidence refs, status open/resolved/superseded, quarantine disposition; retain original finding on correction. |
+| Outbound intent | operation ID, Function/connector pin, destination, canonical input digest, capability/secret handles, actor/delegation, retry/timeout/provider dedup contract, relevant-state pins, compensation action reference. |
+| Outcome | operation/generation/attempt, state, provider receipt/reference, result/error schema + digest, observed/recorded time, reconciliation evidence, causal original operation; outputs are proposals, never direct writes. |
+
+Functions use canonical `FunctionManifest {abi, function_id, version, input_schema, output_schema, error_schema, implementation, dependency_closure, runtime, platform, capabilities, determinism, bounds, cache, retention, steps}`. Admission rejects a missing `dependency_closure` and requires its declared digest to equal the digest computed from its entries. WIT/language bindings must agree; opaque scoped secret handles resolve only inside authorized performers, never the pure evaluator.
+
+## Ingestion versus governed action
+
+[Owner] Imported events already happened. Validate their framing/provenance; durably capture representable source observations and advance the cursor atomically with capture. Mapping/law violations produce **findings + quarantine**, not a refused source fact. Quarantined rows retain raw evidence and stay out of authoritative aggregates unless an explicit observed-data question includes them with quality labels. Invalid transport/authentication is still a boundary failure; it is not a business-law refusal of an external occurrence.
+
+CDC replays deduplicate by `(connector instance, partition, source event identity)`. Same ID/different bytes is an evidence conflict finding. Snapshot handoff records its watermark then consumes CDC without gaps/duplicates. Persist capture, dedup record and cursor together; crash/restart never advances past uncaptured data. Multi-object events preserve each role; Item and Holding mappings remain separate. Declared gaps make coverage incomplete, not silently complete.
+
+Canonical promotion/write-back is a separate governed action under 04/05. Its laws may **refuse** the proposed commit. Observational truth and authoritative posted truth are separate projections; source violations cannot authorize native mutations. Write-back carries causal source/operation IDs to suppress echoes without discarding independent evidence.
+
+## Perform and recovery semantics
+
+All Functions, including ML/heavy pure computation, run behind perform and return recorded schema-checked receipts. Pin training/input snapshots, model/code/dependency digests, seeds where relevant, bounds and result blobs. ML confidence is not proof or write authority. Reconcile output with input identity/freshness/current authority and publish only through a guarded action.
+
+Commit+outbox is atomic. State graph: requested → dispatched; dispatched → succeeded/failed/outcome-unknown; unknown → reconciliation-required; reconciliation → confirmed success/failure or remains unresolved. A known successful compensable consequence may enter compensation-pending → compensated; failed compensation remains pending with failure evidence. “Failed” means known failure, not timeout. Pre-dispatch cancellation is recorded separately.
+
+At-least-once dispatch preserves operation ID across attempts. Retry ambiguous outcomes automatically only under an explicit provider idempotency/lookup contract; otherwise require reconciliation/manual evidence. Revocation blocks fresh attempts; an already dispatched result still enters receipt history. Cancellation racing with success records the success and starts a separately authorized compensation. Replay uses recorded outcomes and never calls a provider.
+
+| Invariant / layer | Stable target code (finding codes are not refusals) |
+|---|---|
+| FEED-CURSOR-1: capture/dedup/cursor atomic; ingestion commit | `core.boundary.cursor_gap` |
+| OBS-EVIDENCE-1: preserve imported truth/provenance, quarantine violations; capture/evaluation | `core.boundary.import_finding` |
+| EFFECT-IDENTITY-1: attempts retain exact operation identity; dispatch | `core.boundary.identity_mismatch` |
+| EFFECT-UNKNOWN-1: uncertainty never means failed/succeeded; reconciliation | `core.boundary.outcome_unknown` |
+| FUNCTION-CAP-1: pinned typed bounded capability boundary; admission/dispatch | `core.boundary.capability_denied` |
+| RESULT-FRESH-1: output receipt is not mutation authority; governed commit | `core.boundary.stale_result` |
+
+Evidence: structural mapping/manifest admission; runtime capability/freshness enforcement; sampled crash/retry/CDC correspondence; external assumptions remain explicit open proof goals. Quarantine is evidence-bearing handling, never a claim of correction.
+
+## Named acceptance scenarios
+
+- **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
+- **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
+- **OBS-BAD:** Given imported purity 1100‰, when evaluated, then capture a quarantined finding; identical native write refuses without business changes.
+- **EFFECT-UNCERTAIN:** Given provider success followed by lost reply, when retried, then dedup/lookup resolves once or outcome remains unknown; never issue a new payment ID.
+- **EFFECT-COMPENSATE:** Given confirmed payment 25, when cancellation wins after dispatch, then a separate refund 25 records its own outcome; failed refund remains outstanding.
+- **FUNCTION-ML:** Given a pinned training table and model Function, when it returns a forecast, then record output/input digests; stale or leaked-future input cannot pass publication guards.
+
+## Main and gaps
+
+Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,function}.rs`, `crates/norn-kernel/src/effect.rs`, `crates/norn-cell/src/host.rs`, `registry/packs/{erpnext,shopify,odoo}/`. Source contracts and outbox/freshness machinery exist, not complete CDC/quarantine/reconciliation or public Function execution. #69's `norn-metrics` temporal tables are pending, not general ML publication. #270/#308–#312 host/surfaces must use this same authority boundary.
+
+## Work breakdown (each PR ≤400 lines; demo priority first)
+
+1. **Demo priority:** feed/cursor/observation contract, then atomic dedup/checkpoint capture, then FEED-RESTART tests.
+2. **Demo priority:** ERPNext/Shopify synthetic mappings + role/provenance/gap declarations, then OBS-BAD quarantine/finding evaluation; [beat 6](../acceptance/data-engineering.md).
+3. **Demo priority:** typed ML receipt inputs/outputs and freshness/temporal publication guards using #69/08; FUNCTION-ML negative cases.
+4. Complete B1 mapping/role preservation with 06; EVENT-MULTI and source echo tests.
+5. Add uncertainty/reconciliation state contract, then dispatch/lookup tests, then compensation races with 04; each supported provider declares its assumptions.
+6. Qualify manifest-projected WASM/worker execution, secrets, bounds and replay; unsupported profiles stay refused.

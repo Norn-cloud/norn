@@ -457,6 +457,41 @@
       "tier": "T3"
     },
     {
+      "code": "core.composition.duplicate_instance",
+      "message": "instance ID must be unique in the retained scoped graph",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.composition.instance_cycle",
+      "message": "instance imports and containment must be acyclic",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.composition.unresolved_pin",
+      "message": "instance reference must resolve to an exact scoped pack pin",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.compute.ambiguous_grain",
+      "message": "Query requires an explicit unambiguous identity grain.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.compute.unsupported_engine",
+      "message": "Query semantics are unsupported by the selected compute profile.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",
