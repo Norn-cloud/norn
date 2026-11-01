@@ -2,8 +2,8 @@
 use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
 use norn_expr::{EvaluationBudget, Expression, Value};
 use norn_ir::{
-    ArtifactEnvelope, DataQualityOutcome, LawIR, LawModality, LawResponse,
-    LawRoot, LawSeverity, ObjectTypeName,
+    ArtifactEnvelope, DataQualityOutcome, LawIR, LawModality, LawResponse, LawRoot, LawSeverity,
+    ObjectTypeName,
 };
 use serde::{Deserialize, de::IntoDeserializer};
 

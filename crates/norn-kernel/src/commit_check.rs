@@ -495,10 +495,7 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
         if authorization.is_some_and(|authority| authority.authorizes_write(write)) {
             continue;
         }
-        if let Some(failure) = failures
-            .into_iter()
-            .find(|failure| failure.refuses_native)
-        {
+        if let Some(failure) = failures.into_iter().find(|failure| failure.refuses_native) {
             return Err(CommitError::Law {
                 key: write.key.clone(),
                 reason: crate::governing_laws::LawEvaluationError::Violated(failure.message),
