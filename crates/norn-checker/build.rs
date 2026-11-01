@@ -1,7 +1,7 @@
 //! Compile the authoritative per-code registry without a shared generated file.
 
 use serde::Deserialize;
-use std::{fs, path::Path};
+use std::{fmt::Write as _, fs, path::Path};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -17,7 +17,7 @@ struct Entry {
 ///
 /// # Errors
 /// Refuses unknown files, malformed entries, duplicate identities and invalid metadata.
-pub fn generate(directory: &Path) -> Result<String, String> {
+pub(crate) fn generate(directory: &Path) -> Result<String, String> {
     if !directory
         .symlink_metadata()
         .map_err(|e| e.to_string())?
@@ -69,7 +69,7 @@ pub fn generate(directory: &Path) -> Result<String, String> {
             "info" => "Info",
             _ => return Err("invalid diagnostic severity".to_owned()),
         };
-        result.push_str(&format!("CodeEntry {{ code: {:?}, tier: Tier::{}, severity: DiagnosticSeverity::{severity}, message: {:?}, since: {:?} }},\n", entry.code, entry.tier, entry.message, entry.since));
+        writeln!(result, "CodeEntry {{ code: {:?}, tier: Tier::{}, severity: DiagnosticSeverity::{severity}, message: {:?}, since: {:?} }},", entry.code, entry.tier, entry.message, entry.since).map_err(|e| e.to_string())?;
     }
     result.push_str("];\n");
     Ok(result)
