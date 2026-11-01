@@ -62,6 +62,12 @@ refusal of an undeclared extension member. No link target/cardinality, scope,
 CAS or complete-adjacency guard is weakened. This fixes the shared lookup before
 stock preparation consumes it; full stock invocation remains subsequent work.
 
+POST-LINK-REQUIRED: the same declared-member inventory supplies required-role
+validation. A source with a required extension role refuses creation without
+a target and removal of its last target, on base types and subtypes alike.
+`required_extension_links_refuse_missing_or_removed_last_targets` exercises
+both refusals.
+
 ## Authoritative preparation reads (P2a)
 
 POST-READ-ORIGIN: `prepare_stock_snapshot` reads manifest-ordered owned lines and declared master/account paths. Complete parent links must agree with the manifest. Facts and complete link sets survive as fences. Type authorization precedes manifest/adjacency reads; object authorization precedes disclosure, retaining the action-authorized parent snapshot. `post_read_origin_denied_reads_preserve_business_state` checks denied-read no-write behavior. The API grants no write authority.
