@@ -85,7 +85,7 @@ class RepostDispatch(unittest.TestCase):
         driver = self.driver(iter([[{'name': 'queued'}], [{'name': 'queued'}], [], []]))
         with patch('extract.dispatch_reposts') as dispatch, patch('extract.time.sleep'):
             self.assertEqual(checkpoint(driver, 0, [])['stock'], [])
-            dispatch.assert_called_once_with()
+            dispatch.assert_called_once_with(30)
 
     def test_no_work_needs_no_dispatch(self):
         from extract import checkpoint
@@ -99,13 +99,21 @@ class RepostDispatch(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired):
                 checkpoint(self.driver(iter([[{'name': 'queued'}]])), 0, [])
 
+    def test_completion_observed_after_deadline_is_unsupported(self):
+        from extract import checkpoint
+        with patch('extract.dispatch_reposts') as dispatch, patch('extract.time.sleep'), patch(
+                'extract.time.monotonic', side_effect=[0, 119, 119, 121]):
+            with self.assertRaises(TimeoutError):
+                checkpoint(self.driver(iter([[{'name': 'queued'}], []])), 0, [])
+            dispatch.assert_called_once_with(1)
+
     def test_zero_exit_with_persistent_queue_times_out(self):
         from extract import checkpoint
         with patch('extract.dispatch_reposts') as dispatch, patch('extract.time.sleep'), patch(
-                'extract.time.monotonic', side_effect=[0, 0, 121]):
+                'extract.time.monotonic', side_effect=[0, 0, 0, 121]):
             with self.assertRaises(TimeoutError):
                 checkpoint(self.driver(iter([[{'name': 'queued'}], [{'name': 'queued'}]])), 0, [])
-            dispatch.assert_called_once_with()
+            dispatch.assert_called_once_with(30)
 
 
 if __name__ == '__main__':

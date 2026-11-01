@@ -12,13 +12,13 @@ def decimal(value):
     return '0' if number == 0 else format(number.normalize(), 'f')
 
 
-def dispatch_reposts():
+def dispatch_reposts(timeout):
     subprocess.run(['docker', 'compose', '-p', 'stock-parity', '-f',
                     '/home/user/parity-runtime/compose.json', 'exec', '-T', 'web',
                     'bash', '-lc', 'cd /home/frappe/frappe-bench && bench --site parity.localhost '
                     'trigger-scheduler-event '
                     'erpnext.stock.doctype.repost_item_valuation.repost_item_valuation.repost_entries'],
-                   check=True, timeout=30, capture_output=True, text=True)
+                   check=True, timeout=timeout, capture_output=True, text=True)
 
 
 def checkpoint(driver, step, attempts, timeout=120):
@@ -29,9 +29,11 @@ def checkpoint(driver, step, attempts, timeout=120):
         if time.monotonic() >= deadline:
             raise TimeoutError('Valuation queue did not settle')
         if not dispatched:
-            dispatch_reposts()
+            dispatch_reposts(min(30, deadline - time.monotonic()))
             dispatched = True
         time.sleep(1)
+    if time.monotonic() >= deadline:
+        raise TimeoutError('Valuation queue did not settle')
     failed = list(api.rows('Repost Item Valuation', {'company': f['company'], 'status': 'Failed'}, ['name']))
     if failed:
         raise RuntimeError('Valuation repost failed')
