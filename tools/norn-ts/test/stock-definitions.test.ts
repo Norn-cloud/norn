@@ -57,7 +57,7 @@ if (checker) test("POST-BINDING: unresolved, mistyped and open declarations refu
     expect(result.admitted).toBe(false)
   }
   const nullPost = compiled.artifacts.map(artifact => {
-    if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) return artifact
+    if (!artifact || typeof artifact !== "object" || !("payload" in artifact)) return artifact
     const payload = artifact.payload
     if (!payload || typeof payload !== "object" || Array.isArray(payload) || !("stockPost" in payload)) return artifact
     return { ...artifact, payload: { ...payload, stockPost: null } }
