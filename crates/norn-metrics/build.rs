@@ -1,3 +1,4 @@
+//! ANALYTICS-FUNCTION-1: pin the native compiler and Cargo configuration.
 use std::{env, error::Error, process::Command};
 fn main() -> Result<(), Box<dyn Error>> {
     let compiler = Command::new(env::var("RUSTC")?).args(["-vV"]).output()?;
