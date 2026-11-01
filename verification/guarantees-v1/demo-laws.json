@@ -1,0 +1,23 @@
+{
+  "statementRegistries": ["verification/stripmine-2026-08-22/obligations.json", "verification/core-physics-v1/obligations.json"],
+  "laws": [
+    {"id":"KERNEL-V2-COMMIT","lawLayer":"core primitives","statement":"Commit admission preserves atomicity, single receipts, refusal transparency and compare-and-swap safety."},
+    {"id":"KERNEL-V2-QUANTITY","lawLayer":"core primitives","statement":"Quantity operations conserve funded balances and reservation remainders, preserve state on refusal and reject expired posting."},
+    {"id":"KERNEL-V2-PROJECTION","lawLayer":"core primitives","statement":"Projection observations correspond to committed authority state under the declared kernel model bounds."},
+    {"id":"POST-ATOMIC","lawLayer":"accounting/inventory","statement":"Refusal or a pre-COMMIT fault preserves stock, GL, history, outbox and receipt state."},
+    {"id":"POST-VALUE","lawLayer":"accounting/inventory","statement":"Quantity, StockEvents and fold deltas agree; signed stock GL equals the rounded partition value delta and every journal balances."},
+    {"id":"POST-IDENTITY","lawLayer":"accounting/inventory","statement":"Identical intent replays once; conflicting payload or pins refuse unchanged; lost acknowledgement cannot duplicate publication."},
+    {"id":"POST-ORDER","lawLayer":"accounting/inventory","statement":"Complete partition and manifest fences cover empty partitions and concurrent posting; immutable replay reproduces allocations and state."},
+    {"id":"POST-AUTHORITY","lawLayer":"accounting/inventory","statement":"Only the pinned declared rule produces protected outputs; specialization cannot weaken inherited laws or lifecycle obligations."},
+    {"id":"STOCK-FIFO","lawLayer":"accounting/inventory","statement":"Issues consume oldest stock layers; final consumption takes the residual value."},
+    {"id":"STOCK-AVERAGE","lawLayer":"accounting/inventory","statement":"Moving-average issues use exact half-up rounding at scale six; final depletion takes all remaining value."},
+    {"id":"STOCK-RETURN","lawLayer":"accounting/inventory","statement":"Returns use original issue cost, cap cumulative quantity and value, and take the residual on final return."},
+    {"id":"STOCK-REVERSAL","lawLayer":"accounting/inventory","statement":"Cancellation appends an exact inverse once, after live dependents have been reversed."},
+    {"id":"INV-JEWELRY-FINE-CONSERVATION","lawLayer":"jewelry","statement":"For each metal and owner, fine input equals fine outputs plus explicitly recorded loss."},
+    {"id":"INV-JEWELRY-CUSTODY","lawLayer":"jewelry","statement":"Custody metal retains its owner and cannot be sold as company stock; custody operations have no company asset or ledger effect."},
+    {"id":"INV-JEWELRY-REFUSAL-ATOMIC","lawLayer":"jewelry","statement":"A refused jewelry operation preserves all state."},
+    {"id":"JEWELRY-PURITY","lawLayer":"jewelry","statement":"Purity inputs map exactly to an integer numerator over 24000000; conflicting forms, excess precision and checked arithmetic overflow refuse."},
+    {"id":"WORKFLOW-INHERITED-LAWS","lawLayer":"workflow","statement":"Tenant workflows preserve named inherited core, stock and jewelry law obligations."},
+    {"id":"WORKFLOW-LAW-ORIGINS","lawLayer":"workflow","statement":"Consistency receipts retain the inherited law identity and origin rather than claiming a new proof."}
+  ]
+}

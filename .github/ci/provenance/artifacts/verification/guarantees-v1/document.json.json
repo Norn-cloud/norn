@@ -1,0 +1,34 @@
+{
+  "sha256": "607758d54484ac20360fefd1709ce8c34cf17a683ccee1c690f2c30a17b5a990",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "scripts/guarantees_document.py",
+    "verification/guarantees-v1/demo-laws.json",
+    "verification/stripmine-2026-08-22/obligations.json",
+    "verification/core-physics-v1/obligations.json",
+    "scripts/coverage_manifest.py",
+    "verification/coverage-v1/manifest/index.json",
+    "verification/coverage-v1/manifest/subsystems/artifact-governance.json",
+    "verification/coverage-v1/manifest/subsystems/authorization.json",
+    "verification/coverage-v1/manifest/subsystems/cala-boundary.json",
+    "verification/coverage-v1/manifest/subsystems/core-physics.json",
+    "verification/coverage-v1/manifest/subsystems/kernel-v2.json",
+    "verification/coverage-v1/manifest/subsystems/ontology.json",
+    "verification/coverage-v1/manifest/subsystems/quantity-ledger.json",
+    "verification/coverage-v1/manifest/subsystems/rules-dmn.json",
+    "verification/coverage-v1/manifest/subsystems/transition-authority.json",
+    "verification/coverage-v1/manifest/subsystems/verification-integrity.json"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
