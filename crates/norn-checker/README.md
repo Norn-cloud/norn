@@ -27,3 +27,5 @@ EXACT-DECIMAL (`0.1234567890123456789012345678` / `0.123456789012345678901234567
 EXACT-LITERAL (`25` / `26`), EXACT-VERIFY (substitution refusal), EXACT-ORDER (key reordering).
 Both positions are covered. Writers emit @5 (mapless), @6 (flow map), @7 (law origins); readers retain @1–@4 until contract cleanup.
 LEGACY-INLINE: verify original inline-layout source, then recheck after extraction; `old_receipt_hashes_recover_and_recheck_after_inline_layout_extraction` covers it.
+ABI-REFUSAL: malformed inline layout yields a rejected receipt with the existing
+`layout.validation.invalid_inline_field` finding, rather than an ABI transport error.
