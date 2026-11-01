@@ -68,6 +68,9 @@ fn rebind(
         serde_json::from_str(include_str!("../../../fixtures/ir/metrics/ontology.json"))
             .expect("template");
     let artifact = &mut artifacts[0];
+    artifact.artifact_id = "demo.Conversion.entity.v2".into();
+    artifact.name = TYPE.into();
+    artifact.namespace = "demo".into();
     let root = EntityRootV2 {
         entity_version: EntityIrVersion::V2_0,
         object_type: object.clone(),
