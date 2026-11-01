@@ -26,6 +26,7 @@ pub struct AverageState {
 
 impl AverageState {
     /// Current inventory at its remaining acquisition cost.
+    #[must_use]
     pub const fn balance(&self) -> StockAmount {
         self.balance
     }
