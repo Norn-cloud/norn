@@ -1535,6 +1535,18 @@ pub static REGISTRY: &[CodeEntry] = &[
         "vendor-qualified mapping has an invalid sparse source contract: {detail}",
     ),
     introduced(
+        "core.compute.ambiguous_grain",
+        Tier::T3,
+        "Query requires an explicit unambiguous identity grain.",
+        "0.2.0",
+    ),
+    introduced(
+        "core.compute.unsupported_engine",
+        Tier::T3,
+        "Query semantics are unsupported by the selected compute profile.",
+        "0.2.0",
+    ),
+    introduced(
         "metric.validation.complexity_limit",
         Tier::T3,
         "Metric dependencies and link paths are bounded to 64 levels.",

@@ -854,3 +854,126 @@ fn shared_and_inherited_monetary_types_keep_the_authoritative_currency_source() 
         codes::MIXED_CURRENCY,
     );
 }
+
+fn keyed_compute_fixture() -> (Vec<MetricDefinition>, QuestionIR, EffectiveCatalog) {
+    let (mut measure, mut question) = sales();
+    measure["type_params"]["expr"] = json!("weight");
+    measure["type_params"]["metric_aggregation_params"]["agg_time_dimension"] =
+        json!("observed_at");
+    measure["x-norn"]["timeDimension"] = json!({"property":"observed_at"});
+    measure["x-norn"]["defaultFilters"] = json!([]);
+    measure["x-norn"]
+        .as_object_mut()
+        .expect("policy")
+        .remove("currency");
+    question
+        .as_object_mut()
+        .expect("question")
+        .remove("compare");
+    question["groupBy"] = json!([{"path":{"property":"observed_at"},"grain":"week"}]);
+    let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
+    ontology[0]["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .expect("properties")
+        .push(json!({"id":"observed_at","type":{"kind":"timestamp","timezone":"utc"}}));
+    (
+        vec![decode(&measure)],
+        decode(&question),
+        catalog(&ontology.to_string()),
+    )
+}
+
+#[test]
+fn query_grain_keyed_sum_preserves_typed_identity_and_freshness() {
+    use norn_checker::metric::compute::admit;
+    let (definitions, question, catalog) = keyed_compute_fixture();
+    let plan = admit(&definitions, &question, &catalog, 100).expect("keyed sum");
+    assert_eq!(plan.grain(), &question.object_set);
+    assert_eq!(plan.question(), &question);
+    assert_eq!(plan.max_items(), 100);
+    let [sum] = plan.sums() else {
+        panic!("one measure")
+    };
+    assert_eq!(sum.property.id.as_str(), "weight");
+    assert_eq!(sum.time_property.as_str(), "observed_at");
+    assert!(
+        matches!(&sum.property.kind, norn_checker::EffectiveKind::Base(
+        norn_ir::PropertyType::Decimal { unit: Some(unit), .. }
+    ) if unit.code == "kg")
+    );
+}
+
+#[test]
+fn query_grain_refuses_expansion_implicit_keys_and_unsupported_semantics() {
+    use norn_checker::metric::compute::{AMBIGUOUS_GRAIN, UNSUPPORTED_ENGINE, admit};
+    let (definitions, question, catalog) = keyed_compute_fixture();
+    let mut expanded = question.clone();
+    expanded.dimensions[0].path.links = vec![
+        norn_ir::LinkId("parent_sales_invoice".into()),
+        norn_ir::LinkId("items".into()),
+    ];
+    expanded.dimensions[0].path.property = norn_ir::PropertyId("name".into());
+    expanded.dimensions[0].grain = None;
+    assert_code(
+        &admit(&definitions, &expanded, &catalog, 100).expect_err("fanout"),
+        codes::FAN_OUT,
+    );
+    let mut symmetric = definitions.clone();
+    symmetric[0].norn.safe_aggregation = Some(norn_ir::metric::SafeAggregation::Symmetric);
+    assert_code(
+        &admit(&symmetric, &expanded, &catalog, 100).expect_err("unqualified traversal"),
+        UNSUPPORTED_ENGINE,
+    );
+    let mut duplicate = question.clone();
+    duplicate.metrics.push(duplicate.metrics[0].clone());
+    assert!(admit(&definitions, &duplicate, &catalog, 100).is_err());
+    assert_code(
+        &admit(&definitions, &question, &catalog, 0).expect_err("zero bound"),
+        UNSUPPORTED_ENGINE,
+    );
+    let mut multiple = question;
+    let mut other = definitions[0].clone();
+    other.name = "erpnext.other".into();
+    multiple.metrics.push(norn_ir::metric::QuestionMetric {
+        metric: other.name.clone(),
+        inline: None,
+        reaggregate: None,
+    });
+    let mut definitions = definitions;
+    definitions.push(other);
+    assert_code(
+        &admit(&definitions, &multiple, &catalog, 100).expect_err("multiple outputs"),
+        AMBIGUOUS_GRAIN,
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn compute_deterministic_ratio_lowering_ignores_definition_order(reverse in proptest::bool::ANY, max_items in 1u32..=1000) {
+        use norn_checker::metric::compute::admit;
+        let (mut definitions, mut question, catalog) = keyed_compute_fixture();
+        let mut denominator = definitions[0].clone();
+        denominator.name = "erpnext.other".into();
+        let mut ratio: MetricDefinition = decode(&ratio());
+        ratio.norn.time_dimension = definitions[0].norn.time_dimension.clone();
+        question.metrics[0].metric.clone_from(&ratio.name);
+        definitions.extend([denominator, ratio]);
+        let expected = admit(&definitions, &question, &catalog, max_items).expect("ratio");
+        if reverse { definitions.reverse(); }
+        let actual = admit(&definitions, &question, &catalog, max_items).expect("reordered ratio");
+        proptest::prop_assert_eq!(actual.sums().iter().map(|s| &s.name).collect::<Vec<_>>(), expected.sums().iter().map(|s| &s.name).collect::<Vec<_>>());
+        proptest::prop_assert_eq!(actual.grain(), expected.grain());
+        proptest::prop_assert_eq!(actual.max_items(), max_items);
+    }
+
+    #[test]
+    fn query_freshness_shape_never_admits_a_zero_age(age in 0u64..=10000, delayed in proptest::bool::ANY) {
+        let (definitions, mut question, catalog) = keyed_compute_fixture();
+        question.freshness = if delayed {
+            norn_ir::metric::FreshnessPolicy::Delayed { max_age_ms: norn_ir::WholeNumber(age) }
+        } else {
+            norn_ir::metric::FreshnessPolicy::Live { max_age_ms: norn_ir::WholeNumber(age) }
+        };
+        proptest::prop_assert_eq!(norn_checker::metric::compute::admit(&definitions, &question, &catalog, 100).is_ok(), age > 0);
+    }
+}
