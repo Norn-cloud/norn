@@ -8,11 +8,11 @@ Reuse `PropertyType`, `PropertyConstraints`, `DecimalLiteral`, `UnitRef`, `Runti
 
 | Target semantic record | Required fields and constraints |
 |---|---|
-| Value contract | `type: PropertyType`, `constraints: PropertyConstraints`, `unit?: UnitRef`, `scale?: u8`, `rounding?: enum(exact, midpoint_away_from_zero, half_even)`; arithmetic declares a rounding site, never ambient locale. |
+| Value contract | `type: PropertyType`, `constraints: PropertyConstraints`, unit and scale derived solely from `type` (`PropertyType::Decimal` requires scale), `rounding?: enum(exact, midpoint_away_from_zero, half_even)`; arithmetic declares a rounding site, never ambient locale. |
 | Object identity | `scope: Scope`, `id: opaque stable ID`, `created_under: Pin`; independent of mutable business keys and concrete subtype labels. |
 | Key binding | `object_id`, `key: KeySpec`, `canonical_components: [RuntimeValue]`, `valid_from`, `valid_to?`, `recorded_at`, `source_aliases: [Alias]`; uniqueness domain is explicit root type + scope + key name. |
 | Alias | `connector_instance`, `source_type`, `source_key`, `object_id`, valid/recorded intervals; source IDs cannot become native authority. |
-| Temporal context | `effective_at`, `recorded_at: Revision`, `calendar: Pin`, `timezone_version`, `dst_policy: reject/earlier/later`; intervals are half-open `[from,to)`. |
+| Temporal context | `effective_at: UtcTimestamp`, `recorded_at: Revision`, `calendar: Pin`, `timezone_version`, `dst_policy: reject/earlier/later`; intervals are half-open `[from,to)`. |
 | Content reference | existing `BlobRef {digest, version?, size_bytes}` plus declared retention/access policy; bytes must match digest before use. |
 
 Definition identity is exact artifact/version/digest plus stable member ID. Renaming a label changes presentation only. A same-version edit changes digest and invalidates admission/evidence; it cannot replace an immutable published release.
