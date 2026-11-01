@@ -51,6 +51,8 @@ pub struct StockPartitionInput {
     pub history: Vec<FifoMovement>,
     /// Master-selected closed runtime bindings.
     pub bindings: StockPostBindings,
+    /// Authoritative quantity unit.
+    pub uom: String,
     /// Immutable posting configuration/UOM pin checked against prior history.
     pub binding_pin: String,
 }
@@ -390,7 +392,7 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
                 &bindings.accounts,
                 &bindings.currency,
                 &bindings.layer,
-                uom,
+                &uom,
             ),
         )
         .map_err(|_encoding| invalid("invalid stock binding pin"))?;
@@ -404,6 +406,7 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
                 history: vec![],
                 bindings,
                 binding_pin,
+                uom,
             });
         partition.lines.push(StockPostLine {
             id: id.clone(),
@@ -549,6 +552,200 @@ fn display_quantity(value: u128) -> String {
     }
 }
 
+/// Complete write proposal; caller-visible data never grants rule authority.
+#[derive(Debug)]
+pub struct StockEffectPlan {
+    /// Voucher transition and computed protected outputs.
+    pub output: norn_ir::DecisionOutput,
+    /// Closed conserved quantity operation.
+    pub quantity: norn_ir::quantity_ledger::QuantityOperation,
+    /// Master-derived quantity ledger.
+    pub ledger_id: String,
+    /// Master unit pinned to the quantity configuration.
+    pub unit: String,
+    /// New immutable event membership.
+    pub links: Vec<crate::cell_host::LinkWrite>,
+}
+
+fn stock_invalid<X>(reason: impl Into<String>) -> crate::ActionRefusal<X> {
+    crate::ActionRefusal::Decision(crate::DecisionRefusal::InvalidOutput {
+        reason: reason.into(),
+    })
+}
+fn stock_json<X, T: serde::Serialize>(
+    value: &T,
+) -> Result<norn_ir::RuntimeValue, crate::ActionRefusal<X>> {
+    norn_ir::runtime::encode(value).map_err(stock_invalid)
+}
+fn stock_decimal<X>(value: u128) -> Result<norn_ir::RuntimeValue, crate::ActionRefusal<X>> {
+    norn_ir::Decimal::parse(&format!("{}.{:06}", value / 1_000_000, value % 1_000_000))
+        .map(norn_ir::RuntimeValue::Number)
+        .map_err(|_| stock_invalid("stock amount exceeds exact decimal range"))
+}
+
+/// Build the complete stock effect proposal using the shared FIFO lowering.
+/// This value is unsealed; only commit_action may recompute and seal it.
+///
+/// # Errors
+/// Refuses multiple partitions, backdating, invalid outputs or exhausted capacity.
+#[allow(clippy::too_many_lines, reason = "one bounded stock effect proposal")]
+pub fn plan_stock_effects<X>(
+    snapshot: &StockSnapshot,
+    operation: StockPostOperation,
+    posting_id: &str,
+    mut facts: Vec<norn_ir::FactChange>,
+) -> Result<StockEffectPlan, crate::ActionRefusal<X>> {
+    use crate::cell_host::{FactVersion, LinkKey, LinkMutation, LinkWrite};
+    use crate::stock_fifo::FifoMovement;
+    use norn_ir::{FactChange, ObjectTypeName, PropertyId, RuntimeValue as V};
+    let [partition] = snapshot.partitions.as_slice() else {
+        return Err(stock_invalid(
+            "CP1 requires exactly one stock partition per voucher",
+        ));
+    };
+    let Some(FactChange::Transition {
+        object_type, key, ..
+    }) = facts.first()
+    else {
+        return Err(stock_invalid("stock rule requires the voucher transition"));
+    };
+    let target = FactKey::new(object_type.as_str(), key);
+    let effective = snapshot
+        .facts
+        .get(&target)
+        .and_then(|s| s.values.as_ref())
+        .and_then(|v| v.get("effective_at"))
+        .and_then(V::as_str)
+        .ok_or_else(|| stock_invalid("missing voucher effective timestamp"))?;
+    let effective_key = norn_expr::temporal::timestamp_ordering_key(effective)
+        .map_err(|_| stock_invalid("invalid stock effective timestamp"))?;
+    let old = snapshot
+        .facts
+        .get(&partition.witness)
+        .and_then(|s| s.values.as_ref());
+    if let Some(prior) = old {
+        let prior = prior
+            .get("effective_at")
+            .and_then(V::as_str)
+            .ok_or_else(|| stock_invalid("missing partition effective timestamp"))?;
+        if norn_expr::temporal::timestamp_ordering_key(prior)
+            .map_err(|_| stock_invalid("invalid partition timestamp"))?
+            > effective_key
+        {
+            return Err(stock_invalid("CP1 refuses backdated stock posting"));
+        }
+    }
+    let plan = crate::action_commit::stock::plan_stock_partition(partition, operation, posting_id)?;
+    let mut history_bytes = snapshot
+        .facts
+        .iter()
+        .filter(|(k, _)| k.object_type.as_str() == "stock.StockEvent")
+        .try_fold(0_u64, |sum, (_, state)| {
+            let bytes = norn_ir::canonical::canonical_json_of(&state.values)
+                .map_err(|_| stock_invalid("invalid stock history encoding"))?
+                .len();
+            Ok::<_, crate::ActionRefusal<X>>(
+                sum.saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX)),
+            )
+        })?;
+    let mut links = Vec::new();
+    for (index, (event, line)) in plan.events.iter().zip(&partition.lines).enumerate() {
+        let (quantity, value, operation) = match &event.movement {
+            FifoMovement::Receipt(layer) => (layer.quantity, layer.value, "receipt"),
+            FifoMovement::Delivery(q) => (
+                *q,
+                event
+                    .allocations
+                    .iter()
+                    .try_fold(0_u128, |sum, a| sum.checked_add(a.value))
+                    .ok_or_else(|| stock_invalid("stock allocation overflow"))?,
+                "delivery",
+            ),
+        };
+        let values = norn_ir::runtime_object! {
+            "id" => event.id, "partition_id" => partition.witness.key,
+            "ordinal" => partition.history.len().saturating_add(index), "operation" => operation,
+            "quantity" => stock_decimal(quantity)?, "value" => stock_decimal(value)?,
+            "allocations" => stock_json(&event.allocations)?, "voucher_id" => target.key,
+            "line_id" => line.id, "effective_at" => effective,
+        };
+        history_bytes = history_bytes.saturating_add(
+            u64::try_from(
+                norn_ir::canonical::canonical_json_of(&values)
+                    .map_err(|_| stock_invalid("invalid stock event encoding"))?
+                    .len(),
+            )
+            .unwrap_or(u64::MAX),
+        );
+        let key = FactKey::new("stock.StockEvent", &event.id);
+        facts.push(FactChange::Create {
+            object_type: key.object_type.clone(),
+            key: key.key.clone(),
+            values,
+        });
+        links.push(LinkWrite {
+            key: LinkKey::new(partition.witness.clone(), "events", key),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        });
+    }
+    let (quantity, value) = plan
+        .layers
+        .iter()
+        .try_fold((0_u128, 0_u128), |(q, v), layer| {
+            Some((q.checked_add(layer.quantity)?, v.checked_add(layer.value)?))
+        })
+        .ok_or_else(|| stock_invalid("stock partition total overflow"))?;
+    let values = norn_ir::runtime_object! {
+        "id" => partition.witness.key, "event_count" => partition.history.len().saturating_add(plan.events.len()),
+        "binding_pin" => partition.binding_pin, "quantity" => stock_decimal(quantity)?, "value" => stock_decimal(value)?,
+        "layers" => stock_json(&plan.layers)?, "effective_at" => effective,
+    };
+    history_bytes = history_bytes.saturating_add(
+        u64::try_from(
+            norn_ir::canonical::canonical_json_of(&values)
+                .map_err(|_| stock_invalid("invalid stock witness encoding"))?
+                .len(),
+        )
+        .unwrap_or(u64::MAX),
+    );
+    if history_bytes > 64 * 1024 {
+        return Err(stock_invalid(
+            "stock history byte capacity exceeded; posting refused",
+        ));
+    }
+    if old.is_some() {
+        facts.extend(values.into_iter().map(|(property, value)| FactChange::Set {
+            object_type: partition.witness.object_type.clone(),
+            key: partition.witness.key.clone(),
+            property: PropertyId(property),
+            value,
+        }));
+    } else {
+        facts.push(FactChange::Create {
+            object_type: partition.witness.object_type.clone(),
+            key: partition.witness.key.clone(),
+            values,
+        });
+    }
+    for leg in &plan.gl {
+        facts.push(FactChange::Create { object_type: ObjectTypeName("stock.GLLeg".into()), key: leg.leg_id.clone(), values: norn_ir::runtime_object! { "id" => leg.leg_id, "journal_id" => posting_id, "leg" => stock_json(leg)? } });
+    }
+    Ok(StockEffectPlan {
+        output: norn_ir::DecisionOutput {
+            facts,
+            commands: vec![],
+            timers: vec![],
+        },
+        quantity: plan.quantity,
+        ledger_id: format!("stock/{}", partition.witness.key),
+        unit: partition.uom.clone(),
+        links,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(
@@ -560,6 +757,10 @@ mod tests {
     use super::*;
     use serde_json::json;
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "stock proposal and capacity conformance"
+    )]
     fn post_partition_refusal_names_authoritative_stock() {
         let accounts =
             ["stock", "srbnb", "cogs"].map(|id| norn_ir::posting::AccountingAccountRef {
@@ -578,6 +779,7 @@ mod tests {
             accounts: ["stock".into(), "srbnb".into(), "cogs".into()],
             witness: FactKey::new("stock.Partition", "p"),
             binding_pin: "pin".into(),
+            uom: "ea".into(),
             history: vec![FifoMovement::Receipt(FifoLayer {
                 receipt: "prior".into(),
                 quantity: 5_000_000,
@@ -606,6 +808,139 @@ mod tests {
             error.to_string(),
             "insufficient stock for item i in warehouse w: requested 6.25, available 5"
         );
+
+        partition.lines[0].quantity = 4_000_000;
+        let target = FactKey::new("stock.DeliveryNote", "dn");
+        let mut snapshot = StockSnapshot {
+            facts: FactSlice::from([
+                (
+                    target.clone(),
+                    super::super::FactState {
+                        version: crate::FactVersion(1),
+                        values: Some(
+                            serde_json::from_value(json!({"effective_at":"2026-11-01T01:00:00Z"}))
+                                .unwrap(),
+                        ),
+                    },
+                ),
+                (
+                    partition.witness.clone(),
+                    super::super::FactState {
+                        version: crate::FactVersion(1),
+                        values: Some(
+                            serde_json::from_value(json!({"effective_at":"2026-11-01T00:00:00Z"}))
+                                .unwrap(),
+                        ),
+                    },
+                ),
+                (
+                    FactKey::new("stock.StockEvent", "prior"),
+                    super::super::FactState {
+                        version: crate::FactVersion(1),
+                        values: Some(serde_json::from_value(json!({"allocations":[]})).unwrap()),
+                    },
+                ),
+            ]),
+            partitions: vec![partition],
+            ..StockSnapshot::default()
+        };
+        let transition = || {
+            vec![norn_ir::FactChange::Transition {
+                object_type: target.object_type.clone(),
+                key: target.key.clone(),
+                lifecycle: norn_ir::PropertyId("status".into()),
+                transition: norn_ir::TransitionId("submit".into()),
+            }]
+        };
+        let effects = plan_stock_effects::<std::convert::Infallible>(
+            &snapshot,
+            StockPostOperation::Delivery,
+            "dn",
+            transition(),
+        )
+        .unwrap();
+        assert_eq!(effects.links.len(), 1, "POST-EFFECTS event membership");
+        let gl: Vec<norn_ir::posting::AccountingLegIr> = effects
+            .output
+            .facts
+            .iter()
+            .filter_map(|fact| match fact {
+                norn_ir::FactChange::Create {
+                    object_type,
+                    values,
+                    ..
+                } if object_type.as_str() == "stock.GLLeg" => {
+                    Some(norn_ir::runtime::decode(values.get("leg").unwrap()).unwrap())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            gl.iter()
+                .map(|leg| leg.amount_unscaled.as_str())
+                .collect::<Vec<_>>(),
+            ["4000", "-4000"],
+            "POST-EFFECTS balanced derived GL"
+        );
+        assert!(effects.output.facts.iter().any(|fact| matches!(fact, norn_ir::FactChange::Set { property, value, .. } if property.as_str() == "quantity" && value.to_string() == "1")), "POST-EFFECTS remaining quantity");
+        snapshot
+            .facts
+            .get_mut(&target)
+            .unwrap()
+            .values
+            .as_mut()
+            .unwrap()
+            .insert(
+                "effective_at".into(),
+                JsonValue::String("2026-10-31T00:00:00Z".into()),
+            );
+        assert!(
+            plan_stock_effects::<std::convert::Infallible>(
+                &snapshot,
+                StockPostOperation::Delivery,
+                "dn",
+                transition()
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("backdated"),
+            "POST-NO-BACKDATE"
+        );
+        snapshot
+            .facts
+            .get_mut(&target)
+            .unwrap()
+            .values
+            .as_mut()
+            .unwrap()
+            .insert(
+                "effective_at".into(),
+                JsonValue::String("2026-11-01T01:00:00Z".into()),
+            );
+        snapshot
+            .facts
+            .get_mut(&FactKey::new("stock.StockEvent", "prior"))
+            .unwrap()
+            .values
+            .as_mut()
+            .unwrap()
+            .insert(
+                "allocations".into(),
+                JsonValue::String("x".repeat(64 * 1024)),
+            );
+        assert!(
+            plan_stock_effects::<std::convert::Infallible>(
+                &snapshot,
+                StockPostOperation::Delivery,
+                "dn",
+                transition()
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("byte capacity"),
+            "POST-HISTORY-BYTES"
+        );
+        partition = snapshot.partitions.pop().unwrap();
         partition.history = (0..255)
             .map(|i| {
                 FifoMovement::Receipt(FifoLayer {
