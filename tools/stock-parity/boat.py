@@ -22,7 +22,7 @@ def main():
     limits = json.loads(boat('limits', '--json'))
     if not limits['canStart'] or limits['starts']['day']['remaining'] < 1:
         raise SystemExit('Boat start budget unavailable')
-    vm = None
+    vm, completed = None, False
     try:
         # Stream creation events so cleanup also covers a failure after allocation.
         with subprocess.Popen(['boat', 'new', '--json', '--from', args.snapshot, '--type', 'default',
@@ -63,16 +63,23 @@ python3 CHECKER /home/user/results.json
         seconds = 1800 if args.acceptance == 'lifecycle' else 600
         result = json.loads(boat('exec', vm, '--json', '--timeout', str(seconds), '--', 'bash', '-lc', command,
                                  timeout=seconds + 60))
-        if not result.get('success'):
-            raise RuntimeError('Oracle batch incomplete; inspect disposable VM logs before cleanup')
-        boat('scp', f'{vm}:/home/user/results.json', str(args.output))
+        completed = bool(result.get('success'))
+        if not completed:
+            raise RuntimeError('Oracle batch incomplete; inspect retained dump when available')
     finally:
         if vm:
-            boat('delete', vm, '--yes')
-            check = subprocess.run(['boat', 'info', vm, '--json'], capture_output=True, text=True, timeout=60)
-            if check.returncode == 0 or not any(t in (check.stdout + check.stderr).lower()
-                                                 for t in ('404', 'not_found', 'not found')):
-                raise RuntimeError('VM deletion was not verified')
+            try:
+                try:
+                    boat('scp', f'{vm}:/home/user/results.json', str(args.output))
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    if completed:
+                        raise
+            finally:
+                boat('delete', vm, '--yes')
+                check = subprocess.run(['boat', 'info', vm, '--json'], capture_output=True, text=True, timeout=60)
+                if check.returncode == 0 or not any(t in (check.stdout + check.stderr).lower()
+                                                     for t in ('404', 'not_found', 'not found')):
+                    raise RuntimeError('VM deletion was not verified')
 
 
 if __name__ == '__main__':

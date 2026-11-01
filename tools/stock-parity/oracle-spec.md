@@ -153,3 +153,9 @@ reposts after the scheduler configuration corrections. The full 20-checkpoint
 lifecycle witness is not qualified. Positive receipt/delivery/transfer/return
 observations do not establish cancellation or cross-engine parity. The next
 unit must qualify a fresh fork with the final configuration and lifecycle budget.
+
+- **CP2-failed-batch-artifact:** retrieve an available normalized dump even when
+  native replay or acceptance exits nonzero. Preserve the failure exit; download
+  never makes an unsupported case pass. Download failure on an otherwise
+  successful run fails too, and owned-VM deletion runs in either case.
+  `test_failed_acceptance_keeps_dump_before_deletion` is its correspondence.
