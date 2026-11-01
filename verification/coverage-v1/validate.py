@@ -410,6 +410,13 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     workflow = yaml.load(source, Loader=WorkflowLoader)
     jobs = workflow["jobs"]
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
+    merge_runner = ("${{ github.event_name == 'merge_group' && "
+                    "vars.NORN_MERGE_RUNNER == 'self-hosted' && "
+                    "fromJSON('[\"self-hosted\",\"norn-merge\"]') || 'ubuntu-24.04' }}")
+    for name, job in jobs.items():
+        expected = merge_runner if name in {"core", "plan", "test", "phase", "full"} else "ubuntu-24.04"
+        require(job.get("runs-on") == expected,
+                f"{name}: runner must preserve merge-only opt-in and hosted fallback")
     cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache"}
     job_env = {
         "core": cache_env,

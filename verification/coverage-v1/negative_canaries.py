@@ -596,6 +596,19 @@ def workflow_context_canaries(source: str) -> None:
                 return
             raise AssertionError(f"workflow context mutation passed: {label}")
 
+        runner = workflow["jobs"]["core"]["runs-on"]
+        for name in ("core", "plan", "test", "phase", "full", "trusted-policy"):
+            for value in ("self-hosted", ["self-hosted", "norn-merge"],
+                          "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
+                          runner.replace("github.event_name == 'merge_group' && ", ""),
+                          runner.replace("vars.NORN_MERGE_RUNNER == 'self-hosted' && ", ""),
+                          runner.replace("'merge_group'", "'pull_request'"),
+                          runner.replace("'merge_group'", "'pull_request_target'"),
+                          runner.replace("'merge_group'", "'issue_comment'"),
+                          runner.replace("|| 'ubuntu-24.04'", "|| 'self-hosted'")):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["runs-on"] = value
+                rejected(f"{name} unsafe runner routing", document)
         for name in ("core", "plan", "test", "phase"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"].insert(-1, {
