@@ -888,7 +888,7 @@ fn capacity_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
         &[
             vec![(
                 "taken",
-                "accumulator.demand < item.capacity ? accumulator.demand : item.capacity",
+                "item.capacity > 0 ? (accumulator.demand < item.capacity ? accumulator.demand : item.capacity) : null",
             )],
             vec![
                 ("demand", "accumulator.demand - taken"),
@@ -928,6 +928,17 @@ fn fold_capacity_complete_allocate_matches_the_core_spec() {
         json!([{"id":"b","capacity":3},{"id":"a","capacity":2}]),
     ] {
         assert_eq!(folded(&rules, initial.clone(), items).unwrap(), expected);
+    }
+}
+
+#[test]
+fn declared_capacity_refuses_nonpositive_grants_after_a_successful_step() {
+    for capacity in [0, -1] {
+        assert!(folded(
+            &capacity_fold(),
+            json!({"demand":4,"residual":0,"allocated":[]}),
+            json!([{"id":"a","capacity":2},{"id":"b","capacity":capacity},{"id":"c","capacity":8}]),
+        ).is_err());
     }
 }
 
