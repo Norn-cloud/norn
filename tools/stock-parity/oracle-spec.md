@@ -46,3 +46,43 @@ checkpoint, every attempted command, native identities, raw GL legs and status.
 
 Remaining contract scenarios and 10b reviewed dispositions are the next unit.
 No result in this checkpoint claims cross-engine parity or race correctness.
+
+## 10b exact comparison contract
+
+`python3 tools/stock-parity/compare.py --norn norn.json --erpnext erpnext.json
+--dispositions reviewed.json --output report` writes sanitized Markdown and JSON.
+The Norn dump may be a stub for conformance; that does not establish live parity.
+
+- **DIFF-EXACT:** compare initial and every consecutive checkpoint, cumulative
+  stock row Q/V and deltas in integer millionths, GL gross debits and credits
+  grouped by request/account/currency/cancellation in cents. Excess scale fails;
+  no epsilon, floating point, final-only netting or cross-request cancellation.
+  Native identities are excluded across engines; raw GL legs remain separately
+  in JSON. Refusal preserves stock/GL contents and native identity sets locally.
+- **DIFF-REVIEW:** each differing field has a SHA-256 binding case, method, step,
+  field and both observed values. Dispositions are an array keyed by fingerprint;
+  duplicates, stale entries or missing evidence fail. Each entry needs `reviewer`
+  (GitHub login), `review` (public review URL), and exactly one `bucket`:
+  `norn-bug` or `erpnext-bug` requires public `issue`, `reproduction`, `receipt`
+  URLs; ERPNext bugs also require a named `invariant`. `intentional-difference`
+  requires `decision` and public `decisionRecord`. Review evidence is supplied by
+  the reviewer, not inferred by this offline comparator. Open bugs fail the gate.
+- **DIFF-DECISIONS:** pre-registered approved decision IDs are
+  `original-cost-returns`, `no-negative-stock`, `backdating-refused`, and
+  `delivery-stock-cogs-only` (#214 design review). Registration never silently
+  accepts a diff; a reviewed, value-bound disposition must reference the decision.
+- **DIFF-COVERAGE:** missing/incomplete cases or checkpoints are unsupported and
+  fail; unsupported is never a disposition. Empty corpora fail. Untriaged diffs
+  fail. Counts distinguish matched checkpoints, intentional differing fields,
+  unsupported cases/checkpoints and open bugs (differing fields).
+- **DIFF-PUBLIC:** case/request/account/currency and observed string labels become
+  stable opaque aliases. Native IDs, native messages, versions and input paths
+  are omitted. Evidence accepts only public Norn issue/PR URLs. JSON retains
+  exact integer observations and individually aliased raw legs; Markdown gives
+  the checkpoint parity table and counts. Only sanitized outputs are publishable.
+
+`test_compare.py` supplies the stub Norn/ERPNext dumps and correspondence cases:
+representation-only equality, one-millionth intermediate drift, net-equal but
+wrong gross GL, refusal identity churn, missing coverage, reviewed dispositions,
+stale/duplicate evidence and public-label omission. Run on Boat:
+`python3 -m unittest discover -s tools/stock-parity -p 'test_*.py'`.

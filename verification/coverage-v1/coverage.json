@@ -2393,6 +2393,8 @@
         "tools/norn-ts/test/translation-validation.test.ts",
         "tools/norn-ts/test/vertical-fixture.test.ts",
         "tools/stock-parity/boat.py",
+        "tools/stock-parity/compare.py",
+        "tools/stock-parity/test_compare.py",
         "tools/stock-parity/boot.sh",
         "tools/stock-parity/check_smoke.py",
         "tools/stock-parity/driver.py",
