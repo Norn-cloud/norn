@@ -1038,3 +1038,86 @@ fn local_lifecycle_states_keep_inherited_property_ownership() {
             .any(|row| row.at.member.id() == "property:commerce.SalesOrder#status")
     );
 }
+
+#[test]
+fn graph_catalog_retains_semantics_and_refuses_projection_writes() {
+    let Value::Array(entities) = read_json("fixtures/law-ir/entities.json") else {
+        panic!("entities")
+    };
+    let Value::Array(laws) = read_json("fixtures/law-ir/laws.json") else {
+        panic!("laws")
+    };
+    let artifacts = [envelope(entities[0].clone()), envelope(laws[0].clone())];
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
+        base: &[],
+        tenant: None,
+    };
+    let findings = check_artifact_set(&artifacts, &context);
+    assert!(findings.is_empty(), "{findings:?}");
+    let retained = project(&[], &artifacts, &registry).expect("retained catalog");
+    for artifact in &artifacts {
+        let row = retained
+            .artifact(&artifact.artifact_id, &artifact.version)
+            .expect("exact pin");
+        assert!(!row.candidate);
+        assert_eq!(
+            row.sha256,
+            norn_checker::receipt::ArtifactRef::of(artifact)
+                .expect("hash")
+                .sha256
+        );
+    }
+    let law = &retained.laws[0];
+    assert_eq!(
+        law.at.member,
+        Member::Law {
+            law: laws[0]["payload"]["id"].as_str().expect("law id").into()
+        }
+    );
+    let transition = &retained.transitions[0];
+    let source = &entities[0]["payload"]["objectType"]["lifecycles"][0]["transitions"][0];
+    assert_eq!(
+        serde_json::to_value(&transition.from).expect("states"),
+        source["from"]
+    );
+    assert_eq!(transition.to, source["to"].as_str().expect("state"));
+    assert!(transition.guards.is_empty());
+    assert!(
+        retained
+            .facets
+            .iter()
+            .all(|row| retained.contains(&row.concept) && retained.contains(&row.member))
+    );
+    for payload in [
+        serde_json::to_value(law).expect("law row"),
+        serde_json::to_value(transition).expect("transition row"),
+        serde_json::to_value(&retained).expect("catalog"),
+    ] {
+        let mut forged = entities[0].clone();
+        forged["payload"] = payload;
+        assert!(
+            norn_checker::check_artifact_json(&forged)
+                .iter()
+                .any(|d| d.code.as_str() == "core.graph.catalog_write")
+        );
+    }
+    assert_eq!(
+        project(&[], &artifacts, &registry).expect("unchanged definitions"),
+        retained
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn graph_catalog_edits_never_become_transition_definitions(target in "[a-z]{1,20}") {
+        let [parent, child] = request_types();
+        let retained = catalog(&[parent.clone(), child], &[]);
+        let mut row = retained.transitions[0].clone();
+        row.to = target;
+        let mut forged = serde_json::to_value(&parent).expect("envelope");
+        forged["payload"] = serde_json::to_value(row).expect("edited projection");
+        proptest::prop_assert!(norn_checker::check_artifact_json(&forged).iter().any(|d| d.code.as_str() == "core.graph.catalog_write"));
+    }
+}

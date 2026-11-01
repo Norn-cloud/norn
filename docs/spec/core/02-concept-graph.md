@@ -45,6 +45,11 @@ Definition catalog reads project admitted IR and exact source identity. Updating
 
 Evidence: structural graph/conformance checking, runtime link/state enforcement, sampled catalog/IR correspondence. Generated laws refer to effective members and explicit classification predicates; interface validation still runs with zero implementors. Empty sets do not establish non-vacuity.
 
+Catalog facet edges use existing exact `MemberRef` identities for props, links,
+states/transitions, admitted writers, law subjects, action access pins and source maps.
+They confer no authority; catalog, law-row and transition-row definition submissions
+refuse with `core.graph.catalog_write` at ordinary checker admission.
+
 ## Named acceptance scenarios
 
 - **GRAPH-DIAMOND:** Given a diamond interface graph with one inherited property, when effective types resolve, then preserve one member identity and all origin paths; conflicting refinements refuse.

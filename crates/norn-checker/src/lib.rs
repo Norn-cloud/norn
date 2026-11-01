@@ -26,9 +26,9 @@
 pub mod action_set;
 pub mod artifact_set;
 pub mod codes;
+mod concept_roles;
 pub mod connector_path;
 pub mod consistency;
-mod concept_roles;
 pub mod definition_catalog;
 pub mod definitions_diff;
 pub mod deontic;
@@ -215,6 +215,9 @@ pub use typed_roots::decode_artifact_json;
 /// envelope's wire JSON (see [`Span::from_legacy_path_in`]).
 #[must_use]
 pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
+    if let Some(finding) = definition_catalog::catalog_write(artifact) {
+        return vec![finding];
+    }
     let (normalized, findings) = match crate::layout::normalize_artifact(artifact) {
         Ok((normalized, _layout)) => (normalized, Vec::new()),
         Err(findings) => (artifact.clone(), findings),

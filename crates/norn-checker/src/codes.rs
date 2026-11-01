@@ -471,6 +471,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     entry(
+        "core.graph.catalog_write",
+        Tier::T2,
+        "catalog projections cannot activate definitions",
+    ),
+    entry(
         "core.graph.role_conflict",
         Tier::T3,
         "inherited concept roles disagree",

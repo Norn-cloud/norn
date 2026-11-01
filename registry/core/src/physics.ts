@@ -156,3 +156,16 @@ export const Claim = Norn.interfaceType({
     { id: "arises_from", description: "The commitment that gave rise to the claim (givesRiseTo, seen from the claim).", target: Commitment, cardinality: { to: "one", from: "many" } },
   ],
 })
+
+export const Process = Norn.interfaceType({
+  name: "core.Process", title: "Process", version: "0.1.0", role: "happening",
+  properties: Schema.Struct({}),
+})
+export const Conversion = Norn.interfaceType({
+  name: "core.Conversion", title: "Conversion", version: "0.1.0", role: "happening",
+  extends: [Process], properties: Schema.Struct({}),
+})
+export const Exchange = Norn.interfaceType({
+  name: "core.Exchange", title: "Exchange", version: "0.1.0", role: "happening",
+  extends: [Process], properties: Schema.Struct({}),
+})
