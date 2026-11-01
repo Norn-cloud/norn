@@ -3352,6 +3352,7 @@ mod cp1_stock {
                 result["status"] = json!("unsupported");
                 result["reason"] =
                     json!("CP1 requires fresh serial FIFO receipt/delivery in warehouse a");
+                result.as_object_mut().expect("case").remove("initial");
                 cases.push(result);
                 continue;
             }
@@ -3387,17 +3388,28 @@ mod cp1_stock {
                 };
                 let row = format!("{id}:1");
                 let mut values = json!({"id":row,"line_number":1,
-                    "quantity":serde_json::from_str::<Value>(op["quantity"].as_str().expect("quantity")).expect("decimal")});
+                    "quantity":0});
                 if receipt {
-                    values["rate"] =
-                        serde_json::from_str(op["rate"].as_str().expect("rate")).expect("decimal");
+                    values["rate"] = json!(0);
+                }
+                let mut line_values: JsonObject = serde_json::from_value(values).expect("line");
+                for field in if receipt {
+                    vec!["quantity", "rate"]
+                } else {
+                    vec!["quantity"]
+                } {
+                    line_values.insert(
+                        field.into(),
+                        JsonValue::from_json_text(op[field].as_str().expect("decimal text"))
+                            .expect("exact decimal"),
+                    );
                 }
                 let manifest =
                     owned_rows_manifest_key(&FactKey::new(ty, &id), "lines").expect("manifest");
                 store.commit(&CommitBatch {
                     world:"main".into(),scope:"org_demo/dev".into(),
                     writes:vec![put(ty,&id,json!({"id":id,"request_id":request,"effective_at":c["effectiveAt"],"status":"draft"})),
-                        put(child,&row,values),put(OWNED_ROWS_TYPE,&manifest.key,json!({"parentType":ty,"parentKey":id,"collectionId":"lines","rowIds":[row]}))],
+                        FactWriteRow::Put {object_type:child.into(),key:row.clone(),values:line_values},put(OWNED_ROWS_TYPE,&manifest.key,json!({"parentType":ty,"parentKey":id,"collectionId":"lines","rowIds":[row]}))],
                     links:vec![link(ty,&id,"company","stock.Company","c"),
                         link(ty,&id,if receipt {"supplier"} else {"customer"},"stock.Party","party"),
                         link(ty,&id,"lines",child,&row),link(child,&row,"voucher",ty,&id),
@@ -3408,6 +3420,16 @@ mod cp1_stock {
             }
             let mut cell: NativeCell =
                 NativeCell::new(store, "org_demo/dev", |c| c.payload.clone()).expect("host");
+            for ty in ["stock.StockEvent", "stock.GLLeg"] {
+                assert_eq!(
+                    cell.store()
+                        .read()
+                        .root_rows("main", ty, 1)
+                        .expect("initial rows"),
+                    (vec![], true),
+                    "ADAPTER-INITIAL"
+                );
+            }
             for (index, step) in steps.iter().enumerate() {
                 let c = &step["command"];
                 let request = c["requestId"].as_str().expect("request");
@@ -3452,9 +3474,7 @@ mod cp1_stock {
                                 let e = object(&cell, "stock.StockEvent", &key.key);
                                 let p = object(&cell, "stock.Partition", &partition.key);
                                 let signed = |field: &str| {
-                                    let text = serde_json::to_value(&e[field])
-                                        .expect("amount")
-                                        .to_string();
+                                    let text = serde_json::to_string(&e[field]).expect("amount");
                                     if receipt || text == "0" {
                                         text
                                     } else {
@@ -3463,8 +3483,8 @@ mod cp1_stock {
                                 };
                                 stock.push(json!({"id":key.key,"requestId":request,"line":format!("{request}:1"),"warehouse":"a",
                                     "quantityDelta":signed("quantity"),"valueDelta":signed("value"),
-                                    "quantity":serde_json::to_value(&p["quantity"]).expect("quantity").to_string(),
-                                    "value":serde_json::to_value(&p["value"]).expect("value").to_string(),
+                                    "quantity":serde_json::to_string(&p["quantity"]).expect("quantity"),
+                                    "value":serde_json::to_string(&p["value"]).expect("value"),
                                     "incomingRate":null,"valuationRate":null,"fifo":null,"cancelled":false}));
                             }
                             if key.object_type.as_str() == "stock.GLLeg" {
@@ -3500,6 +3520,22 @@ mod cp1_stock {
                 documents.push(
                     json!({"requestId":request,"status":if status == "submitted" {1} else {0}}),
                 );
+                for (ty, observed) in [("stock.StockEvent", &stock), ("stock.GLLeg", &gl)] {
+                    let (rows, complete) = cell
+                        .store()
+                        .read()
+                        .root_rows("main", ty, 10000)
+                        .expect("observed identities");
+                    assert!(complete, "ADAPTER-OBSERVATION bounded read incomplete");
+                    assert_eq!(
+                        rows.into_iter().map(|(id, _)| id).collect::<BTreeSet<_>>(),
+                        observed
+                            .iter()
+                            .map(|r| r["id"].as_str().expect("identity").to_owned())
+                            .collect(),
+                        "ADAPTER-OBSERVATION"
+                    );
+                }
                 result["checkpoints"].as_array_mut().expect("checkpoints").push(json!({"step":index,
                     "attempts":[{"attempt":0,"requestId":request,"nativeId":id,"outcome":outcome,"reason":reason,"nativeCode":code,"completionOrder":0}],
                     "stock":stock,"gl":gl,"documents":documents}));
