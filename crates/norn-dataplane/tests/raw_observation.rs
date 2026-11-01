@@ -20,20 +20,20 @@
 //! T12-DP-1 acceptance: `cargo test -p norn-dataplane raw_observation`.
 //!
 //! Contract/schema fixtures cover a mutation, a delete, a cursor, and
-//! deterministic redaction provenance; the Iceberg spec is checked against the
-//! contract; the convergence view is checked for duplicate and out-of-order
-//! delivery.
+//! deterministic redaction provenance and the JSON schema/serialized field contract.
+//! Iceberg-specific correspondence belongs to the separately parked table layer.
 
 use norn_dataplane::{
     ObservationDraft, ObservationError, ObservationKind, RAW_OBSERVATION_CONTRACT, REDACTED,
     RawObservation, RedactionPolicy, parse_exact_json, raw_observation_schema,
 };
+use proptest::prelude::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 
 struct Fixture {
-    #[allow(dead_code, reason = "documents the fixture")]
-    description: String,
+    expected_id: String,
     draft: ObservationDraft,
     policy: Option<RedactionPolicy>,
     expect: Option<Expect>,
@@ -42,6 +42,7 @@ struct Fixture {
 #[derive(Deserialize)]
 struct FixtureWire {
     description: String,
+    expect_observation_id: String,
     draft: Value,
     policy: Option<RedactionPolicy>,
     #[serde(default)]
@@ -62,8 +63,9 @@ fn fixture(name: &str) -> Fixture {
     let text = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path}: {error}"));
     let wire: FixtureWire = serde_json::from_value(parse_exact_json(text.as_bytes()).unwrap())
         .unwrap_or_else(|error| panic!("{path}: {error}"));
+    assert!(!wire.description.trim().is_empty());
     Fixture {
-        description: wire.description,
+        expected_id: wire.expect_observation_id,
         draft: ObservationDraft::from_json_slice(
             serde_json::to_string(&wire.draft).unwrap().as_bytes(),
         )
@@ -93,13 +95,7 @@ fn raw_observation_fixtures_seal_validate_and_round_trip() {
         let decoded = RawObservation::from_json_slice(encoded.as_bytes()).unwrap();
         decoded.validate().unwrap();
         assert_eq!(decoded, observation, "{name} round-trips");
-        assert_eq!(
-            observation.observation_id(),
-            format!(
-                "{}/{}/{}",
-                observation.source, observation.source_id, observation.event_id
-            )
-        );
+        assert_eq!(observation.observation_id(), fixture(name).expected_id);
     }
 }
 
@@ -236,10 +232,8 @@ fn raw_observation_json_schema_matches_the_contract() {
         .keys()
         .cloned()
         .collect();
-    let columns: BTreeSet<String> = RAW_OBSERVATION_COLUMNS
-        .iter()
-        .map(|column| column.name.to_owned())
-        .collect();
+    let instance = serde_json::to_value(sealed("mutation")).unwrap();
+    let columns: BTreeSet<String> = instance.as_object().unwrap().keys().cloned().collect();
     assert_eq!(properties, columns);
     let required: BTreeSet<String> = schema["required"]
         .as_array()
@@ -247,11 +241,34 @@ fn raw_observation_json_schema_matches_the_contract() {
         .iter()
         .map(|value| value.as_str().unwrap().to_owned())
         .collect();
-    let required_columns: BTreeSet<String> = RAW_OBSERVATION_COLUMNS
-        .iter()
-        .filter(|column| column.required)
-        .map(|column| column.name.to_owned())
-        .collect();
+    let required_columns: BTreeSet<String> = [
+        "contract",
+        "source",
+        "source_id",
+        "event_id",
+        "kind",
+        "source_version",
+        "payload",
+        "payload_digest",
+        "extracted_at",
+        "pipeline_version",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
     assert_eq!(required, required_columns);
     assert_eq!(schema["additionalProperties"], json!(false));
+}
+
+proptest! {
+    #[test]
+    fn raw_observation_identity_components_do_not_alias(a in "[a-z%/]{1,12}", b in "[a-z%/]{1,12}", c in "[a-z%/]{1,12}") {
+        let mut first = sealed("mutation");
+        first.source_id = format!("{a}/{b}");
+        first.event_id = c.clone();
+        let mut second = first.clone();
+        second.source_id = a;
+        second.event_id = format!("{b}/{c}");
+        prop_assert_ne!(first.observation_id(), second.observation_id());
+    }
 }
