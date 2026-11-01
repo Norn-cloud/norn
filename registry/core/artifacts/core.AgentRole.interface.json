@@ -1,0 +1,72 @@
+{
+  "artifactId": "core.AgentRole.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Agent role",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "A role an agent plays over a period (customer, supplier, employee, carrier). A role is a relationship, not a subtype of the agent.",
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "The agent playing the role.",
+          "id": "agent",
+          "target": "core.Agent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "The agent the role is held towards, when it is not the business itself.",
+          "id": "counterparty",
+          "target": "core.Agent"
+        }
+      ],
+      "name": "core.AgentRole",
+      "properties": [
+        {
+          "id": "role",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "valid_from",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.date"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "valid_to",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.date"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.AgentRole.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

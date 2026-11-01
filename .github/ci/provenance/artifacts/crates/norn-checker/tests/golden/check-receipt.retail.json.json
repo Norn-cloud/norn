@@ -1,0 +1,32 @@
+{
+  "sha256": "fa340966673c35a5f17b932e4a9a383e910e07d7b099193a202842cae5f64df9",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-checker/tests/check_receipt.rs",
+    "crates/norn-checker/src/receipt.rs",
+    "crates/norn-checker/src/artifact_set.rs",
+    "fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/party.interface.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/purchasing-supplier.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json",
+    "fixtures/ir/retail-sku.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/acme-sku.extension.entity.json",
+    "fixtures/ir/entity-v2/artifact-set/invalid/unknown-supertype.entity.json",
+    "fixtures/rule-ir-v2/invalid/function-node.rule.json",
+    "fixtures/ir/entity-v2/artifact-set/commerce-purchase-order.entity.json",
+    "fixtures/rule-ir-v2/valid/reorder-decision.rule.json",
+    "fixtures/rule-ir-v2/valid/purchase-order-approval.rule.json"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

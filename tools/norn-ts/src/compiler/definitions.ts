@@ -20,6 +20,8 @@ import * as A from "../builder/action.ts"
 import * as P from "../builder/access.ts"
 import * as E from "../builder/entity.ts"
 import * as SS from "../builder/source-schema.ts"
+import * as OP from "../builder/ontology-pack.ts"
+import * as PL from "../builder/pack-link.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
 import * as R from "../builder/rule.ts"
@@ -33,7 +35,7 @@ import { SchemaProjection } from "./schema.ts"
 import { CompileError } from "./types.ts"
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -54,6 +56,8 @@ export type DefinitionsResult =
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> }
 
 const SOURCE_SCHEMA = "@norn/authoring#Norn.sourceSchema"
+const ONTOLOGY_PACK = "@norn/authoring#Norn.ontologyPack"
+const PACK_LINK = "@norn/authoring#Norn.packLink"
 const MARKINGS = "@norn/authoring#Norn.markings"
 const TYPE = "@norn/authoring#Norn.type"
 const INTERFACE = "@norn/authoring#Norn.interfaceType"
@@ -64,7 +68,7 @@ const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
 const FLOW = "@norn/authoring#Norn.flow"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
@@ -128,6 +132,8 @@ export function compileDefinitionFiles(
         : def._tag === "Mapping" ? M.lowerMapping(def, envelopeOptions)
         : def._tag === "Law" ? L.lowerLaw(def, envelopeOptions)
         : def._tag === "SourceSchema" ? SS.lowerSourceSchema(def, envelopeOptions)
+        : def._tag === "OntologyPack" ? OP.lowerOntologyPack(def, envelopeOptions)
+        : def._tag === "PackLink" ? PL.lowerPackLink(def, envelopeOptions)
         : def._tag === "Markings" ? E.lowerMarkings(def, envelopeOptions)
         : E.lowerEntity(def, envelopeOptions)
       if (built.ok) {
@@ -235,6 +241,8 @@ class DefinitionCompiler {
         if (!init || !ts.isCallExpression(init) || id === undefined || !DEFINITION_CALLS.has(id)) continue
         const def =
           id === SOURCE_SCHEMA ? this.sourceSchema(init)
+          : id === ONTOLOGY_PACK ? this.ontologyPack(init)
+          : id === PACK_LINK ? this.packLink(init)
           : id === MARKINGS ? this.markings(init)
           : id === TYPE ? this.objectType(init)
           : id === INTERFACE ? this.interfaceType(init)
@@ -380,6 +388,39 @@ class DefinitionCompiler {
     return SS.sourceSchema({ ...data as unknown as SS.SourceSchemaSpec, at: this.at(call) })
   }
 
+  /** Closed records at every level; identifier, pin, licence and reference rules are the Rust ontology checker's. */
+  private ontologyPack(call: ts.CallExpression): OP.OntologyPackDef {
+    const m = this.meta(call, ["id", "title", "version", "sources", "terms", "mappings", "shapes"])
+    const need = (key: string): ts.Expression => this.member(m, key, call)
+    for (const node of this.list(need("sources"))) {
+      const source = this.closedRecord(node, ["sourceId", "releaseId", "releasedAt", "retrievedAt", "canonicalUrl", "license", "redistribution", "importMode", "importer", "files"], ["sourceId", "releaseId", "releasedAt", "retrievedAt", "canonicalUrl", "license", "redistribution", "importMode"])
+      const importer = source.get("importer")
+      if (importer) this.closedRecord(importer, ["name", "version"], ["name", "version"])
+      const files = source.get("files")
+      for (const file of files ? this.list(files) : []) this.closedRecord(file, ["path", "sha256"], ["path", "sha256"])
+    }
+    for (const node of this.list(need("terms"))) this.closedRecord(node, ["termId", "label", "definition", "termKind", "status", "semanticAuthority", "parentTermId", "supersededBy", "domainTermId"], ["termId", "label", "definition", "termKind", "status", "semanticAuthority"])
+    for (const node of this.list(need("mappings"))) this.closedRecord(node, ["mappingId", "termId", "sourceId", "externalIri", "relation", "justification", "evidenceRefs", "confidenceBasisPoints", "reviewedBy", "reviewedAt", "supersededByMappingId", "ratifiedBy", "ratifiedAt"], ["mappingId", "termId", "sourceId", "externalIri", "relation", "justification", "evidenceRefs", "confidenceBasisPoints", "reviewedBy", "reviewedAt"])
+    for (const node of this.list(need("shapes"))) {
+      const shape = this.closedRecord(node, ["shapeId", "termId", "closed", "fields"], ["shapeId", "termId", "closed", "fields"])
+      for (const field of this.list(shape.get("fields")!)) this.closedRecord(field, ["fieldId", "valueType", "targetTermId", "minCount", "maxCount"], ["fieldId", "valueType", "minCount", "maxCount"])
+    }
+    const data = Object.fromEntries([...m].map(([key, node]) => [key, this.json(node)]))
+    return OP.ontologyPack({ ...data as unknown as OP.OntologyPackSpec, at: this.at(call) })
+  }
+
+  /** Closed records; resolution against the linked packs is the Rust link registry's. */
+  private packLink(call: ts.CallExpression): PL.PackLinkDef {
+    const m = this.meta(call, ["id", "title", "version", "fromPack", "toPack", "correspondences", "residuals"])
+    const need = (key: string): ts.Expression => this.member(m, key, call)
+    for (const key of ["fromPack", "toPack"]) this.closedRecord(need(key), ["packId", "version"], ["packId", "version"])
+    for (const node of this.list(need("correspondences"))) this.closedRecord(node, ["correspondenceId", "fromTermId", "relation", "toTermIds", "justification", "evidenceRefs", "confidenceBasisPoints", "reviewedBy", "reviewedAt", "transformRef", "rulingRef"], ["correspondenceId", "fromTermId", "relation", "toTermIds", "justification", "evidenceRefs", "confidenceBasisPoints", "reviewedBy", "reviewedAt"])
+    const residuals = m.get("residuals")
+    for (const node of residuals ? this.list(residuals) : []) this.closedRecord(node, ["termId", "reason", "note"], ["termId", "reason", "note"])
+    const data = Object.fromEntries([...m].map(([key, node]) => [key, this.json(node)]))
+    return PL.packLink({ ...data as unknown as PL.PackLinkSpec, at: this.at(call) })
+  }
+
   private markings(call: ts.CallExpression): E.MarkingsDef {
     const m = this.meta(call, ["id", "title", "version", "markings"])
     const need = (key: string): ts.Expression => this.member(m, key, call)
@@ -394,15 +435,17 @@ class DefinitionCompiler {
 
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
-      "name", "title", "version", "description", "extends", "properties", "invariants", "markings", "propertyMarkings",
+      "name", "title", "version", "description", "extends", "properties", "links", "invariants", "markings", "propertyMarkings",
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const invariantsNode = members.get("invariants")
+    const linksNode = members.get("links")
     return E.interfaceType({
       ...rest,
       extends: members.has("extends") ? this.list(members.get("extends")!).map((parent) => this.typeName(parent, INTERFACES)) : [],
       properties: projected.map((p) => ({ id: p.id, ...(propertyMarkings.has(p.id) ? { markings: propertyMarkings.get(p.id)! } : {}), type: p.projection.type, ...(p.projection.nullable ? { nullable: true } : {}), at: this.at(p.node) })),
+      links: linksNode ? this.list(linksNode).map((x) => this.interfaceLink(x)) : [],
       invariants: invariantsNode ? this.list(invariantsNode).map((x) => this.invariant(x)) : [],
       at: this.at(call),
     })
@@ -470,21 +513,32 @@ class DefinitionCompiler {
 
   private link(input: ts.Expression): E.LinkDecl {
     const m = this.closedRecord(input, ["id", "description", "target", "cardinality", "inverse", "acyclic"], ["id", "target", "cardinality"])
+    const inverse = m.get("inverse"), acyclic = m.get("acyclic")
+    return {
+      ...this.linkCore(m, OBJECT_TYPES),
+      ...(inverse ? { inverse: this.string(inverse) } : {}),
+      ...(acyclic ? { acyclic: this.boolean(acyclic) } : {}),
+    }
+  }
+
+  /** An interface link requirement: its target may be an object type or an interface. */
+  private interfaceLink(input: ts.Expression): E.InterfaceLinkDecl {
+    return this.linkCore(this.closedRecord(input, ["id", "description", "target", "cardinality"], ["id", "target", "cardinality"]), ANY_TYPE)
+  }
+
+  private linkCore(m: Members, targets: ReadonlySet<string>): E.InterfaceLinkDecl {
     const c = this.closedRecord(m.get("cardinality")!, ["to", "from", "required"], ["to", "from"])
     const multiplicity = (e: ts.Expression): E.Multiplicity => {
       const v = this.string(e)
       if (v !== "one" && v !== "many") throw new CompileError("NORN-FLOW-LITERAL", "a multiplicity is \"one\" or \"many\"", e)
       return v
     }
-    const description = m.get("description"), inverse = m.get("inverse"), required = c.get("required")
-    const acyclic = m.get("acyclic")
+    const description = m.get("description"), required = c.get("required")
     return {
       id: this.string(m.get("id")!),
       ...(description ? { description: this.string(description) } : {}),
-      target: this.typeName(m.get("target")!, OBJECT_TYPES),
+      target: this.typeName(m.get("target")!, targets),
       cardinality: { to: multiplicity(c.get("to")!), from: multiplicity(c.get("from")!), ...(required ? { required: this.boolean(required) } : {}) },
-      ...(inverse ? { inverse: this.string(inverse) } : {}),
-      ...(acyclic ? { acyclic: this.boolean(acyclic) } : {}),
     }
   }
 
