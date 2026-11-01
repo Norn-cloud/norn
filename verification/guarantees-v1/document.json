@@ -1,6 +1,7 @@
 {
   "guarantees": [
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The catalog apply transaction persists the exact artifact embedded in the stored plan.",
         "SHA-256 collision resistance holds for stable artifact and evidence identities; the lifecycle guard itself does not depend on a hash assumption.",
@@ -21,6 +22,7 @@
         }
       },
       "id": "INV-ART-AUTHORITY-PROMOTION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -81,6 +83,7 @@
       "statement": "Every artifact kind becomes Approved/Active catalog authority only through a governed plan that validates and approves the exact artifact content applied; a direct catalog write cannot grant runtime or read-projection authority, and one separate scoped pointer plus a matching trusted-checker receipt selects exactly one executable version while immutable envelopes and historical receipts remain audit evidence."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The hax translation preserves the selected Rust function and closed enum representations.",
         "The pinned F* typechecker and SMT solver are sound.",
@@ -116,6 +119,7 @@
         }
       },
       "id": "INV-ART-DIRECT-WRITE-PREDICATE",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -166,6 +170,7 @@
       "statement": "For every current production ArtifactKind and ArtifactLifecycle value, the direct catalog-write predicate rejects exactly Approved and Active lifecycles and admits the other five lifecycle values."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The store supplies atomic transactions for one consistency owner.",
         "External effects are represented as outbox records rather than executed inside commit."
@@ -185,6 +190,7 @@
         }
       },
       "id": "INV-AUTH-ATOMIC-COMMIT",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -245,6 +251,7 @@
       "statement": "An accepted transition's canonical event, state changes, owner-version increment, idempotency result, and correctness-critical projection changes commit atomically or none becomes authoritative."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Policy/schema versions used by the decision are explicit commit inputs."
       ],
@@ -263,6 +270,7 @@
         }
       },
       "id": "INV-AUTH-CAPABILITY-NOW",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -317,6 +325,7 @@
       "statement": "The capability that authorizes a transition is resolved and checked against current authoritative policy/state in the same commit decision; a preflight or UI check is never sufficient."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Unknown program constructs and undeclared fields fail closed.",
         "External code and ontology inference cannot construct a sealed authority commit directly."
@@ -336,6 +345,7 @@
         }
       },
       "id": "INV-AUTH-CLOSED-CUSTOM-EFFECT",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -385,6 +395,7 @@
       "statement": "A custom authority-bearing program executes only from one exact Active artifact in a closed deterministic language, derives effects server-side, and publishes them only through owner-version CAS and commit-time ontology/domain checks."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The three Boolean inputs are the exact values passed to the extracted Rust function; parsing, mapping, routing, and persistence are separate obligations."
       ],
@@ -403,6 +414,7 @@
         }
       },
       "id": "INV-AUTH-DOMAIN-ADMISSION-PREDICATE",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -443,6 +455,7 @@
       "statement": "For the exact representation-free production admission predicate, generic authority admits only generic sources and domain authority admits only a typed domain source with the identical domain identifier."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The closed EntityIR descriptor parser derives the generic/domain authority fact and exact domain equality correctly.",
         "Every authoritative generic object mutation calls the shared boundary before the atomic publish point."
@@ -462,6 +475,7 @@
         }
       },
       "id": "INV-AUTH-HARD-INVARIANT-OWNERSHIP",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -510,6 +524,7 @@
       "statement": "Generic ActionIR cannot mutate an EntityIR owned by a hard-invariant domain engine, and a typed domain command is admitted only through the exact declared domain owner."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Idempotency identity is stable across network retry, worker retry, and failover."
       ],
@@ -538,6 +553,7 @@
         }
       },
       "id": "INV-AUTH-IDEMPOTENT-RESULT",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -586,6 +602,7 @@
       "statement": "For one scope and transition identity, every retry returns the same logical terminal result and the transition's domain effects occur at most once."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Scope is part of every primary/unique identity that can collide across tenants."
       ],
@@ -604,6 +621,7 @@
         }
       },
       "id": "INV-AUTH-SCOPE-CLOSED",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -662,6 +680,7 @@
       "statement": "Every authoritative read and mutation carries an explicit canonical scope, and a missing, ambiguous, or mismatched scope fails closed before data access or mutation."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Every mutable consistency owner has one monotonically increasing version."
       ],
@@ -688,6 +707,7 @@
         }
       },
       "id": "INV-AUTH-STALE-REJECT",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -734,6 +754,7 @@
       "statement": "A transition prepared against owner version v cannot commit from any authoritative version other than v, and rejection cannot produce domain effects."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The cell clock raises the deadline event for every open commitment once its due time is reached (timer fairness)."
       ],
@@ -752,6 +773,7 @@
         }
       },
       "id": "INV-CORE-COMMITMENT-COMPLETION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": "core.law.commitment_completion",
       "lawLayer": "core primitives",
@@ -777,6 +799,7 @@
       "statement": "A commitment ends fulfilled, cancelled or breached and is never dropped: terminal states are absorbing, no operation removes a commitment, and once its due time passes the deadline event ends it."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Every hold, release and consumption goes through the quantity ledger in one cell transaction."
       ],
@@ -795,6 +818,7 @@
         }
       },
       "id": "INV-CORE-ESCROW-NON-NEGATIVE",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": "core.law.escrow_non_negative",
       "lawLayer": "core primitives",
@@ -820,6 +844,7 @@
       "statement": "Holds (escrow, reservations, quota use) are never negative and never exceed the balance they are held against, so available quantity is never negative."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "A partial correction is a full reversal followed by a new posting."
       ],
@@ -849,6 +874,7 @@
         }
       },
       "id": "INV-CORE-LINKED-REVERSAL",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": "core.law.correction_is_linked_reversal",
       "lawLayer": "core primitives",
@@ -894,6 +920,7 @@
       "statement": "A correction is a new entry linked to its posted original with exactly negated legs, so the pair nets to zero on every account and unit; an entry is reversed at most once and a reversal is never reversed."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The ledger is the only writer of posted entries."
       ],
@@ -921,6 +948,7 @@
         }
       },
       "id": "INV-CORE-POSTED-IMMUTABLE",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": "core.law.posted_immutable",
       "lawLayer": "core primitives",
@@ -973,6 +1001,7 @@
       "statement": "No admitted operation edits or removes a posted economic event or journal entry; each admitted operation only adds entries."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Quantities are exact and in one unit per balance partition; conversions are separate balanced postings."
       ],
@@ -991,6 +1020,7 @@
         }
       },
       "id": "INV-CORE-QUANTITY-CONSERVATION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": "core.law.quantity_conservation",
       "lawLayer": "core primitives",
@@ -1016,6 +1046,7 @@
       "statement": "For one resource in one unit, stock received equals stock issued plus stock on hand; a transformation issues its inputs and receives its outputs, so the law holds per resource."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Amounts are exact integers at one declared precision per unit.",
         "Value moves only through types that declare an accounting leg; an undeclared type is a marked boundary where the inherited claim stops."
@@ -1047,6 +1078,7 @@
         }
       },
       "id": "INV-CORE-VALUE-CONSERVATION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": "core.law.value_conservation",
       "lawLayer": "core primitives",
@@ -1102,6 +1134,7 @@
       "statement": "Every admitted exchange or journal effect nets to zero in every unit, and so does every book built only through the core posting primitives."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Canonical Norn identities remain stable across external vocabulary releases."
       ],
@@ -1134,6 +1167,7 @@
         }
       },
       "id": "INV-ONT-MAPPING-PROVENANCE",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1198,6 +1232,7 @@
       "statement": "Every external ontology/taxonomy mapping records source identifier, source version, canonical Norn concept, mapping relation, evidence, confidence/reviewer, and supersession; external identifiers never become mutable storage topology or authority identities."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Inferred facts retain their derivation and do not overwrite asserted authority facts."
       ],
@@ -1216,6 +1251,7 @@
         }
       },
       "id": "INV-ONT-OPEN-CLOSED-SEPARATION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1271,6 +1307,7 @@
       "statement": "OWL entailment may classify or infer candidate semantic facts, but only a closed validator and typed transition kernel may establish completeness, legality, current authority, or an authoritative mutation."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Omitted RelationIR cardinality means many_to_many.",
         "One authority writer serializes the candidate-set check until a relation-kind/index consistency owner replaces that bootstrap topology."
@@ -1290,6 +1327,7 @@
         }
       },
       "id": "INV-ONT-RELATION-AUTHORITY",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1340,6 +1378,7 @@
       "statement": "Every authoritative relation kind is its exact active Relation artifact identity; endpoint objects match RelationIR from/to through exact active Entity pins; and declared endpoint cardinality holds over persisted plus same-commit candidate relations without double-counting an update to the same immutable relation id."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Administrative retention never deletes canonical posting facts inside the legal/audit horizon."
       ],
@@ -1358,6 +1397,7 @@
         }
       },
       "id": "INV-QL-APPEND-REVERSAL",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1410,6 +1450,7 @@
       "statement": "Posted ledger facts are never updated or deleted; correction is a new linked reversing posting whose exact legs negate the original, followed by an optional replacement posting."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The quantity repository accepts the caller-owned Turso transaction handle and cannot commit independently.",
         "The core posting path uses one scope-owned database file; no second database, connection-owned transaction, delayed outbox, or external effect participates."
@@ -1429,6 +1470,7 @@
         }
       },
       "id": "INV-QL-AUTHORITY-BRIDGE-ATOMIC",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1479,6 +1521,7 @@
       "statement": "A quantity posting, its balance heads and append-only events, the Norn owner version and business effects, action/evidence record, checkpoint, and stable idempotency result commit through one authority transaction or none becomes authoritative."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Batch order is explicit and stable."
       ],
@@ -1509,6 +1552,7 @@
         }
       },
       "id": "INV-QL-BATCH-ATOMIC",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1556,6 +1600,7 @@
       "statement": "A posting batch is all-or-nothing, and executing a conflict-free batch yields the same canonical ledger state as executing its postings sequentially in declared order."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "SHA-256 collision resistance holds for the domain-separated boundary identities.",
         "A deserialized commitment is recomputed from the installed opaque seal and original intent before authority use.",
@@ -1576,6 +1621,7 @@
         }
       },
       "id": "INV-QL-CERTIFICATE-POSTING-BINDING",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1618,6 +1664,7 @@
       "statement": "A conservation certificate can authorize preparation only for the exact versioned checker output, pack hash, template, unit/layer/precision partition, runtime input and evaluation; the resulting posting identity deterministically binds scope, transition, expected owner version, idempotency lookup, and outbox identity."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "All amounts use exact scaled integers.",
         "Each leg has one explicit unit and layer.",
@@ -1638,6 +1685,7 @@
         }
       },
       "id": "INV-QL-CONSERVATION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1689,6 +1737,7 @@
       "statement": "For every admitted posting template and every legal parameter valuation, the exact signed sum of legs is zero independently for each conserved unit and balance layer."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The admitted arithmetic subset is linear unless a stronger proof is supplied."
       ],
@@ -1707,6 +1756,7 @@
         }
       },
       "id": "INV-QL-EXACT-ARITHMETIC",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1750,6 +1800,7 @@
       "statement": "An admitted ledger program has one exact scaled-integer semantics; all input scales and bounds are checked, every intermediate is proved in range, and no implicit rounding or overflow can alter a posting."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Logical expiry time is supplied as a deterministic transition input.",
         "The v0 transition model rejects partial post; a future partial-resolution policy requires a separately modeled remainder or release transition."
@@ -1779,6 +1830,7 @@
         }
       },
       "id": "INV-QL-PENDING-RESOLUTION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1834,6 +1886,7 @@
       "statement": "A pending transfer reserves its amount immediately and has at most one terminal resolution: posted, voided, or expired; every terminal state has zero reserved remainder, and the v0 post transition requires full resolution rather than silently accepting a partial amount."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Amounts are mathematical integers rather than checked i128 values.",
         "The reference list has no unit, layer, account, storage, or authority semantics."
@@ -1864,6 +1917,7 @@
         }
       },
       "id": "INV-QL-REFERENCE-BALANCE-ALGEBRA",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -1900,6 +1954,7 @@
       "statement": "In the mathematical integer-list reference semantics, every pair [amount, -amount] is balanced, reversal negates the net and preserves balance, and appending two balanced lists preserves balance."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "External QUDT/UCUM identifiers are mappings to canonical Norn unit IDs rather than mutable runtime lookups."
       ],
@@ -1937,6 +1992,7 @@
         }
       },
       "id": "INV-QL-UNIT-DIMENSION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -2024,6 +2080,7 @@
       "statement": "Every unit resolves to one pinned unit definition and quantity dimension; addition, conservation, limits, and account balances reject dimensionally incompatible operands."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Rule number values are JSON-safe integers and nested values are outside the admitted subset.",
         "The artifact store returns the exact scoped artifact ID and version requested."
@@ -2043,6 +2100,7 @@
         }
       },
       "id": "INV-RULE-CLOSED-DETERMINISTIC-EVALUATION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -2067,6 +2125,7 @@
       "statement": "An authoritative rule evaluation accepts only the declared closed scalar/schema/condition subset, binds exact active artifact version and explicit scope, and returns deterministic content-addressed evidence without I/O, time, randomness, callbacks, or approximate numeric comparison."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The caller has already evaluated every rule row into an exact Boolean match result.",
         "This predicate does not claim correspondence for JSON decoding, condition evaluation, row ordering, output construction, or UPE routing."
@@ -2086,6 +2145,7 @@
         }
       },
       "id": "INV-RULE-HIT-POLICY-ADMISSION-PREDICATE",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -2110,6 +2170,7 @@
       "statement": "The production Rust hit-policy admission predicate accepts exactly a nonempty FIRST result or a uniquely matching UNIQUE result; the hax-extracted executable predicate and its F* theorems have the same Boolean boundary."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "Row condition evaluation is total and deterministic over the admitted scalar subset."
       ],
@@ -2128,6 +2189,7 @@
         }
       },
       "id": "INV-RULE-HIT-POLICY-SAFETY",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -2152,6 +2214,7 @@
       "statement": "First-hit tables select the earliest matching row in declaration order, while unique-hit tables return a result exactly when one row matches and fail closed on overlap."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The generator covers syntax-valid, semantically valid, boundary, and malformed classes and persists minimized counterexamples."
       ],
@@ -2170,6 +2233,7 @@
         }
       },
       "id": "INV-VER-DIFFERENTIAL-REFINEMENT",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -2211,6 +2275,7 @@
       "statement": "For every proof-bearing executable component, generated valid and invalid inputs run against an executable reference semantics and the production implementation; any decision, result, normalized state, or diagnostic disagreement blocks promotion."
     },
     {
+      "artifactVersion": "unknown",
       "assumptions": [
         "The trusted proof path is much smaller than the application implementation."
       ],
@@ -2229,6 +2294,7 @@
         }
       },
       "id": "INV-VER-NO-PROOF-HOLES",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "law": null,
       "lawLayer": "core primitives",
@@ -2254,6 +2320,7 @@
       "statement": "A proof artifact promoted as trusted declares every axiom, admitted theorem, external model, unsafe boundary, and tool version; production gates reject sorry/admit placeholders or unreviewed assumptions in the trusted proof path."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2269,6 +2336,7 @@
         }
       },
       "id": "KERNEL-V2-COMMIT",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "core primitives",
       "recordedCoverage": {
@@ -2311,6 +2379,7 @@
       "statement": "Commit admission preserves atomicity, single receipts, refusal transparency and compare-and-swap safety."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2326,6 +2395,7 @@
         }
       },
       "id": "KERNEL-V2-PROJECTION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "core primitives",
       "recordedCoverage": {
@@ -2367,6 +2437,7 @@
       "statement": "Projection observations correspond to committed authority state under the declared kernel model bounds."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2382,6 +2453,7 @@
         }
       },
       "id": "KERNEL-V2-QUANTITY",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "core primitives",
       "recordedCoverage": {
@@ -2424,6 +2496,7 @@
       "statement": "Quantity operations conserve funded balances and reservation remainders, preserve state on refusal and reject expired posting."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2439,6 +2512,7 @@
         }
       },
       "id": "POST-ATOMIC",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "accounting/inventory",
       "recordedCoverage": {},
@@ -2446,6 +2520,7 @@
       "statement": "Refusal or a pre-COMMIT fault preserves stock, GL, history, outbox and receipt state."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2461,6 +2536,7 @@
         }
       },
       "id": "POST-AUTHORITY",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "accounting/inventory",
       "recordedCoverage": {},
@@ -2468,6 +2544,7 @@
       "statement": "Only the pinned declared rule produces protected outputs; specialization cannot weaken inherited laws or lifecycle obligations."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2483,6 +2560,7 @@
         }
       },
       "id": "POST-IDENTITY",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "accounting/inventory",
       "recordedCoverage": {},
@@ -2490,6 +2568,7 @@
       "statement": "Identical intent replays once; conflicting payload or pins refuse unchanged; lost acknowledgement cannot duplicate publication."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2505,6 +2584,7 @@
         }
       },
       "id": "POST-ORDER",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "accounting/inventory",
       "recordedCoverage": {},
@@ -2512,6 +2592,7 @@
       "statement": "Complete partition and manifest fences cover empty partitions and concurrent posting; immutable replay reproduces allocations and state."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2527,6 +2608,7 @@
         }
       },
       "id": "POST-VALUE",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "accounting/inventory",
       "recordedCoverage": {},
@@ -2534,6 +2616,7 @@
       "statement": "Quantity, StockEvents and fold deltas agree; signed stock GL equals the rounded partition value delta and every journal balances."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2549,6 +2632,7 @@
         }
       },
       "id": "STOCK-AVERAGE",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "accounting/inventory",
       "recordedCoverage": {},
@@ -2556,6 +2640,7 @@
       "statement": "Moving-average issues use exact half-up rounding at scale six; final depletion takes all remaining value."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2571,6 +2656,7 @@
         }
       },
       "id": "STOCK-FIFO",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "accounting/inventory",
       "recordedCoverage": {},
@@ -2578,6 +2664,7 @@
       "statement": "Issues consume oldest stock layers; final consumption takes the residual value."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2593,6 +2680,7 @@
         }
       },
       "id": "STOCK-RETURN",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "accounting/inventory",
       "recordedCoverage": {},
@@ -2600,6 +2688,7 @@
       "statement": "Returns use original issue cost, cap cumulative quantity and value, and take the residual on final return."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2615,6 +2704,7 @@
         }
       },
       "id": "STOCK-REVERSAL",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "accounting/inventory",
       "recordedCoverage": {},
@@ -2622,6 +2712,7 @@
       "statement": "Cancellation appends an exact inverse once, after live dependents have been reversed."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2637,6 +2728,7 @@
         }
       },
       "id": "INV-JEWELRY-CUSTODY",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "jewelry",
       "recordedCoverage": {},
@@ -2644,6 +2736,7 @@
       "statement": "Custody metal retains its owner and cannot be sold as company stock; custody operations have no company asset or ledger effect."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2659,6 +2752,7 @@
         }
       },
       "id": "INV-JEWELRY-FINE-CONSERVATION",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "jewelry",
       "recordedCoverage": {},
@@ -2666,6 +2760,7 @@
       "statement": "For each metal and owner, fine input equals fine outputs plus explicitly recorded loss."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2681,6 +2776,7 @@
         }
       },
       "id": "INV-JEWELRY-REFUSAL-ATOMIC",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "jewelry",
       "recordedCoverage": {},
@@ -2688,6 +2784,7 @@
       "statement": "A refused jewelry operation preserves all state."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2703,6 +2800,7 @@
         }
       },
       "id": "JEWELRY-PURITY",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "jewelry",
       "recordedCoverage": {},
@@ -2710,6 +2808,7 @@
       "statement": "Purity inputs map exactly to an integer numerator over 24000000; conflicting forms, excess precision and checked arithmetic overflow refuse."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2725,6 +2824,7 @@
         }
       },
       "id": "WORKFLOW-INHERITED-LAWS",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "workflow",
       "recordedCoverage": {},
@@ -2732,6 +2832,7 @@
       "statement": "Tenant workflows preserve named inherited core, stock and jewelry law obligations."
     },
     {
+      "artifactVersion": "unknown",
       "evidence": {
         "execution": {
           "level": "unknown",
@@ -2747,6 +2848,7 @@
         }
       },
       "id": "WORKFLOW-LAW-ORIGINS",
+      "inheritedOrigins": "unknown",
       "installation": "unknown",
       "lawLayer": "workflow",
       "recordedCoverage": {},

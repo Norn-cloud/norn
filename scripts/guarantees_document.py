@@ -56,7 +56,8 @@ def project(coverage: dict, laws: list[dict]) -> dict:
             "parity": facet(claim, "parity", "tested", "tested for parity")},
             "recordedCoverage": claim,
             "residual": claim.get("residual", "No coverage claim is enrolled for this law."),
-            "installation": "unknown"})
+            "installation": "unknown", "artifactVersion": "unknown",
+            "inheritedOrigins": "unknown"})
     return {"schemaVersion": "norn.guarantees.document.v1", "kind": "guarantees",
             "guarantees": rows}
 

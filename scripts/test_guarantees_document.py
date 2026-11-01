@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Conformance tests for GUAR-* in verification/guarantees-v1/spec.md."""
 import copy
+import json
 import unittest
 
-from guarantees_document import ROOT, OUTPUT, project, render
+from guarantees_document import ROOT, OUTPUT, project, read, render
 
 LAW = {"id": "law", "statement": "A named law.", "lawLayer": "workflow"}
 LINK = {"artifact": "proof.lean", "command": "lean proof.lean", "selectors": ["theorem:law"]}
@@ -53,7 +54,14 @@ class GuaranteesConformance(unittest.TestCase):
                          ["Reference scope only."])
 
     def test_document_drift(self):
-        self.assertEqual((ROOT / OUTPUT).read_bytes(), render(ROOT).encode("utf-8"))
+        payload = render(ROOT)
+        self.assertEqual((ROOT / OUTPUT).read_bytes(), payload.encode("utf-8"))
+        enrolled = {c["id"] for s in read(ROOT, "verification/coverage-v1/coverage.json")["subsystems"]
+                    for c in s["obligationClaims"]}
+        rows = json.loads(payload)["guarantees"]
+        self.assertTrue(enrolled <= {row["id"] for row in rows})
+        self.assertTrue({"POST-ATOMIC", "POST-VALUE", "POST-IDENTITY", "POST-ORDER", "POST-AUTHORITY"}
+                        <= {row["id"] for row in rows})
 
 
 if __name__ == "__main__":
