@@ -31,6 +31,7 @@ pub mod consistency;
 pub mod definitions_diff;
 pub mod deontic;
 mod diagnostic;
+pub mod duties;
 pub mod entity_artifacts;
 pub mod entity_instance;
 pub mod entity_lowering;
