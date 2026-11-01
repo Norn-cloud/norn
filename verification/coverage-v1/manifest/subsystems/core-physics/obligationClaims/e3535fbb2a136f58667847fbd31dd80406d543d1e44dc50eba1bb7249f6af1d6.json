@@ -7,39 +7,15 @@
     "proof": "reference_proved",
     "residual": "The kernel commit check refuses a posting group that does not net to zero in each unit, for every type that declares an accounting leg (tested; the cited tests use one balance layer, so cross-layer cancellation is enforced by the check but not separately tested). The Lean reference proves the admission check exact and the law inherited by every workflow of post and reverse steps; it is not a refinement proof of the Rust check, i128 arithmetic or storage.",
     "evidence": {
-      "runtime": [
-        {
-          "artifact": "crates/norn-kernel/tests/accounting_commit.rs",
-          "command": "cargo test --locked -p norn-kernel --test accounting_commit",
-          "selectors": [
-            "test:balanced_exact_posting_group_commits_including_inherited_marker",
-            "test:unbalanced_group_refusal_has_no_fact_ledger_or_outbox_effects",
-            "test:multiple_currencies_balance_independently_and_cannot_cancel_across_units"
-          ]
-        }
-      ],
-      "model": [
-        {
-          "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
-          "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
-          "selectors": [
-            "invariant:allPostedBalanced"
-          ]
-        }
-      ],
-      "proof": [
-        {
-          "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
-          "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
-          "selectors": [
-            "theorem:checkBalanced_iff",
-            "theorem:balanced_append",
-            "theorem:run_balanced",
-            "theorem:run_trial_zero",
-            "theorem:unbalanced_post_refused"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entrye3535fbb2a136f58667847fbd31dd80406d543d1e44dc50eba1bb7249f6af1d6.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entrye3535fbb2a136f58667847fbd31dd80406d543d1e44dc50eba1bb7249f6af1d6.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entrye3535fbb2a136f58667847fbd31dd80406d543d1e44dc50eba1bb7249f6af1d6.evidence.proof"
+      }
     }
   }
 }

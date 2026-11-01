@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
+    "command": "quint verify verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt --backend apalache --invariants typeOk genericNeverCommitsDomainOwned domainNeverCommitsGenericOwned domainCommitMatchesExactOwner rejectionIsNoOp --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entry24b71705cd075f8abadb836e90f201c2fa25c21bdb4eee2aa865d7fca33b4ce9.evidence.model.entrya0e417d9ba9332754fba52a9a34d9dd678bc7ba0d5bab017ce75ec3b60bd383f.selectors"
+    }
+  }
+}

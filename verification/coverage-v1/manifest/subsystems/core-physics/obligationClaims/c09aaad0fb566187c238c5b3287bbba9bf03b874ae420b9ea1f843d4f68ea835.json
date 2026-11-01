@@ -7,29 +7,15 @@
     "proof": "reference_proved",
     "residual": "The public kernel has no linked journal reversal yet; quantity-ledger reversals are covered by INV-QL-APPEND-REVERSAL. The model and reference proof cover the pack law only.",
     "evidence": {
-      "runtime": [],
-      "model": [
-        {
-          "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
-          "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
-          "selectors": [
-            "invariant:reversalLinkedExact",
-            "invariant:reversedAtMostOnce"
-          ]
-        }
-      ],
-      "proof": [
-        {
-          "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
-          "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
-          "selectors": [
-            "theorem:reverse_is_linked_exact",
-            "theorem:reversal_nets_account",
-            "theorem:reversal_nets_unit",
-            "theorem:run_reversed_at_most_once"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entryc09aaad0fb566187c238c5b3287bbba9bf03b874ae420b9ea1f843d4f68ea835.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryc09aaad0fb566187c238c5b3287bbba9bf03b874ae420b9ea1f843d4f68ea835.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryc09aaad0fb566187c238c5b3287bbba9bf03b874ae420b9ea1f843d4f68ea835.evidence.proof"
+      }
     }
   }
 }

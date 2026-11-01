@@ -7,25 +7,15 @@
     "proof": "reference_proved",
     "residual": "The retained InMemory store exercises a general owner-version compare-and-swap envelope, stale-writer rejection, no-partial-effect behavior, and stable replay receipts. The canonical Turso adapter's persistence-failure rollback and reopen tests were removed in #2764 (not currently covered). Legacy callers still use the unversioned compatibility method, Postgres parity and a transport TransitionEnvelope remain open, and the Verus reference has no extracted correspondence proof. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
     "evidence": {
-      "runtime": [],
-      "model": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/models/authority-commit.qnt",
-          "command": "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
-          "selectors": [
-            "invariant:noOpPreservesCanonical"
-          ]
-        }
-      ],
-      "proof": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
-          "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
-          "selectors": [
-            "theorem:stale_commit_rejects"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entryf302af666a01988675dce287cd7cd360aafcb588e828fe1b76572a393ceeab34.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryf302af666a01988675dce287cd7cd360aafcb588e828fe1b76572a393ceeab34.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryf302af666a01988675dce287cd7cd360aafcb588e828fe1b76572a393ceeab34.evidence.proof"
+      }
     }
   }
 }

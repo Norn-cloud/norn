@@ -1,0 +1,10 @@
+{
+  "order": 3,
+  "value": {
+    "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+    "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+    "selectors": {
+      "$entries": "obligationClaims.entry2aa6092c1a3b54093c65cce227e80481199a83aa01f2f2a5a18b637c5f09f1fe.evidence.runtime.entrycc4b31961e4bb3b25ec4c0b3974fdf58e595e851efad354702da8a2133228679.selectors"
+    }
+  }
+}

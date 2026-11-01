@@ -6,9 +6,15 @@
     "model": "missing",
     "proof": "missing",
     "evidence": {
-      "runtime": [],
-      "model": [],
-      "proof": []
+      "runtime": {
+        "$entries": "obligationClaims.entry4e1a049fcee4f93ad87b5363c55d290f05f3b065dd6c3a59b3fc3fb902f12783.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry4e1a049fcee4f93ad87b5363c55d290f05f3b065dd6c3a59b3fc3fb902f12783.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry4e1a049fcee4f93ad87b5363c55d290f05f3b065dd6c3a59b3fc3fb902f12783.evidence.proof"
+      }
     },
     "residual": "Specified only; no runtime enforcement, model or proof yet."
   }

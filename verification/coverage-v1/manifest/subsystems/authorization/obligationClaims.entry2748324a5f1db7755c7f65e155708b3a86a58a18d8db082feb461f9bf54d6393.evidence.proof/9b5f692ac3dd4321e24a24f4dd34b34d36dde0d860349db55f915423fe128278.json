@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/authz-v1/AuthorizationScopeExactness.lean",
+    "command": "lean -DwarningAsError=true verification/authz-v1/AuthorizationScopeExactness.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry2748324a5f1db7755c7f65e155708b3a86a58a18d8db082feb461f9bf54d6393.evidence.proof.entry9b5f692ac3dd4321e24a24f4dd34b34d36dde0d860349db55f915423fe128278.selectors"
+    }
+  }
+}

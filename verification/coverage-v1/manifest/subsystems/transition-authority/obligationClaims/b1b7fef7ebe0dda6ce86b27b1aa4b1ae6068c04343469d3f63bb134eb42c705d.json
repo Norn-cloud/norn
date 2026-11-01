@@ -7,27 +7,15 @@
     "proof": "reference_proved",
     "residual": "Lean proves exact replay is state-preserving, conflicting replay rejects, and a stored receipt blocks a second abstract commit. Retained InMemory receipts bind both the semantic input hash and a canonical authority-effect digest; request-local correlation IDs are normalized out while deterministic action/ledger IDs make lost-reply reconstruction stable. Turso-persisted receipt and reopen evidence was removed in #2764 (not currently covered). The correspondence is not machine-proved, pre-v3 receipts fail closed on replay, and legacy unversioned callers remain. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
     "evidence": {
-      "runtime": [],
-      "model": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/models/authority-commit.qnt",
-          "command": "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
-          "selectors": [
-            "invariant:idempotentAtMostOnce"
-          ]
-        }
-      ],
-      "proof": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
-          "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
-          "selectors": [
-            "theorem:exact_replay_is_state_preserving",
-            "theorem:conflicting_input_replay_rejects",
-            "theorem:conflicting_effect_replay_rejects"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entryb1b7fef7ebe0dda6ce86b27b1aa4b1ae6068c04343469d3f63bb134eb42c705d.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryb1b7fef7ebe0dda6ce86b27b1aa4b1ae6068c04343469d3f63bb134eb42c705d.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryb1b7fef7ebe0dda6ce86b27b1aa4b1ae6068c04343469d3f63bb134eb42c705d.evidence.proof"
+      }
     }
   }
 }

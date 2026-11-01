@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+    "command": "quint verify verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt --backend apalache --invariants typeOk sequentialVersions batchAllOrNone stableReceipt --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entrybf9113d75fa21c27175541a5517b840ea09c472428d7271f35f7b7777f63e2fd.evidence.model.entry10fc6c8742dd31bcc12664b77801a79a37525cc33d7f40fc01935bd4fa0ecf90.selectors"
+    }
+  }
+}

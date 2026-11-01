@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+    "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
+    "selectors": {
+      "$entries": "obligationClaims.entry2aa6092c1a3b54093c65cce227e80481199a83aa01f2f2a5a18b637c5f09f1fe.evidence.proof.entryc09d6dadfff9f785f35bc87120b685463783dbe23997546e5bfb576fed3beecf.selectors"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst",
+    "command": "scripts/verify-artifact-governance-extraction.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.evidence.proof.entry97e7560e66a4b509471c8e6e2bfc6fd81af0f81508e6b50cc796980f50a7ffa8.selectors"
+    }
+  }
+}

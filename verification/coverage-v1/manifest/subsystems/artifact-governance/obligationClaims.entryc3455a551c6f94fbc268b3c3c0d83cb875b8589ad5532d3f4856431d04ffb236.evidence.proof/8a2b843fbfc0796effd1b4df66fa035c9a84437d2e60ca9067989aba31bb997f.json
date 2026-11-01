@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "target/verification-results/artifact-governance-hax/Norn_ir.fst",
+    "command": "scripts/verify-artifact-governance-extraction.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entryc3455a551c6f94fbc268b3c3c0d83cb875b8589ad5532d3f4856431d04ffb236.evidence.proof.entry8a2b843fbfc0796effd1b4df66fa035c9a84437d2e60ca9067989aba31bb997f.selectors"
+    }
+  }
+}

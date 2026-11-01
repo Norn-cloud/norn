@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/ontology/scripts/validate_semantics.py",
+    "command": "scripts/check-ontology-semantics.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entry23616aa875a6ec1c33f8b18143600c4430a57653ec42e2e73ee7bd74a93b4f80.evidence.model.entry79a899ef1ce9b8467c223a40b5997b9a07fded55156b9b0d4ab2ab9a4249229f.selectors"
+    }
+  }
+}

@@ -7,28 +7,15 @@
     "proof": "partial",
     "residual": "The retained IR validator admits a closed upsert_input_object declaration and rejects unknown payload/schema fields, open object schemas, and contradictory idempotent/ledgered declarations. Quint and Lean check independent bounded/reference semantics for exact active-definition pins, schema/ontology guards, one effect/event, stale/no-op behavior, and stable replay. No HTTP executor or custom ActionIR runtime is retained. Relation effects, deletes, field templates, arithmetic, domain-specific invariant programs, task-result coupling, extraction/refinement, and arbitrary custom ActionIR remain open.",
     "evidence": {
-      "runtime": [],
-      "model": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/models/closed-action-effect.qnt",
-          "command": "quint verify verification/stripmine-2026-08-22/models/closed-action-effect.qnt --backend apalache --invariants typeOk oneClosedEffectPerCommit acceptedBoundExactDefinitions acceptedPassedClosedChecks noOpPreservesAuthority --max-steps 8",
-          "selectors": [
-            "invariant:oneClosedEffectPerCommit",
-            "invariant:acceptedBoundExactDefinitions",
-            "invariant:acceptedPassedClosedChecks"
-          ]
-        }
-      ],
-      "proof": [
-        {
-          "artifact": "verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
-          "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
-          "selectors": [
-            "theorem:accepted_execution_has_one_derived_effect",
-            "theorem:derived_effect_cannot_change_declared_pins"
-          ]
-        }
-      ]
+      "runtime": {
+        "$entries": "obligationClaims.entry196bd9cc99340deef3447cded633ffb9706e1a0a7f2a380f1568a6105ab9cc09.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry196bd9cc99340deef3447cded633ffb9706e1a0a7f2a380f1568a6105ab9cc09.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry196bd9cc99340deef3447cded633ffb9706e1a0a7f2a380f1568a6105ab9cc09.evidence.proof"
+      }
     }
   }
 }

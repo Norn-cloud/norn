@@ -7,26 +7,15 @@
     "proof": "missing",
     "residual": "The checker retains exact certificate/evaluation binding. Quantity v2 compiles the immutable admitted pack and evaluates original parameters inside the cell transaction; no caller-provided leg vector or naked certificate can supply posting authority. Formal references are not v2 refinement proofs.",
     "evidence": {
-      "runtime": [
-        {
-          "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
-          "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
-          "selectors": [
-            "test:posting_commitment_binds_runtime_evaluation_and_deterministic_outbox_identity",
-            "test:stale_pack_or_checker_reference_fails_before_runtime_posting"
-          ]
-        }
-      ],
-      "model": [
-        {
-          "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
-          "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
-          "selectors": [
-            "test:posting_commitment_binds_runtime_evaluation_and_deterministic_outbox_identity"
-          ]
-        }
-      ],
-      "proof": []
+      "runtime": {
+        "$entries": "obligationClaims.entry3419154418805d515c6e9e0fa8297dbc83ed7dbe1795990d1135b3fdbbd70454.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry3419154418805d515c6e9e0fa8297dbc83ed7dbe1795990d1135b3fdbbd70454.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry3419154418805d515c6e9e0fa8297dbc83ed7dbe1795990d1135b3fdbbd70454.evidence.proof"
+      }
     }
   }
 }
