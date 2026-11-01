@@ -69,16 +69,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let (records, diagnostics) = if field("kind")? == "upsert" {
             match compiled.apply(&[source_document], &input.recorded_at) {
                 Ok(records) => (records, Vec::new()),
-                Err(diagnostics) => (Vec::new(), diagnostics.into_iter().map(|d| norn_ir::runtime_object! {
-                    "code" => d.code.as_str(), "message" => d.message,
-                    "span" => d.span.map_or_else(String::new, |s| s.to_string())
-                }).collect()),
+                Err(diagnostics) => (Vec::new(), diagnostics.into_iter().map(|d| norn_ir::runtime::encode(&d.to_json()).map_err(CellError::Encoding)).collect::<Result<Vec<_>, _>>()?),
             }
         } else {
             (Vec::new(), vec![norn_ir::runtime_object! {"code"=>norn_checker::mapping::codes::EVALUATION_FAILED, "message"=>"CP2 mapping bundle does not apply source deletes"}])
         };
         let artifact_pins = [source, mapping].into_iter().map(|a| {
-            let pin = norn_checker::ArtifactRef::of(a)?;
+            let pin = norn_checker::ArtifactRef::of(a).map_err(|e| CellError::Encoding(e.to_string()))?;
             Ok((pin.artifact_id, pin.version, pin.sha256))
         }).collect::<Result<Vec<_>, CellError>>()?;
         let definitions_digest = digest(&artifacts)?;
