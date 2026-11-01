@@ -535,6 +535,7 @@ fn instance_case(cycle: bool, suffix: &str) -> Value {
     let entry = json!({"fixture":"ir/retail-core.business_pack.json",
         "patch":{"artifactId":"retail.pack.leaf", "payload":leaf}});
     let pin = norn_checker::receipt::ArtifactRef::of(&artifact(&entry)).expect("pin");
+    let pin = json!({"artifactId":pin.artifact_id,"version":pin.version,"sha256":pin.sha256});
     let a = json!({"instanceId":format!("a:{suffix}"), "pack":pin});
     let b = json!({"instanceId":format!("b:{suffix}"), "pack":pin});
     let declarations = json!([
