@@ -2515,6 +2515,13 @@
       "tier": "T3"
     },
     {
+      "code": "object_type.validation.protected_owned_row_field",
+      "message": "kernel-owned row metadata cannot be protected: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
       "code": "object_type.validation.redundant_key",
       "message": "key {key} has the same components, normalization, and match policy as key {other}; component order does not change uniqueness",
       "severity": "error",

@@ -2231,3 +2231,57 @@ fn lean_l1_lifecycle_corpus_matches_real_commit() {
     }
     assert_eq!(count, 20);
 }
+
+#[test]
+fn append_only_types_admit_create_but_refuse_every_later_mutation() {
+    let mut types = types();
+    types[0].immutable = true;
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = cell().with_types(types.clone());
+    let order = key(ORDER, "APPEND-ONLY");
+    decide(
+        &mut cell,
+        &catalog,
+        "append-create",
+        &[],
+        &[create(ORDER, "APPEND-ONLY", 5.0)],
+    )
+    .unwrap();
+    let before = cell.load(&order).unwrap();
+    let ledger_len = cell.ledger().len();
+    for change in [
+        set(ORDER, "APPEND-ONLY", "amount", &json!(9)),
+        json!({"op":"delete","objectType":ORDER,"key":"APPEND-ONLY"}),
+        transition(ORDER, "APPEND-ONLY", "submit"),
+    ] {
+        let error = decide(
+            &mut cell,
+            &catalog,
+            "append-refuse",
+            std::slice::from_ref(&order),
+            &[change],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(*error, DecisionRefusal::InvalidOutput { reason } if reason.contains("is immutable"))
+        );
+        assert_eq!(cell.load(&order).unwrap(), before);
+        assert_eq!(cell.ledger().len(), ledger_len);
+    }
+    let rejected = cell
+        .commit(CellCommit {
+            writes: vec![FactWrite {
+                key: order.clone(),
+                expected: before.version,
+                mutation: FactMutation::Delete,
+            }],
+            ..CellCommit::default()
+        })
+        .unwrap_err();
+    assert!(matches!(
+        rejected,
+        norn_kernel::CommitError::ImmutableObject { .. }
+    ));
+    assert_eq!(cell.load(&order).unwrap(), before);
+    assert_eq!(cell.ledger().len(), ledger_len);
+}

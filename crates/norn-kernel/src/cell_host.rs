@@ -599,6 +599,12 @@ pub struct CommitVersions {
 /// no event, no enqueue, no consumption.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommitError<X> {
+    /// An existing instance of an append-only type was changed or deleted.
+    #[error("{key} is immutable")]
+    ImmutableObject {
+        /// The stored object.
+        key: FactKey,
+    },
     /// An owned child or manifest was changed without the trusted atomic
     /// parent-and-rows action, or a parent delete omitted that action.
     #[error("{key} is protected by an owned child collection transaction")]
@@ -827,6 +833,7 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::ImmutableObject { .. } => "commit.immutable_object",
             Self::DuplicateKey { .. } => "commit.duplicate_key",
             Self::NotPending { .. } => "commit.not_pending",
             Self::Conflict { .. } => "commit.conflict",

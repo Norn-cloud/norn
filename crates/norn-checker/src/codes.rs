@@ -1975,6 +1975,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "property {property} is nullable, but the property {owner} declares is not; an override may only narrow",
     ),
     entry(
+        "object_type.validation.protected_owned_row_field",
+        Tier::T3,
+        "kernel-owned row metadata cannot be protected: {detail}",
+    ),
+    entry(
         "object_type.validation.redundant_key",
         Tier::T2,
         "key {key} has the same components, normalization, and match policy as key {other}; component order does not change uniqueness",
