@@ -1809,7 +1809,7 @@ pub(crate) fn check_typed_root(
             check_document_root(payload, &object, diagnostics, artifact_id);
         }
         ArtifactPayload::DefinedConcept(_) => {
-            check_defined_concept_root(&object, diagnostics, artifact_id)
+            check_defined_concept_root(&object, diagnostics, artifact_id);
         }
         ArtifactPayload::Action(_) | ArtifactPayload::Rule(_) | ArtifactPayload::Law(_) => {}
     }
