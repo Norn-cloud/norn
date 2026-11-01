@@ -1496,3 +1496,37 @@ fn numeric_result_boundary_refuses_an_invalid_profile_without_numeric_inputs() {
     })));
     assert!(isolate.run_standard("len(x)").is_err());
 }
+
+proptest::proptest! {
+    /// FOLD-SCALED: exact aligned add/subtract agree with signed integer arithmetic.
+    #[test]
+    fn scaled_add_subtract_match_integer_reference(
+        a in -1_000_000_i64..=1_000_000,
+        b in -1_000_000_i64..=1_000_000,
+        scale in 0_u32..=18,
+    ) {
+        use zen_engine::scaled::{Rounding, ScaledArithmetic};
+        let profile = ScaledArithmetic { scale, rounding: Rounding::Refuse };
+        for (op, expected) in [("Add", a + b), ("Subtract", a - b)] {
+            let result = profile.binary(op, a.into(), b.into()).unwrap();
+            proptest::prop_assert_eq!(profile.coefficient(result).unwrap(), i128::from(expected) * 10_i128.pow(scale));
+        }
+    }
+
+    /// FOLD-BOUNDS: local numeric policy preserves shared, sticky exhaustion.
+    #[test]
+    fn fold_meter_clones_preserve_sticky_exhaustion(limit in 0_u64..10_000, charge in 0_u64..20_000) {
+        use zen_engine::{meter::Meter, scaled::{Rounding, ScaledArithmetic}};
+        let meter = Meter::new(limit);
+        let local = meter.with_arithmetic(ScaledArithmetic { scale: 2, rounding: Rounding::Refuse });
+        let first = local.charge(charge);
+        proptest::prop_assert_eq!(first.is_ok(), charge <= limit);
+        if let Err(error) = first {
+            proptest::prop_assert_eq!(meter.charge(0), Err(error));
+            proptest::prop_assert_eq!(local.charge(1), Err(error));
+        } else {
+            proptest::prop_assert_eq!(meter.used(), charge);
+        }
+        proptest::prop_assert!(meter.arithmetic().is_none());
+    }
+}
