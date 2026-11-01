@@ -5503,7 +5503,7 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
     let old_model = cell.store().model().clone();
     drop(cell);
     let mut store = CellStore::open(path, old_model, StoreOptions::default()).expect("store");
-    let mut installation = install_input("bundle", previous.installed_at + 1, &model);
+    let mut installation = install_input("bundle", previous.installed_at.checked_add(1).expect("next epoch"), &model);
     installation.canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical")).expect("UTF8");
     store.install_definitions(model, installation, Some(previous.version), "org_demo/dev").expect("admission");
     store
@@ -5539,7 +5539,7 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_eq!(&bundle.raw, &raw.input);
         norn_testkit::proptest::prop_assert_eq!(bundle.records.len(), 1);
         store.read().recheck_mapping_bundle(&bundle).expect("cell recomputation");
-        let mut altered = bundle.clone(); altered.records.clear();
+        let mut altered = bundle; altered.records.clear();
         norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_bundle(&altered), Err(CellError::MappingBundleMismatch)), "derived output refuses");
         let mut changed = input; changed.partition.push('x');
         let (different, _) = store.inject_mapping_bundle(&raw, &changed).expect("other pins");
