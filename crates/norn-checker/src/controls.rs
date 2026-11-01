@@ -27,7 +27,10 @@ mod tests {
     fn incomplete_evidence_is_never_promoted() {
         for check in [DutyCheck::Invalid, DutyCheck::Exhausted] {
             for concrete in [false, true] {
-                assert_eq!(evidence(&check, concrete), (ControlStatus::Unknown, Reachability::Unknown));
+                assert_eq!(
+                    evidence(&check, concrete),
+                    (ControlStatus::Unknown, Reachability::Unknown)
+                );
             }
         }
     }
@@ -38,16 +41,29 @@ mod tests {
             for present in [false, true] {
                 let trace = if present {
                     vec![DutyStep {
-                        edge: DutyEdge { action: "approve".into(), from: 0, to: 1 },
+                        edge: DutyEdge {
+                            action: "approve".into(),
+                            from: 0,
+                            to: 1,
+                        },
                         role: "reviewer".into(),
                     }]
-                } else { vec![] };
-                let check = DutyCheck::Counterexample {
-                    role: "reviewer".into(), trace, sensitive_start: 0,
+                } else {
+                    vec![]
                 };
-                assert_eq!(evidence(&check, concrete), if concrete && present {
-                    (ControlStatus::Refuted, Reachability::Witnessed)
-                } else { (ControlStatus::Unknown, Reachability::Unknown) });
+                let check = DutyCheck::Counterexample {
+                    role: "reviewer".into(),
+                    trace,
+                    sensitive_start: 0,
+                };
+                assert_eq!(
+                    evidence(&check, concrete),
+                    if concrete && present {
+                        (ControlStatus::Refuted, Reachability::Witnessed)
+                    } else {
+                        (ControlStatus::Unknown, Reachability::Unknown)
+                    }
+                );
             }
         }
     }
@@ -55,10 +71,14 @@ mod tests {
     #[test]
     fn safe_overapproximation_does_not_claim_availability() {
         for concrete in [false, true] {
-            assert_eq!(evidence(&DutyCheck::Separated { roles_checked: 2 }, concrete),
-                (ControlStatus::Proven, Reachability::Unknown));
-            assert_eq!(evidence(&DutyCheck::Unreachable, concrete),
-                (ControlStatus::Proven, Reachability::Unreachable));
+            assert_eq!(
+                evidence(&DutyCheck::Separated { roles_checked: 2 }, concrete),
+                (ControlStatus::Proven, Reachability::Unknown)
+            );
+            assert_eq!(
+                evidence(&DutyCheck::Unreachable, concrete),
+                (ControlStatus::Proven, Reachability::Unreachable)
+            );
         }
     }
 }
