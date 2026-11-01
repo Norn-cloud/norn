@@ -18,15 +18,9 @@ const Evidence = Schema.Struct({
   error_unit: Schema.String, result_error_unit: Schema.String, diagnostics_passed: Schema.Boolean,
 })
 
-/** ANALYSIS-PUBLISH-1: recorded Function evidence precedes projection authority.
- * No ordinary create/update action authors these evidence fields. Until the
- * acceptReceipt effect binds authenticated results, the empty receipt pin keeps
- * publication fail-closed. PUBLISH accepts only a receipt reference and an ID.
- */
-export const Publication = Norn.type({
-  name: "core.analytics.Publication", title: "Analytical publication", version: "0.1.0",
-  properties: Evidence, identity: [{ name: "primary", properties: ["id"] }],
-  defaults: { status: "proposed", receipt_digest: "" },
+export const PublicationEvidence = Norn.interfaceType({
+  name: "core.analytics.PublicationEvidence", title: "Qualified publication evidence", version: "0.1.0",
+  properties: Evidence,
   invariants: [{ id: "publication_policy", message: "Analytical publication requires matching qualified evidence.",
     expression: Norn.expression(Evidence, self => self.status !== "published" || (
       self.receipt_digest !== "" && self.table_version !== "" && self.table_digest !== "" && self.source_digest !== "" &&
@@ -45,6 +39,17 @@ export const Publication = Norn.type({
       (self.diagnostics_passed || self.mode === "descriptive")
     )),
   }],
+})
+
+/** ANALYSIS-PUBLISH-1: recorded Function evidence precedes projection authority.
+ * No ordinary create/update action authors these evidence fields. Until the
+ * acceptReceipt effect binds authenticated results, the empty receipt pin keeps
+ * publication fail-closed. PUBLISH accepts only a receipt reference and an ID.
+ */
+export const Publication = Norn.type({
+  name: "core.analytics.Publication", title: "Analytical publication", version: "0.1.0",
+  properties: Evidence, implements: [PublicationEvidence], identity: [{ name: "primary", properties: ["id"] }],
+  defaults: { status: "proposed", receipt_digest: "" },
   lifecycles: [{ property: "status", initial: ["proposed"], terminal: ["published", "refused"], transitions: [
     { id: "publish", from: ["proposed"], to: "published", guardRefusalCode: "core.projection.publication_guard",
       guards: [

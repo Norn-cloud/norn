@@ -13,7 +13,7 @@ function publication() {
   const result = compilePack(join(ROOT, "registry/core/src"), { scope: {}, registry: "registry/core", root: ROOT })
   if (!result.ok) throw new Error(JSON.stringify(result.failures))
   const artifacts = result.artifacts.filter(artifact => Schema.decodeUnknownSync(Envelope)(artifact).artifactId.startsWith("core.analytics."))
-  expect(artifacts).toHaveLength(5)
+  expect(artifacts).toHaveLength(6)
   return artifacts
 }
 
