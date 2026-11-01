@@ -29,7 +29,7 @@ def digest(value: object) -> str:
 def inputs() -> tuple[dict, dict, dict]:
     coverage = coverage_manifest.load()
     statements = {}
-    paths = [*coverage_manifest.files(), *(ROOT / name for name in REGISTRIES), Path(__file__)]
+    paths = [*coverage_manifest.files(), *(ROOT / name for name in REGISTRIES), Path(__file__).resolve()]
     for name in REGISTRIES:
         for item in json.loads((ROOT / name).read_bytes())["obligations"]:
             if item["id"] in statements:
@@ -103,7 +103,7 @@ def project(coverage: dict, statements: dict, pins: dict, checked: dict | None) 
                 "limitations": system["limitations"],
             })
     return {"schemaVersion": "norn.guarantees.matrix/1", "authority": "projection_only",
-            "inputDigest": digest(pins), "inputs": pins,
+            "inputDigest": digest({"inputs": pins, "evidence": digest(checked) if checked else None}), "inputs": pins,
             "evidenceDigest": digest(checked) if checked else None,
             "toolPins": checked["tools"] if checked else {},
             "sourceIdentity": checked["git"] if checked else None,
@@ -112,6 +112,12 @@ def project(coverage: dict, statements: dict, pins: dict, checked: dict | None) 
 
 def challenge_rows(challenge: dict) -> list[dict]:
     """An obligation inventory or transition-frame assessment is never checked proof."""
+    if (not isinstance(challenge, dict)
+            or not isinstance(challenge.get("lawStatements"), list)
+            or not isinstance(challenge.get("obligations"), list)
+            or any(not isinstance(goal, dict) or "statement" not in goal or "goal" not in goal
+                   for goal in challenge["obligations"])):
+        raise ValueError("invalid challenge: expected lawStatements/obligations lists and complete goal objects")
     laws = challenge["lawStatements"]
     binding = digest(challenge)
     return [{"law": laws[goal["law"]] if type(goal.get("law")) is int and 0 <= goal["law"] < len(laws) else None, "obligation": index,
@@ -132,15 +138,18 @@ def main() -> None:
         checked = None
     document = project(coverage, statements, pins, checked)
     document["sourceIdentity"] = source
-    binding = {"inputs": pins, "source": source}
+    binding = {"inputs": pins, "source": source, "evidence": document["evidenceDigest"]}
     document["inputDigest"] = digest(binding)
     if args.challenge:
         raw = sys.stdin.buffer.read() if str(args.challenge) == "-" else args.challenge.read_bytes()
-        challenge = json.loads(raw)
+        try:
+            rows = challenge_rows(json.loads(raw))
+        except ValueError as error:
+            parser.error(str(error))
         challenge_digest = hashlib.sha256(raw).hexdigest()
         document["challengeDigest"] = challenge_digest
         document["inputDigest"] = digest({**binding, "challenge": challenge_digest})
-        document["generatedObligations"] = challenge_rows(challenge)
+        document["generatedObligations"] = rows
     os.set_blocking(sys.stdout.fileno(), True)
     print(json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2))
 

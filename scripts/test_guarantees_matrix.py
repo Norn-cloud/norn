@@ -93,6 +93,19 @@ class GuaranteesScenarios(unittest.TestCase):
         challenge["lawStatements"][0]["sha256"] = "b" * 64
         self.assertNotEqual(before, matrix.challenge_rows(challenge)[0]["statementDigest"])
 
+    def test_guarantees_malformed_challenges_fail_before_projection(self):
+        for invalid in [[], {}, {"lawStatements": [], "obligations": {}},
+                        {"lawStatements": [], "obligations": [None]},
+                        {"lawStatements": [], "obligations": [{}]},
+                        {"lawStatements": [], "obligations": [{"statement": {}}]}]:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "invalid challenge"):
+                matrix.challenge_rows(invalid)
+
+    def test_guarantees_input_identity_changes_with_checked_evidence(self):
+        coverage, statements, pins, checked = fixture()
+        self.assertNotEqual(matrix.project(coverage, statements, pins, checked)["inputDigest"],
+                            matrix.project(coverage, statements, pins, None)["inputDigest"])
+
     def test_generated_evidence_removal_never_increases_assurance(self):
         rng = random.Random(213)
         rank = {"unknown": 0, "tested": 1, "proved": 2}
