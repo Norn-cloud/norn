@@ -162,7 +162,9 @@ mod tests {
     fn host_admission_refuses_unchecked_and_out_of_scope_sources() {
         let overlay = format!(
             "[{}]",
-            include_str!("../../../fixtures/ir/entity-v2/artifact-set/acme-sku.extension.entity.json")
+            include_str!(
+                "../../../fixtures/ir/entity-v2/artifact-set/acme-sku.extension.entity.json"
+            )
         );
         for source in ["{}", "[{}]", "1e999999", overlay.as_str()] {
             let refusal = DevHost::new(
