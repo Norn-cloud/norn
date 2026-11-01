@@ -1115,7 +1115,19 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
         .expect("exact payload"),
     )
     .expect("Melt");
-    let instances = projected(&law, &[interface, property_types, melt]);
+    let base = vec![interface, property_types, melt];
+    assert_eq!(
+        check_artifact_set(
+            std::slice::from_ref(&law),
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None,
+            }
+        ),
+        vec![]
+    );
+    let instances = projected(&law, &base);
     assert_eq!(instances.len(), 1);
     assert_eq!(instances[0].subject.artifact_id, "jewelry.Melt.entity");
     assert_eq!(instances[0].origin.artifact_id, "core.Conversion.interface");
