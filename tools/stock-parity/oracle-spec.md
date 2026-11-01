@@ -185,7 +185,10 @@ only a real dump from the Norn driver qualifies cross-engine parity.
 
 - **CP2-fresh-scheduler-dispatch:** a fresh fork with the committed 10-second
   scheduler tick and once-per-minute valuation Cron reproduced a queued repost
-  on cancellation. Native diagnostics reported scheduler enabled and one worker
+  at the first cancellation for both methods. Ten preceding checkpoints passed
+  exact Q/V and balanced GL. Both cancel-return commands were accepted, but
+  their snapshots timed out at the 120-second settlement bound. Native
+  diagnostics reported scheduler enabled and one worker
   online, but both valuation jobs had no `last_execution` and Scheduled Job Log
   was empty. The scheduler process was running and its logs were empty. This
   falsifies stale errors from the earlier development fork as the sole cause.
