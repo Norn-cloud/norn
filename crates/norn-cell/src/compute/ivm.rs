@@ -1,5 +1,13 @@
 //! QUERY-ENGINE-1: receipt-driven maintenance at the exact cell frontier.
-use super::*;
+use super::{Contributions, Engine, QueryContext, QueryResult, Totals, finish, refused};
+use crate::{
+    CellError, CellStore, ObjectRecord,
+    engine::SqlEngine,
+    reactive::{BudgetedRead, DecodeBudget, ReactiveLimits},
+};
+use norn_checker::metric::compute::{QuestionPlan, contribution::project};
+use norn_ir::ResourceLimitProfile;
+use std::collections::BTreeSet;
 
 /// Private complete generation; restart explicitly rebuilds from the cell.
 #[derive(Clone)]

@@ -81,6 +81,31 @@ fn skipped_receipt_or_changed_population_refuses_without_partial_publication() {
     assert!(view.advance(&store, context.clone(), |_| Ok(true)).is_err());
     assert_eq!(view.result(), &before);
     context.authorization_epoch = 1;
+    store
+        .commit(&CommitBatch {
+            world: WORLD.into(),
+            scope: "synthetic".into(),
+            logical_time: CLOCK,
+            writes: vec![put(
+                "SYN-MELT-15-0",
+                75_000,
+                70_000,
+                "2026-10-23T00:00:00Z",
+                "gold",
+            )],
+            ..CommitBatch::default()
+        })
+        .expect("one correction");
+    assert!(
+        view.advance(&store, context.clone(), |_| Err(
+            norn_cell::CellError::ComputeRefused("test.refusal")
+        ))
+        .is_err()
+    );
+    assert_eq!(view.result(), &before);
+    view.advance(&store, context.clone(), |_| Ok(true))
+        .expect("retry the same receipt");
+    let before = view.result().clone();
     for id in ["a", "b"] {
         store
             .commit(&CommitBatch {
