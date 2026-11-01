@@ -53,7 +53,7 @@ export const Source = Norn.sourceSchema({
 
 export const Mapping = Norn.mapping({
   id: "demo.erpnext.measurements.mapping", title: "Synthetic ERPNext measurement evidence mapping", version: "0.1.0",
-  source: { schemaId: "demo.erpnext.measurements.source", version: "0.1.0", sha256: "0000000000000000000000000000000000000000000000000000000000000000" },
+  source: { schemaId: "demo.erpnext.measurements.source", version: "0.1.0", sha256: "5fcb06b5dccda0b547fc854cb0056ef618d0ec68d6f312cfd1928026ad2e9fce" },
   sourceContract: { kind: "generic" }, interfaces: [Measurement],
   maps: [{
     id: "measurement", source: { dataset: "Stock Entry Measurement" }, target: { type: StockEntryMeasurement, interface: Measurement },

@@ -1,0 +1,184 @@
+{
+  "artifactId": "demo.erpnext.measurements.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic ERPNext custom measurement profile",
+  "namespace": "demo",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-feed-replay",
+      "version": "0.1.0"
+    },
+    "codeSets": [
+      {
+        "dataset": "Stock Entry Measurement",
+        "field": "custom_metal",
+        "id": "metal",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "gold"
+          },
+          {
+            "value": "silver"
+          }
+        ]
+      },
+      {
+        "dataset": "Stock Entry Measurement",
+        "field": "custom_role",
+        "id": "role",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "input"
+          },
+          {
+            "value": "output"
+          },
+          {
+            "value": "loss"
+          }
+        ]
+      }
+    ],
+    "constraints": [
+      {
+        "dataset": "Stock Entry Measurement",
+        "fields": [
+          "name"
+        ],
+        "id": "row_identity",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "Stock Entry Measurement",
+        "kind": "child_document",
+        "nativeName": "Synthetic Stock Entry custom measurement row"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "Stock Entry Measurement",
+        "name": "name",
+        "nativeType": "Data",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Stock Entry Measurement",
+        "name": "parent",
+        "nativeType": "Link",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Stock Entry Measurement",
+        "name": "custom_metal",
+        "nativeType": "Select",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Stock Entry Measurement",
+        "name": "custom_role",
+        "nativeType": "Select",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Stock Entry Measurement",
+        "name": "custom_gross_grams",
+        "nativeType": "Decimal",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Stock Entry Measurement",
+        "name": "custom_purity",
+        "nativeType": "Decimal",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Stock Entry Measurement",
+        "name": "custom_fine_grams",
+        "nativeType": "Decimal",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Stock Entry Measurement",
+        "name": "custom_occurred_at",
+        "nativeType": "Datetime",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Stock Entry Measurement",
+        "name": "custom_lot",
+        "nativeType": "Link",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-10-25T23:59:59Z",
+    "rawMetadata": {
+      "sha256": "91385b57e376c46d0b3b53db6f746a5f0ab7891a37d5046a6a568edf8234ddaa",
+      "uri": "https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558867021"
+    },
+    "source": {
+      "instance": "demo",
+      "system": "synthetic-erpnext",
+      "version": "16-custom-measurements-v1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

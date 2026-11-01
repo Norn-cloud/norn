@@ -11,11 +11,14 @@ fn compiled() -> CompiledMapping {
         .iter().flat_map(|dir| fs::read_dir(root.join(dir)).expect("artifacts").map(|entry| {
             serde_json::from_str(&fs::read_to_string(entry.expect("entry").path()).expect("read")).expect("artifact")
         })).collect();
-    // Only the closed core-physics slice is needed; core.Order still names core.Party.
-    artifacts.retain(|a| a.artifact_id != "core.Order.interface" && a.artifact_id != "commerce.SalesOrder.entity");
+    artifacts.retain(|a| a.artifact_id.starts_with("demo.") || [
+        "core.value_types.entity", "std.value_types.entity", "core.Agent.interface", "core.AgentRole.interface",
+        "core.Resource.interface", "core.EconomicEvent.interface", "core.Commitment.interface",
+        "core.Hold.interface", "core.LedgerEffect.interface", "core.Claim.interface",
+    ].contains(&a.artifact_id.as_str()));
     let source = artifacts.iter().find(|a| a.artifact_id == "demo.erpnext.measurements.source").expect("source");
     let mapping = artifacts.iter().find(|a| a.artifact_id == "demo.erpnext.measurements.mapping").expect("mapping");
-    assert_eq!(mapping.payload.to_json_value()["source"]["sha256"].as_str(), Some(ArtifactRef::of(source).expect("hash").sha256.as_str()));
+    assert_eq!(serde_json::to_value(mapping).expect("JSON")["payload"]["source"]["sha256"].as_str(), Some(ArtifactRef::of(source).expect("hash").sha256.as_str()));
     compile_mapping_artifact(mapping, &artifacts, &[]).unwrap_or_else(|d| panic!("admission: {d:#?}"))
 }
 
@@ -65,11 +68,11 @@ fn d1a_exact_measurements_history_and_showcase() {
         row(15, 0, "output", 58_800, "1.000000"), row(15, 1, "output", 73_500, "1.000000"),
         row(15, 2, "output", 78_400, "1.000000"), row(15, 3, "output", 83_300, "1.000000"),
     ], &recorded).expect("showcase");
-    let total: norn_ir::Decimal = showcase.iter().map(|r| {
+    let outputs = showcase.iter().map(|r| {
         let RuntimeValue::Number(n) = &r.invocations[0].input["fine_grams"] else { panic!("exact decimal") };
-        n.clone()
-    }).sum();
-    assert_eq!(total.to_string(), "294");
+        n.to_string()
+    }).collect::<Vec<_>>();
+    assert_eq!(outputs, ["58.8", "73.5", "78.4", "83.3"]);
     assert_eq!(gold_inputs[60..].iter().sum::<i64>(), 300_000);
     for record in &records {
         assert!(record.links.is_empty(), "no canonical promotion before link qualification");

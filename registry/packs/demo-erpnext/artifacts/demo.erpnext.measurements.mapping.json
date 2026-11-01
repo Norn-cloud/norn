@@ -1,0 +1,112 @@
+{
+  "artifactId": "demo.erpnext.measurements.mapping",
+  "dependencies": [
+    {
+      "artifactId": "demo.erpnext.measurements.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "demo.erpnext.Measurement.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "demo.erpnext.StockEntryMeasurement.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "Synthetic ERPNext measurement evidence mapping",
+  "namespace": "demo",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "demo.erpnext.Measurement.interface"
+    ],
+    "maps": [
+      {
+        "gaps": [
+          {
+            "member": "lot",
+            "note": "Requires the admitted lane C Holding/MetalLot mapping; a catalog Item is never a lot.",
+            "reason": "deferred"
+          },
+          {
+            "member": "event",
+            "note": "Requires lane C conversion identity and multi-object roles; these rows grant no posting authority.",
+            "reason": "deferred"
+          }
+        ],
+        "id": "measurement",
+        "ignoredFields": [
+          {
+            "field": "custom_lot",
+            "reason": "Retained in the source document; canonical lot resolution is an explicit gap."
+          }
+        ],
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.name"
+          },
+          {
+            "property": "metal",
+            "value": "input.custom_metal"
+          },
+          {
+            "property": "role",
+            "value": "input.custom_role"
+          },
+          {
+            "property": "gross_grams",
+            "value": "input.custom_gross_grams"
+          },
+          {
+            "property": "purity",
+            "value": "input.custom_purity"
+          },
+          {
+            "property": "fine_grams",
+            "value": "input.custom_fine_grams"
+          },
+          {
+            "property": "occurred_at",
+            "value": "input.custom_occurred_at"
+          }
+        ],
+        "source": {
+          "dataset": "Stock Entry Measurement"
+        },
+        "sourceRecord": "input.parent + '/' + input.name",
+        "subject": "input.name",
+        "target": {
+          "entity": "demo.erpnext.StockEntryMeasurement.entity",
+          "interface": "demo.erpnext.Measurement.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "demo.erpnext.measurements.source",
+      "sha256": "5fcb06b5dccda0b547fc854cb0056ef618d0ec68d6f312cfd1928026ad2e9fce",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
