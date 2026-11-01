@@ -66,7 +66,9 @@ def project(coverage: dict, statements: dict, pins: dict, checked: dict | None) 
 
     def supported(system: str, layer: str, entries: list) -> bool:
         return bool(entries) and all(
-            entry["artifact"] in evidence and entry["selectors"] and any(
+            entry["artifact"] in evidence and entry["selectors"]
+            and (layer != "runtime" or all(selector.startswith("test:") for selector in entry["selectors"]))
+            and any(
                 gate["result"] == "pass" and gate["role"] == "claim-evidence"
                 and {"subsystem": system, "layer": layer} in gate["classifications"]
                 and canonical_command(gate["command"]) == canonical_command(entry["command"])
