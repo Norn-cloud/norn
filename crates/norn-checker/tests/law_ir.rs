@@ -114,6 +114,7 @@ fn law_transitive_diamond_is_one_instance_per_subject_with_all_paths() {
         );
         assert_eq!(instance.origin.artifact_id, "core.Order.interface");
         assert_eq!(instance.paths.len(), 2);
+        assert_ne!(instance.paths[0], instance.paths[1]);
         assert!(
             instance
                 .paths
@@ -360,6 +361,10 @@ fn law_contained_instances_keep_origins_and_import_diamonds() {
     let instances = projected(&law, &base);
     assert_eq!(instances.len(), 1);
     assert_eq!(instances[0].instance_paths.len(), 2);
+    assert_ne!(
+        instances[0].instance_paths[0],
+        instances[0].instance_paths[1]
+    );
     assert_eq!(instances[0].origin.artifact_id, "core.Order.interface");
     assert_eq!(
         instances[0].subject.artifact_id,
