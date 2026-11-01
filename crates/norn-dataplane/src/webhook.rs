@@ -131,7 +131,7 @@ pub fn verify_hmac_sha256(
 ///
 /// # Errors
 ///
-/// [`IngestError::InvalidTimestamp`].
+/// [`IngestError::InvalidTimestamp`], including sub-microsecond precision.
 pub fn normalize_frappe_datetime(value: &str) -> Result<String, IngestError> {
     let datetime: jiff::civil::DateTime =
         value
@@ -141,6 +141,12 @@ pub fn normalize_frappe_datetime(value: &str) -> Result<String, IngestError> {
                 value: value.to_owned(),
                 reason: error.to_string(),
             })?;
+    if datetime.subsec_nanosecond().checked_rem(1000) != Some(0) {
+        return Err(IngestError::InvalidTimestamp {
+            value: value.to_owned(),
+            reason: "Frappe timestamps cannot contain sub-microsecond precision".to_owned(),
+        });
+    }
     Ok(format_frappe_datetime(datetime))
 }
 

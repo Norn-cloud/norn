@@ -583,6 +583,12 @@ mod tests {
     fn sweep_hydration_conforms() {
         let sweep = sweep();
         let command = sweep.plan(SweepFeed::Documents, None).expect("plan");
+        for timestamp in ["2026-11-01 00:00:00.1234567", "2026-11-01 00:00:00.1234568"] {
+            assert!(matches!(
+                normalize_frappe_datetime(timestamp),
+                Err(IngestError::InvalidTimestamp { .. })
+            ));
+        }
         let (listing, full) = hydrated_inputs("row");
         assert_eq!(
             sweep
