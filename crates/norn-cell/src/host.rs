@@ -1436,6 +1436,9 @@ where
                 },
             }),
             Err(GuardedError::Guard(refusal)) => Err(refusal),
+            Err(GuardedError::Store(CellError::Quantity(reason))) => {
+                Err(CommitError::Quantity(reason))
+            }
             Err(GuardedError::Store(error)) => Err(CommitError::Host(error)),
         }
     }
