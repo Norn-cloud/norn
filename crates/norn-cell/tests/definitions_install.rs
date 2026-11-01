@@ -4263,7 +4263,7 @@ async fn quantity_retry_binds_first_definition_and_submitted_values_before_new_d
         },
     });
     let first = cell
-        .commit_with_quantity(commit.clone(), &quantity, "first")
+        .commit_with_partition_postings(commit.clone(), std::slice::from_ref(&quantity), "first")
         .expect("combined first commit");
     let pinned = cell
         .store()
@@ -4292,8 +4292,12 @@ async fn quantity_retry_binds_first_definition_and_submitted_values_before_new_d
     cell.advance_to(LogicalTime::from_millis(4));
     let before = cell.store().read().dump().expect("dump");
     assert_eq!(
-        cell.commit_with_quantity(commit.clone(), &quantity, "first")
-            .expect("old input replays before defaults"),
+        cell.commit_with_partition_postings(
+            commit.clone(),
+            std::slice::from_ref(&quantity),
+            "first"
+        )
+        .expect("old input replays before defaults"),
         first
     );
     assert_eq!(
@@ -4303,7 +4307,11 @@ async fn quantity_retry_binds_first_definition_and_submitted_values_before_new_d
     let mut changed_expectation = commit.clone();
     changed_expectation.writes[0].expected = FactVersion(1);
     assert!(matches!(
-        cell.commit_with_quantity(changed_expectation, &quantity, "first"),
+        cell.commit_with_partition_postings(
+            changed_expectation,
+            std::slice::from_ref(&quantity),
+            "first"
+        ),
         Err(norn_kernel::CommitError::Host(
             CellError::IdempotencyConflict(_)
         ))
@@ -4313,7 +4321,7 @@ async fn quantity_retry_binds_first_definition_and_submitted_values_before_new_d
         values.insert("tag".into(), Value::String("later-default".into()));
     }
     assert!(matches!(
-        cell.commit_with_quantity(changed, &quantity, "first"),
+        cell.commit_with_partition_postings(changed, std::slice::from_ref(&quantity), "first"),
         Err(norn_kernel::CommitError::Host(
             CellError::IdempotencyConflict(_)
         ))
@@ -4358,7 +4366,7 @@ async fn quantity_retry_binds_first_definition_and_submitted_values_before_new_d
     .expect("restored host");
     assert_eq!(
         restored
-            .commit_with_quantity(commit, &quantity, "first")
+            .commit_with_partition_postings(commit, std::slice::from_ref(&quantity), "first")
             .expect("restored retry"),
         first
     );
