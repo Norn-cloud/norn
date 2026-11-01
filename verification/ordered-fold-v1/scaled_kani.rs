@@ -190,8 +190,8 @@ fn rescale_invalid_scales_and_full_width_boundaries_refuse() {
 fn decimal_site_scale_one_to_zero_matches_integer_reference() {
     let n = i128::from(kani::any::<i8>());
     let rounding = mode();
-    let result = ScaledArithmetic { scale: 0, rounding }
-        .rescale(Decimal::from_i128_with_scale(n, 1));
+    let result =
+        ScaledArithmetic { scale: 0, rounding }.rescale(Decimal::from_i128_with_scale(n, 1));
     let remainder = n % 10;
     if rounding == Rounding::Refuse && remainder != 0 {
         assert!(result.is_err());

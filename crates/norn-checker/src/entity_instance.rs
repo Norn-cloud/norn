@@ -1210,7 +1210,8 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
         ) if candidate_unit == previous_unit
             && candidate_currency == previous_currency
             && candidate_rounding.unwrap_or(norn_ir::Rounding::Refuse)
-                == previous_rounding.unwrap_or(norn_ir::Rounding::Refuse) => {
+                == previous_rounding.unwrap_or(norn_ir::Rounding::Refuse) =>
+        {
             Some(candidate_scale.0 <= previous_scale.0)
         }
         (

@@ -327,31 +327,78 @@ fn record_members_are_closed_typed_and_acyclic() {
 
 #[test]
 fn val_round_declarations_fail_closed_until_exact_site_binding() {
-    for mode in [None, Some("refuse"), Some("toward_zero"), Some("half_even"), Some("half_away_from_zero")] {
+    for mode in [
+        None,
+        Some("refuse"),
+        Some("toward_zero"),
+        Some("half_even"),
+        Some("half_away_from_zero"),
+    ] {
         let mut ty = serde_json::json!({"kind":"decimal","scale":2});
-        if let Some(mode) = mode { ty["rounding"] = mode.into(); }
-        let defs: Vec<PropertyTypeDef> = serde_json::from_value(serde_json::json!([{"name":"a.amount","type":ty}])).expect("typed declaration");
+        if let Some(mode) = mode {
+            ty["rounding"] = mode.into();
+        }
+        let defs: Vec<PropertyTypeDef> =
+            serde_json::from_value(serde_json::json!([{"name":"a.amount","type":ty}]))
+                .expect("typed declaration");
         let findings = check_property_type_defs(&defs, &BTreeSet::new());
-        if matches!(mode, None | Some("refuse")) { assert!(findings.is_empty()); }
-        else { assert!(findings.iter().any(|d| d.code == "core.values.inexact" && d.span.as_ref().is_some_and(|s| s.pointer == "/0/type/rounding"))); }
+        if matches!(mode, None | Some("refuse")) {
+            assert!(findings.is_empty());
+        } else {
+            assert!(findings.iter().any(|d| {
+                d.code == "core.values.inexact"
+                    && d.span
+                        .as_ref()
+                        .is_some_and(|s| s.pointer == "/0/type/rounding")
+            }));
+        }
     }
 }
 
 #[test]
 fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
     use norn_ir::{PropertyType, Rounding, WholeNumber};
-    let mut site = PropertyType::Decimal { scale: WholeNumber(2), rounding: None, unit: None, currency_source: None };
+    let mut site = PropertyType::Decimal {
+        scale: WholeNumber(2),
+        rounding: None,
+        unit: None,
+        currency_source: None,
+    };
     assert!(norn_expr::rescale_decimal(&site, &"1.005".parse().expect("number")).is_err());
-    assert_eq!(norn_expr::rescale_decimal(&site, &"1.0100".parse().expect("number")).expect("exact").as_str(), "1.01");
-    if let PropertyType::Decimal { rounding, .. } = &mut site { *rounding = Some(Rounding::HalfAwayFromZero); }
+    assert_eq!(
+        norn_expr::rescale_decimal(&site, &"1.0100".parse().expect("number"))
+            .expect("exact")
+            .as_str(),
+        "1.01"
+    );
+    if let PropertyType::Decimal { rounding, .. } = &mut site {
+        *rounding = Some(Rounding::HalfAwayFromZero);
+    }
     for text in ["1.005", "-1.005"] {
-        assert_eq!(norn_expr::rescale_decimal(&site, &text.parse().expect("number")).expect("rounds").as_str(), if text.starts_with('-') { "-1.01" } else { "1.01" });
+        assert_eq!(
+            norn_expr::rescale_decimal(&site, &text.parse().expect("number"))
+                .expect("rounds")
+                .as_str(),
+            if text.starts_with('-') {
+                "-1.01"
+            } else {
+                "1.01"
+            }
+        );
     }
     for scale in [19, 28, u64::MAX] {
-        if let PropertyType::Decimal { scale: declared, .. } = &mut site { declared.0 = scale; }
+        if let PropertyType::Decimal {
+            scale: declared, ..
+        } = &mut site
+        {
+            declared.0 = scale;
+        }
         assert!(norn_expr::rescale_decimal(&site, &"0".parse().expect("number")).is_err());
     }
-    assert!(norn_expr::rescale_decimal(&PropertyType::Integer {}, &"1".parse().expect("number")).is_err());
+    assert!(
+        norn_expr::rescale_decimal(&PropertyType::Integer {}, &"1".parse().expect("number"))
+            .is_err()
+    );
 }
 
 proptest::proptest! {

@@ -20,11 +20,23 @@ use crate::{ExprError, Value};
 /// # Errors
 /// Returns a typed evaluation error for a non-Decimal site, or an invalid-number
 /// error for unsupported scale (above 18), inexact refusal or checked overflow.
-pub fn rescale_decimal(site: &norn_ir::PropertyType, value: &crate::Number) -> Result<crate::Number, ExprError> {
-    let norn_ir::PropertyType::Decimal { scale, rounding, .. } = site else {
-        return Err(ExprError::Evaluation { message: "exact site must be a declared Decimal".to_owned() });
+pub fn rescale_decimal(
+    site: &norn_ir::PropertyType,
+    value: &crate::Number,
+) -> Result<crate::Number, ExprError> {
+    let norn_ir::PropertyType::Decimal {
+        scale, rounding, ..
+    } = site
+    else {
+        return Err(ExprError::Evaluation {
+            message: "exact site must be a declared Decimal".to_owned(),
+        });
     };
-    crate::convert::rescale_number(value, scale.0, rounding.unwrap_or(norn_ir::Rounding::Refuse))
+    crate::convert::rescale_number(
+        value,
+        scale.0,
+        rounding.unwrap_or(norn_ir::Rounding::Refuse),
+    )
 }
 
 /// A compiled ZEN standard expression, ready to evaluate repeatedly.

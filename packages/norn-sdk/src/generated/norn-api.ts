@@ -3940,6 +3940,11 @@ export interface components {
             /** @enum {string} */
             kind: "decimal";
             /**
+             * @description VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.
+             * @enum {string}
+             */
+            rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
+            /**
              * Format: uint64
              * @description Fraction digits every value is held at (`2` for cents). At most 28,
              *     the exact range of ZEN Expression's decimal (checked by

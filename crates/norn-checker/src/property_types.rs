@@ -456,7 +456,12 @@ pub(crate) fn check_type_members(
                 check_type_members(&pointer, &member.property_type, out);
             }
         }
-        PropertyType::Decimal { scale, unit, rounding, .. } => {
+        PropertyType::Decimal {
+            scale,
+            unit,
+            rounding,
+            ..
+        } => {
             // VAL-ROUND: a decoded policy cannot activate legacy expression arithmetic.
             if rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse) {
                 out.push(error(crate::property_codec::INEXACT,

@@ -140,7 +140,11 @@ pub enum PropertyType {
         /// `norn-checker`).
         scale: WholeNumber,
         /// VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.
-        #[serde(default, deserialize_with = "present_non_null", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "present_non_null",
+            skip_serializing_if = "Option::is_none"
+        )]
         #[schemars(with = "crate::Rounding")]
         rounding: Option<crate::Rounding>,
         #[serde(

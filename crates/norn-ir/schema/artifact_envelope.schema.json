@@ -7796,6 +7796,10 @@
               "type": "string",
               "const": "decimal"
             },
+            "rounding": {
+              "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+              "$ref": "#/$defs/Rounding"
+            },
             "scale": {
               "description": "Fraction digits every value is held at (`2` for cents). At most 28,\nthe exact range of ZEN Expression's decimal (checked by\n`norn-checker`).",
               "$ref": "#/$defs/WholeNumber"
