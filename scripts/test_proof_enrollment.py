@@ -194,6 +194,18 @@ class CoverageLayoutTests(unittest.TestCase):
                     with self.assertRaisesRegex(coverage_manifest.InvalidCoverageLayout, expected):
                         coverage_manifest.load(target)
 
+    def test_subsystem_order_is_identical_in_old_new_and_mixed_layouts(self):
+        expected = {"subsystems": [{"id": "a-b"}, {"id": "a"}]}
+        for split in (False, True):
+            with tempfile.TemporaryDirectory() as temporary:
+                target = Path(temporary) / "manifest"
+                coverage_manifest.write(expected, target, split_entries=split)
+                self.assertEqual(coverage_manifest.load(target), expected)
+                if split:
+                    (target / "subsystems/a-b/index.json").rename(target / "subsystems/a-b.json")
+                    (target / "subsystems/a-b").rmdir()
+                    self.assertEqual(coverage_manifest.load(target), expected)
+
     def test_entry_field_validation(self):
         for body in ({"../escaped": []}, {"a": {"b": []}, "a.b": []}):
             with tempfile.TemporaryDirectory() as temporary:

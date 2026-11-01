@@ -135,7 +135,7 @@ def load(directory: Path = COVERAGE) -> dict[str, Any]:
     if "subsystems" in document:
         raise InvalidCoverageLayout(f"{INDEX} must not list subsystems; each has its own file")
     subsystems = []
-    for entry in sorted((directory / SUBSYSTEMS).iterdir()):
+    for entry in sorted((directory / SUBSYSTEMS).iterdir(), key=lambda path: path.name if path.is_file() else path.name + ".json"):
         body = _subsystem(entry) if entry.is_dir() else _object(entry)
         if "id" in body:
             raise InvalidCoverageLayout(f"{entry.name}: file name is the subsystem id; drop the id field")
