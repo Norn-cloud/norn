@@ -46,7 +46,8 @@ bench version --format json
 dc exec -T web bash -lc 'cd /home/frappe/frappe-bench; bench version --format json' > versions.json
 python3 - <<'PY'
 import json
-versions = json.load(open('versions.json'))
+versions = {v['app']: v for v in json.load(open('versions.json'))}
+json.dump(versions, open('versions.json', 'w'))
 assert all(versions[a]['version'].startswith('16.') for a in ('frappe', 'erpnext')), 'Requires v16'
 PY
 dc exec -d web bash -lc 'cd /home/frappe/frappe-bench; bench serve --port 8000 > /tmp/parity-web.log 2>&1'
