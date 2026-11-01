@@ -78,14 +78,23 @@ pub fn resolve_current_parameter<'a>(
         return Err(ParameterError::Invalid);
     }
     let projected = records.iter().map(project).collect::<Result<Vec<_>, _>>()?;
-    let candidate = |(setting, scope)| ParameterCandidate {
-        setting,
-        scope,
-        revision: context.revision,
-    };
-    let candidates: Vec<_> = projected.iter().map(candidate).collect();
+    let candidates: Vec<_> = projected
+        .iter()
+        .map(|(setting, scope)| ParameterCandidate {
+            setting,
+            scope,
+            revision: context.revision,
+        })
+        .collect();
     let default_projection = default.map(project).transpose()?;
-    let default_candidate = default_projection.as_ref().map(candidate);
+    let default_candidate =
+        default_projection
+            .as_ref()
+            .map(|(setting, scope)| ParameterCandidate {
+                setting,
+                scope,
+                revision: context.revision,
+            });
     let selected = resolve_parameter(&candidates, context, default_candidate.as_ref())?;
     let index = candidates
         .iter()
