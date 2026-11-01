@@ -160,11 +160,11 @@ fn interpretation_contracts(document: &LawInterpretationIr, base: &[ArtifactEnve
                     (Member::Type { type_name: a }, Member::Type { type_name: b }) if a == &source && b == &target));
                 arity == target_arity && (interpreted || (source == target && catalog.target_types(&source).is_some()))
             }
-            (Member::State { type_name: a, lifecycle: l, state: s }, Member::State { type_name: b, lifecycle: r, state: t })
-            | (Member::Transition { type_name: a, lifecycle: l, transition: s }, Member::Transition { type_name: b, lifecycle: r, transition: t }) => {
-                let source = catalog.object_type_named(a).and_then(Result::ok).and_then(|o| o.lifecycle(l));
-                let target = catalog.object_type_named(b).and_then(Result::ok).and_then(|o| o.lifecycle(r));
-                l == r && s == t && source.is_some() && source == target
+            (Member::State { type_name: source_type, lifecycle: source_lifecycle, state: source_id }, Member::State { type_name: target_type, lifecycle: target_lifecycle, state: target_id })
+            | (Member::Transition { type_name: source_type, lifecycle: source_lifecycle, transition: source_id }, Member::Transition { type_name: target_type, lifecycle: target_lifecycle, transition: target_id }) => {
+                let source = catalog.object_type_named(source_type).and_then(Result::ok).and_then(|o| o.lifecycle(source_lifecycle));
+                let target = catalog.object_type_named(target_type).and_then(Result::ok).and_then(|o| o.lifecycle(target_lifecycle));
+                source_lifecycle == target_lifecycle && source_id == target_id && source.is_some() && source == target
             }
             _ => false,
         }
