@@ -38,15 +38,12 @@ pub(crate) fn resolve(
             }
             let Some(inherited) = parents
                 .iter()
-                .map(|name| roles.get(name).copied())
+                .map(|name| roles.get(name).and_then(|role| role.as_ref().ok()).copied())
                 .collect::<Option<Vec<_>>>()
             else {
                 continue;
             };
-            let role = inherited
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()
-                .and_then(|parents| ConceptRole::resolve(*declared, &parents));
+            let role = ConceptRole::resolve(*declared, &inherited);
             roles.insert(name.clone(), role);
             changed = true;
         }

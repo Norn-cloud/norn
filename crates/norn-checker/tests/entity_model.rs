@@ -1925,21 +1925,20 @@ proptest::proptest! {
     #[test]
     fn graph_role_dags_match_independent_bitset_oracle(nodes in proptest::collection::vec((proptest::option::of(proptest::bool::ANY), proptest::num::u16::ANY), 1..12)) {
         let (roles, edges): (Vec<_>, Vec<_>) = nodes.into_iter().unzip();
-        let mut expected: Vec<Result<bool, &str>> = Vec::new();
+        let mut expected: Vec<Option<Result<bool, &str>>> = Vec::new();
         for (i, declared) in roles.iter().enumerate() {
-            let parents: Vec<_> = (0..i).filter(|p| edges[i] & (1 << p) != 0).map(|p| expected[p]).collect();
-            let bits = parents.iter().filter_map(|p| p.as_ref().ok()).fold(0_u8, |bits, role| bits | if *role { 2 } else { 1 });
-            expected.push(if let Some(error) = parents.iter().find_map(|p| p.as_ref().err()) {
-                Err(*error)
-            } else if bits == 3 {
+            let parents: Option<Vec<_>> = (0..i).filter(|p| edges[i] & (1 << p) != 0).map(|p| expected[p].and_then(Result::ok)).collect();
+            let Some(parents) = parents else { expected.push(None); continue; };
+            let bits = parents.iter().fold(0_u8, |bits, role| bits | if *role { 2 } else { 1 });
+            expected.push(Some(if bits == 3 {
                 Err("core.graph.role_conflict")
             } else if declared.is_some_and(|role| bits != 0 && bits != if role { 2 } else { 1 }) {
                 Err("core.graph.role_mismatch")
             } else {
                 Ok(declared.unwrap_or(bits == 2))
-            });
+            }));
         }
-        let refusals: Vec<_> = expected.into_iter().filter_map(Result::err).collect();
+        let refusals: Vec<_> = expected.into_iter().flatten().filter_map(Result::err).collect();
         proptest::prop_assert_eq!(role_diagnostics(&roles, &edges), refusals);
     }
 }

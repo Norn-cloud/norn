@@ -681,7 +681,7 @@ impl<'a> Checker<'a, '_> {
                 self.out.push(error(
                     code,
                     format!("concept {name} has incompatible declared or inherited roles"),
-                    span_at(&pointer(root, &index.to_string()), "role"),
+                    span_at(&pointer(root, &index.to_string()), &["role"]),
                 ));
             }
         }
