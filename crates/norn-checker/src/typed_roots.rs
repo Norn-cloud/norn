@@ -390,7 +390,7 @@ fn validate_action_slice(
                 });
                 let time_ok =
                     action_input_field_type(payload.get("inputSchema"), effective_at.as_str())
-                        == Some(Type::String);
+                        .is_some_and(|ty| is_string_key_type(&ty));
                 if !source_ok || !default_ok || !time_ok {
                     diagnostics.push(invalid_diagnostic(ACTION_CODE, "parameter requires an earlier same-type list, a string effective instant and an optional earlier same-type default", format!("{path}.key"), artifact_id));
                 }
