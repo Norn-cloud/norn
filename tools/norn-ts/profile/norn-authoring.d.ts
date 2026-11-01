@@ -208,7 +208,6 @@ declare module "@norn/authoring" {
       /** Stored properties maintained by declared rules, never action inputs. */
       readonly protected?: ReadonlyArray<keyof S["Type"] & string>
       readonly links?: ReadonlyArray<LinkSpec>
-      readonly ownedCollections?: ReadonlyArray<{ readonly id: string; readonly childType: string; readonly rowIdProperty: string; readonly orderingKey: string; readonly cascadeOnParentDelete: boolean; readonly maxRows: number }>
       readonly identity?: ReadonlyArray<KeySpec<EffectiveProperties<E, I, S["Type"]>>>
       /** Literal defaults; numbers are exact decimal literals. */
       readonly defaults?: { readonly [P in keyof S["Type"]]?: S["Type"][P] }
@@ -283,8 +282,6 @@ declare module "@norn/authoring" {
       }>
       /** Boolean ZEN Expressions over `input` and the declared `slice`. */
       readonly preconditions?: ReadonlyArray<Expression<boolean>>
-      /** Closed preparation from owned lines and linked stock masters. */
-      readonly stockPost?: import("../src/builder/action.ts").StockPost
       /** Outgoing links to existing objects, each required in the declared slice. */
       readonly createLinks?: ReadonlyArray<{
         readonly link: string

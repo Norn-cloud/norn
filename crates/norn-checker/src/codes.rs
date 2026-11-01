@@ -192,11 +192,6 @@ pub static REGISTRY: &[CodeEntry] = &[
         "the action's quantity effect or its input bindings are invalid: {detail}",
     ),
     entry(
-        "artifact_set.action.stock_post",
-        Tier::T3,
-        "the stock posting binding cannot resolve owned lines or typed masters",
-    ),
-    entry(
         "artifact_set.action.target_not_writable",
         Tier::T3,
         "{target} of {objectKind} is not writable by a generic action: {reason}",

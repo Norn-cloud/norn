@@ -1441,9 +1441,6 @@ where
                 },
             }),
             Err(GuardedError::Guard(refusal)) => Err(refusal),
-            Err(GuardedError::Store(CellError::Quantity(reason))) => {
-                Err(CommitError::Quantity(reason))
-            }
             Err(GuardedError::Store(error)) => Err(CommitError::Host(error)),
         }
     }
@@ -1612,16 +1609,6 @@ where
         )
     }
 
-    fn load_quantity(
-        &self,
-        request: &norn_ir::quantity_ledger::QuantityRequest,
-    ) -> Result<Option<norn_kernel::quantity::QuantityState>, CellError> {
-        self.store
-            .read()
-            .quantity_state(MAIN_WORLD, request)
-            .map(Some)
-    }
-
     fn commit_action_quantity(
         &mut self,
         commit: CellCommit<E, C, I>,
@@ -1636,20 +1623,7 @@ where
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let quantity = proof
-            .quantity()
-            .map(|(request, key)| (request.clone(), key.to_owned()));
-        self.commit_with_authorization(
-            commit,
-            None,
-            Some(proof),
-            quantity
-                .as_ref()
-                .map(|(request, key)| (request, key.as_str())),
-            &[],
-            &[],
-            &[],
-        )
+        self.commit_with_authorization(commit, None, Some(proof), None, &[], &[], &[])
     }
 
     fn commit_observed(

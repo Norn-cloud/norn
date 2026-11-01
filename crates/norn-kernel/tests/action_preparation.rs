@@ -347,28 +347,3 @@ fn underived_twenty_kib_input_is_retained_once_and_commits_a_small_transition() 
         )
     );
 }
-
-#[test]
-fn post_authority_requires_preparation_without_writes() {
-    let mut action = action();
-    action.stock_post = Some(serde_json::from_value(json!({
-        "operation": "receipt", "collection": "lines",
-        "partition": {"item": ["item"], "warehouse": ["destination"]},
-        "accounts": {"stock": ["destination", "stock_account"], "srbnb": ["destination", "company", "srbnb_account"], "cogs": ["destination", "company", "cogs_account"]}
-    })).unwrap());
-    let types = types();
-    let catalog = TypeCatalog::new(&types);
-    let mut storage = cell();
-    let refusal = commit_action(
-        &mut storage,
-        &catalog,
-        &call(&action, input("x"), "1.0.0"),
-        &Allow,
-    )
-    .unwrap_err();
-    assert!(matches!(
-        refusal,
-        norn_kernel::ActionRefusal::UnsupportedEffect { .. }
-    ));
-    assert!(storage.ledger().is_empty());
-}

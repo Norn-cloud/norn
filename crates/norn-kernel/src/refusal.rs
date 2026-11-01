@@ -242,7 +242,6 @@ impl<X> CommitError<X> {
             | Self::EventLimitExceeded { .. }
             | Self::IdentifierTooLong { .. }
             | Self::Overflow => RefusalCategory::Limit,
-            Self::Quantity(reason) => quantity_category(reason),
             Self::Host(_) => RefusalCategory::Internal,
         }
     }
@@ -333,7 +332,6 @@ impl<X> DecisionRefusal<X> {
             | Self::Overflow
             | Self::EnvelopeExceeded { .. }
             | Self::TurnEnvelopeExceeded { .. } => RefusalCategory::Limit,
-            Self::Quantity(reason) => quantity_category(reason),
             Self::Host(_) => RefusalCategory::Internal,
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
@@ -484,7 +482,6 @@ impl<X> DecisionRefusal<X> {
             | Self::InvariantBudgetExceeded { .. }
             | Self::TraversalLimitExceeded { .. }
             | Self::Overflow
-            | Self::Quantity(_)
             | Self::Host(_) => None,
         };
         reason.map(|(law, key, values)| RefusalReason {
@@ -511,10 +508,9 @@ impl<X> ActionRefusal<X> {
             Self::Decision(refusal) => refusal.category(),
             Self::TargetNotFound | Self::SliceObjectMissing { .. } => RefusalCategory::Visibility,
             Self::PermissionDenied { .. } => RefusalCategory::Permission,
-            Self::InsufficientStock { .. }
-            | Self::StockPosting(_)
-            | Self::PreconditionFailed { .. }
-            | Self::WriteModeFailed { .. } => RefusalCategory::Precondition,
+            Self::PreconditionFailed { .. } | Self::WriteModeFailed { .. } => {
+                RefusalCategory::Precondition
+            }
             Self::IdempotencyConflict { .. } | Self::StalePreconditionRead { .. } => {
                 RefusalCategory::Conflict
             }
@@ -687,19 +683,5 @@ impl<R: Refusable + fmt::Display> Refusable for StepError<R> {
 impl Refusable for IngressLimitExceeded {
     fn refusal(&self) -> Refusal {
         Refusal::new("ingress.limit_exceeded", RefusalCategory::Limit, self)
-    }
-}
-
-const fn quantity_category(reason: &crate::quantity::QuantityError) -> RefusalCategory {
-    use crate::quantity::QuantityError;
-    match reason {
-        QuantityError::InsufficientAvailable { .. }
-        | QuantityError::Expired
-        | QuantityError::NotExpired
-        | QuantityError::Terminal => RefusalCategory::Precondition,
-        QuantityError::StaleVersion { .. } | QuantityError::Duplicate => RefusalCategory::Conflict,
-        QuantityError::Overflow => RefusalCategory::Limit,
-        QuantityError::Corrupt | QuantityError::ClockRegression => RefusalCategory::Internal,
-        QuantityError::InvalidContract | QuantityError::InvalidReversal => RefusalCategory::Invalid,
     }
 }

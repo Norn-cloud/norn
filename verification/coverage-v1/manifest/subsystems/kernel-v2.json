@@ -136,7 +136,8 @@
     "Finite models and sampled traces are not unbounded Rust refinement.",
     "No OS/fs durability, host scheduler fairness, external delivery, authorization noninterference, or i128 overflow theorem.",
     "Quantity reservation vectors have three legs in one unit/layer partition; multi-partition vectors, reversal, account-limit admission, and growing-net-hold remainders are outside this bounded model. Existing quantity v2 regressions cover additional cases.",
-    "Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled."
+    "Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
+    "Field-authority is an unenrolled finite reference contract: its model scenarios and sampled invariant traces are reported on the PR, with no bounded-model-checked or Rust correspondence coverage claim."
   ],
   "sourceFiles": [
     "crates/norn-cli/src/eval.rs",

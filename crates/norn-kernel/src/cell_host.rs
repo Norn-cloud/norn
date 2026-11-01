@@ -74,7 +74,6 @@ use crate::snapshot_observe::{ObservationAuthorization, ObservationEvent};
 /// created only after the kernel has prepared and authorized the complete
 /// parent/child mutation, then consumed by the host admission check.
 pub struct OwnedRowsCommitProof {
-    quantity: Option<(norn_ir::quantity_ledger::QuantityRequest, String)>,
     max_events: u32,
     consumes: Option<Consumed>,
     reads: Vec<FactExpectation>,
@@ -84,13 +83,8 @@ pub struct OwnedRowsCommitProof {
 }
 
 impl OwnedRowsCommitProof {
-    pub(crate) fn new<E, C, T>(
-        commit: &CellCommit<E, C, T>,
-        max_events: u32,
-        quantity: Option<(norn_ir::quantity_ledger::QuantityRequest, String)>,
-    ) -> Self {
+    pub(crate) fn new<E, C, T>(commit: &CellCommit<E, C, T>, max_events: u32) -> Self {
         Self {
-            quantity,
             max_events,
             consumes: commit.consumes.clone(),
             reads: commit.reads.clone(),
@@ -98,15 +92,6 @@ impl OwnedRowsCommitProof {
             links: commit.links.clone(),
             link_reads: commit.link_reads.clone(),
         }
-    }
-
-    /// Kernel-prepared quantity intent and action identity, if this transaction
-    /// has one. Hosts must commit it atomically with the owned-row writes.
-    #[must_use]
-    pub fn quantity(&self) -> Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)> {
-        self.quantity
-            .as_ref()
-            .map(|(request, key)| (request, key.as_str()))
     }
 
     pub(crate) const fn max_events(&self) -> u32 {
@@ -838,9 +823,6 @@ pub enum CommitError<X> {
     /// A version or the ledger sequence would overflow.
     #[error("fact version or ledger sequence overflow")]
     Overflow,
-    /// A closed quantity operation refused the whole transaction.
-    #[error("quantity posting refused: {0}")]
-    Quantity(#[source] crate::quantity::QuantityError),
     /// The host failed; nothing was applied.
     #[error("cell host failure")]
     Host(#[source] X),
@@ -878,7 +860,6 @@ impl<X> CommitError<X> {
             Self::ObservationAuthorization => "commit.observation_authorization",
             Self::EventLimitExceeded { .. } => "commit.event_limit",
             Self::Overflow => "commit.overflow",
-            Self::Quantity(_) => "quantity.refused",
             Self::Host(_) => "commit.host",
         }
     }
@@ -1014,18 +995,6 @@ pub trait CellHost {
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>>;
 
-    /// Read verified quantity inputs for a kernel-derived action intent.
-    /// Admitted pack bounds apply; unsupported hosts return no snapshot.
-    ///
-    /// # Errors
-    /// A host read or quantity-integrity failure.
-    fn load_quantity(
-        &self,
-        _request: &norn_ir::quantity_ledger::QuantityRequest,
-    ) -> Result<Option<crate::quantity::QuantityState>, Self::Error> {
-        Ok(None)
-    }
-
     /// Atomically commit an authorized business action and its checked quantity
     /// intent. Unsupported hosts fail closed without publishing business writes.
     ///
@@ -1081,11 +1050,8 @@ pub trait CellHost {
     fn commit_owned_rows(
         &mut self,
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-        proof: OwnedRowsCommitProof,
+        _proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        if proof.quantity().is_some() {
-            return Err(CommitError::ObservationAuthorization);
-        }
         self.commit(commit)
     }
 

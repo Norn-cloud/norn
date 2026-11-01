@@ -28,13 +28,6 @@ export interface ActionCreateLink {
   readonly targetIdField: string
 }
 
-export interface StockPost {
-  readonly operation: "receipt" | "delivery"
-  readonly collection: string
-  readonly partition: { readonly item: ReadonlyArray<string>; readonly warehouse: ReadonlyArray<string> }
-  readonly accounts: { readonly stock: ReadonlyArray<string>; readonly srbnb: ReadonlyArray<string>; readonly cogs: ReadonlyArray<string> }
-}
-
 export type WriteChange = "created" | "modified" | "deleted"
 
 /** A connector command the action enqueues (ERPNext write-back through perform, #3028). */
@@ -86,7 +79,6 @@ export interface ActionDef {
   /** Boolean ZEN Expressions over `input` and the declared `slice`. */
   readonly preconditions: ReadonlyArray<string>
   readonly commands: ReadonlyArray<ActionCommand>
-  readonly stockPost?: StockPost
   readonly createLinks?: ReadonlyArray<ActionCreateLink>
   readonly writes: ReadonlyArray<{ readonly entityKind: string; readonly change: WriteChange }>
   readonly effect?: ActionEffect
@@ -155,7 +147,6 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     derive: omitEmpty(def.derive.map(({ inputRequired, ...entry }) => (inputRequired === false ? { ...entry, inputRequired } : entry))),
     preconditions: omitEmpty(def.preconditions),
     commands: omitEmpty(def.commands),
-    stockPost: def.stockPost,
     createLinks: omitEmpty(def.createLinks ?? []),
     writes: omitEmpty(def.writes),
     effectProgram: def.effect,

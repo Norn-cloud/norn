@@ -66,7 +66,8 @@ pub fn get_defs<E: SqlEngine>(
     })?;
     let installed = host
         .cell()?
-        .store().read()
+        .store()
+        .read()
         .installed_definitions(query.version)
         .map_err(Refusal::host)?
         .ok_or_else(|| {

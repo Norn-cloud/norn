@@ -155,16 +155,9 @@ export interface ControlsDeclaration {
   readonly sensitivePaths: ReadonlyArray<{ readonly objectType: string; readonly actions: ReadonlyArray<string> }>
 }
 
-export interface OwnedCollection {
-  readonly id: string; readonly childType: string; readonly rowIdProperty: string; readonly orderingKey: string; readonly cascadeOnParentDelete: boolean; readonly maxRows: number
-}
-
 export interface ObjectTypeDef extends TypeMetaBase {
   readonly controls?: ControlsDeclaration
   readonly immutable?: boolean
-}
-
-  readonly ownedCollections?: ReadonlyArray<OwnedCollection>
   readonly _tag: "ObjectType"
   readonly extends?: string
   readonly implements: ReadonlyArray<string>
@@ -224,7 +217,6 @@ export function objectType(
     readonly implements?: ReadonlyArray<string | InterfaceDef>
     readonly links?: ReadonlyArray<LinkDecl>
     readonly identity?: ReadonlyArray<KeyDecl>
-    readonly ownedCollections?: ReadonlyArray<OwnedCollection>
     readonly lifecycles?: ReadonlyArray<LifecycleDecl>
   } & At,
 ): ObjectTypeDef {
@@ -339,7 +331,6 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
               })),
             ),
             identity: omitEmpty(def.identity),
-            ownedCollections: omitEmpty(def.ownedCollections ?? []),
             lifecycles: omitEmpty(
               def.lifecycles.map((l) => ({
                 ...l,
