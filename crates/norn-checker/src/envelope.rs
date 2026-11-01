@@ -302,6 +302,13 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
     validate_root_shape(&artifact.payload, diagnostics, artifact_id, code);
     let payload = validation_json_value(&artifact.payload);
     match &artifact.payload {
+        // GRAPH-CLASS-1: a wire declaration cannot authorize unsupported execution.
+        ArtifactPayload::DefinedConcept(_) => diagnostics.push(invalid_diagnostic(
+            "core.graph.incomplete_classification",
+            "defined-concept semantic admission is not implemented",
+            "payload",
+            artifact_id,
+        )),
         ArtifactPayload::Entity(_) => validate_entity_payload(&payload, diagnostics, artifact_id),
         ArtifactPayload::Relation(relation) => {
             validate_relation_payload(&payload, diagnostics, artifact_id, &artifact.name);
@@ -420,6 +427,7 @@ const fn artifact_payload_validation_code(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema.validation.invalid_document",
         ArtifactKind::Mapping => "mapping.validation.invalid_document",
         ArtifactKind::Law => crate::verification::codes::INVALID_DOCUMENT,
+        ArtifactKind::DefinedConcept => "core.graph.incomplete_classification",
     }
 }
 
@@ -5398,6 +5406,7 @@ fn artifact_kind_key(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema",
         ArtifactKind::Mapping => "mapping",
         ArtifactKind::Law => "law",
+        ArtifactKind::DefinedConcept => "defined_concept",
     }
 }
 

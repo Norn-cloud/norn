@@ -220,6 +220,7 @@
     "crates/norn-dataplane/Cargo.toml",
     "crates/norn-dataplane/src/lib.rs",
     "crates/norn-dataplane/src/raw_observation.rs",
+    "crates/norn-ir/src/defined_concept.rs",
     "crates/norn-ir/src/definition_catalog.rs",
     "crates/norn-ir/src/entity_v2/concept_role.rs",
     "crates/norn-ir/src/mapping.rs",

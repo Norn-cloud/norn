@@ -26,6 +26,17 @@ Roles affect the catalog, presentation defaults and generated metrics, never run
 Core Agent, Resource and Claim declare `thing`; EconomicEvent, Process, Conversion,
 Exchange, Commitment, Hold and LedgerEffect declare `happening`.
 
+## Defined-concept wire contract
+
+A pack declares a separate `defined_concept` artifact in the existing envelope/payload family.
+Its strict payload contains `id`, `version`, `base: MemberRef`, `predicate: ZenExpression`,
+`dependencies: [MemberRef]`, and `bounds: ResourceLimitProfile`. The base entity has an
+exact required envelope dependency. Bounds reuse the resource profile's existing fields
+and units, capped by the admitted profile; there is no separate classifier limits type.
+Classifications keep base object IDs, never store writable membership, and trigger no effects.
+The initial wire-only cut refuses semantic admission with `core.graph.incomplete_classification`;
+GRAPH-DAG-1 admission and GRAPH-CLASS-1 evaluation remove that refusal only for qualified semantics.
+
 ## Evaluation and enforcement
 
 Admission computes effective types from retained exact definitions, resolves interfaces and specialization, rejects cycles and conflicting diamond members. Reuse `EffectiveCatalog::target_types` for law subject resolution. Inherited constraints are conjoined, never replaced. A lifecycle transition selects its declared source state, evaluates all inherited/local guards and produces explicit effects for 04.

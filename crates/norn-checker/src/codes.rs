@@ -476,6 +476,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "catalog projections cannot activate definitions",
     ),
     entry(
+        "core.graph.incomplete_classification",
+        Tier::T3,
+        "classification requires complete supported semantic admission and evaluation",
+    ),
+    entry(
         "core.graph.role_conflict",
         Tier::T3,
         "inherited concept roles disagree",

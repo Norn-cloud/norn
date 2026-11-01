@@ -1288,3 +1288,23 @@ fn graph_catalog_roles_follow_declarations_not_lifecycle_shape() {
             .all(|row| row.role == norn_ir::ConceptRole::Happening)
     );
 }
+
+#[test]
+fn defined_concept_wire_support_cannot_activate_unimplemented_semantics() {
+    let declaration = envelope(json!({
+        "irVersion": "0.1", "artifactId": "test.HighValue", "kind": "defined_concept",
+        "namespace": "test", "name": "HighValue", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [{ "artifactId": "test.Item.entity", "kind": "entity", "version": "1.0.0", "required": true }],
+        "provenance": { "source": "system" }, "payload": {
+            "id": "test.HighValue", "version": "1.0.0",
+            "base": { "artifactId": "test.Item.entity", "version": "1.0.0", "member": { "kind": "type", "typeName": "test.Item" } },
+            "predicate": "self.amount > 100", "dependencies": [],
+            "bounds": norn_ir::ResourceLimitProfile::norn_limits_v1()
+        }
+    }));
+    assert!(
+        norn_checker::check_artifact(&declaration)
+            .iter()
+            .any(|d| d.code.as_str() == "core.graph.incomplete_classification")
+    );
+}

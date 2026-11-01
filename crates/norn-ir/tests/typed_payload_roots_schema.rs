@@ -15,7 +15,7 @@ use norn_ir::{
 
 const UPDATE_SCHEMAS_ENV: &str = "NORN_IR_UPDATE_PAYLOAD_SCHEMAS";
 
-fn payload_root_cases() -> [(&'static str, ArtifactKind); 14] {
+fn payload_root_cases() -> [(&'static str, ArtifactKind); 15] {
     [
         ("entity.schema.json", ArtifactKind::Entity),
         ("relation.schema.json", ArtifactKind::Relation),
@@ -31,6 +31,7 @@ fn payload_root_cases() -> [(&'static str, ArtifactKind); 14] {
         ("source_schema.schema.json", ArtifactKind::SourceSchema),
         ("mapping.schema.json", ArtifactKind::Mapping),
         ("law.schema.json", ArtifactKind::Law),
+        ("defined_concept.schema.json", ArtifactKind::DefinedConcept),
     ]
 }
 
@@ -589,6 +590,9 @@ fn envelope_kind_selects_its_closed_payload_root() {
             }
             ArtifactKind::Mapping => assert!(matches!(payload, ArtifactPayload::Mapping(_))),
             ArtifactKind::Law => assert!(matches!(payload, ArtifactPayload::Law(_))),
+            ArtifactKind::DefinedConcept => {
+                assert!(matches!(payload, ArtifactPayload::DefinedConcept(_)))
+            }
         }
     }
 }
@@ -740,4 +744,21 @@ fn existing_artifact_fixtures_roundtrip_with_identical_canonical_json() {
         "verification/archive/rules-dmn-v1/fixtures/conformance.json#artifact",
         &rule_artifact,
     );
+}
+
+#[test]
+fn defined_concept_is_a_pack_owned_declaration_not_membership_data() {
+    let root = serde_json::json!({
+        "id": "test.HighValue", "version": "1.0.0",
+        "base": { "artifactId": "test.Item.entity", "version": "1.0.0",
+            "member": { "kind": "type", "typeName": "test.Item" } },
+        "predicate": "self.amount > 100", "dependencies": [],
+        "bounds": norn_ir::ResourceLimitProfile::norn_limits_v1()
+    });
+    let typed: norn_ir::DefinedConceptRoot =
+        serde_json::from_value(root.clone()).expect("declaration");
+    assert_eq!(serde_json::to_value(&typed).expect("wire"), root);
+    let mut membership = root;
+    membership["members"] = serde_json::json!(["item-1"]);
+    assert!(serde_json::from_value::<norn_ir::DefinedConceptRoot>(membership).is_err());
 }
