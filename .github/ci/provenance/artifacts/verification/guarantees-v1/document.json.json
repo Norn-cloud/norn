@@ -1,5 +1,5 @@
 {
-  "sha256": "726ce6b26294d12f3dd94655995f0f2288984a64a6c3252ae0f7c368e6974656",
+  "sha256": "607758d54484ac20360fefd1709ce8c34cf17a683ccee1c690f2c30a17b5a990",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -8,9 +8,20 @@
   "parents": [
     "scripts/guarantees_document.py",
     "verification/guarantees-v1/demo-laws.json",
-    "verification/coverage-v1/coverage.json",
     "verification/stripmine-2026-08-22/obligations.json",
-    "verification/core-physics-v1/obligations.json"
+    "verification/core-physics-v1/obligations.json",
+    "scripts/coverage_manifest.py",
+    "verification/coverage-v1/manifest/index.json",
+    "verification/coverage-v1/manifest/subsystems/artifact-governance.json",
+    "verification/coverage-v1/manifest/subsystems/authorization.json",
+    "verification/coverage-v1/manifest/subsystems/cala-boundary.json",
+    "verification/coverage-v1/manifest/subsystems/core-physics.json",
+    "verification/coverage-v1/manifest/subsystems/kernel-v2.json",
+    "verification/coverage-v1/manifest/subsystems/ontology.json",
+    "verification/coverage-v1/manifest/subsystems/quantity-ledger.json",
+    "verification/coverage-v1/manifest/subsystems/rules-dmn.json",
+    "verification/coverage-v1/manifest/subsystems/transition-authority.json",
+    "verification/coverage-v1/manifest/subsystems/verification-integrity.json"
   ],
   "rights_evidence": [
     {

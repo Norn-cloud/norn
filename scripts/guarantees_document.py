@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import coverage_manifest
 import hashlib
 import json
 import re
@@ -75,7 +76,7 @@ def render(root: Path) -> str:
     catalog = read(root, f"{DIRECTORY}/demo-laws.json")
     statements = unique([item for source in catalog["statementRegistries"]
                          for item in read(root, source)["obligations"]])
-    coverage = read(root, "verification/coverage-v1/coverage.json")
+    coverage = coverage_manifest.load(root / "verification/coverage-v1/manifest")
     laws = unique(catalog["laws"])
     for system in coverage["subsystems"]:
         for claim in system["obligationClaims"]:
