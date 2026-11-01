@@ -47,7 +47,7 @@ fn window(
             return Err(ParameterError::Invalid);
         }
     }
-    let parse = |s: &str| timestamp_ordering_key(s).map_err(|_| ParameterError::Invalid);
+    let parse = |s: &str| timestamp_ordering_key(s).map_err(|_error| ParameterError::Invalid);
     Ok(ParameterWindow {
         from: parse(&candidate.setting.effective_from)?,
         to: candidate
@@ -79,7 +79,8 @@ pub fn resolve_parameter<'a>(
     context: &ParameterContext<'_>,
     default: Option<&'a ParameterCandidate<'a>>,
 ) -> Result<&'a ParameterCandidate<'a>, ParameterError> {
-    let at = timestamp_ordering_key(context.effective_at).map_err(|_| ParameterError::Invalid)?;
+    let at =
+        timestamp_ordering_key(context.effective_at).map_err(|_error| ParameterError::Invalid)?;
     let mut winner = None;
     for (rank, scope) in context.precedence.iter().enumerate() {
         if scope_conflict(context.scope, scope).is_some()
