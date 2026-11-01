@@ -3125,3 +3125,45 @@ fn obs_evidence_direct_law_violation_persists_its_governing_pin() {
     );
     assert_eq!(findings[0].outcome, DataQualityOutcome::NotSatisfied);
 }
+
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn obs_evidence_redelivery_keeps_the_law_finding_identity(amount in 101i64..200, delivery in "[a-z]{1,12}") {
+        use norn_testkit::proptest::prelude::*;
+        let laws = [direct_amount_law()];
+        let (types, interfaces) = definitions();
+        let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
+        let cell = observation_cell();
+        let key = FactKey::new(ITEM, "law-replay");
+        let slice = load_slice(&cell, [key.clone()]).expect("slice");
+        let values = object(json!({"item_id":"law-replay", "amount":amount}));
+        let provenance = source_provenance();
+        let finding = |id: &str| {
+            let (mut commit, authority) = prepare_observed_snapshot(&catalog, &slice, &turn(id), ObservedSnapshot {key:&key, values:&values, lifecycles:&[], provenance:&provenance}).expect("prepare").into_parts();
+            authority.append_findings(&mut commit);
+            commit.events.into_iter().find_map(|event| match event { ObservationEvent::DataQualityFinding {fact} => Some(fact), _ => None }).expect("law finding")
+        };
+        let first = finding("first-delivery");
+        let again = finding(&delivery);
+        prop_assert_eq!(&first.id, &again.id);
+        prop_assert_eq!(&first.dedupe_key, &again.dedupe_key);
+        prop_assert!(norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &values, &first).expect("verify"));
+        prop_assert_eq!(catalog.classify_data_quality_rule(&first.rule_ref).expect("classification"), norn_kernel::DataQualityRuleClassification::Integrity);
+    }
+}
+
+
+#[test]
+fn law_supported_temporal_semantics_refuse_even_when_activation_is_false() {
+    let mut law = serde_json::to_value(direct_amount_law()).expect("law");
+    law["payload"]["condition"] = json!("false");
+    law["payload"]["modality"] = json!({"kind":"eventually"});
+    let laws = [serde_json::from_value(law).expect("temporal law")];
+    let (types, interfaces) = definitions();
+    let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
+    let key = FactKey::new(ITEM, "unsupported-law");
+    let slice = load_slice(&observation_cell(), [key.clone()]).expect("slice");
+    let refusal = prepare_observed_snapshot(&catalog, &slice, &turn("unsupported"), ObservedSnapshot {key:&key, values:&object(json!({"item_id":"unsupported-law", "amount":5})), lifecycles:&[], provenance:&source_provenance()}).expect_err("unsupported semantics");
+    assert!(matches!(refusal, ObservationRefusal::Law(ref error) if error.code() == "core.laws.unsupported_semantics"));
+}
