@@ -53,45 +53,18 @@ fn measured<T>(
     Err(failure("native resource meter unavailable"))
 }
 
-fn encoded_outcome(result: Result<ForecastSummary, ForecastFailure>)
-    -> Result<(FunctionOutcome, u64), ForecastFailure> {
-    Ok(match result {
-        Ok(summary) => {
-            let summary = norn_ir::runtime::encode(&summary)
-                .map_err(failure)?
-                .as_object()
-                .cloned()
-                .ok_or_else(|| failure("summary object"))?;
-            let output_bytes = u64::try_from(
-                norn_ir::canonical::canonical_json_of(&summary)
-                    .map_err(failure)?
-                    .len(),
-            )
-            .map_err(failure)?;
-            (FunctionOutcome::Success(SuccessOutcome {
-                output_manifest: output_manifest_digest(&[], &summary).map_err(failure)?,
-                outputs: vec![],
-                summary,
-            }), output_bytes)
-        }
-        Err(error) => {
-            let detail = norn_ir::runtime::encode(&error)
-                .map_err(failure)?
-                .as_object()
-                .cloned()
-                .ok_or_else(|| failure("error object"))?;
-            let output_bytes = u64::try_from(
-                norn_ir::canonical::canonical_json_of(&detail)
-                    .map_err(failure)?
-                    .len(),
-            )
-            .map_err(failure)?;
-            (FunctionOutcome::Failure(FailureOutcome {
-                code: error.code,
-                detail,
-            }), output_bytes)
-        }
-    })
+fn encoded_outcome(result: Result<ForecastSummary, ForecastFailure>) -> Result<(FunctionOutcome, u64), ForecastFailure> {
+    let (code, value) = match result {
+        Ok(summary) => (None, norn_ir::runtime::encode(&summary).map_err(failure)?),
+        Err(error) => { let value = norn_ir::runtime::encode(&error).map_err(failure)?; (Some(error.code), value) }
+    };
+    let object = value.as_object().cloned().ok_or_else(|| failure("result object"))?;
+    let bytes = u64::try_from(norn_ir::canonical::canonical_json_of(&object).map_err(failure)?.len()).map_err(failure)?;
+    let outcome = match code {
+        None => FunctionOutcome::Success(SuccessOutcome { output_manifest: output_manifest_digest(&[], &object).map_err(failure)?, outputs: vec![], summary: object }),
+        Some(code) => FunctionOutcome::Failure(FailureOutcome { code, detail: object }),
+    };
+    Ok((outcome, bytes))
 }
 
 fn prepare(invocation: &FunctionInvocation, export: &ForecastExport<'_>, executor: &str, now_millis: u64)
