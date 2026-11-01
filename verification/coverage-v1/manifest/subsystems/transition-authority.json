@@ -256,6 +256,8 @@
     "Cargo.toml",
     "crates/norn-api/Cargo.toml",
     "crates/norn-api/src/contracts.rs",
+    "crates/norn-api/src/defs.rs",
+    "crates/norn-api/src/host.rs",
     "crates/norn-api/src/lib.rs",
     "crates/norn-api/src/openapi.rs",
     "crates/norn-api/src/refusal.rs",
