@@ -73,6 +73,21 @@ fn val_unit_closed_membership_refuses_unknown_units_and_money() {
     }
 }
 
+#[test]
+fn val_unit_descriptor_refuses_another_unit_code() {
+    let grams = property("g");
+    let mut value = norn_ir::runtime_object! { "code" => "g", "dimension" => "mass", "numerator" => 1_i64, "denominator" => 1_i64 };
+    assert!(grams.check_runtime_value(&value).is_ok());
+    value
+        .as_object_mut()
+        .expect("record")
+        .insert("code".to_owned(), "kg".into());
+    assert!(grams.check_runtime_value(&value).is_err());
+    for (_, _, _, numerator, denominator) in units::UNITS {
+        assert!(numerator > 0 && denominator > 0);
+    }
+}
+
 proptest! {
     #[test]
     fn val_unit_factor_and_dimension_cannot_be_substituted(index in 0..units::UNITS.len(), candidate in any::<i64>()) {
@@ -82,6 +97,9 @@ proptest! {
         prop_assert!(constraint.check_runtime_value(&record).is_ok());
         record.as_object_mut().expect("record").insert("numerator".to_owned(), candidate.into());
         prop_assert_eq!(constraint.check_runtime_value(&record).is_ok(), candidate == numerator);
+        record.as_object_mut().expect("record").insert("numerator".to_owned(), numerator.into());
+        record.as_object_mut().expect("record").insert("denominator".to_owned(), candidate.into());
+        prop_assert_eq!(constraint.check_runtime_value(&record).is_ok(), candidate == denominator);
         record.as_object_mut().expect("record").insert("dimension".to_owned(), RuntimeValue::from("currency"));
         prop_assert!(constraint.check_runtime_value(&record).is_err());
     }
