@@ -762,6 +762,23 @@ mod alpha_surface {
             }
             declarations.push(artifact);
         }
+        let registry = std::collections::BTreeSet::new();
+        let context = norn_checker::EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
+        let checked = norn_checker::check_artifact_set_with_receipt(
+            &declarations,
+            &context,
+            &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+        )
+        .expect("check");
+        assert!(
+            checked.receipt.admitted,
+            "{}",
+            norn_checker::diagnostics_to_json(&checked.diagnostics)
+        );
         let source = serde_json::to_string(&declarations).expect("typed declarations");
         let exact = r#"{"large":9007199254740993,"decimal":0.1234567890123456789012345678}"#;
         for surface in ["api", "mcp"] {
