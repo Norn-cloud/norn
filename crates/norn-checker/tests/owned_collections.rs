@@ -1014,3 +1014,63 @@ fn row_operation_items_must_admit_the_bounded_json_operation_profile() {
         }
     }
 }
+
+#[test]
+fn post_authority_owned_quantity_bindings_are_checked_before_execution() {
+    let entities = vec![
+        entity_artifact(
+            PARENT_ARTIFACT,
+            PARENT,
+            &parent_type(20, &json!({"to": "many", "from": "one"})),
+            &json!([{"artifactId": CHILD_ARTIFACT, "kind": "entity", "version": "1.0.0", "required": true}]),
+        ),
+        entity_artifact(
+            CHILD_ARTIFACT,
+            CHILD,
+            &child_type("text", "integer"),
+            &json!([]),
+        ),
+    ];
+    let mut action = action_artifact(&row_effect(&valid_collection_action()));
+    let payload = &mut action["payload"];
+    for field in ["posting", "amount", "versions"] {
+        payload["inputSchema"]["properties"][field] = if field == "versions" {
+            json!({"type": "array", "items": {"type": "string"}})
+        } else {
+            json!({"type": "string"})
+        };
+        payload["inputSchema"]["required"]
+            .as_array_mut()
+            .expect("required")
+            .push(json!(field));
+    }
+    payload["quantityEffect"] = json!({"ledgerId": "stock", "balanceVersionsField": "versions",
+        "operation": {"kind": "post", "postingIdField": "posting", "templateId": "ship",
+            "parameters": {"q": {"field": "amount", "scale": 6}}}});
+    let findings = admission_diagnostics_for_artifacts(entities.clone(), action.clone());
+    assert!(findings.is_empty(), "POST-AUTHORITY: {findings:?}");
+    for (pointer, value) in [
+        (
+            "/quantityEffect/operation/templateId",
+            json!("not canonical"),
+        ),
+        ("/quantityEffect/operation/postingIdField", json!("missing")),
+        ("/quantityEffect/operation/parameters/q/scale", json!(29)),
+        (
+            "/quantityEffect/operation/parameters/q/field",
+            json!("rowOps"),
+        ),
+        ("/quantityEffect/balanceVersionsField", json!("amount")),
+        ("/ledgered", json!(false)),
+    ] {
+        let mut invalid = action.clone();
+        *invalid["payload"].pointer_mut(pointer).expect("binding") = value;
+        let findings = admission_diagnostics_for_artifacts(entities.clone(), invalid);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "artifact_set.action.quantity_effect"),
+            "POST-AUTHORITY {pointer}: {findings:?}"
+        );
+    }
+}
