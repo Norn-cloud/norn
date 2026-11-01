@@ -33,7 +33,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let invariants =
             norn_kernel::evaluate_invariants(&catalog, &key, &record.values, &mut remaining)
                 .map_err(|error| {
-                    CellError::DefinitionReceiptInvalid(format!("quality evaluation: {error:?}"))
+                    match error {
+                        norn_kernel::InvariantEvaluationError::InvalidEffectiveValues(_invalid) => CellError::QualityEvaluation("invalid effective values".into()),
+                        norn_kernel::InvariantEvaluationError::BudgetExceeded => CellError::QualityEvaluation("invariant evaluation budget exhausted".into()),
+                        norn_kernel::InvariantEvaluationError::MissingInterface(name) => CellError::QualityEvaluation(format!("missing interface {name}")),
+                    }
                 })?;
         norn_kernel::governing_laws::evaluate(
             &catalog,
@@ -47,7 +51,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     .iter()
                     .any(|failure| failure.classification == norn_ir::ConstraintClass::Integrity)
         })
-        .map_err(|error| CellError::DefinitionReceiptInvalid(error.to_string()))
+        .map_err(quality_law_error)
     }
 
     /// Authoritative projection selection excludes quarantined observations.
@@ -147,7 +151,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                             &record.values,
                             &probe,
                         )
-                        .map_err(|error| CellError::DefinitionReceiptInvalid(error.to_string()))?
+                        .map_err(|error| CellError::QualityEvaluation(error.to_string()))?
                         {
                             finding.status = if catalog
                                 .classify_data_quality_rule(&finding.rule_ref)?
@@ -234,4 +238,14 @@ pub(crate) fn deduplicate<E: SqlEngine>(
         }
     }
     Ok(())
+}
+
+fn quality_law_error(error: norn_kernel::governing_laws::LawEvaluationError) -> CellError {
+    match error {
+        norn_kernel::governing_laws::LawEvaluationError::UnsupportedUntilB2(law_id) => CellError::UnsupportedLawScope {law_id},
+        other @ (norn_kernel::governing_laws::LawEvaluationError::Unsupported(_)
+            | norn_kernel::governing_laws::LawEvaluationError::Invalid(_)
+            | norn_kernel::governing_laws::LawEvaluationError::BudgetExceeded
+            | norn_kernel::governing_laws::LawEvaluationError::Violated(_)) => CellError::QualityEvaluation(other.to_string()),
+    }
 }
