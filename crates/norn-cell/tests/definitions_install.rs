@@ -5727,7 +5727,7 @@ fn instance_source_provenance_rechecks_bundle_and_disclosure_for_exact_version()
     assert!(reader.instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(false)).expect("withheld").is_none());
     let evidence = reader.instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true)).expect("checked source lineage").expect("bundle");
     assert_eq!(id, format!("mapping-bundle:{}", evidence.bundle_digest));
-    assert_eq!(evidence.source_record_ref.record, "MEAS-1");
+    assert_eq!(evidence.source_record_ref.record, "Rows/MEAS-1");
     assert_eq!(evidence.document_ref.record, "MEAS-1");
     assert_eq!(evidence.document_digest, raw.input.get("payload_digest").and_then(Value::as_str).expect("source digest"));
     assert_eq!(evidence.mapping_pin.artifact_id, "quality.mapping");
