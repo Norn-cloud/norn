@@ -107,6 +107,7 @@ export interface LifecycleDecl {
   readonly description?: string
   readonly initial: ReadonlyArray<string>
   readonly terminal?: ReadonlyArray<string>
+  readonly immutable?: ReadonlyArray<string>
   readonly transitions: ReadonlyArray<TransitionDecl>
 }
 
@@ -323,6 +324,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
               def.lifecycles.map((l) => ({
                 ...l,
                 terminal: omitEmpty(l.terminal ?? []),
+                immutable: omitEmpty(l.immutable ?? []),
                 transitions: omitEmpty(l.transitions.map((t) => ({ ...t, guards: omitEmpty(t.guards ?? []) }))),
               })),
             ),
