@@ -20,6 +20,10 @@ use norn_ir::{
 };
 use query_support::*;
 
+fn row(id: &str, input: i64, recovered: i64) -> FactWriteRow {
+    put(id, input, recovered, "2026-10-23T12:00:00Z", "gold")
+}
+
 fn commit(store: &mut CellStore, writes: Vec<FactWriteRow>) {
     store
         .commit(&CommitBatch {
@@ -96,21 +100,10 @@ fn query_three_scrap_yield_sql_matches_exact_frontier_and_lineage_after_correcti
     let (mut store, plan, context) = fixture();
     load(&mut store);
     let original = compare(&store, &plan, context.clone());
-    assert_eq!(
-        original.rows["\"2026-10-19\""]
-            .value
-            .expect("ratio")
-            .canonical(),
-        "0.98"
-    );
+    let week = &original.rows["\"2026-10-19\""];
+    assert_eq!(week.value.expect("ratio").canonical(), "0.98");
     for write in [
-        put(
-            "SYN-MELT-15-1",
-            75_000,
-            72_000,
-            "2026-10-23T12:01:00Z",
-            "gold",
-        ),
+        row("SYN-MELT-15-1", 75_000, 72_000),
         FactWriteRow::Delete {
             object_type: TYPE.into(),
             key: "SYN-MELT-15-1".into(),
@@ -135,13 +128,7 @@ fn query_sql_exact_rounding_signs_zero_and_large_coefficients() {
         let (mut store, plan, context) = fixture();
         commit(
             &mut store,
-            vec![put(
-                "quoted'); DROP TABLE input;--",
-                input,
-                recovered,
-                "2026-10-23T12:00:00Z",
-                "gold",
-            )],
+            vec![row("quoted'); DROP TABLE input;--", input, recovered)],
         );
         compare(&store, &plan, context);
     }
@@ -170,7 +157,7 @@ proptest::proptest! {
     ) {
         let (seed,base,context)=fixture();
         let (mut store,plan)=rebind(&seed,&base,3,sum);
-        let writes=population.iter().enumerate().map(|(i,(input,recovered))|put(&format!("G{i}"),*input,*recovered,"2026-10-23T12:00:00Z","gold")).collect();
+        let writes=population.iter().enumerate().map(|(i,(input,recovered))|row(&format!("G{i}"),*input,*recovered)).collect();
         commit(&mut store,writes);
         compare(&store,&plan,context);
     }
