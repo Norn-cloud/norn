@@ -329,8 +329,7 @@ pub(crate) fn finish(
         })
         .collect::<Result<_, CellError>>()?;
     let mut complete = context.exclusions.is_empty();
-    let mut stale = false;
-    let mut aged = false;
+    let (mut stale, mut aged) = (false, false);
     let age = match plan.question().freshness {
         FreshnessPolicy::Live { max_age_ms } | FreshnessPolicy::Delayed { max_age_ms } => {
             max_age_ms.0
