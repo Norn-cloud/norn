@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 pub trait Valuation: Default + Clone {
     /// Admitted receipt, delivery or original-cost return.
     type Movement: Clone;
-    /// Apply without modifying the input; refuse invalid valuation.
+    /// Apply without modifying the input.
+    /// # Errors
+    /// Refuses invalid valuation.
     fn apply(&self, movement: &Self::Movement) -> Result<(Self, StockEffect), StockHistoryError>;
     /// Source issue for a transfer.
     fn delivery(id: &str, quantity: u128) -> Self::Movement;
@@ -152,7 +154,7 @@ impl<S: Valuation> StockHistory<S> {
             }
             if let StockEventKind::Post(operation) = &event.kind {
                 let changes = apply(&mut states, &event.id, operation)
-                    .map_err(|_| StockHistoryError::Dependents)?;
+                    .map_err(|_refusal| StockHistoryError::Dependents)?;
                 if changes != event.changes {
                     return Err(StockHistoryError::Dependents);
                 }
@@ -227,7 +229,8 @@ impl<S: Valuation> StockHistory<S> {
 impl Valuation for AverageState {
     type Movement = AverageMovement;
     fn apply(&self, movement: &Self::Movement) -> Result<(Self, StockEffect), StockHistoryError> {
-        let result = allocate_average(self, movement).map_err(|_| StockHistoryError::Valuation)?;
+        let result =
+            allocate_average(self, movement).map_err(|_refusal| StockHistoryError::Valuation)?;
         Ok((
             result.state,
             StockEffect {
