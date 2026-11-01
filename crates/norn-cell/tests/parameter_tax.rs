@@ -7,10 +7,10 @@
     reason = "PARAM-TAX integration fixtures"
 )]
 //! PARAM-TAX / PARAM-PIN-1: governed settings, exact evaluation and durable receipts.
-mod common;
 use norn_cell::{SqliteCell, StoreOptions};
 use norn_ir::{
-    ActionRoot, ArtifactEnvelope, ObjectTypeDef, Property, PropertyId, PropertyType, RuntimeValue,
+    ActionRoot, ArtifactEnvelope, InterfaceDef, ObjectTypeDef, Property, PropertyId, PropertyType,
+    RuntimeValue,
 };
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
@@ -39,7 +39,8 @@ impl ActionAuthorizer for Policy {
         Ok(())
     }
 }
-fn definitions() -> (Vec<ObjectTypeDef>, Vec<ActionRoot>) {
+type Definitions = (Vec<ObjectTypeDef>, Vec<ActionRoot>, Vec<InterfaceDef>);
+fn definitions() -> Definitions {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let compiled = Command::new("bun")
         .current_dir(&root)
@@ -63,31 +64,30 @@ fn definitions() -> (Vec<ObjectTypeDef>, Vec<ActionRoot>) {
         },
     );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    let mut types = Vec::new();
+    let mut types = Vec::<ObjectTypeDef>::new();
+    let mut interfaces = Vec::new();
     let mut actions = Vec::new();
     for artifact in artifacts {
         let payload = serde_json::to_value(artifact.payload).expect("typed payload");
         if let Some(object) = payload.get("objectType") {
             types.push(serde_json::from_value(object.clone()).expect("object type"));
         }
+        if let Some(interface) = payload.get("interface") {
+            interfaces.push(serde_json::from_value(interface.clone()).expect("interface"));
+        }
         if payload.get("actionId").is_some() {
             actions.push(serde_json::from_value(payload).expect("action"));
         }
     }
-    let receipt = ObjectTypeDef {
-        name: norn_ir::ObjectTypeName(ACTION_CALL_TYPE.into()),
-        description: None,
-        status: Default::default(),
-        extends: None,
-        implements: vec![],
-        links: vec![],
-        owned_collections: vec![],
-        identity: vec![],
-        invariants: vec![],
-        lifecycles: vec![],
-        markings: vec![],
-        accounting_leg: None,
-        properties: "actionId actionArtifactId actionVersion effectKind object input effectiveInput derivedValues preconditionOutcomes parameterReads actor turn transition from to rowOperations"
+    let mut receipt = types
+        .iter()
+        .find(|ty| ty.name.as_str() == "demo.SettingRegistry")
+        .expect("registry template")
+        .clone();
+    receipt.name = norn_ir::ObjectTypeName(ACTION_CALL_TYPE.into());
+    receipt.links.clear();
+    receipt.identity.clear();
+    receipt.properties = "actionId actionArtifactId actionVersion effectKind object input effectiveInput derivedValues preconditionOutcomes parameterReads actor turn transition from to rowOperations"
         .split_whitespace()
         .map(|name| Property {
             id: PropertyId(name.into()),
@@ -101,10 +101,9 @@ fn definitions() -> (Vec<ObjectTypeDef>, Vec<ActionRoot>) {
             markings: vec![],
             computed: None,
         })
-        .collect(),
-    };
+        .collect();
     types.push(receipt);
-    (types, actions)
+    (types, actions, interfaces)
 }
 fn values(text: &str) -> JsonObject {
     RuntimeValue::from_json_text(text)
@@ -159,12 +158,13 @@ fn recorded(cell: &Cell, key: &str) -> ActionCallRecord {
 }
 #[test]
 fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
-    let (types, actions) = definitions();
+    let (types, actions, interfaces) = definitions();
     let catalog = TypeCatalog::new(
         types
             .iter()
             .filter(|ty| ty.name.as_str() != ACTION_CALL_TYPE),
-    );
+    )
+    .with_interfaces(&interfaces);
     let action = |id: &str| {
         actions
             .iter()
@@ -176,7 +176,8 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
     let open = || {
         Cell::open(
             &path,
-            common::model_of(&types),
+            norn_cell::Model::from_definitions_with_interfaces(&types, &[], &interfaces)
+                .expect("projected model"),
             StoreOptions::default(),
             "org_demo/dev",
             |command| command.payload.clone(),
