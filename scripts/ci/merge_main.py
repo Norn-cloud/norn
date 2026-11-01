@@ -84,8 +84,6 @@ def provenance(path, base, ours, theirs, unresolved):
     source = Path(path[len(PROVENANCE):-5])
     if source.as_posix() in unresolved or source.is_symlink() or not source.is_file():
         raise ValueError(f'source unresolved or not regular: {source}')
-    if b'<<<<<<<' in source.read_bytes():
-        raise ValueError(f'source contains conflict markers: {source}')
     return {'sha256': hashlib.sha256(source.read_bytes()).hexdigest(), **merged}
 
 

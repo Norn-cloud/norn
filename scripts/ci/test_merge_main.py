@@ -25,7 +25,7 @@ class MergeTests(unittest.TestCase):
         self.run_git('add', '.')
         self.run_git('commit', '-m', 'fixture')
 
-    def scenario(self, path, base, ours, theirs, success):
+    def scenario(self, path, base, ours, theirs, success, source_conflict=False):
         with tempfile.TemporaryDirectory() as directory:
             self.root = Path(directory)
             self.run_git('init', '-b', 'topic')
@@ -36,9 +36,13 @@ class MergeTests(unittest.TestCase):
             self.commit()
             self.run_git('branch', 'incoming')
             self.put(path, ours)
+            if source_conflict:
+                self.put('source.txt', 'our source')
             self.commit()
             self.run_git('checkout', 'incoming')
             self.put(path, theirs)
+            if source_conflict:
+                self.put('source.txt', 'their source')
             self.commit()
             self.run_git('update-ref', 'refs/remotes/origin/main', 'HEAD')
             self.run_git('checkout', 'topic')
@@ -61,6 +65,10 @@ class MergeTests(unittest.TestCase):
 
     def test_unknown_conflict_aborts(self):
         self.scenario('unknown.json', {'x': 0}, {'x': 1}, {'x': 2}, False)
+
+    def test_unresolved_source_aborts(self):
+        values = [dict(sha256=s, origin='authored') for s in ('base', 'ours', 'theirs')]
+        self.scenario(RECORD, *values, False, source_conflict=True)
 
     def test_field_conflict_aborts(self):
         values = [dict(sha256=s, origin=s) for s in ('base', 'ours', 'theirs')]
