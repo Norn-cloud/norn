@@ -76,7 +76,7 @@ impl DefinitionSource {
         if artifacts.len().saturating_add(base.len()) > 8_388_608 {
             return Err(ChallengeError::Limit);
         }
-        let decode = |text: &str| -> Result<Vec<ArtifactEnvelope>, ChallengeError> {
+        let decode = |text: &str| -> Result<_, ChallengeError> {
             numeric_budget(text)?;
             let exact = norn_canonical::parse_json_verbatim(text.as_bytes())
                 .map_err(|_error| ChallengeError::LossyInput)?;
@@ -87,7 +87,12 @@ impl DefinitionSource {
             let projected = norn_canonical::parse_json_verbatim(&projected_bytes)
                 .map_err(|_error| ChallengeError::LossyInput)?;
             check_numbers(&exact, &projected)?;
-            Ok(typed)
+            let exact = norn_ir::RuntimeValue::from_canonical(&exact)
+                .map_err(|_error| ChallengeError::LossyInput)?;
+            let norn_ir::RuntimeValue::Array(sources) = exact else {
+                return Err(ChallengeError::NotAdmitted);
+            };
+            Ok((typed, sources))
         };
         // Commit the original UTF-8 documents, including escapes, whitespace and
         // exact number spellings. Never pass executable text through Norn1 first.
@@ -95,20 +100,8 @@ impl DefinitionSource {
             b"definition-source",
             &[artifacts.as_bytes(), base.as_bytes()],
         )?;
-        let exact_candidates = norn_ir::RuntimeValue::from_json_text(artifacts)
-            .map_err(|_error| ChallengeError::LossyInput)?;
-        let exact_base = norn_ir::RuntimeValue::from_json_text(base)
-            .map_err(|_error| ChallengeError::LossyInput)?;
-        let receipt_sources = exact_candidates
-            .as_array()
-            .ok_or(ChallengeError::LossyInput)?
-            .clone();
-        let base_sources = exact_base
-            .as_array()
-            .ok_or(ChallengeError::LossyInput)?
-            .clone();
-        let artifacts = decode(artifacts)?;
-        let base = decode(base)?;
+        let (artifacts, receipt_sources) = decode(artifacts)?;
+        let (base, base_sources) = decode(base)?;
         // Qualify inputs before ordinary admission can construct diagnostics or
         // dependency closures. This is a proof-ingress resource profile, not an
         // expansion of the ordinary definition admission surface.
