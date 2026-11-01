@@ -68,3 +68,14 @@ fn witnessed_verdict_requires_trace_on_decode() {
         .is_err()
     );
 }
+
+#[test]
+fn witnessed_verdict_requires_trace_on_encode() -> Result<(), serde_json::Error> {
+    let mut value: ControlVerdict = serde_json::from_value(json!({
+        "objectType":"demo.Order", "actions":["demo.approve"], "verdict":"unknown",
+        "reachability":"unknown", "trace":[], "explanation":"finite model"
+    }))?;
+    value.reachability = Reachability::Witnessed;
+    assert!(serde_json::to_value(&value).is_err());
+    Ok(())
+}
