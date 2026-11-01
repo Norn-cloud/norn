@@ -12,6 +12,7 @@ use norn_cell::engine::NativeEngine;
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, Model, StoreOptions};
 use norn_ir::{FactChange, ObjectTypeName, PropertyId, RuntimeValue as Value};
+use norn_testkit::proptest::prelude::*;
 use serde_json::json;
 
 fn runtime(value: serde_json::Value) -> Value {
@@ -189,6 +190,51 @@ fn knowledge_cutoff_budgets_proofs_before_decoding_and_rejects_corrupt_receipts(
                 result.is_err(),
                 "corrupt receipt cannot supply an earlier timestamp"
             );
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    #[test]
+    fn old_answer_reproducible_after_later_corrections(
+        original in any::<u64>(),
+        corrections in prop::collection::vec(any::<u64>(), 1..8),
+        first_recorded_at in 0_u64..1_000_000,
+    ) {
+        use norn_cell::reactive::BudgetedRead;
+        use norn_kernel::{FactKey, LogicalTime};
+
+        let mut store = CellStore::open_in_memory(model()).expect("store");
+        store.commit(&CommitBatch {
+            logical_time: first_recorded_at,
+            ..batch(vec![put("proof.Item", "item", &original.to_string())])
+        }).expect("original input");
+        let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        let fact = FactKey::new("proof.Item", "item");
+        let mut recorded_at = first_recorded_at;
+        let mut version = 1;
+        for correction in corrections {
+            recorded_at += 1;
+            version += 1;
+            store.commit(&CommitBatch {
+                logical_time: recorded_at,
+                ..batch(vec![put("proof.Item", "item", &correction.to_string())])
+            }).expect("append correction");
+            let read = |version, at| store.read().object_at_version_known_at_with_budget(
+                MAIN_WORLD, &fact, version, LogicalTime::from_millis(at),
+                &mut DecodeBudget::new(&limits),
+            );
+            let BudgetedRead::Found(old) = read(1, first_recorded_at).expect("old cutoff") else {
+                return Err(TestCaseError::fail("old input disappeared"));
+            };
+            prop_assert_eq!(&old.values["value"], &Value::from(original.to_string()));
+            prop_assert!(matches!(read(version, first_recorded_at), Err(CellError::TemporalLeakage)));
+            let BudgetedRead::Found(new) = read(version, recorded_at).expect("new cutoff") else {
+                return Err(TestCaseError::fail("new input disappeared"));
+            };
+            prop_assert_eq!(&new.values["value"], &Value::from(correction.to_string()));
         }
     }
 }
