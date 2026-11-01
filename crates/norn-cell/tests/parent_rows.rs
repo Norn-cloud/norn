@@ -3380,18 +3380,10 @@ mod cp1_stock {
                 let request = c["requestId"].as_str().expect("request");
                 let id = format!("trace-{request}");
                 let receipt = op["kind"] == "receipt";
-                let (ty, child, action) = if receipt {
-                    (
-                        "stock.PurchaseReceipt",
-                        "stock.ReceiptLine",
-                        "stock.receipt.submit",
-                    )
+                let (ty, child) = if receipt {
+                    ("stock.PurchaseReceipt", "stock.ReceiptLine")
                 } else {
-                    (
-                        "stock.DeliveryNote",
-                        "stock.DeliveryLine",
-                        "stock.delivery.submit",
-                    )
+                    ("stock.DeliveryNote", "stock.DeliveryLine")
                 };
                 let row = format!("{id}:1");
                 let mut values = json!({"id":row,"line_number":1,
