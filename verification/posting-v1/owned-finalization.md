@@ -137,3 +137,8 @@ history plus its witness above 64 KiB, before publication. CP1 requires exactly
 one partition per voucher. Conformance checks derived GL, remaining quantity,
 backdating and the byte ceiling. The subsequent kernel join must recompute this
 proposal from authorized reads and seal it; callers cannot submit this proposal.
+
+POST-QUANTITY-SNAPSHOT: all quantity reconstruction reads share one SQLite read
+snapshot, including inside an existing transaction; refusal releases its scope.
+POST-CATALOG-ORDER: extension and property-type order does not change the schema
+pin. Conformance reverses both lists and checks the same pin.
