@@ -1349,5 +1349,11 @@ fn protected_owned_default_refusal_survives_the_object_type_api() {
             {"id":"flag","type":{"kind":"boolean"},"protected":true,"default":false}
         ]}
     ]);
-    assert_eq!(findings(&definitions), vec![(codes::PROTECTED_DEFAULT.to_owned(), "/0/ownedCollections/0/childType".to_owned())]);
+    assert_eq!(
+        findings(&definitions),
+        vec![(
+            codes::PROTECTED_DEFAULT.to_owned(),
+            "/0/ownedCollections/0/childType".to_owned()
+        )]
+    );
 }
