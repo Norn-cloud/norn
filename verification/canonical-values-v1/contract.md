@@ -50,5 +50,5 @@ against the canonical diagnostic adapter, including absence for malformed JSON.
 Its intended scope is classification and absence of panic, not the
 heap-backed arbitrary-length decimal/JSON parser or evaluator arithmetic.
 
-Run the production-library harness with `cargo kani -p norn-checker --lib
+Run the production-adapter harness with `cargo kani -p norn-checker --tests
 --harness numeric_refusals_have_the_canonical_code --output-format terse`.

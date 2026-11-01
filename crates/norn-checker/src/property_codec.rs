@@ -41,11 +41,6 @@ pub const fn runtime_error_code(error: &RuntimeValueError) -> Option<&'static st
     }
 }
 
-#[allow(unexpected_cfgs, reason = "Kani-only verification module")]
-#[cfg(kani)]
-#[path = "../../../verification/canonical-values-v1/diagnostic_kani.rs"]
-mod kani_proofs;
-
 /// Materialize the persisted representation before checking its constraints.
 pub(crate) fn stored_value(
     kind: PropertyKind,
