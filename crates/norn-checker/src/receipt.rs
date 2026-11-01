@@ -304,6 +304,7 @@ pub struct ReceiptSources {
     base: Vec<ArtifactEnvelope>,
     identity: ArtifactSetRef,
 }
+
 impl ReceiptSources {
     /// Prepare semantic sources without projecting numbers through f64.
     /// # Errors
@@ -335,6 +336,7 @@ impl ReceiptSources {
         })
     }
 }
+
 /// Check `artifacts` against `context` ([`crate::check_artifact_set`]) under
 /// `limits`, derive the set's type environment when the set is clean, and
 /// issue the [`CheckReceipt`]. See the module docs.
