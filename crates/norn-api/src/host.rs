@@ -311,6 +311,13 @@ mod defs_read {
                 .expect("request");
             let response = app.clone().oneshot(request).await.expect("response");
             assert!(response.status().is_client_error());
+            assert_eq!(
+                response
+                    .headers()
+                    .get(http::header::CACHE_CONTROL)
+                    .expect("cache policy"),
+                "no-store"
+            );
             let bytes = axum::body::to_bytes(response.into_body(), 4096)
                 .await
                 .expect("body");
@@ -352,6 +359,13 @@ mod defs_read {
                 .expect("request");
             let response = app.clone().oneshot(request).await.expect("response");
             assert_eq!(response.status().as_u16(), status);
+            assert_eq!(
+                response
+                    .headers()
+                    .get(http::header::CACHE_CONTROL)
+                    .expect("cache policy"),
+                "no-store"
+            );
             let bytes = axum::body::to_bytes(response.into_body(), 16384)
                 .await
                 .expect("body");

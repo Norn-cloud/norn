@@ -142,14 +142,19 @@ pub fn router<E: SqlEngine + Send + 'static>(host: std::sync::Arc<DevHost<E>>) -
             }
             Err(error) => Err(Refusal::invalid(error.to_string())),
         };
-        match result {
+        let mut response = match result {
             Ok(document) => axum::Json(document).into_response(),
             Err(refusal) => (
                 StatusCode::from_u16(refusal.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                 axum::Json(refusal),
             )
                 .into_response(),
-        }
+        };
+        response.headers_mut().insert(
+            http::header::CACHE_CONTROL,
+            http::HeaderValue::from_static("no-store"),
+        );
+        response
     }
     axum::Router::new()
         .route("/v1/defs", axum::routing::get(read::<E>))
