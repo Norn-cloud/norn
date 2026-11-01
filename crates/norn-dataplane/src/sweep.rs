@@ -7,7 +7,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::frappe::FrappeSource;
 use crate::raw_observation::RawObservation;
@@ -239,6 +239,7 @@ impl FrappeSweep {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use serde_json::Value;
 
     fn sweep() -> FrappeSweep {
         FrappeSweep {
@@ -281,7 +282,7 @@ mod tests {
         assert_eq!(rewound.modified, "2026-11-01 00:00:00.000000");
         assert!(rewound.name.is_empty());
         assert!(sweep.plan(SweepFeed::Deletions, Some(&cursor)).is_err());
-        let mut invalid = cursor.clone();
+        let mut invalid = cursor;
         invalid.modified = "not a timestamp".into();
         assert!(sweep.plan(SweepFeed::Documents, Some(&invalid)).is_err());
         sweep.page_size = 0;
