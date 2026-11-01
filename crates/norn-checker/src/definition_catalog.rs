@@ -58,8 +58,10 @@ pub fn project(
             candidate,
         });
     }
+    let combined: Vec<_> = all.iter().map(|artifact| (*artifact).clone()).collect();
+    let effective = crate::EffectiveCatalog::from_artifacts_with_registry(&combined, registry);
     for artifact in &all {
-        rows.entity(artifact);
+        rows.entity(artifact, &effective);
         rows.depends_on(artifact, &all);
     }
     let admission = Admission::new(artifacts, base, registry);
@@ -114,6 +116,7 @@ struct Rows {
     properties: BTreeSet<PropertyRow>,
     links: BTreeSet<LinkRow>,
     transitions: BTreeSet<TransitionRow>,
+    states: BTreeSet<MemberRef>,
     writes: BTreeSet<WritesRow>,
     depends_on: BTreeSet<DependsOnRow>,
     mappings: BTreeSet<MappingRow>,
@@ -126,17 +129,6 @@ fn at(artifact: &ArtifactEnvelope, member: Member) -> MemberRef {
         version: artifact.version.clone(),
         member,
     }
-}
-
-fn key(artifact: &ArtifactEnvelope) -> ArtifactKey {
-    ArtifactKey {
-        artifact_id: artifact.artifact_id.clone(),
-        version: artifact.version.clone(),
-    }
-}
-
-fn payload_json(artifact: &ArtifactEnvelope) -> serde_json::Value {
-    serde_json::to_value(artifact.payload.to_json_value()).unwrap_or_default()
 }
 
 fn lifecycle_states(property: &Property, lifecycles: &[Lifecycle]) -> Option<LifecycleStates> {
@@ -193,20 +185,20 @@ fn member_of(key: &ArtifactKey, member: Member) -> MemberRef {
 }
 
 impl Rows {
-    fn entity(&mut self, artifact: &ArtifactEnvelope) {
+    fn entity(&mut self, artifact: &ArtifactEnvelope, effective: &crate::EffectiveCatalog) {
         let decoded = decode_v2(artifact);
         if let (Decoded::NotV2, ArtifactPayload::Entity(payload)) = (&decoded, &artifact.payload)
             && let Ok(Some(object)) = entity_object_type(payload)
             && object.form == EntityForm::V1
         {
-            self.object_type(artifact, &object.root.object_type);
+            self.object_type(artifact, &object.root.object_type, effective);
             return;
         }
         let Decoded::Root(root) = decoded else {
             return;
         };
         match *root {
-            EntityRoot::V2(root) => self.object_type(artifact, &root.object_type),
+            EntityRoot::V2(root) => self.object_type(artifact, &root.object_type, effective),
             EntityRoot::V2Interface(root) => {
                 let name = root.interface.name.as_str().to_owned();
                 self.types.insert(TypeRow {
@@ -250,7 +242,12 @@ impl Rows {
         }
     }
 
-    fn object_type(&mut self, artifact: &ArtifactEnvelope, def: &ObjectTypeDef) {
+    fn object_type(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        def: &ObjectTypeDef,
+        effective: &crate::EffectiveCatalog,
+    ) {
         let name = def.name.as_str().to_owned();
         self.types.insert(TypeRow {
             at: at(
@@ -274,6 +271,20 @@ impl Rows {
             self.link(artifact, &name, link.id.as_str(), link.target.as_str());
         }
         for lifecycle in &def.lifecycles {
+            if let Some(Ok(object)) = effective.object_type(&artifact.artifact_id)
+                && let Some(machine) = object.lifecycle(lifecycle.property.as_str())
+            {
+                self.states.extend(machine.states.iter().map(|state| {
+                    at(
+                        artifact,
+                        Member::State {
+                            type_name: name.clone(),
+                            lifecycle: lifecycle.property.as_str().to_owned(),
+                            state: state.clone(),
+                        },
+                    )
+                }));
+            }
             for transition in &lifecycle.transitions {
                 self.transitions.insert(TransitionRow {
                     at: at(
@@ -318,42 +329,6 @@ impl Rows {
         });
     }
 
-    fn depends_on(&mut self, artifact: &ArtifactEnvelope, all: &[&ArtifactEnvelope]) {
-        let present = |id: &str, version: &str| {
-            all.iter()
-                .any(|other| other.artifact_id == id && other.version == version)
-        };
-        let mut edge = |id: &str, version: &str, via: DependencyVia| {
-            if present(id, version) {
-                self.depends_on.insert(DependsOnRow {
-                    from: key(artifact),
-                    to: ArtifactKey {
-                        artifact_id: id.to_owned(),
-                        version: version.to_owned(),
-                    },
-                    via,
-                });
-            }
-        };
-        for dependency in &artifact.dependencies {
-            if let Some(version) = &dependency.version {
-                edge(&dependency.artifact_id, version, DependencyVia::Dependency);
-            }
-        }
-        if let ArtifactPayload::BusinessPack(_) = &artifact.payload
-            && let Ok(BusinessPackRoot::Composition(pack)) =
-                serde_json::from_value(payload_json(artifact))
-        {
-            for member in &pack.artifacts {
-                edge(
-                    &member.artifact_id,
-                    &member.version,
-                    DependencyVia::PackMember,
-                );
-            }
-        }
-    }
-
     fn finish(self) -> DefinitionCatalog {
         DefinitionCatalog {
             format: CatalogFormat::V1,
@@ -362,6 +337,7 @@ impl Rows {
             properties: self.properties.into_iter().collect(),
             links: self.links.into_iter().collect(),
             transitions: self.transitions.into_iter().collect(),
+            states: self.states.into_iter().collect(),
             writes: self.writes.into_iter().collect(),
             depends_on: self.depends_on.into_iter().collect(),
             mappings: self.mappings.into_iter().collect(),
