@@ -269,8 +269,8 @@ mod tests {
         let checks =
             Checks(norn_checker::function::admit_function_manifest(&manifest).expect("manifest"));
         let mut invocation: FunctionInvocation = fixture("invocation");
-        invocation.freshness = norn_ir::function::FreshnessMode::AppendOnly;
-        invocation.destination = None;
+        invocation.freshness = norn_ir::function::FreshnessMode::DestinationCas;
+        invocation.destination = Some(norn_ir::function::Destination { object_type:"test.ReceiptTarget".into(), key:"target-1".into(), expected_owner_version:1 });
         let dispatched = DispatchedCommand::pin(invocation, checks.0.execution_profile.clone())
             .expect("dispatch");
         let mut receipt: FunctionReceipt = fixture("receipt");

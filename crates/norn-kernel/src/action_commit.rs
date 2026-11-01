@@ -1133,7 +1133,8 @@ fn receipt_changes<H: CellHost + ?Sized>(
         .resolve_accepted_receipt(&reference, &declaration.manifest_digest)
         .map_err(host_failure)?
         .ok_or_else(invalid)?;
-    let (digest, result, _) = binding.into_parts();
+    let (digest, result, acceptance) = binding.into_parts();
+    if acceptance.destination.as_ref().is_some_and(|pin| &pin.key != target) { return Err(invalid()); }
     let mut values = JsonObject::new();
     values.insert(
         declaration.digest_property.0.clone(),
