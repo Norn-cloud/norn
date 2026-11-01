@@ -721,44 +721,42 @@ mod alpha_surface {
         .expect("authored alpha");
         let mut declarations = Vec::new();
         for mut artifact in artifacts {
-            match &artifact.payload {
-                norn_ir::ArtifactPayload::Entity(payload) => {
-                    let norn_ir::EntityRoot::V2(mut root) = typed(payload) else {
-                        continue;
-                    };
-                    if root.object_type.name.as_str() != "alpha.Customer" {
-                        continue;
-                    }
-                    root.object_type
-                        .properties
-                        .iter_mut()
-                        .find(|p| p.id.as_str() == "name")
-                        .expect("name")
-                        .property_type = norn_ir::PropertyType::JsonExt { schema: None };
-                    artifact.payload = norn_ir::ArtifactPayload::Entity(typed(root));
+            if let norn_ir::ArtifactPayload::Entity(payload) = &artifact.payload {
+                let norn_ir::EntityRoot::V2(mut root) = typed(payload) else {
+                    continue;
+                };
+                if root.object_type.name.as_str() != "alpha.Customer" {
+                    continue;
                 }
-                norn_ir::ArtifactPayload::Action(payload) => {
-                    let mut action: norn_ir::ActionRoot = typed(payload);
-                    if action.action_id != "alpha.customer.create" {
-                        continue;
-                    }
-                    let norn_ir::JsonValue::Object(properties) = action
-                        .input_schema
-                        .get_mut("properties")
-                        .expect("properties")
-                    else {
-                        panic!("object schema")
-                    };
-                    properties.insert(
-                        "name".into(),
-                        typed(json!({
-                            "type":"object", "additionalProperties":false,
-                            "properties":{"large":{"type":"integer"},"decimal":{"type":"number"}}
-                        })),
-                    );
-                    artifact.payload = norn_ir::ArtifactPayload::Action(typed(action));
+                root.object_type
+                    .properties
+                    .iter_mut()
+                    .find(|p| p.id.as_str() == "name")
+                    .expect("name")
+                    .property_type = norn_ir::PropertyType::JsonExt { schema: None };
+                artifact.payload = norn_ir::ArtifactPayload::Entity(typed(root));
+            } else if let norn_ir::ArtifactPayload::Action(payload) = &artifact.payload {
+                let mut action: norn_ir::ActionRoot = typed(payload);
+                if action.action_id != "alpha.customer.create" {
+                    continue;
                 }
-                _ => continue,
+                let norn_ir::JsonValue::Object(properties) = action
+                    .input_schema
+                    .get_mut("properties")
+                    .expect("properties")
+                else {
+                    panic!("object schema")
+                };
+                properties.insert(
+                    "name".into(),
+                    typed(json!({
+                        "type":"object", "additionalProperties":false,
+                        "properties":{"large":{"type":"integer"},"decimal":{"type":"number"}}
+                    })),
+                );
+                artifact.payload = norn_ir::ArtifactPayload::Action(typed(action));
+            } else {
+                continue;
             }
             declarations.push(artifact);
         }
