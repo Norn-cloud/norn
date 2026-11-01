@@ -429,6 +429,30 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     introduced(
+        "consistency.instance.violation",
+        Tier::T3,
+        "the data breaks {rule}: {detail}",
+        "0.2.0",
+    ),
+    warning_introduced(
+        "consistency.mapping.non_total",
+        Tier::T3,
+        "{element} never reaches the target",
+        "0.2.0",
+    ),
+    introduced(
+        "consistency.schema.incompatible",
+        Tier::T3,
+        "no {relation} tuple can be mapped: {detail}",
+        "0.2.0",
+    ),
+    warning_introduced(
+        "consistency.schema.unpreserved_constraint",
+        Tier::T3,
+        "the source admits data that breaks {rule}: {witness}",
+        "0.2.0",
+    ),
+    introduced(
         "consistency.theory.malformed",
         Tier::T3,
         "the lowered theory is malformed: {detail}",
