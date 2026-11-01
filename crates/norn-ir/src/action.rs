@@ -406,7 +406,7 @@ pub struct ActionQuantityEffect {
     pub operation: ActionQuantityOperation,
 }
 
-/// Ordinary quantity-backed actions can reserve or fully post a reservation.
+/// Ordinary quantity-backed actions select an admitted quantity template.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -415,6 +415,15 @@ pub struct ActionQuantityEffect {
     deny_unknown_fields
 )]
 pub enum ActionQuantityOperation {
+    /// Post a fixed admitted template atomically with the business effect.
+    Post {
+        /// Input field naming the immutable posting.
+        posting_id_field: String,
+        /// Template identity pinned by the admitted definition.
+        template_id: String,
+        /// Exact input bindings; the ledger checks the configured certificate.
+        parameters: BTreeMap<String, ActionQuantityParameter>,
+    },
     /// Reserve the pinned template with exact string-valued parameters.
     Reserve {
         /// Input field naming the reservation.

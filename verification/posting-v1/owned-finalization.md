@@ -28,3 +28,20 @@ remain required. This is execution conformance for the join, not stock/GL
 lowering; POST-VALUE and the remaining POST-ORDER/IDENTITY scenarios still need
 receipt/delivery conformance in part (d). Direct Post and protected rule-output
 admission remain subsequent changes.
+
+## Declared direct Post expansion
+
+A quantity-backed action may select `Post` with a definition-pinned template,
+posting identity field and exact parameter bindings. The configured ledger's
+certificate, funding checks and caller balance fences still govern admission.
+The same binding validator covers owned-row and ordinary business effects.
+No configuration or opening operation is admitted through this declaration.
+
+POST-ATOMIC and POST-IDENTITY conformance extends the native owned-row witness
+to direct Post: the ledger gains exactly one commit containing the parent,
+child, membership, manifest, action receipt and quantity posting. Insufficient
+funding leaves every one absent, with no new ledger commit or quantity version.
+An identical retry adds nothing; a conflicting input refuses without a commit.
+This is runtime-enforced native quantity conformance, not CP1 stock acceptance.
+Closed Receipt/Delivery selection, master loading, StockEvents, GL legs and
+alpha invoke/replay remain obligations of the stock-specific wiring.

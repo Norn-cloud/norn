@@ -1875,6 +1875,7 @@ fn quantity_effect_findings(
         Some(
             ActionEffectProgram::FireTransition { .. }
                 | ActionEffectProgram::UpsertInputObject { .. }
+                | ActionEffectProgram::MutateParentWithRows { .. }
         )
     );
     if !supported
@@ -1883,7 +1884,7 @@ fn quantity_effect_findings(
         || !root.scope_required.iter().any(|s| s == "environmentId")
         || !identity(&effect.ledger_id)
     {
-        errors.push("quantity effects require a ledgered scoped ordinary transition/upsert and a fixed ledger identity".to_owned());
+        errors.push("quantity effects require a ledgered scoped business effect and a fixed ledger identity".to_owned());
     }
     let props = root
         .input_schema
@@ -1907,21 +1908,18 @@ fn quantity_effect_findings(
     match &effect.operation {
         ActionQuantityOperation::Reserve {
             reservation_id_field,
-            template_id,
-            parameters,
             ttl_ms,
+            ..
         } => {
-            strings.push(reservation_id_field.as_str());
-            if !identity(template_id)
-                || ttl_ms.0 == 0
-                || parameters.len() > 16
-                || parameters
-                    .iter()
-                    .any(|(id, p)| !identity(id) || p.scale.0 > 28)
-            {
-                errors.push("reserve needs a fixed template, a positive deadline and bounded exact parameter bindings".to_owned());
+            if ttl_ms.0 == 0 {
+                errors.push("reserve needs a positive deadline".to_owned());
             }
-            strings.extend(parameters.values().map(|p| p.field.as_str()));
+            strings.push(reservation_id_field.as_str());
+        }
+        ActionQuantityOperation::Post {
+            posting_id_field, ..
+        } => {
+            strings.push(posting_id_field.as_str());
         }
         ActionQuantityOperation::PostReservation {
             reservation_id_field,
@@ -1929,6 +1927,30 @@ fn quantity_effect_findings(
         } => {
             strings.extend([reservation_id_field.as_str(), posting_id_field.as_str()]);
         }
+    }
+    if let ActionQuantityOperation::Reserve {
+        template_id,
+        parameters,
+        ..
+    }
+    | ActionQuantityOperation::Post {
+        template_id,
+        parameters,
+        ..
+    } = &effect.operation
+    {
+        if !identity(template_id)
+            || parameters.len() > 16
+            || parameters
+                .iter()
+                .any(|(id, p)| !identity(id) || p.scale.0 > 28)
+        {
+            errors.push(
+                "post/reserve needs a fixed template and bounded exact parameter bindings"
+                    .to_owned(),
+            );
+        }
+        strings.extend(parameters.values().map(|p| p.field.as_str()));
     }
     for field in strings {
         if field == effect.balance_versions_field
