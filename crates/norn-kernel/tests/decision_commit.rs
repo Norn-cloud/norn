@@ -697,11 +697,11 @@ fn decision_refuses_transition_from_wrong_state() {
     );
     let wire = norn_kernel::Refusable::refusal(&refusal);
     assert_eq!(
-        wire.reason.as_ref().unwrap().values["allowed"],
+        serde_json::to_value(&wire.reason.as_ref().unwrap().values["allowed"]).unwrap(),
         json!(["submitted"])
     );
     assert_eq!(
-        wire.reason.as_ref().unwrap().values["current"],
+        serde_json::to_value(&wire.reason.as_ref().unwrap().values["current"]).unwrap(),
         json!("draft")
     );
     assert!(!wire.message.contains("Some("));
