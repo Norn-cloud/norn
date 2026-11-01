@@ -47,7 +47,7 @@ fn project(record: &Record) -> Result<(SettingRoot, ScopeRef), ParameterError> {
                 reviewed_by: None,
                 reviewed_at: None,
                 reason: None,
-                additional: Default::default(),
+                additional: std::collections::BTreeMap::new(),
             },
             scope_required: Vec::new(),
             extensions: None,
