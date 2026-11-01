@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.lifecycle.unconstrained_state",
+  "message": "the decision creates {objectType} with lifecycle property {property}, which must be a string enum of initial states",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

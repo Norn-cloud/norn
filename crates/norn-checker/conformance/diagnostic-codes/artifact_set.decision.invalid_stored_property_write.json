@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.decision.invalid_stored_property_write",
+  "message": "the decision writes {property} of {objectType}, which violates its effective stored-property contract: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

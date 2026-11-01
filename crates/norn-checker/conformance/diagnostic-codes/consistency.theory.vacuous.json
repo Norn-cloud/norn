@@ -1,0 +1,7 @@
+{
+  "code": "consistency.theory.vacuous",
+  "message": "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

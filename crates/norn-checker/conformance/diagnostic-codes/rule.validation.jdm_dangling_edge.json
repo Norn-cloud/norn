@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_dangling_edge",
+  "message": "edge {edgeId} names node {nodeId}, which the graph does not have",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

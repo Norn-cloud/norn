@@ -1,0 +1,7 @@
+{
+  "code": "interface.validation.duplicate_property_id",
+  "message": "required property id {property} is declared twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
