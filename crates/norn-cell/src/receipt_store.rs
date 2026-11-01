@@ -591,9 +591,12 @@ mod tests {
             .input
             .insert("receipt".into(), RuntimeValue::String(digest.0));
         if !accepts {
-            let error = commit_action(&mut cell, &catalog, &request, &ActionAllow).expect_err("refusal");
+            let error =
+                commit_action(&mut cell, &catalog, &request, &ActionAllow).expect_err("refusal");
             if member == "confidence" {
-                assert!(matches!(error, norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::InvalidOutput { ref reason }) if reason.contains("receipt result property confidence")));
+                assert!(
+                    matches!(error, norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::InvalidOutput { ref reason }) if reason.contains("receipt result property confidence"))
+                );
             }
             assert_eq!(cell.store().verified_head().expect("head"), before);
             assert!(
