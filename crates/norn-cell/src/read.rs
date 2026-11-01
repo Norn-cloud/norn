@@ -1175,10 +1175,8 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         world: &str,
         request: &norn_ir::quantity_ledger::QuantityRequest,
     ) -> Result<norn_kernel::quantity::QuantityState, CellError> {
-        self.conn.execute_batch("SAVEPOINT norn_quantity_read")?;
-        let state = crate::quantity::state(self.conn, world, request);
-        self.conn.execute_batch("RELEASE norn_quantity_read")?;
-        state
+        self.conn
+            .read_snapshot(|| crate::quantity::state(self.conn, world, request))
     }
 
     /// Read the complete balance CAS set for a quantity intent.
