@@ -136,12 +136,6 @@ const fn warning_introduced(
 
 /// Every diagnostic code the checker can emit, sorted by code.
 pub static REGISTRY: &[CodeEntry] = &[
-    introduced(
-        crate::property_codec::INEXACT,
-        Tier::T6,
-        "the number is outside the exact 96-bit decimal profile (scale at most 28)",
-        "0.2.0",
-    ),
     entry(
         "action.validation.command_environment_underivable",
         Tier::T2,
@@ -427,6 +421,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "connector.validation.unknown_resource",
         Tier::T2,
         "resourceId '{resourceId}' does not match a declared connector resource",
+    ),
+    introduced(
+        crate::property_codec::INEXACT,
+        Tier::T6,
+        "the number is outside the exact 96-bit decimal profile (scale at most 28)",
+        "0.2.0",
     ),
     introduced(
         "consistency.chase.refused",
