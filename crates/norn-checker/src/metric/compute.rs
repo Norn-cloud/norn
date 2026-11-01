@@ -3,7 +3,7 @@
 pub mod arithmetic;
 pub mod contribution;
 
-use norn_ir::metric::{MetricFilter, TimeGrain};
+use norn_ir::metric::{FilterOperator, MetricFilter, TimeGrain};
 use norn_ir::{MetricDefinition, ObjectTypeName, PropertyId, PropertyType, QuestionIR};
 
 use super::{BoundMeasure, MeasureAggregate, bind_metric, check_metrics_and_questions};
@@ -124,10 +124,7 @@ pub fn admit(
             !dimension.path.links.is_empty()
                 || !matches!(dimension.grain, None | Some(TimeGrain::Week))
         })
-        || question
-            .filters
-            .iter()
-            .any(|filter| !filter.path.links.is_empty())
+        || question.filters.iter().any(unsupported_filter)
     {
         return Err(refuse());
     }
@@ -199,10 +196,7 @@ fn lower_sum(
         || metric.currency.is_some()
         || definition.norn.freshness.is_some()
         || definition.norn.authz.is_some()
-        || metric
-            .default_filters
-            .iter()
-            .any(|f| !f.path.links.is_empty())
+        || metric.default_filters.iter().any(unsupported_filter)
     {
         return Err(refuse());
     }
@@ -226,6 +220,11 @@ fn lower_sum(
         time_property: metric.time_dimension.property,
         filters: metric.default_filters,
     })
+}
+
+fn unsupported_filter(filter: &MetricFilter) -> bool {
+    !filter.path.links.is_empty()
+        || !matches!(filter.operator, FilterOperator::Eq | FilterOperator::Ne)
 }
 
 fn refusal(code: &str) -> Vec<Diagnostic> {
