@@ -1483,6 +1483,13 @@
             "$ref": "#/$defs/JsonValue"
           }
         },
+        "instances": {
+          "description": "Declarations in the retained scoped graph; omitted when there are none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PackInstance"
+          }
+        },
         "packId": {
           "type": "string"
         },
@@ -1498,13 +1505,6 @@
           "type": "array",
           "items": {
             "type": "string"
-          }
-        },
-        "instances": {
-          "description": "Declarations in the retained scoped graph; omitted when there are none.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/PackInstance"
           }
         }
       },
@@ -4482,10 +4482,10 @@
         },
         "properties": {
           "description": "Required properties, in presentation order. Omitted when empty.",
-          "type": "array",
           "items": {
             "$ref": "#/$defs/InterfaceProperty"
-          }
+          },
+          "type": "array"
         },
         "status": {
           "description": "The definition's resource status. Omitted means `active`.",
@@ -5400,10 +5400,10 @@
         },
         "properties": {
           "description": "The key's components, in tuple order: one id for a single key, several\nfor a composite key. Each names a stored, non-nullable property of an\nadmissible kind.",
-          "type": "array",
           "items": {
             "$ref": "#/$defs/PropertyId"
-          }
+          },
+          "type": "array"
         },
         "rule": {
           "description": "How key values are normalized and matched. Omitted: components compare\nexactly as stored.",
@@ -6041,10 +6041,10 @@
         },
         "properties": {
           "description": "Link properties: attributes of each link instance (a relationship\nobject), with the shape of object type properties. Omitted when\nempty.",
-          "type": "array",
           "items": {
             "$ref": "#/$defs/Property"
-          }
+          },
+          "type": "array"
         },
         "target": {
           "description": "The object type or interface linked to (they share one name space).\nA link to an interface admits every type that implements it.",
@@ -6751,10 +6751,10 @@
         },
         "properties": {
           "description": "Property maps. Omitted when empty.",
-          "type": "array",
           "items": {
             "$ref": "#/$defs/PropertyMap"
-          }
+          },
+          "type": "array"
         },
         "source": {
           "description": "Where the records come from.",
@@ -6863,10 +6863,10 @@
         },
         "properties": {
           "description": "Declared properties, in presentation order: new properties, and\nnarrowing overrides of inherited ones (same id). Omitted when empty.",
-          "type": "array",
           "items": {
             "$ref": "#/$defs/Property"
-          }
+          },
+          "type": "array"
         },
         "status": {
           "description": "The definition's resource status. Omitted means `active` (the\ncanonical form omits it).",
@@ -6898,10 +6898,10 @@
         },
         "properties": {
           "description": "Added properties; each id is `<namespace>__<name>`. Omitted when\nempty.",
-          "type": "array",
           "items": {
             "$ref": "#/$defs/Property"
-          }
+          },
+          "type": "array"
         },
         "target": {
           "description": "The extended object type.",
