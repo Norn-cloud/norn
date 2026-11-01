@@ -20,6 +20,10 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// Deterministic query semantics or snapshot preconditions refused.
+    #[error("{0}")]
+    ComputeRefused(&'static str),
+
     /// Missing or mismatched independent historical value proof.
     #[error("historical value proof refused: {0}")]
     HistoricalValueUnproven(String),

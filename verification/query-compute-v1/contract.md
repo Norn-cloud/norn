@@ -50,3 +50,20 @@ producer must validate pins, complete reads and freshness. Exact transport and
 opaque cursor separation have conformance tests. There is no new handwritten
 pure function or arithmetic primitive requiring another proptest/Kani harness;
 the producing evaluator and existing arithmetic kernel own that evidence.
+
+## G2 cell reference execution
+
+COMPUTE-DETERMINISTIC-1 / QUERY-GRAIN-1 use the shared projector and arithmetic
+inside one cell transaction. A full bounded metadata/decode scan precedes
+publication; budget exhaustion refuses rather than returning a partial total.
+Effective model contracts and tenant scope must match. The trusted host supplies
+visibility, source progress and Core 07 exclusions; this adds no quality law or
+permission authority. Required source partitions retain opaque cursor vectors;
+missing coverage/quarantine is incomplete, aged heartbeats are stale.
+The envelope binds actual ledger/knowledge revision, model/declarations, window,
+mapping/population/epoch, contributions and frontier. Historical knowledge
+selection refuses; retained old results are not a historical-query API.
+The unchanged #353 CSV is a generated numerical fixture, not authenticated
+training knowledge. Native cell scenarios cover 98%/97.5%, immutable prior
+results, exact contribution membership, unavailable zero-input ratios and
+visibility/quarantine separation. Governing commit-read qualification follows G4.
