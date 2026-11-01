@@ -25,8 +25,9 @@ export function purity(input: { readonly karat?: string; readonly fineness?: str
 export function fineMass(input: { readonly grossMicrograms: string; readonly karat?: string; readonly fineness?: string }): Result<bigint> {
   const normalized = purity(input)
   if (!normalized.ok) return normalized
-  const gross = scaled(input.grossMicrograms, 0)
-  if (gross === undefined || gross <= 0n) return { ok: false, code: "invalid_gross_mass" }
+  if (!/^[1-9][0-9]*$/.test(input.grossMicrograms)) return { ok: false, code: "invalid_gross_mass" }
+  if (input.grossMicrograms.length > 39) return { ok: false, code: "fine_mass_overflow" }
+  const gross = BigInt(input.grossMicrograms)
   if (gross > MAX_FINE_TICKS / normalized.value) return { ok: false, code: "fine_mass_overflow" }
   return { ok: true, value: gross * normalized.value }
 }

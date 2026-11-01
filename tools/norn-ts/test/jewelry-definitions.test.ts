@@ -52,6 +52,7 @@ test("exactPurityRefusal: excess precision, invalid ranges and conflicts never r
 test("checkedFineMass: signed i128 boundary is exact, overflow refuses", () => {
   expect(fineMass({ grossMicrograms: String(MAX_FINE_TICKS), karat: "0.000001" })).toEqual({ ok: true, value: MAX_FINE_TICKS })
   expect(fineMass({ grossMicrograms: String(MAX_FINE_TICKS + 1n), karat: "0.000001" })).toEqual({ ok: false, code: "fine_mass_overflow" })
+  expect(fineMass({ grossMicrograms: "1".repeat(129), karat: "24" })).toEqual({ ok: false, code: "fine_mass_overflow" })
   expect(fineMass({ grossMicrograms: String(MAX_FINE_TICKS / 24_000_000n + 1n), karat: "24" })).toEqual({ ok: false, code: "fine_mass_overflow" })
   for (const grossMicrograms of ["0", "-1", "1.1", "1e9"]) {
     expect(fineMass({ grossMicrograms, karat: "24" })).toEqual({ ok: false, code: "invalid_gross_mass" })
