@@ -55,7 +55,7 @@ export const Shopify = Norn.sourceSchema({
 })
 export const ERPNextMapping = Norn.mapping({
   id: "demo.erpnext.identity.mapping", title: "ERPNext explicit demo identities", version: "0.1.0",
-  source: { schemaId: "demo.erpnext.identity.source", version: "0.1.0", sha256: "ERP_SOURCE_HASH" },
+  source: { schemaId: "demo.erpnext.identity.source", version: "0.1.0", sha256: "f6874ecd93a6cfb36cb57f66e81ee60e1149b9c6970f1f64505a1052a58935b3" },
   sourceContract: { kind: "generic" }, interfaces: [SourceIdentity],
   maps: [
     { id: "catalog", source: { dataset: "Item" }, target: { type: CatalogEntry, interface: SourceIdentity },
@@ -70,7 +70,7 @@ export const ERPNextMapping = Norn.mapping({
 })
 export const ShopifyMapping = Norn.mapping({
   id: "demo.shopify.identity.mapping", title: "Shopify explicit demo identities", version: "0.1.0",
-  source: { schemaId: "demo.shopify.identity.source", version: "0.1.0", sha256: "SHOPIFY_SOURCE_HASH" },
+  source: { schemaId: "demo.shopify.identity.source", version: "0.1.0", sha256: "2d5f8307387f9ef7094bdc02498536c593586ae3151b8ad614ceba9f317afda1" },
   sourceContract: { kind: "generic" }, interfaces: [SourceIdentity],
   maps: [
     { id: "catalog", source: { dataset: "ProductVariant" }, target: { type: CatalogEntry, interface: SourceIdentity },

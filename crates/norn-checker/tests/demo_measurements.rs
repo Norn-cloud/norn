@@ -26,14 +26,10 @@ fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
     ]
     .iter()
     .flat_map(|dir| {
-        fs::read_dir(dir)
-            .expect("artifacts")
-            .map(|entry| {
-                serde_json::from_str(
-                    &fs::read_to_string(entry.expect("entry").path()).expect("read"),
-                )
+        fs::read_dir(dir).expect("artifacts").map(|entry| {
+            serde_json::from_str(&fs::read_to_string(entry.expect("entry").path()).expect("read"))
                 .expect("artifact")
-            })
+        })
     })
     .collect();
     artifacts.retain(|a| {
@@ -57,7 +53,10 @@ fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
         .find(|a| a.artifact_id == mapping_id)
         .expect("mapping");
     let value = serde_json::to_value(mapping).expect("JSON");
-    let source = artifacts.iter().find(|a| Some(a.artifact_id.as_str()) == value["payload"]["source"]["schemaId"].as_str()).expect("source");
+    let source = artifacts
+        .iter()
+        .find(|a| Some(a.artifact_id.as_str()) == value["payload"]["source"]["schemaId"].as_str())
+        .expect("source");
     assert_eq!(
         serde_json::to_value(mapping).expect("JSON")["payload"]["source"]["sha256"].as_str(),
         Some(ArtifactRef::of(source).expect("hash").sha256.as_str())
@@ -71,23 +70,52 @@ fn d1b_shipment_identity_converges_with_independent_evidence() {
     let erp = compile("demo-commerce", "demo.erpnext.identity.mapping");
     let shopify = compile("demo-commerce", "demo.shopify.identity.mapping");
     let recorded = UtcTimestamp("2026-10-26T00:00:00Z".into());
-    let delivery = SourceDocument::from_json("Delivery Note", r#"{
+    let delivery = SourceDocument::from_json(
+        "Delivery Note",
+        r#"{
         "name":"SYN-DN-001", "custom_shipment_ref":"demo/shipment/SYN-001"
-    }"#, None).expect("delivery");
-    let fulfillment = SourceDocument::from_json("Fulfillment", r#"{
+    }"#,
+        None,
+    )
+    .expect("delivery");
+    let fulfillment = SourceDocument::from_json(
+        "Fulfillment",
+        r#"{
         "id":"SYN-FULFILLMENT-001", "custom_shipment_ref":"demo/shipment/SYN-001"
-    }"#, None).expect("fulfillment");
-    let a = erp.apply(&[delivery.clone()], &recorded).expect("ERP mapping");
-    let b = shopify.apply(&[fulfillment.clone()], &recorded).expect("Shopify mapping");
+    }"#,
+        None,
+    )
+    .expect("fulfillment");
+    let a = erp
+        .apply(std::slice::from_ref(&delivery), &recorded)
+        .expect("ERP mapping");
+    let b = shopify
+        .apply(std::slice::from_ref(&fulfillment), &recorded)
+        .expect("Shopify mapping");
     assert_eq!(a.len(), 1);
     assert_eq!(b.len(), 1);
-    assert_eq!((&a[0].object_type, &a[0].key), (&b[0].object_type, &b[0].key));
+    assert_eq!(
+        (&a[0].object_type, &a[0].key),
+        (&b[0].object_type, &b[0].key)
+    );
     assert_eq!(a[0].key, "demo/shipment/SYN-001");
     assert_ne!(a[0].provenance.source, b[0].provenance.source);
-    assert_ne!(a[0].provenance.mapping_version, b[0].provenance.mapping_version);
+    assert_ne!(
+        a[0].provenance.mapping_version,
+        b[0].provenance.mapping_version
+    );
     assert!(a[0].links.is_empty() && b[0].links.is_empty());
-    assert_eq!(b, shopify.apply(&[fulfillment], &recorded).expect("Shopify first/replay"));
-    assert_eq!(a, erp.apply(&[delivery], &recorded).expect("ERP second/replay"));
+    assert_eq!(
+        b,
+        shopify
+            .apply(&[fulfillment], &recorded)
+            .expect("Shopify first/replay")
+    );
+    assert_eq!(
+        a,
+        erp.apply(&[delivery], &recorded)
+            .expect("ERP second/replay")
+    );
 }
 
 #[test]
@@ -95,20 +123,46 @@ fn d1b_catalog_not_holding_and_unresolved_references() {
     let erp = compile("demo-commerce", "demo.erpnext.identity.mapping");
     let shopify = compile("demo-commerce", "demo.shopify.identity.mapping");
     let recorded = UtcTimestamp("2026-10-26T00:00:00Z".into());
-    let item = SourceDocument::from_json("Item", r#"{
+    let item = SourceDocument::from_json(
+        "Item",
+        r#"{
         "name":"SYN-ITEM", "item_code":"SHARED-SKU", "custom_catalog_ref":"demo/catalog/GOLD"
-    }"#, None).expect("item");
-    let variant = SourceDocument::from_json("ProductVariant", r#"{
+    }"#,
+        None,
+    )
+    .expect("item");
+    let variant = SourceDocument::from_json(
+        "ProductVariant",
+        r#"{
         "id":"SYN-VARIANT", "sku":"SHARED-SKU", "custom_catalog_ref":"demo/catalog/SILVER"
-    }"#, None).expect("variant");
+    }"#,
+        None,
+    )
+    .expect("variant");
     let a = erp.apply(&[item], &recorded).expect("catalog item");
-    let b = shopify.apply(&[variant], &recorded).expect("catalog variant");
+    let b = shopify
+        .apply(&[variant], &recorded)
+        .expect("catalog variant");
     assert_eq!(a[0].object_type.as_str(), "demo.commerce.CatalogEntry");
     assert_eq!(a[0].object_type, b[0].object_type);
     assert_ne!(a[0].key, b[0].key, "same SKU cannot resolve identity");
-    assert_eq!(a[0].invocations[0].input.len(), 2, "id and objectId only; no Holding quantity");
-    for reference in ["", ",\"custom_shipment_ref\":null", ",\"custom_shipment_ref\":\"\"", ",\"custom_shipment_ref\":[\"A\",\"B\"]"] {
-        let document = SourceDocument::from_json("Fulfillment", &format!("{{\"id\":\"SYN-UNRESOLVED\"{reference}}}"), None).expect("raw evidence");
+    assert_eq!(
+        a[0].invocations[0].input.len(),
+        2,
+        "id and objectId only; no Holding quantity"
+    );
+    for reference in [
+        "",
+        ",\"custom_shipment_ref\":null",
+        ",\"custom_shipment_ref\":\"\"",
+        ",\"custom_shipment_ref\":[\"A\",\"B\"]",
+    ] {
+        let document = SourceDocument::from_json(
+            "Fulfillment",
+            &format!("{{\"id\":\"SYN-UNRESOLVED\"{reference}}}"),
+            None,
+        )
+        .expect("raw evidence");
         assert!(shopify.apply(&[document], &recorded).is_err());
     }
 }
