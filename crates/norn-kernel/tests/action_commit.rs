@@ -3430,10 +3430,12 @@ fn owned_quantity_intent_refuses_hosts_without_combined_admission() {
     );
     let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
         .with_types(definitions.clone());
+    let refusal = refuse_owned_series_atomically(&mut cell, &catalog, &request);
     assert!(
-        matches!(refuse_owned_series_atomically(&mut cell, &catalog, &request),
+        matches!(&refusal,
         ActionRefusal::Decision(norn_kernel::DecisionRefusal::InvalidOutput { reason })
-            if reason == "observation authorization did not match its prepared commit")
+            if reason == "observation authorization did not match its prepared commit"),
+        "{refusal:?}"
     );
 }
 

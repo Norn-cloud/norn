@@ -343,10 +343,15 @@ fn owned_row_finalization_and_quantity_intent_share_one_commit() {
     );
     for amount in [5, 150] {
         let mut cell = native_cell_for(&definitions);
-        cell.commit_quantity_fenced(&quantity_support::define(), "define")
+        cell.commit_quantity(&quantity_support::define(), "define")
             .expect("define");
-        cell.commit_quantity_fenced(&quantity_support::post(1, "fund", "fund", 100), "fund")
-            .expect("fund");
+        let mut funding = quantity_support::post(1, "fund", "fund", 100);
+        funding.balance_versions = cell
+            .store()
+            .read()
+            .quantity_balance_versions("main", &funding)
+            .expect("funding fences");
+        cell.commit_quantity(&funding, "fund").expect("fund");
         let request = quantity_support::reserve(2, "hold", amount, 11000);
         let versions = cell
             .store()
@@ -361,8 +366,8 @@ fn owned_row_finalization_and_quantity_intent_share_one_commit() {
         input["versions"] = serde_json::to_value(versions).expect("versions");
         input["reservation"] = json!("hold");
         input["amount"] = json!(amount.to_string());
-        let call = call(&declared, "rows-with-hold", input);
-        let outcome = commit_action(&mut cell, &catalog, &call, &Allow);
+        let invocation = call(&declared, "rows-with-hold", input);
+        let outcome = commit_action(&mut cell, &catalog, &invocation, &Allow);
         let reader = cell.store().read();
         let hold = reader
             .quantity_reservation("main", "stock", "hold")
@@ -377,7 +382,7 @@ fn owned_row_finalization_and_quantity_intent_share_one_commit() {
             assert_parent(&cell, 1, "with hold");
             assert_row(&cell, "row-a", 1, 1, "first", 5);
             assert!(matches!(
-                commit_action(&mut cell, &catalog, &call, &Allow),
+                commit_action(&mut cell, &catalog, &invocation, &Allow),
                 Ok(ActionOutcome::Replayed { .. })
             ));
             assert_eq!(
