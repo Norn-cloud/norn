@@ -474,7 +474,7 @@
       "code": "definition.text.not_nfc",
       "message": "definition text at {path} must already be Unicode NFC",
       "severity": "error",
-      "since": "0.1.0",
+      "since": "0.2.0",
       "tier": "T0"
     },
     {
