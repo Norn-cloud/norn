@@ -506,6 +506,13 @@ fn check_closure(manifest: &FunctionManifest, out: &mut Vec<Diagnostic>) {
 
 fn check_profile(manifest: &FunctionManifest, out: &mut Vec<Diagnostic>) {
     let format = manifest.implementation.format;
+    // FUNCTION-HOST-1: existing unqualified/non-cacheable producer semantics.
+    if format == ImplementationFormat::Host {
+        let pinned = format!("{}/{}@{}", manifest.runtime.id, manifest.runtime.version, manifest.implementation.digest);
+        if manifest.implementation.locator.as_deref() != Some(pinned.as_str()) {
+            out.push(error(codes::MUTABLE_IDENTITY, "a host implementation pins crate name/version and source-tree digest".to_owned(), at(["implementation", "locator"])));
+        }
+    }
     let deterministic = !matches!(manifest.determinism, DeterminismProfile::Effectful(_));
     match &manifest.determinism {
         DeterminismProfile::QualifiedWasm(evidence) => {
