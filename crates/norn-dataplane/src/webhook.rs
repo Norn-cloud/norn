@@ -40,6 +40,9 @@ pub enum IngestError {
         /// The MAC's message.
         reason: String,
     },
+    /// The body is not JSON.
+    #[error("the body is not JSON: {0}")]
+    Json(#[from] serde_json::Error),
     /// A required field or header is absent or has the wrong type.
     #[error("required field `{field}` is missing or not a {expected}")]
     MissingField {
@@ -69,6 +72,12 @@ pub enum IngestError {
         expected: String,
         /// The header value.
         found: String,
+    },
+    /// The sweep configuration is unusable.
+    #[error("invalid sweep configuration: {reason}")]
+    InvalidSweep {
+        /// Why.
+        reason: &'static str,
     },
     /// The resulting observation was refused.
     #[error(transparent)]

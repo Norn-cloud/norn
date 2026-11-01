@@ -220,6 +220,7 @@
     "crates/norn-dataplane/src/lib.rs",
     "crates/norn-dataplane/src/raw_observation.rs",
     "crates/norn-dataplane/src/shopify.rs",
+    "crates/norn-dataplane/src/sweep.rs",
     "crates/norn-dataplane/src/webhook.rs",
     "crates/norn-ir/src/definition_catalog.rs",
     "crates/norn-ir/src/mapping.rs",
