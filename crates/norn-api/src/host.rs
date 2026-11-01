@@ -444,7 +444,6 @@ mod defs_read {
         );
     }
 }
-<<<<<<< HEAD
 
 #[cfg(all(test, feature = "native", feature = "http-host"))]
 #[allow(
@@ -457,9 +456,9 @@ mod defs_read {
 )]
 mod cp1_surface {
     use super::*;
-    use norn_ir::quantity_ledger::{QUANTITY_CELL_VERSION, QuantityOperation, QuantityRequest};
     use crate::authz::{AccessRequest, Authorizer, DenyAll};
     use norn_cell::{CommitBatch, FactWriteRow, LinkChange, engine::NativeEngine};
+    use norn_ir::quantity_ledger::{QUANTITY_CELL_VERSION, QuantityOperation, QuantityRequest};
     use norn_ir::{ArtifactEnvelope, ArtifactPayload, EntityIrVersion, EntityRootV2};
     use norn_kernel::{
         ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
@@ -697,7 +696,3 @@ mod cp1_surface {
         );
     }
 }
-||||||| 70be955a1
-
-=======
->>>>>>> surface/cp1-action-transports
