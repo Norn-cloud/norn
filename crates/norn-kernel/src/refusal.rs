@@ -157,6 +157,13 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn category(&self) -> RefusalCategory {
         match self {
+            Self::Law { reason, .. } => match reason {
+                crate::governing_laws::LawEvaluationError::Violated(_) => {
+                    RefusalCategory::Precondition
+                }
+                crate::governing_laws::LawEvaluationError::BudgetExceeded => RefusalCategory::Limit,
+                _ => RefusalCategory::Invalid,
+            },
             Self::DuplicateKey { .. }
             | Self::DuplicateLink { .. }
             | Self::LinkTarget { .. }
@@ -257,6 +264,11 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn category(&self) -> RefusalCategory {
         match self {
+            Self::Law { reason, .. } => match reason {
+                crate::governing_laws::LawEvaluationError::Violated(_) => RefusalCategory::Precondition,
+                crate::governing_laws::LawEvaluationError::BudgetExceeded => RefusalCategory::Limit,
+                _ => RefusalCategory::Invalid,
+            },
             Self::GuardFalse { .. }
             | Self::GuardError { .. }
             | Self::NotFromState { .. }
@@ -477,6 +489,7 @@ impl<X> DecisionRefusal<X> {
             | Self::Stale { .. }
             | Self::NotPending { .. }
             | Self::AccountingPosting { .. }
+            | Self::Law { .. }
             | Self::InvariantViolation { .. }
             | Self::InvariantBudgetExceeded { .. }
             | Self::TraversalLimitExceeded { .. }

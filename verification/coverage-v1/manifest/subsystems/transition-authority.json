@@ -344,6 +344,7 @@
     "crates/norn-kernel/src/decision_commit.rs",
     "crates/norn-kernel/src/effect.rs",
     "crates/norn-kernel/src/envelope.rs",
+    "crates/norn-kernel/src/governing_laws.rs",
     "crates/norn-kernel/src/limits.rs",
     "crates/norn-kernel/src/naming_series.rs",
     "crates/norn-kernel/src/observations.rs",

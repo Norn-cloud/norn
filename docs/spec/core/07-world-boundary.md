@@ -35,6 +35,11 @@ Applicable inherited or effective-instance scope refuses with
 `core.laws.unsupported_semantics` and an `unsupported until B2` detail, preserving
 LAW-COMPLETE-1 / LAW-SUPPORTED-1 rather than omitting governing constraints.
 
+CP2 direct-law evaluation uses the metered expression evaluator for pointwise
+`always`/`never` predicates with an optional Boolean activation condition.
+Unsupported timing, response, lifecycle or commitment scope fails closed with
+`core.laws.unsupported_semantics`; native violations use `core.laws.violated`.
+
 ## Ingestion versus governed action
 
 [Owner] Imported events already happened. Validate their framing/provenance; durably capture representable source observations and advance the cursor atomically with capture. Mapping/law violations produce **findings + quarantine**, not a refused source fact. Quarantined rows retain raw evidence and stay out of authoritative aggregates unless an explicit observed-data question includes them with quality labels. Invalid transport/authentication is still a boundary failure; it is not a business-law refusal of an external occurrence.
