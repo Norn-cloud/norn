@@ -926,7 +926,7 @@ impl LawContext<'_> {
         interface: &norn_ir::InterfaceDef,
         out: &mut Vec<Diagnostic>,
     ) {
-        if matches!(law.scope.root, LawRoot::App(_) | LawRoot::Pack(_))
+        if matches!(law.scope.root, LawRoot::App(_))
             && let Err(findings) =
                 retained_law_membership(artifact, self.base, RETAINED_SCOPE_BUDGET)
         {
