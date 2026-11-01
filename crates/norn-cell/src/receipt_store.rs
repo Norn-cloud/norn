@@ -99,7 +99,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         self.store.commit_guarded(&batch, |reader| -> Result<(), CellError> {
             if dispatched.invocation.tenant != scope || dispatched.invocation.world != MAIN_WORLD { return Err(refused("scope")); }
             let pending = reader.head_command()?.ok_or_else(|| refused("unknown"))?;
-            let invocation = norn_ir::runtime::encode(&dispatched.invocation).map_err(|_invalid| refused("dispatch"))?;
+            let invocation = norn_ir::runtime_object! { "type" => "norn.function/v1", "invocation" => norn_ir::runtime::encode(&dispatched.invocation).map_err(|_invalid| refused("dispatch"))? };
             let receipt = norn_ir::runtime::encode(completion.receipt).map_err(|_invalid| refused("body"))?;
             if pending.command.command_id != dispatched.invocation.command_id
                 || pending.command.generation != dispatched.generation().0
@@ -158,6 +158,17 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Ok(Some(stored))
     }
 
+    pub(crate) fn receipt_for_acceptance(&self, reference: &Digest) -> Result<Option<StoredReceipt>, CellError> {
+        let Some(stored) = self.stored_function_receipt(reference)? else { return Ok(None); };
+        let pending = self.store.read().head_command()?.ok_or_else(|| refused("replayed"))?;
+        let payload = pending.command.command.get("payload").ok_or_else(|| refused("dispatch"))?;
+        if payload.get("type").and_then(RuntimeValue::as_str) != Some("norn.function/v1") { return Err(refused("dispatch")); }
+        let invocation: norn_ir::function::FunctionInvocation = norn_ir::runtime::decode(payload.get("invocation").ok_or_else(|| refused("dispatch"))?).map_err(|_invalid| refused("dispatch"))?;
+        if invocation.tenant != self.scope || invocation.world != MAIN_WORLD || invocation.content_digest().map_err(|_invalid| refused("dispatch"))? != stored.receipt.dispatch
+            || pending.command.command_id != stored.receipt.command_id || pending.command.generation != stored.receipt.run.generation { return Err(refused("dispatch")); }
+        Ok(Some(stored))
+    }
+
     pub(crate) fn bind_function_receipt(
         &self,
         reference: &norn_kernel::receipt_binding::ReceiptReference,
@@ -166,7 +177,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Option<norn_kernel::receipt_binding::ReceiptBinding<norn_ir::RuntimeObject>>,
         CellError,
     > {
-        let Some(stored) = self.stored_function_receipt(reference.digest())? else {
+        let Some(stored) = self.receipt_for_acceptance(reference.digest())? else {
             return Ok(None);
         };
         if stored.receipt.manifest != *manifest {
@@ -261,7 +272,7 @@ mod tests {
             }
         }
     }
-    type Cell = SqliteCell<RuntimeValue, FunctionInvocation, FunctionReceipt>;
+    type Cell = SqliteCell<RuntimeValue, RuntimeValue, FunctionReceipt>;
     fn setup(path: &std::path::Path) -> (Cell, DispatchedCommand, FunctionReceipt, Checks, Model) {
         let manifest: FunctionManifest = fixture("manifest");
         let checks =
@@ -269,6 +280,8 @@ mod tests {
         let mut invocation: FunctionInvocation = fixture("invocation");
         invocation.freshness = norn_ir::function::FreshnessMode::AppendOnly;
         invocation.destination = None;
+        invocation.dependency.facts.clear();
+        invocation.dependency.predicates.clear();
         let dispatched = DispatchedCommand::pin(invocation, checks.0.execution_profile.clone())
             .expect("dispatch");
         let mut receipt: FunctionReceipt = fixture("receipt");
@@ -285,7 +298,7 @@ mod tests {
             idempotency_key: IdempotencyKey("receipt-test".into()),
             freshness: FreshnessPolicy::AppendOnly,
             deadline: None,
-            payload: dispatched.invocation.clone(),
+            payload: norn_ir::runtime_object! { "type" => "norn.function/v1", "invocation" => norn_ir::runtime::encode(&dispatched.invocation).expect("invocation") },
         };
         store
             .commit(&CommitBatch {

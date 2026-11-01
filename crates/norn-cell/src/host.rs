@@ -1619,7 +1619,7 @@ where
         reference: &norn_kernel::receipt_binding::ReceiptReference,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let stored = self
-            .stored_function_receipt(reference.digest())
+            .receipt_for_acceptance(reference.digest())
             .map_err(CommitError::Host)?
             .ok_or_else(|| CommitError::Host(crate::receipt_store::refused("unknown")))?;
         if commit
