@@ -1,6 +1,5 @@
 //! RECEIPT-STORE-1: only authenticated reconciliation populates the receipt store.
-//! The private store survives reopen. Exported events alone never recreate its
-//! authority. Predicate/collection adapters that are unavailable refuse closed.
+//! The store survives reopen; event restore and unavailable adapters refuse closed.
 
 use crate::{
     CellError, CommitBatch, SqliteCell, StoreReader,
@@ -102,9 +101,9 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             let stored = StoredReceipt { receipt: completion.receipt.clone(), acceptance, source, frontier };
             let body = serde_json::to_string(&stored).map_err(CellError::Json)?;
             if body.len() > LIMIT { return Err(refused("limit")); }
-            let consumed = reader.conn.query_optional("SELECT consumed_commit_seq FROM _norn_function_receipt WHERE reference = ?1", params![reference.0], |row| row.get::<Option<i64>>(0))?;
-            if consumed.flatten().is_some() { return Err(refused("replayed")); }
-            reader.conn.execute("INSERT INTO _norn_function_receipt(reference,scope,body) VALUES (?1,?2,?3) ON CONFLICT(reference) DO UPDATE SET body=excluded.body WHERE consumed_commit_seq IS NULL", params![reference.0, scope, body])?;
+            let retained = reader.conn.query_optional("SELECT 1 FROM _norn_function_receipt WHERE reference = ?1", params![reference.0], |row| row.get::<i64>(0))?;
+            if retained.is_some() { return Err(refused("already_retained")); }
+            reader.conn.execute("INSERT INTO _norn_function_receipt(reference,scope,body) VALUES (?1,?2,?3)", params![reference.0, scope, body])?;
             Ok(())
         }, &mut |_| Ok(())).map_err(|error| match error { GuardedError::Guard(error) | GuardedError::Store(error) => error })?;
         Ok(reference)
@@ -315,6 +314,7 @@ mod tests {
             .function_receipt_evidence(&reference)
             .expect("read")
             .expect("evidence");
+        assert!(retain(&mut cell, &dispatched, &receipt, &checks, true).is_err());
         assert_eq!(evidence.0, receipt);
         assert_eq!(evidence.1.body.logical_time, 1_790_000_000_100);
         drop(cell);
