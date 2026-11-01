@@ -32,9 +32,13 @@ pub struct ForecastInput {
 /// Typed summary accepted by a governed publication action.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "receipt schema carries independent source-quality and diagnostic facts"
+)]
 pub struct ForecastSummary {
     /// Input export version.
-    pub table_version: u64,
+    pub table_version: String,
     /// Exact input export digest.
     pub table_digest: Digest,
     /// Source population/recipe digest.
@@ -51,7 +55,7 @@ pub struct ForecastSummary {
     pub training_rows: u32,
     /// Held-out rows.
     pub holdout_rows: u32,
-    /// Features recorded after their prediction cutoffs.
+    /// Features violating their valid/recorded prediction cutoffs.
     pub late_features: u32,
     /// Training outcomes recorded at/after the split boundary.
     pub late_training_labels: u32,
@@ -63,6 +67,26 @@ pub struct ForecastSummary {
     pub quarantine_count: u32,
     /// Whether the supplied export frontier is current for its declared population.
     pub fresh: bool,
+    /// Exact alpha, split, column and freshness parameter identity.
+    pub parameters_digest: Digest,
+    /// Declared assumptions document identity.
+    pub assumptions_digest: Digest,
+    /// Declared remedy document identity.
+    pub remedy_digest: Digest,
+    /// Split boundary in the cell receipt clock’s milliseconds.
+    pub split_at_ms: i64,
+    /// Latest actual training knowledge time in cell milliseconds.
+    pub latest_training_label_ms: i64,
+    /// Non-forward outcomes, retained as refusal evidence.
+    pub non_forward_outcome_count: u32,
+    /// Host-resolved source frontier lag.
+    pub frontier_age_ms: u64,
+    /// Whether every computed library diagnostic passed.
+    pub diagnostics_passed: bool,
+    /// UCUM outcome code; 1 denotes a dimensionless integer column.
+    pub error_unit: String,
+    /// Ontology-resolved outcome unit, including dimensionless/unknown absence.
+    pub unit: Option<norn_ir::UnitRef>,
     /// RMSE in billionths of the declared outcome unit; absent without a fit.
     pub rmse_nanos: Option<i64>,
     /// Training-mean baseline in the same units; absent without a fit.
