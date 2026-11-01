@@ -356,6 +356,36 @@ proptest::proptest! {
 }
 
 #[test]
+fn law_weaken_candidate_containment_cannot_replace_retained_membership() {
+    let (law, base) = membership_case();
+    let mut owner = base.last().expect("holder").clone();
+    let mut root: CompositionPackRoot =
+        serde_json::from_value(serde_json::to_value(owner.payload.to_json_value()).expect("wire"))
+            .expect("pack");
+    root.instances.as_mut().expect("instances")[0]
+        .imports
+        .clear();
+    owner.payload = ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::BusinessPack,
+        serde_json::from_value(serde_json::to_value(root).expect("root")).expect("tree"),
+    )
+    .expect("payload");
+    let errors = check_artifact_set(
+        &[law, owner],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &base,
+            tenant: None,
+        },
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|d| d.code.as_str() == "artifact_set.resolution.shadows_base")
+    );
+}
+
+#[test]
 fn law_contained_instances_keep_origins_and_import_diamonds() {
     let (law, base) = membership_case();
     let instances = projected(&law, &base);
