@@ -61,7 +61,7 @@ impl TypeCatalog<'_> {
         &self,
         object_type: &ObjectTypeName,
     ) -> Result<Vec<&ArtifactEnvelope>, LawEvaluationError> {
-        if !self.contains(object_type) {
+        if !self.contains(object_type) && !self.law_artifacts.is_empty() {
             return Err(LawEvaluationError::Invalid(object_type.as_str().to_owned()));
         }
         let is_a = |name: &str| {
