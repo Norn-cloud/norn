@@ -1305,6 +1305,7 @@ pub fn check_sub_decision_closures(
 ) -> Vec<Diagnostic> {
     let pool = Pool::new(artifacts, base);
     let mut memo: BTreeMap<(&str, &str), Closure<'_>> = BTreeMap::new();
+    let mut fold_graphs = BTreeMap::new();
     let mut findings = Vec::new();
     for artifact in artifacts {
         let Some(graph) = decode_graph(artifact) else {
@@ -1353,9 +1354,13 @@ pub fn check_sub_decision_closures(
                             .filter_map(|identity| pool.by_identity.get(identity).copied()),
                     )
                     .all(|helper| {
-                        decode_graph(helper).is_some_and(|graph| {
-                            norn_expr::schema::fold_step_graph_supported(&graph)
-                        })
+                        *fold_graphs
+                            .entry((helper.artifact_id.as_str(), helper.version.as_str()))
+                            .or_insert_with(|| {
+                                decode_graph(helper).is_some_and(|graph| {
+                                    norn_expr::schema::fold_step_graph_supported(&graph)
+                                })
+                            })
                     })
             {
                 findings.push(set_finding(
