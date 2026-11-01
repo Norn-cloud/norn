@@ -16,7 +16,6 @@ import { Norn } from "@norn/authoring"
 
 export const Agent = Norn.interfaceType({
   name: "core.Agent",
-  role: "thing",
   title: "Agent",
   version: "0.1.0",
   description: "An actor that holds resources, takes part in economic events and makes commitments: a person, an organisation or a system (REA agent).",
@@ -44,7 +43,6 @@ export const AgentRole = Norn.interfaceType({
 
 export const Resource = Norn.interfaceType({
   name: "core.Resource",
-  role: "thing",
   title: "Resource",
   version: "0.1.0",
   description: "Something of value that is conserved: goods, money, time, capacity or a right, held as a quantity in exactly one unit (a UCUM unit, or a currency for money). `valuation_method` is the governed parameter of core.law.stock_valuation (FIFO or moving average); it is null for a resource that is not valued.",
@@ -63,7 +61,6 @@ export const Resource = Norn.interfaceType({
 
 export const Commitment = Norn.interfaceType({
   name: "core.Commitment",
-  role: "happening",
   title: "Commitment",
   version: "0.1.0",
   description: "A promise of a future economic event: an order line, a contract term, a subscription period. It ends fulfilled, cancelled or breached and is never dropped (DEMO request, promise, execute).",
@@ -83,7 +80,6 @@ export const Commitment = Norn.interfaceType({
 
 export const Hold = Norn.interfaceType({
   name: "core.Hold",
-  role: "happening",
   title: "Hold",
   version: "0.1.0",
   description: "A quantity set aside against a balance: an escrow, a stock reservation or a use of a quota. A hold is released, consumed or expires, and never exceeds what is available (core.law.escrow_non_negative).",
@@ -103,7 +99,6 @@ export const Hold = Norn.interfaceType({
 
 export const EconomicEvent = Norn.interfaceType({
   name: "core.EconomicEvent",
-  role: "happening",
   title: "Economic event",
   version: "0.1.0",
   description: "A posted change of resources. A transfer moves ownership or custody from provider to receiver; a transformation consumes inputs and produces outputs. Posted events are immutable; a correction is a new event that reverses its original.",
@@ -125,7 +120,6 @@ export const EconomicEvent = Norn.interfaceType({
 
 export const LedgerEffect = Norn.interfaceType({
   name: "core.LedgerEffect",
-  role: "happening",
   title: "Ledger effect",
   version: "0.1.0",
   description: "The value view of an economic event: one signed amount on one account. A positive amount is a debit and a negative one a credit; the side is presentation only and is never stored. The effects posted together balance (core.law.value_conservation).",
@@ -141,7 +135,6 @@ export const LedgerEffect = Norn.interfaceType({
 
 export const Claim = Norn.interfaceType({
   name: "core.Claim",
-  role: "thing",
   title: "Claim",
   version: "0.1.0",
   description: "An economic claim: a right to receive resources, such as an invoice or a receivable, settled by economic events. Not a catalog claim about definitions. Disjoint from core.Commitment (Commitment ⊓ Claim = ∅): a promise is not yet a right, and no type is both. A fulfilled or accepted commitment gives rise to claims (givesRiseTo); the relation is recorded on the claim as `arises_from`, because a commitment is not edited when a claim arises.",
