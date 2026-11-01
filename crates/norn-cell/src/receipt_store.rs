@@ -284,9 +284,36 @@ mod tests {
             {"id":"status","type":{"kind":"enum","values":[{"value":"proposed"},{"value":"published"}]},"default":"proposed"}
         ],"identity":[{"name":"primary","properties":["id"]}],"lifecycles":[{"property":"status","initial":["proposed"],"terminal":["published"],"transitions":[{"id":"publish","from":["proposed"],"to":"published","guards":["self.intent == \"order.modify\""]}]}]})).expect("target");
         definitions.push(target.clone());
-        target.name = norn_ir::ObjectTypeName("norn.ActionCall".into()); target.lifecycles.clear(); target.identity.clear(); target.properties.clear();
-        let names = ["actionId","actionArtifactId","actionVersion","effectKind","object","input","effectiveInput","derivedValues","preconditionOutcomes","actor","turn","transition","from","to","rowOperations"];
-        target.properties = names.into_iter().map(|id| serde_json::from_value(json!({"id":id,"type":{"kind":"json-ext"},"constraints":{"nullable":true}})).expect("property")).collect();
+        target.name = norn_ir::ObjectTypeName("norn.ActionCall".into());
+        target.lifecycles.clear();
+        target.identity.clear();
+        target.properties.clear();
+        let names = [
+            "actionId",
+            "actionArtifactId",
+            "actionVersion",
+            "effectKind",
+            "object",
+            "input",
+            "effectiveInput",
+            "derivedValues",
+            "preconditionOutcomes",
+            "actor",
+            "turn",
+            "transition",
+            "from",
+            "to",
+            "rowOperations",
+        ];
+        target.properties = names
+            .into_iter()
+            .map(|id| {
+                serde_json::from_value(
+                    json!({"id":id,"type":{"kind":"json-ext"},"constraints":{"nullable":true}}),
+                )
+                .expect("property")
+            })
+            .collect();
         definitions.push(target);
         let model = Model::from_definitions(&definitions, &[]).expect("model");
         let mut store =
@@ -297,15 +324,55 @@ mod tests {
             idempotency_key: IdempotencyKey("receipt-test".into()),
             freshness: FreshnessPolicy::AppendOnly,
             deadline: None,
-            payload: norn_ir::runtime::encode(&dispatched.invocation).expect("invocation").as_object().expect("object").clone(),
+            payload: norn_ir::runtime::encode(&dispatched.invocation)
+                .expect("invocation")
+                .as_object()
+                .expect("object")
+                .clone(),
         };
-        store.commit(&CommitBatch { world: MAIN_WORLD.into(), scope: dispatched.invocation.tenant.clone(), logical_time: 1_790_000_000_000,
-            writes: vec![FactWriteRow::Put { object_type: "norn.FunctionCommand".into(), key: command.id.0.clone(), values: norn_ir::RuntimeObject::from([("state".into(), norn_ir::runtime::encode(&CommandState::dispatched(&dispatched)).expect("state"))]) }, FactWriteRow::Put { object_type:"test.ReceiptTarget".into(), key:"target-1".into(), values:norn_ir::RuntimeObject::from([("id".into(),RuntimeValue::String("target-1".into()))]) }],
-            effects: vec![EffectRow::Enqueue { command: OutboxCommand { command_id: command.id.0.clone(), generation: command.generation.0, idempotency_key: command.idempotency_key.0.clone(), deadline: None, command: norn_ir::runtime::encode(&command).expect("command") } }], ..CommitBatch::default()
-        }).expect("enqueue");
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: dispatched.invocation.tenant.clone(),
+                logical_time: 1_790_000_000_000,
+                writes: vec![
+                    FactWriteRow::Put {
+                        object_type: "norn.FunctionCommand".into(),
+                        key: command.id.0.clone(),
+                        values: norn_ir::RuntimeObject::from([(
+                            "state".into(),
+                            norn_ir::runtime::encode(&CommandState::dispatched(&dispatched))
+                                .expect("state"),
+                        )]),
+                    },
+                    FactWriteRow::Put {
+                        object_type: "test.ReceiptTarget".into(),
+                        key: "target-1".into(),
+                        values: norn_ir::RuntimeObject::from([(
+                            "id".into(),
+                            RuntimeValue::String("target-1".into()),
+                        )]),
+                    },
+                ],
+                effects: vec![EffectRow::Enqueue {
+                    command: OutboxCommand {
+                        command_id: command.id.0.clone(),
+                        generation: command.generation.0,
+                        idempotency_key: command.idempotency_key.0.clone(),
+                        deadline: None,
+                        command: norn_ir::runtime::encode(&command).expect("command"),
+                    },
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("enqueue");
         let result = receipt.clone();
         let mut cell = Cell::new(store, dispatched.invocation.tenant.clone(), move |_| {
-            norn_ir::runtime::encode(&result).expect("receipt").as_object().expect("object").clone()
+            norn_ir::runtime::encode(&result)
+                .expect("receipt")
+                .as_object()
+                .expect("object")
+                .clone()
         })
         .expect("cell");
         assert!(cell.perform().expect("perform").is_some());
@@ -425,10 +492,17 @@ mod tests {
     }
     struct ActionAllow;
     impl norn_kernel::ActionAuthorizer for ActionAllow {
-        fn authorize(&self, _: &norn_kernel::ActionAuthzRequest<'_>) -> Result<(), norn_kernel::ActionDenial> { Ok(()) }
+        fn authorize(
+            &self,
+            _: &norn_kernel::ActionAuthzRequest<'_>,
+        ) -> Result<(), norn_kernel::ActionDenial> {
+            Ok(())
+        }
     }
     fn exercise_receipt_action(member: &str, accepts: bool) {
-        use norn_kernel::{ActionCall, ActionOutcome, DecisionTurn, TypeCatalog, World, commit_action};
+        use norn_kernel::{
+            ActionCall, ActionOutcome, DecisionTurn, TypeCatalog, World, commit_action,
+        };
         let dir = tempfile::tempdir().expect("dir");
         let (mut cell, dispatched, receipt, checks, model) = setup(&dir.path().join("cell.sqlite"));
         let digest = retain(&mut cell, &dispatched, &receipt, &checks, true).expect("retain");
@@ -439,31 +513,84 @@ mod tests {
             "effectProgram":{"kind":"fire_transition","objectIdField":"id","objectKind":"test.ReceiptTarget","entityArtifactId":"test.target","entityArtifactVersion":"0.1.0","lifecycle":"status","transition":"publish", "acceptReceipt":{"referenceField":"receipt","manifestDigest":receipt.manifest.0,"digestProperty":"digest","resultBindings":{"intent":member}}}
         })).expect("action");
         let catalog = TypeCatalog::new(model.object_types());
-        let mut call = ActionCall { action:&action, action_artifact_id:"test.accept",action_version:"0.1.0",scope:std::collections::BTreeMap::from([("orgId".into(),dispatched.invocation.tenant)]),actor:"reviewer:test".into(),input:norn_ir::RuntimeObject::from([("id".into(),RuntimeValue::String("target-1".into())),("receipt".into(),RuntimeValue::String(digest.0.clone()))]),idempotency_key:"accept-1".into(),object_type:None,turn:DecisionTurn { id:"publish-turn".into(),now:LogicalTime::from_millis(1_790_000_000_000),world:World::Main,consumes:None } };
+        let mut call = ActionCall {
+            action: &action,
+            action_artifact_id: "test.accept",
+            action_version: "0.1.0",
+            scope: std::collections::BTreeMap::from([(
+                "orgId".into(),
+                dispatched.invocation.tenant,
+            )]),
+            actor: "reviewer:test".into(),
+            input: norn_ir::RuntimeObject::from([
+                ("id".into(), RuntimeValue::String("target-1".into())),
+                ("receipt".into(), RuntimeValue::String(digest.0.clone())),
+            ]),
+            idempotency_key: "accept-1".into(),
+            object_type: None,
+            turn: DecisionTurn {
+                id: "publish-turn".into(),
+                now: LogicalTime::from_millis(1_790_000_000_000),
+                world: World::Main,
+                consumes: None,
+            },
+        };
         let before = cell.store().verified_head().expect("head");
-        call.input.insert("receipt".into(), norn_ir::runtime::encode(&receipt).expect("body"));
-        assert!(commit_action(&mut cell,&catalog,&call,&ActionAllow).is_err());
-        assert_eq!(cell.store().verified_head().expect("head"),before);
-        call.input.insert("receipt".into(),RuntimeValue::String(digest.0));
+        call.input.insert(
+            "receipt".into(),
+            norn_ir::runtime::encode(&receipt).expect("body"),
+        );
+        assert!(commit_action(&mut cell, &catalog, &call, &ActionAllow).is_err());
+        assert_eq!(cell.store().verified_head().expect("head"), before);
+        call.input
+            .insert("receipt".into(), RuntimeValue::String(digest.0));
         if !accepts {
-            assert!(commit_action(&mut cell,&catalog,&call,&ActionAllow).is_err());
-            assert_eq!(cell.store().verified_head().expect("head"),before);
-            assert!(cell.resolve_accepted_receipt(&norn_kernel::receipt_binding::ReceiptReference::parse(call.input.get("receipt").expect("reference")).expect("reference"),&receipt.manifest).expect("unconsumed").is_some());
+            assert!(commit_action(&mut cell, &catalog, &call, &ActionAllow).is_err());
+            assert_eq!(cell.store().verified_head().expect("head"), before);
+            assert!(
+                cell.resolve_accepted_receipt(
+                    &norn_kernel::receipt_binding::ReceiptReference::parse(
+                        call.input.get("receipt").expect("reference")
+                    )
+                    .expect("reference"),
+                    &receipt.manifest
+                )
+                .expect("unconsumed")
+                .is_some()
+            );
             return;
         }
-        assert!(matches!(commit_action(&mut cell,&catalog,&call,&ActionAllow).expect("publish"),ActionOutcome::Committed { .. }));
-        assert_eq!(cell.load(&FactKey::new("test.ReceiptTarget","target-1")).expect("target").values.expect("values").get("status").and_then(RuntimeValue::as_str),Some("published"));
+        assert!(matches!(
+            commit_action(&mut cell, &catalog, &call, &ActionAllow).expect("publish"),
+            ActionOutcome::Committed { .. }
+        ));
+        assert_eq!(
+            cell.load(&FactKey::new("test.ReceiptTarget", "target-1"))
+                .expect("target")
+                .values
+                .expect("values")
+                .get("status")
+                .and_then(RuntimeValue::as_str),
+            Some("published")
+        );
         let published = cell.store().verified_head().expect("head");
-        assert!(matches!(commit_action(&mut cell,&catalog,&call,&ActionAllow).expect("retry"),ActionOutcome::Replayed { .. }));
-        assert_eq!(cell.store().verified_head().expect("head"),published);
+        assert!(matches!(
+            commit_action(&mut cell, &catalog, &call, &ActionAllow).expect("retry"),
+            ActionOutcome::Replayed { .. }
+        ));
+        assert_eq!(cell.store().verified_head().expect("head"), published);
         call.idempotency_key = "accept-2".into();
-        assert!(commit_action(&mut cell,&catalog,&call,&ActionAllow).is_err());
-        assert_eq!(cell.store().verified_head().expect("head"),published);
+        assert!(commit_action(&mut cell, &catalog, &call, &ActionAllow).is_err());
+        assert_eq!(cell.store().verified_head().expect("head"), published);
     }
     #[test]
-    fn receipt_action_binds_before_guard_and_exact_retry_reproduces_answer() { exercise_receipt_action("intent", true); }
+    fn receipt_action_binds_before_guard_and_exact_retry_reproduces_answer() {
+        exercise_receipt_action("intent", true);
+    }
     #[test]
-    fn wrong_typed_result_refuses_without_consumption() { exercise_receipt_action("confidence", false); }
+    fn wrong_typed_result_refuses_without_consumption() {
+        exercise_receipt_action("confidence", false);
+    }
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(16))]
         #[test]
@@ -499,7 +626,9 @@ pub(crate) fn claim<S: SqlEngine>(
     let current = reader.next_commit_seq()?;
     let (retained, consumed) = reader.conn.query_optional("SELECT body, consumed_commit_seq FROM _norn_function_receipt WHERE reference=?1 AND scope=?2", params![reference.0, scope], |row| Ok((row.get::<String>(0)?, row.get::<Option<i64>>(1)?)))?.ok_or_else(|| refused("unknown"))?;
     let body = serde_json::to_string(stored).map_err(CellError::Json)?;
-    if retained != body || !crate::receipt_fence::usable(consumed.is_some(), stored.frontier, current) {
+    if retained != body
+        || !crate::receipt_fence::usable(consumed.is_some(), stored.frontier, current)
+    {
         return Err(refused("replayed_or_stale"));
     }
     reader.conn.execute("UPDATE _norn_function_receipt SET consumed_commit_seq=?1 WHERE reference=?2 AND scope=?3 AND body=?4 AND consumed_commit_seq IS NULL", params![i64::try_from(current).map_err(|_| refused("frontier"))?, reference.0, scope, body])?;

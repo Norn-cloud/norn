@@ -1064,7 +1064,8 @@ where
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
-    let (receipt, mut changes) = receipt_changes(host, catalog, call, &preparation.effective_input, &target)?;
+    let (receipt, mut changes) =
+        receipt_changes(host, catalog, call, &preparation.effective_input, &target)?;
     let change = FactChange::Transition {
         object_type,
         key: object_id.clone(),
@@ -1097,21 +1098,68 @@ where
 }
 
 /// RECEIPT-EFFECT-1: only a host-authenticated binding supplies effect values.
-fn receipt_changes<H: CellHost + ?Sized>(host: &H, catalog: &TypeCatalog<'_>, call: &ActionCall<'_>, input: &JsonObject, target: &FactKey) -> Result<(Option<crate::receipt_binding::ReceiptReference>, Vec<FactChange>), ActionRefusal<H::Error>> {
-    let Some(ActionEffectProgram::FireTransition { accept_receipt: Some(declaration), .. }) = &call.action.effect_program else { return Ok((None, Vec::new())); };
-    let invalid = || ActionRefusal::InvalidInput { field: declaration.reference_field.clone() };
-    if !matches!(call.turn.world, crate::World::Main) { return Err(invalid()); }
-    let value = input.get(&declaration.reference_field).ok_or_else(invalid)?;
-    let reference = crate::receipt_binding::ReceiptReference::parse(value).map_err(|_| invalid())?;
-    let binding = host.resolve_accepted_receipt(&reference, &declaration.manifest_digest).map_err(host_failure)?.ok_or_else(invalid)?;
+fn receipt_changes<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    input: &JsonObject,
+    target: &FactKey,
+) -> Result<
+    (
+        Option<crate::receipt_binding::ReceiptReference>,
+        Vec<FactChange>,
+    ),
+    ActionRefusal<H::Error>,
+> {
+    let Some(ActionEffectProgram::FireTransition {
+        accept_receipt: Some(declaration),
+        ..
+    }) = &call.action.effect_program
+    else {
+        return Ok((None, Vec::new()));
+    };
+    let invalid = || ActionRefusal::InvalidInput {
+        field: declaration.reference_field.clone(),
+    };
+    if !matches!(call.turn.world, crate::World::Main) {
+        return Err(invalid());
+    }
+    let value = input
+        .get(&declaration.reference_field)
+        .ok_or_else(invalid)?;
+    let reference =
+        crate::receipt_binding::ReceiptReference::parse(value).map_err(|_| invalid())?;
+    let binding = host
+        .resolve_accepted_receipt(&reference, &declaration.manifest_digest)
+        .map_err(host_failure)?
+        .ok_or_else(invalid)?;
     let (digest, result, _) = binding.into_parts();
     let mut values = JsonObject::new();
-    values.insert(declaration.digest_property.0.clone(), JsonValue::String(digest.0));
+    values.insert(
+        declaration.digest_property.0.clone(),
+        JsonValue::String(digest.0),
+    );
     for (property, member) in &declaration.result_bindings {
-        values.insert(property.0.clone(), result.get(member.as_str()).ok_or_else(invalid)?.clone());
+        values.insert(
+            property.0.clone(),
+            result.get(member.as_str()).ok_or_else(invalid)?.clone(),
+        );
     }
-    validate_stored_patch::<H::Error>(catalog, &target.object_type, &values, &declaration.reference_field)?;
-    let changes = values.into_iter().map(|(property, value)| FactChange::Set { object_type: target.object_type.clone(), key: target.key.clone(), property: norn_ir::PropertyId(property), value }).collect();
+    validate_stored_patch::<H::Error>(
+        catalog,
+        &target.object_type,
+        &values,
+        &declaration.reference_field,
+    )?;
+    let changes = values
+        .into_iter()
+        .map(|(property, value)| FactChange::Set {
+            object_type: target.object_type.clone(),
+            key: target.key.clone(),
+            property: norn_ir::PropertyId(property),
+            value,
+        })
+        .collect();
     Ok((Some(reference), changes))
 }
 
@@ -3651,7 +3699,11 @@ where
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
     let result = if let Some(reference) = receipt {
-        if quantity.is_some() { return Err(ActionRefusal::UnsupportedEffect { action_id: call.action.action_id.clone() }); }
+        if quantity.is_some() {
+            return Err(ActionRefusal::UnsupportedEffect {
+                action_id: call.action.action_id.clone(),
+            });
+        }
         host.commit_accepted_receipt(commit, &reference)
     } else if let Some(request) = quantity {
         let identity = norn_ir::canonical::canonical_json_of(&(
