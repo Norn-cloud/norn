@@ -286,21 +286,20 @@ fn default_members_are_all_members_except_native_heavy_crates() {
 fn engine_metadata(dependency: &str, kind: Option<&str>) -> Metadata {
     let base = with_dep_as("norn-cli", dependency, kind, None);
     let mut value = serde_json::to_value(base).expect("metadata JSON");
-    let mut engine = value["packages"]
-        .as_array()
+    let template = value["packages"]
+        .as_array_mut()
         .expect("packages")
-        .iter()
+        .iter_mut()
         .find(|pkg| pkg["name"] == "norn-cli")
-        .cloned()
         .expect("CLI metadata template");
+    let dependency = template["dependencies"]
+        .as_array_mut()
+        .expect("dependencies")
+        .pop()
+        .expect("injected dependency");
+    let mut engine = template.clone();
     engine["name"] = json!("norn-engine");
     engine["id"] = json!("path+file:///policy-fixture/norn-engine#0.1.0");
-    let dependency = engine["dependencies"]
-        .as_array()
-        .expect("dependencies")
-        .last()
-        .cloned()
-        .expect("injected dependency");
     engine["dependencies"] = json!([dependency]);
     value["workspace_members"]
         .as_array_mut()
@@ -1623,11 +1622,12 @@ fn graph_library_edges_follow_the_pure_boundary() {
 /// Public boundary data must retain the executable dependency policy exactly.
 #[test]
 fn machine_boundaries_match_dependency_policy() {
+    let metadata = metadata();
     for rule in norn_skeleton_guard::CRATES
         .iter()
         .chain(norn_skeleton_guard::PREDECLARED_CRATES)
     {
-        if !metadata()
+        if !metadata
             .workspace_packages()
             .iter()
             .any(|pkg| pkg.name == rule.name)
