@@ -1416,6 +1416,11 @@
                   "type": "string"
                 },
                 "property": {
+                  "enum": [
+                    "invoice_count",
+                    "invoiced_total",
+                    "allocated_total"
+                  ],
                   "type": "string"
                 },
                 "value": {
@@ -1736,6 +1741,11 @@
                   "type": "string"
                 },
                 "property": {
+                  "enum": [
+                    "invoice_count",
+                    "invoiced_total",
+                    "allocated_total"
+                  ],
                   "type": "string"
                 },
                 "value": {
