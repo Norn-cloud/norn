@@ -1,0 +1,5 @@
+{
+  "contracts": "generated-openapi",
+  "scope": "admitted-widget-presentation",
+  "authority": "server"
+}

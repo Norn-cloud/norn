@@ -125,6 +125,7 @@
     "fixtures/rule-ir-v2/valid/reorder-decision.rule.json",
     "fixtures/rule-ir-v2/valid/reorder-priority.rule.json",
     "packages/norn-sdk/test/schema.test.ts",
+    "packages/norn-widget-renderer/test/contract.test.ts",
     "tools/norn-ts/fixtures/compiler/aliases.source.ts",
     "tools/norn-ts/fixtures/compiler/branch-continuation.source.ts",
     "tools/norn-ts/fixtures/compiler/caught-continuation.source.ts",

@@ -156,6 +156,7 @@
     "crates/norn-checker/src/entity_artifacts.rs",
     "fixtures/rule-ir-v2/invalid/open-input-schema.rule.json",
     "packages/norn-sdk/package.json",
+    "packages/norn-widget-renderer/package.json",
     "registry/core/artifacts/commerce.SalesOrder.entity.json",
     "registry/core/artifacts/core.Agent.interface.json",
     "registry/core/artifacts/core.AgentRole.interface.json",

@@ -397,6 +397,8 @@
     "fixtures/law-ir/laws.source.ts",
     "packages/norn-sdk/src/generated/norn-api.ts",
     "packages/norn-sdk/src/index.ts",
+    "packages/norn-widget-renderer/src/json.ts",
+    "packages/norn-widget-renderer/src/model.ts",
     "tools/norn-ts/corpus/accept/aliased-imports.ts",
     "tools/norn-ts/corpus/accept/data-and-results.ts",
     "tools/norn-ts/corpus/accept/reexported-effect.ts",
