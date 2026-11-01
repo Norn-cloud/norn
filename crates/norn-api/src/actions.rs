@@ -269,7 +269,7 @@ mod http_adapter {
                     .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR),
                 axum::Json(serde_json::json!({
                     "jsonrpc":"2.0", "id":request_id,
-                    "error":{"code":-32600,"message":error.message.clone(),"data":error}
+                    "error":{"code":-32600,"message":error.message,"data":error}
                 })),
             )
                 .into_response(),
