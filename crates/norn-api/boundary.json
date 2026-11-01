@@ -2,8 +2,8 @@
   "name": "norn-api",
   "ring": "Zero",
   "allowed_norn": [
-    "norn-checker",
-    "norn-ir"
+    "norn-ir",
+    "norn-checker"
   ],
   "dev_only_norn": [],
   "third_party": [
