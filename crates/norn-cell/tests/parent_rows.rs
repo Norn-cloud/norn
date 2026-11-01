@@ -11,6 +11,11 @@
 //! action commits (#3254).
 
 mod common;
+#[allow(
+    dead_code,
+    reason = "shared quantity fixtures also serve other test targets"
+)]
+mod quantity_support;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
@@ -315,6 +320,98 @@ fn add(row_id: &str, label: &str, quantity: i64) -> Value {
 fn native_cell() -> NativeCell {
     let definitions = types();
     native_cell_for(&definitions)
+}
+
+#[test]
+fn owned_row_finalization_and_quantity_intent_share_one_commit() {
+    let definitions = types();
+    let catalog = entity_catalog(&definitions);
+    let mut declared = action();
+    let mut schema = input_schema();
+    schema["properties"]["versions"] = json!({"type": "array", "items": {
+        "type": "object", "properties": {
+            "account": {"type": "string"}, "unit": {"type": "string"},
+            "layer": {"type": "string"}, "version": {"type": "integer"}
+        }, "required": ["account", "unit", "layer", "version"], "additionalProperties": false
+    }});
+    schema["properties"]["reservation"] = json!({"type": "string"});
+    schema["properties"]["amount"] = json!({"type": "string"});
+    declared.input_schema = serde_json::from_value(schema).expect("quantity input schema");
+    declared.quantity_effect = Some(
+        serde_json::from_value(json!({
+            "ledgerId": "stock", "balanceVersionsField": "versions",
+            "operation": {"kind": "reserve", "reservationIdField": "reservation",
+                "templateId": "ship", "parameters": {"q": {"field": "amount", "scale": 0}},
+                "ttlMs": 10000}
+        }))
+        .expect("existing reserve operation"),
+    );
+    for amount in [5, 150] {
+        let mut cell = native_cell_for(&definitions);
+        cell.commit_quantity(&quantity_support::define(), "define")
+            .expect("define");
+        let mut funding = quantity_support::post(1, "fund", "fund", 100);
+        funding.balance_versions = cell
+            .store()
+            .read()
+            .quantity_balance_versions("main", &funding)
+            .expect("funding fences");
+        cell.commit_quantity(&funding, "fund").expect("fund");
+        let request = quantity_support::reserve(2, "hold", amount, 11000);
+        let versions = cell
+            .store()
+            .read()
+            .quantity_balance_versions("main", &request)
+            .expect("quantity fences");
+        let mut input = action_input(
+            "0",
+            &json!({"title": "with hold"}),
+            &json!([add("row-a", "first", 5)]),
+        );
+        input["versions"] = serde_json::to_value(versions).expect("versions");
+        input["reservation"] = json!("hold");
+        input["amount"] = json!(amount.to_string());
+        let invocation = call(&declared, "rows-with-hold", input);
+        let outcome = commit_action(&mut cell, &catalog, &invocation, &Allow);
+        let reader = cell.store().read();
+        let hold = reader
+            .quantity_reservation("main", "stock", "hold")
+            .expect("reservation");
+        if amount == 5 {
+            assert!(
+                matches!(outcome, Ok(ActionOutcome::Committed { .. })),
+                "{outcome:?}"
+            );
+            assert!(hold.is_some());
+            assert_eq!(
+                reader.quantity_version("main", "stock").expect("version"),
+                3
+            );
+            assert_parent(&cell, 1, "with hold");
+            assert_row(&cell, "row-a", 1, 1, "first", 5);
+            assert!(matches!(
+                commit_action(&mut cell, &catalog, &invocation, &Allow),
+                Ok(ActionOutcome::Replayed { .. })
+            ));
+            assert_eq!(
+                cell.store()
+                    .read()
+                    .quantity_version("main", "stock")
+                    .expect("replay version"),
+                3
+            );
+        } else {
+            assert!(outcome.is_err());
+            assert!(hold.is_none());
+            assert_eq!(
+                reader.quantity_version("main", "stock").expect("version"),
+                2
+            );
+            assert!(!cell.load(&parent_key()).expect("parent").exists());
+            assert!(!cell.load(&row_key("row-a")).expect("row").exists());
+            assert!(!cell.load(&manifest_key()).expect("manifest").exists());
+        }
+    }
 }
 
 fn native_cell_for(definitions: &[norn_ir::ObjectTypeDef]) -> NativeCell {

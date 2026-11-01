@@ -9,7 +9,7 @@ use norn_ir::{ActionQuantityOperation, RuntimeObject, RuntimeValue};
 pub(crate) fn prepare_quantity_action<X>(
     call: &ActionCall<'_>,
     input: &RuntimeObject,
-) -> Result<Option<QuantityRequest>, ActionRefusal<X>> {
+) -> Result<Option<(QuantityRequest, String)>, ActionRefusal<X>> {
     let Some(effect) = &call.action.quantity_effect else {
         return Ok(None);
     };
@@ -66,10 +66,20 @@ pub(crate) fn prepare_quantity_action<X>(
             resolution: QuantityResolution::All,
         },
     };
-    Ok(Some(QuantityRequest {
-        version: QUANTITY_CELL_VERSION.into(),
-        ledger_id: effect.ledger_id.clone(),
-        balance_versions,
-        operation,
-    }))
+    let identity = norn_ir::canonical::canonical_json_of(&(
+        "action.quantity/1",
+        &call.action.action_id,
+        &call.idempotency_key,
+    ))
+    .map_err(|_encoding_error| invalid("idempotencyKey"))?;
+    let key = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&identity);
+    Ok(Some((
+        QuantityRequest {
+            version: QUANTITY_CELL_VERSION.into(),
+            ledger_id: effect.ledger_id.clone(),
+            balance_versions,
+            operation,
+        },
+        key,
+    )))
 }
