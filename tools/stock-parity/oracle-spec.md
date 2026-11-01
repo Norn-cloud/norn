@@ -74,7 +74,7 @@ The Norn dump may be a stub for conformance; that does not establish live parity
 - **DIFF-COVERAGE:** missing/incomplete cases or checkpoints are unsupported and
   fail; unsupported is never a disposition. Empty corpora fail. Untriaged diffs
   fail. Counts distinguish matched checkpoints, intentional differing fields,
-  unsupported cases/checkpoints and open bugs (differing fields).
+  unsupported cases/checkpoints and open bugs (unique issue URLs).
 - **DIFF-PUBLIC:** case/request/account/currency and observed string labels become
   stable opaque aliases. Native IDs, native messages, versions and input paths
   are omitted. Evidence accepts only public Norn issue/PR URLs. JSON retains

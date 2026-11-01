@@ -64,6 +64,11 @@ class Contract(unittest.TestCase):
         self.e['cases'] = []
         self.assertEqual(self.report()['counts']['unsupported'], 1)
 
+    def test_unavailable_snapshot_is_not_an_empty_observation(self):
+        for dump in (self.n, self.e):
+            dump['cases'][0]['checkpoints'][0]['status'] = 'unsupported'
+        self.assertFalse(self.report()['passed'])
+
     def test_incomplete_prefix_is_still_compared(self):
         self.e['cases'][0]['status'] = 'unsupported'
         self.n['cases'][0]['checkpoints'][0]['stock'][0]['value'] = '21'
@@ -99,7 +104,13 @@ class Contract(unittest.TestCase):
         leg = self.n['cases'][0]['checkpoints'][0]['gl'][0]
         leg['debit'] = '21'
         self.n['cases'][0]['checkpoints'][0]['gl'].append(dict(leg, account='cogs'))
-        self.assertEqual(self.report()['counts']['untriaged'], 2)
+        report = self.report()
+        self.assertEqual(report['counts']['untriaged'], 2)
+        evidence = 'https://github.com/Norn-cloud/norn/issues/215'
+        dispositions = [dict(fingerprint=d['fingerprint'], bucket='norn-bug', reviewer='reviewer',
+            review=evidence, issue=evidence, reproduction=evidence, receipt=evidence)
+            for d in report['cases'][0]['checkpoints'][1]['differences']]
+        self.assertEqual(self.report(dispositions)['counts']['openNornBugs'], 1)
 
     def test_public_report_omits_untrusted_labels(self):
         for d in (self.n, self.e):

@@ -119,7 +119,7 @@ def compare(norn, erpnext, dispositions):
             pair = [c.get(step) for c in checkpoints]
             entry = dict(step=step, differences=[])
             row['checkpoints'].append(entry)
-            if any(c is None for c in pair):
+            if any(c is None or c.get('status') == 'unsupported' for c in pair):
                 entry['status'] = row['status'] = 'unsupported'
                 counts['unsupported'] += 1
                 continue
@@ -170,6 +170,8 @@ def compare(norn, erpnext, dispositions):
                                  else 'intentionally different')
     if used != set(decisions):
         raise ValueError('Stale disposition does not match an observed divergence')
+    for bucket, key in (('norn-bug', 'openNornBugs'), ('erpnext-bug', 'openErpnextBugs')):
+        counts[key] = len({d['issue'] for d in dispositions if d['bucket'] == bucket})
     passed = bool(rows) and not any(counts[k] for k in ('unsupported', 'untriaged', 'openNornBugs', 'openErpnextBugs'))
     return dict(format='norn.stock-parity/1', passed=passed, counts=counts,
                 decisions=list(DECISIONS), scales=dict(stock=6, gl=2), cases=rows)
