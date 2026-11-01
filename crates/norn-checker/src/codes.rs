@@ -470,6 +470,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
         "0.2.0",
     ),
+    introduced(
+        "core.composition.mapping_gap",
+        Tier::T3,
+        "interpretation must cover the retained source contract exactly with unique compatible target members",
+        "0.2.0",
+    ),
     entry(
         "customization.validation.invalid_payload",
         Tier::T2,
@@ -1335,12 +1341,6 @@ pub static REGISTRY: &[CodeEntry] = &[
         "mapping.interpretation.invalid_endpoint",
         Tier::T3,
         "interpretation endpoint {artifactId} requires one retained business pack, an exact required dependency and matching version/content identity",
-        "0.2.0",
-    ),
-    introduced(
-        "core.composition.mapping_gap",
-        Tier::T3,
-        "interpretation must cover the retained source contract exactly with unique compatible target members",
         "0.2.0",
     ),
     introduced(
