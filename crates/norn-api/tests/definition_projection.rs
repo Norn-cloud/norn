@@ -105,9 +105,12 @@ fn host_definition_wire_keeps_empty_collections_and_revision_names() {
         base: &[],
         tenant: None,
     };
-    let checked =
-        check_artifact_set_with_receipt(&[], &context, &ResourceLimitProfile::norn_limits_v1())
-            .unwrap();
+    let checked = check_artifact_set_with_receipt(
+        &norn_checker::ReceiptSources::new(&[], &[]).unwrap(),
+        &context,
+        &ResourceLimitProfile::norn_limits_v1(),
+    )
+    .unwrap();
     assert!(checked.receipt.admitted);
     admitted.receipt = serde_json::from_slice(&checked.receipt.canonical_json().unwrap()).unwrap();
     admitted.receipt_sha256 = checked.receipt.content_sha256().unwrap();
