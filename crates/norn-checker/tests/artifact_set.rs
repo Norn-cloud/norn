@@ -619,7 +619,7 @@ fn pack_pin_1_shared_contract_and_structural_refusals() {
         .expect("leaf");
     retained["base"] = json!([leaf]);
     assert!(run(&retained).is_empty());
-    let mut self_cycle = valid.clone();
+    let mut self_cycle = valid;
     let node = &mut self_cycle["artifacts"][0]["patch"]["payload"]["instances"][0];
     node["instances"][0]["instanceId"] = node["instanceId"].clone();
     assert!(
