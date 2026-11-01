@@ -131,8 +131,7 @@ Post action API is activated; the parked generic posting branch stays parked.
 
 POST-EFFECTS: the unsealed proposal contains the voucher transition, immutable
 StockEvents/GL legs, partition totals/layers and complete new event membership,
-all from one FIFO plan. It grants no authority. POST-NO-BACKDATE compares actual
-UTC instants against the partition witness. POST-HISTORY-BYTES refuses prospective
+all from one FIFO plan. It grants no authority. POST-NO-BACKDATE compares actual UTC instants against the partition witness. POST-HISTORY-BYTES refuses prospective
 history plus its witness above 64 KiB, before publication. CP1 requires exactly
 one partition per voucher. Conformance checks derived GL, remaining quantity,
 backdating and the byte ceiling. The subsequent kernel join must recompute this
