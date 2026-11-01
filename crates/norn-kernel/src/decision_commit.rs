@@ -1471,7 +1471,7 @@ pub enum DecisionRefusal<X> {
         /// The lifecycle property.
         lifecycle: String,
         /// The object.
-        key: FactKey,
+        key: Box<FactKey>,
         /// The transition.
         transition: String,
         /// The object's current state, if it has one.
@@ -1630,14 +1630,15 @@ impl<X> DecisionRefusal<X> {
             | Self::UnknownLifecycle { key, .. }
             | Self::UnresolvedLifecycle { key, .. }
             | Self::UnknownTransition { key, .. }
-            | Self::NotFromState { key, .. }
             | Self::GuardFalse { key, .. }
             | Self::GuardError { key, .. }
             | Self::Stale { key, .. }
             | Self::AccountingPosting { key, .. }
             | Self::InvariantBudgetExceeded { key, .. }
             | Self::TraversalLimitExceeded { key, .. } => Some(key),
-            Self::InvariantViolation { key, .. } => Some(key.as_ref()),
+            Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
+                Some(key.as_ref())
+            }
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
@@ -2575,7 +2576,7 @@ fn resolve_transition<X>(
         }),
         Err(FiringRefusal::NotFromState) => Err(DecisionRefusal::NotFromState {
             lifecycle: lifecycle.as_str().to_owned(),
-            key: key.clone(),
+            key: Box::new(key.clone()),
             transition: transition.as_str().to_owned(),
             current,
             from: declared

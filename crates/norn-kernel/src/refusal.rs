@@ -358,7 +358,7 @@ impl<X> Refusable for DecisionRefusal<X> {
                 from,
             } => Some((
                 "lifecycle.transition_source",
-                key,
+                key.as_ref(),
                 json!({ "lifecycle": lifecycle, "transition": transition, "current": current, "allowed": from }),
             )),
             Self::InvalidInitialState {
@@ -419,7 +419,25 @@ impl<X> Refusable for DecisionRefusal<X> {
                 key,
                 json!({ "transition": transition, "guard": guard, "error": reason }),
             )),
-            _ => None,
+            Self::ReadOnlyWorld
+            | Self::PerformOutsideMain { .. }
+            | Self::EnvelopeExceeded { .. }
+            | Self::IdentifierTooLong { .. }
+            | Self::TurnEnvelopeExceeded { .. }
+            | Self::UnknownType { .. }
+            | Self::NotInSlice { .. }
+            | Self::SourceOwnedTarget { .. }
+            | Self::ObjectMissing { .. }
+            | Self::ObjectExists { .. }
+            | Self::InvalidOutput { .. }
+            | Self::Stale { .. }
+            | Self::NotPending { .. }
+            | Self::AccountingPosting { .. }
+            | Self::InvariantViolation { .. }
+            | Self::InvariantBudgetExceeded { .. }
+            | Self::TraversalLimitExceeded { .. }
+            | Self::Overflow
+            | Self::Host(_) => None,
         };
         if let Some((law, key, serde_json::Value::Object(values))) = reason {
             refusal.reason = Some(RefusalReason {
@@ -462,10 +480,10 @@ impl<X> ActionRefusal<X> {
 
 impl<X> Refusable for ActionRefusal<X> {
     fn refusal(&self) -> Refusal {
-        match self {
-            Self::Decision(refusal) => refusal.refusal(),
-            _ => Refusal::new(self.code(), self.category(), self),
+        if let Self::Decision(refusal) = self {
+            return refusal.refusal();
         }
+        Refusal::new(self.code(), self.category(), self)
     }
 }
 

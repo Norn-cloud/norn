@@ -709,7 +709,7 @@ fn decision_refuses_transition_from_wrong_state() {
         refusal,
         DecisionRefusal::NotFromState {
             lifecycle: "status".into(),
-            key: so1,
+            key: Box::new(so1),
             transition: "approve".into(),
             current: Some("draft".into()),
             from: vec!["submitted".into()],

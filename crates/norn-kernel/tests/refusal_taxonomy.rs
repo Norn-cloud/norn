@@ -73,7 +73,7 @@ fn refusal_categories_are_stable() {
         (
             decision(DecisionRefusal::NotFromState {
                 lifecycle: "status".into(),
-                key: key.clone(),
+                key: Box::new(key.clone()),
                 transition: "invoice".into(),
                 current: Some("draft".into()),
                 from: vec!["approved".into()],
@@ -494,7 +494,7 @@ fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
     for current in [Some("on_hold".to_owned()), None] {
         let decision = DecisionRefusal::<Infallible>::NotFromState {
             lifecycle: "status".into(),
-            key: FactKey::new("commerce.SalesOrder", "SO-1"),
+            key: Box::new(FactKey::new("commerce.SalesOrder", "SO-1")),
             transition: "invoice".into(),
             current: current.clone(),
             from: vec!["approved".into(), "partially_invoiced".into()],
