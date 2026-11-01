@@ -3179,6 +3179,9 @@ mod cp1_stock {
         let path = dir.path().join("cell.sqlite");
         let mut store =
             CellStore::open(&path, model.clone(), StoreOptions::default()).expect("durable cell");
+        store
+            .bind("scope", "org_demo/dev")
+            .expect("POST-STORE-BIND-BEFORE-FIRST-COMMIT");
         seed(&mut store);
         let mut cell: NativeCell =
             NativeCell::new(store, "org_demo/dev", |c| c.payload.clone()).expect("host");
