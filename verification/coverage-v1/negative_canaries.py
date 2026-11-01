@@ -518,7 +518,9 @@ def jewelry_closure_canaries() -> None:
     with tempfile.TemporaryDirectory() as directory:
         candidate = Path(directory) / "coverage.json"
         candidate.write_text(json.dumps(coverage))
-        expect_coverage_validator_rejection("missing jewelry coverage", coverage_path=candidate)
+        message = expect_coverage_validator_rejection("missing jewelry coverage", coverage_path=candidate)
+        if "jewelry coverage must claim exactly" not in message:
+            raise AssertionError(f"missing jewelry coverage rejected for wrong reason: {message}")
         candidate.write_text(COVERAGE.read_text())
         registry["obligations"].pop()
         obligations = Path(directory) / "obligations.json"
