@@ -508,7 +508,9 @@ impl Model {
                 other @ (norn_kernel::governing_laws::LawEvaluationError::Unsupported(_)
                 | norn_kernel::governing_laws::LawEvaluationError::Invalid(_)
                 | norn_kernel::governing_laws::LawEvaluationError::BudgetExceeded
-                | norn_kernel::governing_laws::LawEvaluationError::Violated(_)) => CellError::DefinitionReceiptInvalid(other.to_string()),
+                | norn_kernel::governing_laws::LawEvaluationError::Violated(_)) => {
+                    CellError::DefinitionReceiptInvalid(other.to_string())
+                }
             })
     }
 

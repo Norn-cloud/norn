@@ -87,7 +87,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         };
         for record in raw {
             if self.observation_is_quarantined(&record)? {
-                page.quarantine_count = page.quarantine_count.checked_add(1).ok_or(CellError::OutOfRange("quarantine count"))?;
+                page.quarantine_count = page
+                    .quarantine_count
+                    .checked_add(1)
+                    .ok_or(CellError::OutOfRange("quarantine count"))?;
             } else {
                 page.records.push(record);
             }

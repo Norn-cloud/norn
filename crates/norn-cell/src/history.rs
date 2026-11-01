@@ -80,7 +80,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         definitions_version: u64,
         object_type: &str,
     ) -> Result<Vec<norn_ir::ArtifactEnvelope>, CellError> {
-        self.retained_definition_model(definitions_version)?.governing_laws(object_type)
+        self.retained_definition_model(definitions_version)?
+            .governing_laws(object_type)
     }
 
     fn retained_definition_model(&self, definitions_version: u64) -> Result<Model, CellError> {
@@ -1365,7 +1366,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(snapshot) = candidates.next() else {
             return Ok(None);
         };
-        let receipt = self.receipt_at(entry.commit_seq)?.ok_or_else(unproven_event)?;
+        let receipt = self
+            .receipt_at(entry.commit_seq)?
+            .ok_or_else(unproven_event)?;
         let historical;
         let model = if receipt.body.definitions_version == 0 {
             self.model()
