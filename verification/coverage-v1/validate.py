@@ -26,6 +26,15 @@ COVERAGE = ROOT / "verification/coverage-v1/coverage.json"
 CENTRAL_OBLIGATIONS = (
     ROOT / "verification/stripmine-2026-08-22/obligations.json"
 )
+CORE_PHYSICS_OBLIGATIONS = ROOT / "verification/core-physics-v1/obligations.json"
+REQUIRED_CORE_PHYSICS_OBLIGATION_IDS = frozenset([
+    "INV-CORE-COMMITMENT-COMPLETION",
+    "INV-CORE-ESCROW-NON-NEGATIVE",
+    "INV-CORE-LINKED-REVERSAL",
+    "INV-CORE-POSTED-IMMUTABLE",
+    "INV-CORE-QUANTITY-CONSERVATION",
+    "INV-CORE-VALUE-CONSERVATION",
+])
 KERNEL_OBLIGATIONS = ROOT / "verification/archive/kernel-v1/obligations.json"
 KERNEL_OBLIGATIONS_SCHEMA = (
     ROOT / "verification/archive/kernel-v1/schemas/obligations.schema.json"
@@ -68,6 +77,7 @@ MANDATORY = {
     "cala-boundary",
     "verification-integrity",
     "kernel-v2",
+    "core-physics",
 }
 LAYERS = ("runtime", "model", "proof")
 GATE_ROLES = {
@@ -606,6 +616,24 @@ def validate_timeout_budgets(
             )
 
 
+def validate_selector_gate_order(
+    registrations: list[tuple[str, str]], gates: list[dict[str, Any]]
+) -> None:
+    positions = {gate_id: index for index, (_, gate_id) in enumerate(registrations)}
+    for profile, selector_gate in (
+        ("full", "verification-executed-test-selectors"),
+        ("fast", "verification-executed-test-selectors-fast"),
+    ):
+        require(selector_gate in positions, f"missing selector validator: {selector_gate}")
+        for gate in gates:
+            if gate["evidenceKind"] == "rust-tests" and gate["profile"] == profile:
+                require(
+                    gate["id"] in positions
+                    and positions[gate["id"]] < positions[selector_gate],
+                    f"{selector_gate}: producing gate {gate['id']} must run first",
+                )
+
+
 def validate_claim_evidence_shape(
     subsystem_id: str,
     claim_id: str,
@@ -697,6 +725,7 @@ def validate(
     coverage_path: Path = COVERAGE,
     gate_manifest_source: Path | None = None,
     central_obligations_path: Path = CENTRAL_OBLIGATIONS,
+    core_physics_obligations_path: Path = CORE_PHYSICS_OBLIGATIONS,
     formal_workflow_path: Path = FORMAL_WORKFLOW,
 ) -> int:
     """Validate canonical inputs, with explicit paths only for in-process canaries.
@@ -771,9 +800,24 @@ def validate(
         f"unexpected={sorted(central_ids - REQUIRED_CENTRAL_OBLIGATION_IDS)}",
     )
     phase1_registry = load(ROOT / "verification/kernel-v2/manifest.json")
-    known_obligations = central_ids | obligation_ids(phase1_registry)
-    p0_obligations = p0_obligation_ids(central_registry) | p0_obligation_ids(
-        kernel_registry, default_priority="P0"
+    core_physics_registry = load(core_physics_obligations_path)
+    core_physics_ids = obligation_ids(core_physics_registry)
+    require(
+        len(core_physics_registry.get("obligations", [])) == len(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)
+        and core_physics_ids == REQUIRED_CORE_PHYSICS_OBLIGATION_IDS,
+        "core-physics obligation registry must contain exactly the norn.core law closure; "
+        f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_ids)}, "
+        f"unexpected={sorted(core_physics_ids - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
+    )
+    known_obligations = (
+        central_ids
+        | obligation_ids(phase1_registry)
+        | core_physics_ids
+    )
+    p0_obligations = (
+        p0_obligation_ids(central_registry)
+        | p0_obligation_ids(kernel_registry, default_priority="P0")
+        | p0_obligation_ids(core_physics_registry)
     )
 
     subsystems = coverage.get("subsystems")
@@ -958,6 +1002,13 @@ def validate(
                     f"{subsystem_id}.{layer_name}: aggregate {status} disagrees with obligation claims {sorted(obligation_statuses)}",
                 )
 
+    core_physics_claimed = set(by_id.get("core-physics", {}).get("obligations", []))
+    require(
+        core_physics_claimed == REQUIRED_CORE_PHYSICS_OBLIGATION_IDS,
+        "core-physics coverage must claim exactly the norn.core law closure, whatever their priority; "
+        f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_claimed)}, "
+        f"unexpected={sorted(core_physics_claimed - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
+    )
     require(set(by_id) == MANDATORY | present_domains, f"mandatory subsystem mismatch: expected {sorted(MANDATORY)}, got {sorted(by_id)}")
 
     lean_composite_gates = coverage.get("leanCompositeGates", {})
@@ -1126,6 +1177,12 @@ def validate(
         "promoted gate profiles must match the runner registrations; "
         f"runner={runner_profiles}, manifest={manifest_profiles}",
     )
+
+    require(
+        runner_registrations == [(gate["profile"], gate["id"]) for gate in gates],
+        "promoted gate order must match the runner registrations",
+    )
+    validate_selector_gate_order(runner_registrations, gates)
 
     validate_timeout_budgets(gates, formal_path=formal_workflow_path)
     # Archived UPE gate IDs are historical, never promoted current evidence.
