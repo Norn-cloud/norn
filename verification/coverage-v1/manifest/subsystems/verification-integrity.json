@@ -449,6 +449,7 @@
     "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
-    "verification/stripmine-2026-08-22/scripts/validate.sh"
+    "verification/stripmine-2026-08-22/scripts/validate.sh",
+    "crates/norn-checker/tests/stock_templates.rs"
   ]
 }
