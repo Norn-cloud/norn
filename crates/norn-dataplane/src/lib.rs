@@ -16,3 +16,6 @@ pub mod webhook;
 pub mod frappe;
 pub use frappe::{FrappeSource, ingest_frappe_webhook};
 pub use webhook::IngestError;
+
+pub mod shopify;
+pub use shopify::{ShopifyHeaders, ShopifySource, ingest_shopify_webhook};
