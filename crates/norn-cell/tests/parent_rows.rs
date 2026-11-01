@@ -322,11 +322,7 @@ fn native_cell() -> NativeCell {
     native_cell_for(&definitions)
 }
 
-#[test]
-fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
-    let ledger = |cell: &NativeCell| cell.store().verified_head().expect("verified ledger");
-    let definitions = types();
-    let catalog = entity_catalog(&definitions);
+fn quantity_rows_action(direct_post: bool) -> ActionRoot {
     let mut declared = action();
     let mut schema = input_schema();
     schema["properties"]["versions"] = json!({"type": "array", "items": {
@@ -347,15 +343,24 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
         }))
         .expect("existing reserve operation"),
     );
+    if direct_post {
+        declared.quantity_effect.as_mut().expect("effect").operation =
+            serde_json::from_value(json!({
+                "kind": "post", "postingIdField": "reservation", "templateId": "ship",
+                "parameters": {"q": {"field": "amount", "scale": 0}}
+            }))
+            .expect("declared direct post");
+    }
+    declared
+}
+
+#[test]
+fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
+    let ledger = |cell: &NativeCell| cell.store().verified_head().expect("verified ledger");
+    let definitions = types();
+    let catalog = entity_catalog(&definitions);
     for (direct_post, amount) in [(false, 5), (false, 150), (true, 5), (true, 150)] {
-        if direct_post {
-            declared.quantity_effect.as_mut().expect("effect").operation =
-                serde_json::from_value(json!({
-                    "kind": "post", "postingIdField": "reservation", "templateId": "ship",
-                    "parameters": {"q": {"field": "amount", "scale": 0}}
-                }))
-                .expect("declared direct post");
-        }
+        let declared = quantity_rows_action(direct_post);
         let mut cell = native_cell_for(&definitions);
         cell.commit_quantity(&quantity_support::define(), "define")
             .expect("define");
@@ -391,20 +396,18 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
         let hold = reader
             .quantity_reservation("main", "stock", "hold")
             .expect("reservation");
+        let posting = reader
+            .quantity_posting("main", "stock", "hold")
+            .expect("posting");
         if amount == 5 {
             assert!(
                 matches!(outcome, Ok(ActionOutcome::Committed { .. })),
                 "{outcome:?}"
             );
             assert_eq!(hold.is_some(), !direct_post);
-            assert_eq!(
-                reader
-                    .quantity_posting("main", "stock", "hold")
-                    .expect("posting")
-                    .is_some(),
-                direct_post
-            );
-            assert_eq!(ledger(&cell).commits, before.commits + 1, "POST-ATOMIC");
+            assert_eq!(posting.is_some(), direct_post);
+            let posted = ledger(&cell);
+            assert_eq!(posted.commits, before.commits + 1, "POST-ATOMIC");
             assert_eq!(
                 reader.quantity_version("main", "stock").expect("version"),
                 3
@@ -415,11 +418,7 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
                 commit_action(&mut cell, &catalog, &invocation, &Allow),
                 Ok(ActionOutcome::Replayed { .. })
             ));
-            assert_eq!(
-                ledger(&cell).commits,
-                before.commits + 1,
-                "POST-IDENTITY retry"
-            );
+            assert_eq!(ledger(&cell), posted, "POST-IDENTITY retry");
             let mut conflict = invocation.clone();
             conflict
                 .input
@@ -428,16 +427,10 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
                 commit_action(&mut cell, &catalog, &conflict, &Allow),
                 Err(ActionRefusal::IdempotencyConflict { .. })
             ));
+            assert_eq!(ledger(&cell), posted, "POST-IDENTITY conflict");
+            let current = cell.store().read();
             assert_eq!(
-                ledger(&cell).commits,
-                before.commits + 1,
-                "POST-IDENTITY conflict"
-            );
-            assert_eq!(
-                cell.store()
-                    .read()
-                    .quantity_version("main", "stock")
-                    .expect("replay version"),
+                current.quantity_version("main", "stock").expect("version"),
                 3
             );
         } else {
@@ -447,29 +440,12 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
             assert_eq!(public.category, norn_kernel::RefusalCategory::Precondition);
             assert!(public.message.contains("insufficient available quantity"));
             assert!(hold.is_none());
-            assert_eq!(ledger(&cell).commits, before.commits, "POST-ATOMIC refusal");
-            assert!(
-                !cell
-                    .load(&FactKey::new(
-                        ACTION_CALL_TYPE,
-                        "test.order.edit/rows-with-hold"
-                    ))
-                    .expect("receipt")
-                    .exists()
-            );
-            assert!(
-                !cell
-                    .load_link(&LinkKey::new(parent_key(), COLLECTION, row_key("row-a")))
-                    .expect("membership")
-                    .exists()
-            );
-            assert!(
-                cell.store()
-                    .read()
-                    .quantity_posting("main", "stock", "hold")
-                    .expect("posting")
-                    .is_none()
-            );
+            assert_eq!(ledger(&cell), before, "POST-ATOMIC refusal");
+            let receipt = FactKey::new(ACTION_CALL_TYPE, "test.order.edit/rows-with-hold");
+            assert!(!cell.load(&receipt).expect("receipt").exists());
+            let membership = LinkKey::new(parent_key(), COLLECTION, row_key("row-a"));
+            assert!(!cell.load_link(&membership).expect("membership").exists());
+            assert!(posting.is_none());
             assert_eq!(
                 reader.quantity_version("main", "stock").expect("version"),
                 2
