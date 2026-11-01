@@ -33,3 +33,9 @@ checker identity gap. No additional host canonicalizer is introduced.
 HOST-IDENTITY: artifacts, scope and logical time remain the canonical IR/kernel
 types. The API now owns a ring-1 host over ring-1 cells; pure contracts stay here.
 Correspondence: `host::tests`. HTTP reads and action parity follow in later slices.
+
+HOST-SCOPE/HOST-AUTHORITY: scope and `ReadDefinitions` precede store queries (SQL spy); default deny.
+HOST-ADMISSION: one definition epoch covers load and projection; retained versions remain readable.
+HOST-WIRE/HOST-EXACT: raw source/receipt JSON, camelCase, empty collections and exact numeric vectors.
+HOST-REFUSAL: absent version `defs.version_not_found` (404); malformed query `request.invalid` (400).
+HTTP requires an authenticated routing host to supply x-norn-actor; host errors conceal diagnostics.
