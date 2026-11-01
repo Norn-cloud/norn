@@ -5002,11 +5002,11 @@ fn adding_an_interface_parent_scans_existing_rows_before_activating_its_invarian
     }
 }
 
-
 fn governing_law_input(expression: &str, at: u64) -> (Model, InstalledDefinitionInput) {
     let plain = model(false);
     let mut input = install_input("governing-laws", at, &plain);
-    let mut artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(&input.canonical_set).expect("artifacts");
+    let mut artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_str(&input.canonical_set).expect("artifacts");
     artifacts.push(serde_json::from_value(json!({
         "irVersion":"0.1", "artifactId":"defs.name.law", "kind":"law",
         "namespace":"defs", "name":"name", "version":"0.1.0", "lifecycle":"draft",
@@ -5020,12 +5020,25 @@ fn governing_law_input(expression: &str, at: u64) -> (Model, InstalledDefinition
             "modality":{"kind":"always"}, "response":{"kind":"predicate", "expression":expression}
         }
     })).expect("law"));
-    let findings = norn_checker::check_artifact_set(&artifacts, &norn_checker::EntityArtifactSetContext {
-        registry: &std::collections::BTreeSet::new(), base: &[], tenant: None,
-    });
+    let findings = norn_checker::check_artifact_set(
+        &artifacts,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &std::collections::BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
     assert!(findings.is_empty(), "{findings:?}");
-    input.canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set")).expect("UTF8");
-    (plain.with_governing_laws(&artifacts).expect("retained laws"), input)
+    input.canonical_set = String::from_utf8(
+        norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set"),
+    )
+    .expect("UTF8");
+    (
+        plain
+            .with_governing_laws(&artifacts)
+            .expect("retained laws"),
+        input,
+    )
 }
 
 #[test]
@@ -5033,13 +5046,29 @@ fn obs_evidence_historical_governing_laws_do_not_follow_current_definitions() {
     let (first, input) = governing_law_input("self.name != 'bad'", 1);
     let expected_first = first.governing_laws("defs.Item").expect("direct laws");
     let mut store = CellStore::open_in_memory(first.clone()).expect("store");
-    store.install_definitions(first, input, Some(0), "org_demo/dev").expect("v1");
+    store
+        .install_definitions(first, input, Some(0), "org_demo/dev")
+        .expect("v1");
     let (second, input) = governing_law_input("self.name != 'bad' and self.name != 'worse'", 2);
     let expected_second = second.governing_laws("defs.Item").expect("direct laws");
-    store.install_definitions(second, input, Some(1), "org_demo/dev").expect("v2");
+    store
+        .install_definitions(second, input, Some(1), "org_demo/dev")
+        .expect("v2");
     assert_ne!(expected_first, expected_second);
-    assert_eq!(store.read().governing_laws_at(1, "defs.Item").expect("v1 lookup"), expected_first);
-    assert_eq!(store.read().governing_laws_at(2, "defs.Item").expect("v2 lookup"), expected_second);
+    assert_eq!(
+        store
+            .read()
+            .governing_laws_at(1, "defs.Item")
+            .expect("v1 lookup"),
+        expected_first
+    );
+    assert_eq!(
+        store
+            .read()
+            .governing_laws_at(2, "defs.Item")
+            .expect("v2 lookup"),
+        expected_second
+    );
     assert!(store.read().governing_laws_at(99, "defs.Item").is_err());
 }
 
@@ -5047,27 +5076,54 @@ fn obs_evidence_historical_governing_laws_do_not_follow_current_definitions() {
 fn obs_evidence_install_refuses_missing_or_substituted_governing_laws() {
     let (retained, input) = governing_law_input("self.name != 'bad'", 1);
     let mut store = CellStore::open_in_memory(model(false)).expect("store");
-    for candidate in [model(false), governing_law_input("self.name != 'other'", 1).0] {
-        assert!(matches!(store.install_definitions(candidate, input.clone(), Some(0), "org_demo/dev"), Err(CellError::DefinitionReceiptInvalid(_))));
-        assert!(store.read().installed_definitions(None).expect("active version").is_none());
+    for candidate in [
+        model(false),
+        governing_law_input("self.name != 'other'", 1).0,
+    ] {
+        assert!(matches!(
+            store.install_definitions(candidate, input.clone(), Some(0), "org_demo/dev"),
+            Err(CellError::DefinitionReceiptInvalid(_))
+        ));
+        assert!(
+            store
+                .read()
+                .installed_definitions(None)
+                .expect("active version")
+                .is_none()
+        );
     }
-    store.install_definitions(retained, input, Some(0), "org_demo/dev").expect("matching laws install");
+    store
+        .install_definitions(retained, input, Some(0), "org_demo/dev")
+        .expect("matching laws install");
 }
 
 #[test]
 fn law_complete_inherited_and_effective_scopes_refuse_until_b2() {
     let (model, _) = governing_law_input("self.name != 'bad'", 1);
     let mut snapshot = model.definitions_snapshot();
-    snapshot.object_types.push(serde_json::from_value(json!({"name":"defs.Child", "extends":"defs.Item"})).expect("child"));
+    snapshot.object_types.push(
+        serde_json::from_value(json!({"name":"defs.Child", "extends":"defs.Item"})).expect("child"),
+    );
     let inherited = Model::from_snapshot(&snapshot).expect("snapshot");
-    let refusal = inherited.governing_laws("defs.Child").expect_err("inherited scope");
+    let refusal = inherited
+        .governing_laws("defs.Child")
+        .expect_err("inherited scope");
     assert!(matches!(refusal, CellError::UnsupportedLawScope { .. }));
-    assert!(refusal.to_string().contains("core.laws.unsupported_semantics"));
+    assert!(
+        refusal
+            .to_string()
+            .contains("core.laws.unsupported_semantics")
+    );
     assert!(refusal.to_string().contains("unsupported until B2"));
     let mut artifact = serde_json::to_value(&snapshot.law_artifacts[0]).expect("law");
     artifact["payload"]["scope"]["root"] = json!({"kind":"app", "id":"defs"});
     snapshot.law_artifacts[0] = serde_json::from_value(artifact).expect("effective scope");
-    assert!(matches!(Model::from_snapshot(&snapshot).expect("model").governing_laws("defs.Item"), Err(CellError::UnsupportedLawScope { .. })));
+    assert!(matches!(
+        Model::from_snapshot(&snapshot)
+            .expect("model")
+            .governing_laws("defs.Item"),
+        Err(CellError::UnsupportedLawScope { .. })
+    ));
 }
 
 norn_testkit::proptest::proptest! {

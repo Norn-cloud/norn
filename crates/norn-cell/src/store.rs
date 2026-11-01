@@ -1792,7 +1792,9 @@ fn preflight_definition_install<E: SqlEngine>(
     } else if let Some(receipt) = &install.input.admission_receipt {
         verify_admission_receipt(receipt, &install.input.receipt_sha256)?;
     }
-    install.candidate_model.check_governing_laws(&install.input.canonical_set)?;
+    install
+        .candidate_model
+        .check_governing_laws(&install.input.canonical_set)?;
     let migration = crate::migration::preflight_model_migration(
         engine,
         previous_model,

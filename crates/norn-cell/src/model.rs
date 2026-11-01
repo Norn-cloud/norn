@@ -186,14 +186,25 @@ fn append_binding_indexes(
     Ok(())
 }
 
-fn canonical_law_artifacts(artifacts: &[ArtifactEnvelope]) -> Result<Vec<ArtifactEnvelope>, CellError> {
-    let mut laws: Vec<_> = artifacts.iter().filter(|a| a.kind() == ArtifactKind::Law).cloned().collect();
+fn canonical_law_artifacts(
+    artifacts: &[ArtifactEnvelope],
+) -> Result<Vec<ArtifactEnvelope>, CellError> {
+    let mut laws: Vec<_> = artifacts
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::Law)
+        .cloned()
+        .collect();
     laws.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
     for artifact in &laws {
-        let _: LawIR = serde_json::from_value(artifact.payload.to_json_value())?;
+        let _: LawIR = serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
     }
-    if laws.windows(2).any(|pair| matches!(pair, [a, b] if a.artifact_id == b.artifact_id)) {
-        return Err(CellError::DefinitionReceiptInvalid("duplicate governing law artifact".to_owned()));
+    if laws
+        .windows(2)
+        .any(|pair| matches!(pair, [a, b] if a.artifact_id == b.artifact_id))
+    {
+        return Err(CellError::DefinitionReceiptInvalid(
+            "duplicate governing law artifact".to_owned(),
+        ));
     }
     Ok(laws)
 }
@@ -486,9 +497,13 @@ impl Model {
         self.entry(object_type)?;
         let mut direct = Vec::new();
         for artifact in &self.law_artifacts {
-            let law: LawIR = serde_json::from_value(artifact.payload.to_json_value())?;
+            let law: LawIR = serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
             let applicable = self.is_a(object_type, &law.subject)
-                || law.scope.object_types.iter().any(|ty| self.is_a(object_type, ty));
+                || law
+                    .scope
+                    .object_types
+                    .iter()
+                    .any(|ty| self.is_a(object_type, ty));
             if !applicable {
                 continue;
             }
