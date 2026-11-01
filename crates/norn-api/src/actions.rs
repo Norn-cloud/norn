@@ -170,6 +170,15 @@ fn kernel_refusal(safe: norn_kernel::Refusal) -> Refusal {
 pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync::Arc<DevHost<E>>> {
     use axum::{extract::State, response::IntoResponse};
     type Host<E> = State<std::sync::Arc<DevHost<E>>>;
+    #[derive(Deserialize)]
+    struct Envelope {
+        params: Parameters,
+    }
+    #[derive(Deserialize)]
+    struct Parameters {
+        arguments: Box<serde_json::value::RawValue>,
+    }
+
     fn scope(headers: &http::HeaderMap) -> DefinitionsQuery {
         DefinitionsQuery {
             org_id: headers
@@ -201,10 +210,6 @@ pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync:
             }
             let request = if mcp {
                 if value.get("method").and_then(serde_json::Value::as_str) != Some("tools/call") || value.pointer("/params/name").and_then(serde_json::Value::as_str) != Some("call_action") { return Err(Refusal::invalid("unknown MCP method or tool")); }
-                #[derive(Deserialize)]
-                struct Envelope { params: Parameters }
-                #[derive(Deserialize)]
-                struct Parameters { arguments: Box<serde_json::value::RawValue> }
                 let envelope: Envelope = serde_json::from_slice(&body).map_err(|e| Refusal::invalid(e.to_string()))?;
                 let mut args: BTreeMap<String, Box<serde_json::value::RawValue>> = serde_json::from_str(envelope.params.arguments.get()).map_err(|e| Refusal::invalid(e.to_string()))?;
                 let key = value.pointer("/params/_meta/norn~1idempotencyKey").ok_or_else(|| Refusal::invalid("missing retry identity"))?;
