@@ -73,7 +73,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
 fn source_from_bundle(bundle: &MappingBundle, instance: &ObjectRecord) -> Result<InstanceSourceProvenance, CellError> {
     let invalid = || CellError::MappingBundleMismatch;
-        let mapped = bundle.records.iter().find(|r| r.object_type == instance.object_type && r.key == instance.id).ok_or_else(invalid)?;
+        let mapped = bundle.records.iter().find(|r| r.object_type.as_str() == instance.object_type.as_str() && r.key == instance.id).ok_or_else(invalid)?;
         let invocation = mapped.invocations.first().ok_or_else(invalid)?;
         if invocation.input.iter().filter(|(p, _)| p.as_str() != norn_checker::mapping::OBJECT_ID_FIELD)
             .any(|(property, value)| instance.values.get(property) != Some(value)) { return Err(invalid()); }
