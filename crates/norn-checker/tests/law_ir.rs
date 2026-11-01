@@ -344,6 +344,32 @@ fn law_contained_unknown_stale_missing_duplicate_cycle_and_budget_refuse() {
     assert!(membership(&law, &missing).is_err());
 }
 
+#[test]
+fn law_contained_pending_path_bytes_refuse_before_multiplying_large_identities() {
+    let (mut law, mut base) = membership_case();
+    let large_id = "r".repeat(2_000_000);
+    let mut declaration: LawIR =
+        serde_json::from_value(serde_json::to_value(law.payload.to_json_value()).expect("wire"))
+            .expect("law");
+    declaration.scope.root = norn_ir::LawRoot::App(large_id.clone());
+    law.payload = ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Law,
+        serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
+    )
+    .expect("payload");
+    let owner = base.last_mut().expect("holder");
+    let mut root: CompositionPackRoot =
+        serde_json::from_value(serde_json::to_value(owner.payload.to_json_value()).expect("wire"))
+            .expect("pack");
+    root.instances.as_mut().expect("instances")[0].instance_id = large_id;
+    owner.payload = ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::BusinessPack,
+        serde_json::from_value(serde_json::to_value(root).expect("root")).expect("tree"),
+    )
+    .expect("payload");
+    assert!(membership(&law, &base).is_err());
+}
+
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
