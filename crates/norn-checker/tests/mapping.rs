@@ -261,14 +261,18 @@ fn edge_fixture() -> (
         &BTreeSet::new(),
     )
     .expect("retained");
+    let fixture: Vec<Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("fixture");
     let mut law: norn_ir::LawIR = serde_json::from_value(
-        serde_json::from_str::<Vec<Value>>(include_str!("../../../fixtures/law-ir/laws.json"))
-            .expect("fixture")[0]["payload"]
+        fixture
+            .first()
+            .and_then(|a| a.get("payload"))
+            .expect("law payload")
             .clone(),
     )
     .expect("law");
-    law.id = "toy.conservation".to_owned();
-    law.subject = "commerce.SalesOrder".to_owned();
+    "toy.conservation".clone_into(&mut law.id);
+    "commerce.SalesOrder".clone_into(&mut law.subject);
     law.scope.root = norn_ir::LawRoot::Company("org_demo".to_owned());
     law.scope.object_types = vec![law.subject.clone()];
     law.modality = norn_ir::LawModality::Always {};
@@ -286,8 +290,7 @@ fn edge_fixture() -> (
         version: Some("0.1.0".to_owned()),
         required: true,
     }];
-    let source =
-        DefinitionSource::parse(&json!([law.clone()]).to_string(), &raw).expect("law source");
+    let source = DefinitionSource::parse(&json!([law]).to_string(), &raw).expect("law source");
     let approved = ApprovedContract::approve_retained(
         &source,
         &retained,
