@@ -2813,6 +2813,77 @@
         "verification/core-physics-v1/models/core-value-ledger.qnt",
         "verification/core-physics-v1/proofs/CoreValueLedger.lean"
       ]
+    },
+    {
+      "id": "jewelry-statechart",
+      "obligations": [
+        "INV-JEWELRY-BOUNDED-REFINING"
+      ],
+      "obligationClaims": [
+        {
+          "id": "INV-JEWELRY-BOUNDED-REFINING",
+          "runtime": "missing",
+          "model": "bounded_model_checked",
+          "proof": "missing",
+          "residual": "Bounded reference only: one metal, two fixed ownership partitions, six initial fine ticks each. No runtime, purity normalization, multi-party allocation, valuation or lifecycle reversal correspondence.",
+          "evidence": {
+            "runtime": [],
+            "proof": [],
+            "model": [
+              {
+                "artifact": "verification/jewelry-v1/refining.qnt",
+                "command": "quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved assetsExcludeCustody custodyIsolated refusedIsNoop --max-steps 4",
+                "selectors": [
+                  "invariant:nonnegative",
+                  "invariant:fineConserved",
+                  "invariant:assetsExcludeCustody",
+                  "invariant:custodyIsolated",
+                  "invariant:refusedIsNoop"
+                ],
+                "resultArtifacts": [
+                  "target/verification-results/jewelry-refining-quint.json"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "runtime": {
+        "status": "missing",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "proof": {
+        "status": "missing",
+        "artifacts": [],
+        "commands": [],
+        "generatedArtifacts": [],
+        "resultArtifacts": []
+      },
+      "model": {
+        "status": "bounded_model_checked",
+        "bound": "Apalache depth 4; one metal, two ownership partitions with six fine ticks each; inputs 1..6, outputs/loss 0..6, optional loss documentation.",
+        "artifacts": [
+          "verification/jewelry-v1/refining.qnt"
+        ],
+        "commands": [
+          "quint typecheck verification/jewelry-v1/refining.qnt",
+          "quint test verification/jewelry-v1/refining.qnt",
+          "quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved assetsExcludeCustody custodyIsolated refusedIsNoop --max-steps 4"
+        ],
+        "resultArtifacts": [
+          "target/verification-results/jewelry-refining-quint.json"
+        ],
+        "generatedArtifacts": []
+      },
+      "limitations": [
+        "Bounded mathematical statechart in exact normalized fine ticks; assets proxy fine quantity, not monetary valuation. No runtime, purity parser, replay, cancellation or inherited mapping claim."
+      ],
+      "sourceFiles": [
+        "verification/jewelry-v1/refining.qnt"
+      ]
     }
   ]
 }

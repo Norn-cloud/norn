@@ -561,6 +561,15 @@ run_gate fast quantity-reservation-lean \
   command \
   lean -DwarningAsError=true \
     verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean
+run_gate fast jewelry-refining-typecheck \
+  "quint typecheck verification/jewelry-v1/refining.qnt" command \
+  quint typecheck verification/jewelry-v1/refining.qnt
+run_gate fast jewelry-refining-examples \
+  "quint test verification/jewelry-v1/refining.qnt" command \
+  quint test verification/jewelry-v1/refining.qnt
+run_gate fast jewelry-refining-quint \
+  "quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved assetsExcludeCustody custodyIsolated refusedIsNoop --max-steps 4" command \
+  quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved assetsExcludeCustody custodyIsolated refusedIsNoop --max-steps 4 --out "$result_root/jewelry-refining-quint.json"
 run_gate fast quantity-batch-quint-typecheck \
   "quint typecheck verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt" \
   command \

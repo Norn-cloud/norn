@@ -1189,6 +1189,53 @@
       ],
       "resultArtifacts": [],
       "generatedArtifacts": []
+    },
+    {
+      "id": "jewelry-refining-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/jewelry-v1/refining.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "jewelry-statechart",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "jewelry-refining-examples",
+      "profile": "fast",
+      "command": "quint test verification/jewelry-v1/refining.qnt",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "jewelry-statechart",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "jewelry-refining-quint",
+      "profile": "fast",
+      "command": "quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved assetsExcludeCustody custodyIsolated refusedIsNoop --max-steps 4",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "jewelry-statechart",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/jewelry-refining-quint.json"
+      ],
+      "generatedArtifacts": []
     }
   ]
 }
