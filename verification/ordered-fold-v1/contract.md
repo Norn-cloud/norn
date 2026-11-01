@@ -98,3 +98,8 @@ and its complete output before it becomes state. Nested ordinary calls retain
 the fold helper's boundary check. Non-fold helper admission is unchanged.
 The checks charge materialization to shared fuel. No schema failure produces
 an accumulator or effects; the execution-unavailable gate still applies here.
+
+FOLD-VM-BOUNDARY: a profiled VM checks numeric leaves in its base scope, locals
+and complete result, including identity/negation and nested records/lists. The
+iterative walk charges nodes and pending children before allocating traversal
+work. No caller can attach a profile and pass excess-precision values through.
