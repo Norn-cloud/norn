@@ -4053,7 +4053,8 @@ fn protected_properties_refuse_action_input_and_unsealed_output() {
 #[test]
 fn row_only_cas_checker_and_runtime_admission_agree() {
     let baseline = owned_series_types(false, false);
-    let action = owned_series_action();
+    let mut action = owned_series_action();
+    action.writes.remove(2);
     for mask in 0..4 {
         let mut types = baseline.clone();
         for (index, property) in types[0].properties.iter_mut().enumerate() {
@@ -4071,6 +4072,9 @@ fn row_only_cas_checker_and_runtime_admission_agree() {
         }
         let mut envelope = fixture("ir/commerce-sales-order-submit-invoice.action.json");
         envelope["payload"] = serde_json::to_value(&action).unwrap();
+        envelope["dependencies"] = json!(types.iter().map(|object| json!({
+            "artifactId":format!("{}.entity", object.name.as_str()), "kind":"entity", "version":"0.1.0", "required":true
+        })).collect::<Vec<_>>());
         artifacts.push(serde_json::from_value(envelope).unwrap());
         let diagnostics = norn_checker::action_set::check_action_set(
             &artifacts,
