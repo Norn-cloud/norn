@@ -46,7 +46,10 @@ fn apply<S: Valuation>(
     id: &str,
     operation: &StockOperation<S::Movement>,
 ) -> Result<Vec<StockChange>, StockHistoryError> {
-    let movement = |states: &mut BTreeMap<String, S>, partition: &String, event: &S::Movement| {
+    let movement = |states: &mut BTreeMap<String, S>,
+                    partition: &String,
+                    event: &S::Movement|
+     -> Result<StockChange, StockHistoryError> {
         let (after, effect) = states
             .get(partition)
             .cloned()
