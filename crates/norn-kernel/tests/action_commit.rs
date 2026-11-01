@@ -4041,6 +4041,7 @@ fn candidate_promotion_requires_kernel_admission_and_commit() {
         "guarded",
         "denied",
         "overlong",
+        "partial",
     ] {
         let approve = if variant == "overlong" {
             format!("demo.{}", "a".repeat(257))
@@ -4071,6 +4072,7 @@ fn candidate_promotion_requires_kernel_admission_and_commit() {
                 "effectProgram":{"kind":"upsert_input_object", "objectIdField":"id", "objectKind":"demo.Order", "entityArtifactId":"demo.Order", "entityArtifactVersion":"0.1.0"}
             })).unwrap()
         }).map(|mut action: ActionRoot| {
+            if variant == "partial" && action.action_id == "demo.pay" { action.effect_program = None; }
             match variant {
                 "effect_free" => action.effect_program = None,
                 "create_only" => {
