@@ -113,3 +113,14 @@ and refusals through HTTP, MCP and the compiled CLI. Exercise a lifecycle guard
 refusal and a forbidden actor, checking no writes for each. This is sampled
 correspondence evidence. The stock CP1 vector remains pending declared
 receipt/delivery rules; it does not qualify the generic surfaces.
+
+Run the sampled three-surface acceptance with the compiled CLI:
+
+```sh
+cargo build --locked -p norn-cli
+NORN_CLI="${CARGO_TARGET_DIR:-target}/debug/norn" cargo test --locked -p norn-api surface_alpha_parity_and_no_write_refusals -- --ignored
+```
+
+The cancellation guard vector starts from an approved order with a trusted
+fixture invoice count of one. It qualifies the declared guard and transport
+refusals; it does not claim to run the asynchronous invoice-fold workflow.

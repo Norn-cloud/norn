@@ -630,6 +630,21 @@ mod alpha_surface {
                 ("alpha.order.submit", json!({"id":"order"}), "submit"),
                 ("alpha.order.approve", json!({"id":"order"}), "approve"),
                 ("alpha.order.cancel", json!({"id":"order"}), "cancel"),
+                (
+                    "alpha.order.create",
+                    json!({"id":"blocked","order_number":"SO-2","order_date":"2026-11-01","currency":"USD","counterparty":"customer","total_amount":"10.00"}),
+                    "create-blocked",
+                ),
+                (
+                    "alpha.order.submit",
+                    json!({"id":"blocked"}),
+                    "submit-blocked",
+                ),
+                (
+                    "alpha.order.approve",
+                    json!({"id":"blocked"}),
+                    "approve-blocked",
+                ),
             ] {
                 let (result, failed) =
                     invoke(&app, surface, &url, "demo", action, input, key).await;
@@ -642,14 +657,10 @@ mod alpha_surface {
                 let mut values = cell
                     .store()
                     .read()
-                    .object("main", "alpha.SalesOrder", "order")
+                    .object("main", "alpha.SalesOrder", "blocked")
                     .expect("read")
                     .expect("order")
                     .values;
-                values.insert(
-                    "status".into(),
-                    norn_ir::RuntimeValue::String("approved".into()),
-                );
                 values.insert(
                     "invoice_count".into(),
                     norn_ir::RuntimeValue::from_json(json!(1)).expect("count"),
@@ -660,7 +671,7 @@ mod alpha_surface {
                         scope: "org_alpha/dev".into(),
                         writes: vec![norn_cell::FactWriteRow::Put {
                             object_type: "alpha.SalesOrder".into(),
-                            key: "order".into(),
+                            key: "blocked".into(),
                             values,
                         }],
                         ..Default::default()
@@ -674,7 +685,7 @@ mod alpha_surface {
                 &url,
                 "demo",
                 "alpha.order.cancel",
-                json!({"id":"order"}),
+                json!({"id":"blocked"}),
                 "guard",
             )
             .await;
