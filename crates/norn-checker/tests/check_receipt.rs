@@ -755,3 +755,29 @@ fn retained_warning_evidence_verifies_but_unreconstructable_legacy_hash_is_refus
     // hash alone cannot recover that historical finding, so it fails closed.
     assert!(recover_legacy_admission_receipt(&digest, &artifacts, &base, &limits).is_err());
 }
+
+#[test]
+fn alpha_golden_controls_remain_unknown_until_kernel_replay() {
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(include_str!(
+        "../../../fixtures/engine-alpha/sales-order.definitions.json"
+    ))
+    .expect("golden");
+    let checked = norn_checker::check_artifact_set_with_receipt(
+        &artifacts,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &std::collections::BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+    )
+    .expect("receipt");
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+    assert!(!checked.controls.is_empty());
+    assert!(
+        checked
+            .controls
+            .iter()
+            .all(|control| control.reachability == norn_ir::Reachability::Unknown)
+    );
+}
