@@ -78,7 +78,9 @@ pub enum StockPostError {
 }
 
 fn identity(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_whitespace)
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 fn total_value(layers: &[FifoLayer]) -> Result<u128, StockPostError> {
@@ -96,31 +98,16 @@ fn round(value: u128, divisor: u128) -> Result<u128, StockPostError> {
 }
 
 fn cents(value: u128) -> Result<i128, StockPostError> {
-    i128::try_from(round(value, 10_000)?).map_err(|_| StockPostError::Overflow)
+    i128::try_from(round(value, 10_000)?).map_err(|_range| StockPostError::Overflow)
 }
 
-/// Derive quantity, immutable movements and GL together using the shared FIFO API.
-/// History and lines must already be authorized and fenced by the action caller.
-///
-/// # Errors
-/// Invalid bindings/lines, arithmetic overflow or FIFO refusal return no proposal.
-pub fn lower_stock_posting(
-    bindings: &StockPostBindings,
-    operation: StockPostOperation,
-    posting_id: &str,
-    history: &[FifoMovement],
-    lines: &[StockPostLine],
-) -> Result<StockPostPlan, StockPostError> {
+fn validate_bindings(bindings: &StockPostBindings) -> Result<(), StockPostError> {
     let [stock, srbnb, cogs] = &bindings.accounts;
     let [receipt_template, delivery_template] = &bindings.templates;
-    if !identity(posting_id)
-        || !identity(&bindings.currency)
+    if !identity(&bindings.currency)
         || !identity(&bindings.layer)
         || bindings.templates.iter().any(|id| !identity(id))
         || receipt_template == delivery_template
-        || lines.is_empty()
-        || lines.len() > 100
-        || history.len() > 10_000
         || bindings.accounts.iter().any(|a| {
             !identity(&a.account_id)
                 || !identity(&a.scope_key)
@@ -137,6 +124,27 @@ pub fn lower_stock_posting(
     {
         return Err(StockPostError::Invalid);
     }
+    Ok(())
+}
+
+/// Derive quantity, immutable movements and GL together using the shared FIFO API.
+/// History and lines must already be authorized and fenced by the action caller.
+///
+/// # Errors
+/// Invalid bindings/lines, arithmetic overflow or FIFO refusal return no proposal.
+pub fn lower_stock_posting(
+    bindings: &StockPostBindings,
+    operation: StockPostOperation,
+    posting_id: &str,
+    history: &[FifoMovement],
+    lines: &[StockPostLine],
+) -> Result<StockPostPlan, StockPostError> {
+    if !identity(posting_id) || lines.is_empty() || lines.len() > 100 || history.len() > 10_000 {
+        return Err(StockPostError::Invalid);
+    }
+    validate_bindings(bindings)?;
+    let [stock, srbnb, cogs] = &bindings.accounts;
+    let [receipt_template, delivery_template] = &bindings.templates;
     let mut layers = replay_fifo(history)?;
     let before = cents(total_value(&layers)?)?;
     let mut quantity = 0_u128;
@@ -150,7 +158,7 @@ pub fn lower_stock_posting(
             .checked_add(line.quantity)
             .ok_or(StockPostError::Overflow)?;
         let id = norn_ir::canonical::canonical_json_of(&(posting_id, &line.id))
-            .map_err(|_| StockPostError::Invalid)?;
+            .map_err(|_encoding| StockPostError::Invalid)?;
         let id = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&id);
         let movement = match (operation, line.unit_cost) {
             (StockPostOperation::Receipt, Some(cost)) => {
@@ -176,7 +184,7 @@ pub fn lower_stock_posting(
             allocations: result.allocations,
         });
     }
-    let quantity = i128::try_from(quantity).map_err(|_| StockPostError::Overflow)?;
+    let quantity = i128::try_from(quantity).map_err(|_range| StockPostError::Overflow)?;
     let stock_delta = cents(total_value(&layers)?)?
         .checked_sub(before)
         .ok_or(StockPostError::Overflow)?;

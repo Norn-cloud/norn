@@ -84,16 +84,11 @@ fn post_value_order_identity_cp1_fifo() -> Result<(), StockPostError> {
 #[test]
 fn post_value_aggregate_half_cents_and_zero_cost() -> Result<(), StockPostError> {
     let b = bindings();
-    let receipt = lower_stock_posting(
-        &b,
-        Receipt,
-        "round",
-        &[],
-        &[
-            line("a", 1_000_000, Some(5_000)),
-            line("b", 1_000_000, Some(5_000)),
-        ],
-    )?;
+    let lines = [
+        line("a", 1_000_000, Some(5_000)),
+        line("b", 1_000_000, Some(5_000)),
+    ];
+    let receipt = lower_stock_posting(&b, Receipt, "round", &[], &lines)?;
     assert_eq!(
         receipt.gl[0].amount_unscaled, "1",
         "aggregate before rounding"
