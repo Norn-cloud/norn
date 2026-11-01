@@ -7,6 +7,7 @@
 
 use norn_checker::quantity_ledger::{
     compile_ledger_pack, evaluate_ledger_template, validate_ledger_pack,
+    verify_conservation_certificate,
 };
 use norn_ir::quantity_ledger::{
     LEDGER_PACK_IR_VERSION, LedgerAccountIr, LedgerFundingPolicy, LedgerLayerIr, LedgerLegIr,
@@ -151,7 +152,7 @@ fn receipt_delivery_templates_certify_every_parameter_coefficient() {
 }
 
 #[test]
-fn specialization_cannot_drop_or_change_the_declared_counterpart() {
+fn specialization_cannot_drop_legs_or_change_coefficients() {
     for gl in [false, true] {
         for drop in [false, true] {
             let mut pack = templates(gl);
@@ -164,6 +165,24 @@ fn specialization_cannot_drop_or_change_the_declared_counterpart() {
             assert!(!result.ok, "POST-VALUE: nonzero coefficient residual");
             assert!(result.certificates.is_empty());
         }
+    }
+}
+
+#[test]
+fn account_substitution_invalidates_the_pinned_certificate() {
+    for gl in [false, true] {
+        let mut pack = templates(gl);
+        let certificate = validate_ledger_pack(&pack).certificates.remove(0);
+        pack.templates[0].legs[1].account_id =
+            if gl { "cogs" } else { "external-destination" }.into();
+        assert!(
+            validate_ledger_pack(&pack).ok,
+            "substitution still conserves"
+        );
+        assert!(
+            verify_conservation_certificate(&pack, &certificate).is_err(),
+            "POST-AUTHORITY: the original seal must not admit a substituted account"
+        );
     }
 }
 

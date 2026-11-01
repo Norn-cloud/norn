@@ -20,8 +20,11 @@ authoritative manifest order, not expanded by a callback.
 
 `receipt_delivery_templates_certify_every_parameter_coefficient` checks both
 certificates and CP1 evaluated legs: receipt 5 units / journal 80, delivery
-4 units / journal 60. `specialization_cannot_drop_or_change_the_declared_counterpart`
-rejects lost or changed counterparts. `exact_parameter_scale_and_bounds_are_admission_obligations`
+4 units / journal 60. `specialization_cannot_drop_legs_or_change_coefficients`
+rejects dropped legs and coefficient changes. `account_substitution_invalidates_the_pinned_certificate`
+shows that substituting a declared same-unit account still conserves but cannot
+reuse the original certificate. Correct initial master-account selection remains
+a separate admission obligation. `exact_parameter_scale_and_bounds_are_admission_obligations`
 rejects wrong scale, negative amounts and overflow of the sealed range.
 
 ## Binding and transaction obligations
