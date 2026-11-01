@@ -20,6 +20,8 @@ It holds every check over the typed IR in `norn-ir` (T1-CHK-1, #2524, moved them
 Retained definition receipts are verified against their recorded checker/profile and exact artifact set before re-admission. Legacy `receipt@1` evidence retains the historical identifier policy; upgraded `receipt@2` evidence records that policy explicitly. New installs and updates always enforce the current identifier limits. Identifier limits are defined in `norn-ir::identifier_limits`.
 
 ### Exact-source receipt identity (HOST-RECEIPT)
+SOURCE-DECODE-VERBATIM: preparing an exact source removes only inline editor fields. The semantic source, decoded string values and object keys retain their submitted Unicode spelling, including decomposed artifact ids and executable text. Semantic decoding does not apply Norn1 normalization.
+SOURCE-HASH-CORRESPONDENCE: artifact hashes still use the existing Norn1 canonical bytes of that extracted source. Unicode normalization belongs only to hashing; preparation, challenge admission and writer → source-verification round trips agree on the verbatim semantic model. `source_decode_verbatim_and_hash_correspondence` exercises both candidate/base positions with decomposed ids, keys and executable literals, alongside editor extraction.
 RECEIPT-EXACT: receipt identity is injective over exact canonical source (assuming SHA-256 collision resistance).
 Raw callers use `check_artifact_sources_with_receipt` and `verify_admission_receipt_sources`; typed entry points bind serialized projections.
 Conformance in `tests/check_receipt.rs`: EXACT-INTEGER (`9007199254740992` / `9007199254740993`),
