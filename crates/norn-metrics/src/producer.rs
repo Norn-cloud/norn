@@ -49,10 +49,11 @@ impl ForecastExport<'_> {
         if self.rows.is_empty() || self.rows.len() > 10_000 { return Err(failure("row bound")); }
         let features: Vec<_> = self.plan.features().iter().map(|c| (&c.property, &c.unit)).collect();
         let bytes = norn_ir::canonical::canonical_json_of(&(
-            self.tenant, self.world, self.version, &self.source_digest, self.source_head, self.as_of,
-            self.plan.object_type(), self.plan.max_age_micros(), features, (&self.plan.outcome().property, &self.plan.outcome().unit),
-            self.rows, self.complete, self.quarantine_count, self.fresh,
-            &self.assumptions_digest, &self.remedy_digest, self.frontier_age_ms,
+            "norn.analytics.export/v1",
+            (self.tenant, self.world, self.version, &self.source_digest, self.source_head, self.as_of),
+            (self.plan.object_type(), self.plan.max_age_micros(), features, (&self.plan.outcome().property, &self.plan.outcome().unit)),
+            (self.complete, self.quarantine_count, self.fresh, &self.assumptions_digest, &self.remedy_digest, self.frontier_age_ms),
+            self.rows,
         )).map_err(failure)?;
         if bytes.len() > 4_194_304 { return Err(failure("input byte bound")); }
         let digest = Digest::of_json_document(bytes.as_slice()).map_err(failure)?;
