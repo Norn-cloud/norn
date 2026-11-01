@@ -1,5 +1,10 @@
 //! Executable reference for POST-*; see verification/posting-v1/contract.md.
 //! Valuation witnesses are inputs, not an implementation of the stock fold.
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    reason = "small bounded reference states and fixed witness indices"
+)]
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Intent {
