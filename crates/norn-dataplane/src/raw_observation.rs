@@ -636,15 +636,17 @@ mod tests {
             observation.payload_digest,
             payload_digest(&observation.payload).expect("digest")
         );
-        let stored = serde_json::to_vec(&observation).expect("encode");
+        let stored = serde_json::to_string(&observation).expect("encode");
         assert_eq!(
-            RawObservation::from_json_slice(&stored).expect("replay"),
+            RawObservation::from_json_slice(stored.as_bytes()).expect("replay"),
             observation
         );
         let mut tampered = observation.clone();
         tampered.payload = json!({"secret":REDACTED,"amount":43});
         assert!(matches!(
-            RawObservation::from_json_slice(&serde_json::to_vec(&tampered).expect("encode")),
+            RawObservation::from_json_slice(
+                serde_json::to_string(&tampered).expect("encode").as_bytes()
+            ),
             Err(ObservationError::DigestMismatch { .. })
         ));
         let lossy = String::from_utf8(bytes.to_vec())
@@ -659,7 +661,9 @@ mod tests {
         assert_eq!(submission.source, "fixture");
         assert_eq!(
             RawObservation::from_json_slice(
-                &serde_json::to_vec(&submission.payload).expect("payload")
+                serde_json::to_string(&submission.payload)
+                    .expect("payload")
+                    .as_bytes()
             )
             .expect("checked submission"),
             observation
