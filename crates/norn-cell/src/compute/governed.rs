@@ -5,6 +5,7 @@ use norn_kernel::{CellCommit, FactExpectation, action_commit::ActionReferenceRea
 
 /// Server-declared dependency used while preparing an admitted action.
 /// This adapter grants no authorization to a query envelope or point expectation.
+#[derive(Clone, Copy)]
 pub enum GovernedRead<'a> {
     /// Fixed point dependencies; the kernel remains their commit-fence authority.
     PointFacts(&'a [FactExpectation]),

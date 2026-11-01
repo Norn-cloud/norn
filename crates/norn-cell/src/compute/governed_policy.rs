@@ -35,7 +35,7 @@ impl std::error::Error for GovernedReadRefusal {}
 
 /// QUERY-FRESH-1: even eligible root inputs lack the required membership proof.
 #[must_use]
-pub const fn root_refusal(cell: bool, exact: bool, complete: bool) -> GovernedReadRefusal {
+pub(super) const fn root_refusal(cell: bool, exact: bool, complete: bool) -> GovernedReadRefusal {
     if cell && exact && complete {
         GovernedReadRefusal::UnfencedRoot
     } else {
