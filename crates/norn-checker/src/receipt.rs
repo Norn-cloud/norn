@@ -386,7 +386,9 @@ fn source_refs(
     for source in sources {
         let mut semantic = source.clone();
         drop(crate::layout::extract_inline_layout(&mut semantic));
-        crate::layout::require_nfc_text(&semantic).map_err(|findings| {
+        let document: serde_json::Value =
+            norn_ir::runtime::decode(&semantic).map_err(invalid_receipt)?;
+        crate::layout::require_nfc_text(&document).map_err(|findings| {
             invalid_receipt(
                 findings
                     .iter()
@@ -1111,7 +1113,7 @@ fn artifact_value(artifact: &ArtifactEnvelope) -> Result<serde_json::Value, Rece
 
 /// Remove legacy inline JDM editor fields that the layout migration extracts.
 /// Receipt identity therefore stays tied to executable definition semantics.
-fn semantic_artifact_projection(mut value: serde_json::Value) -> serde_json::Value {
+pub(crate) fn semantic_artifact_projection(mut value: serde_json::Value) -> serde_json::Value {
     let Some(envelope) = value.as_object_mut() else {
         return value;
     };
