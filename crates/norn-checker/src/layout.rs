@@ -33,7 +33,6 @@ pub struct PreparedArtifact {
 pub fn prepare_artifact_source(source: RuntimeValue) -> Result<PreparedArtifact, Vec<Diagnostic>> {
     let mut semantic_source = source;
     let layout = extract_inline_layout(&mut semantic_source)?;
-    require_nfc_text(&semantic_source)?;
     let document: serde_json::Value =
         norn_ir::runtime::decode(&semantic_source).map_err(|error| {
             vec![invalid_source_diagnostic(
@@ -41,6 +40,7 @@ pub fn prepare_artifact_source(source: RuntimeValue) -> Result<PreparedArtifact,
                 &format!("artifact source cannot be decoded: {error}"),
             )]
         })?;
+    require_nfc_text(&document)?;
     let artifact = crate::decode_artifact_json(&document).map_err(|legacy| {
         legacy
             .into_iter()
@@ -54,25 +54,28 @@ pub fn prepare_artifact_source(source: RuntimeValue) -> Result<PreparedArtifact,
     })
 }
 
-pub(crate) fn require_nfc_text(source: &RuntimeValue) -> Result<(), Vec<Diagnostic>> {
-    fn visit(value: &RuntimeValue, path: &str) -> Option<String> {
+pub(crate) fn require_nfc_text(source: &serde_json::Value) -> Result<(), Vec<Diagnostic>> {
+    fn visit(value: &serde_json::Value, path: &str) -> Option<String> {
         match value {
-            RuntimeValue::String(text) if norn_canonical::nfc(text) != *text => {
+            serde_json::Value::String(text) if norn_canonical::nfc(text) != *text => {
                 Some(path.to_owned())
             }
-            RuntimeValue::Array(items) => items
+            serde_json::Value::Array(items) => items
                 .iter()
                 .enumerate()
                 .find_map(|(i, item)| visit(item, &format!("{path}/{i}"))),
-            RuntimeValue::Object(fields) => fields.iter().find_map(|(key, value)| {
+            serde_json::Value::Object(fields) => fields.iter().find_map(|(key, value)| {
                 let pointer = format!("{path}/{}", key.replace('~', "~0").replace('/', "~1"));
-                if norn_canonical::nfc(key) != *key {
-                    Some(pointer)
-                } else {
+                if norn_canonical::nfc(key) == *key {
                     visit(value, &pointer)
+                } else {
+                    Some(pointer)
                 }
             }),
-            _ => None,
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => None,
         }
     }
     if let Some(path) = visit(source, "") {
@@ -83,7 +86,7 @@ pub(crate) fn require_nfc_text(source: &RuntimeValue) -> Result<(), Vec<Diagnost
             span: Some(Span::pointer(path)),
             artifact_id: source
                 .get("artifactId")
-                .and_then(RuntimeValue::as_str)
+                .and_then(serde_json::Value::as_str)
                 .map(str::to_owned),
             remediation: Some(DiagnosticRemediation::FixDefinition),
         }]);
@@ -97,14 +100,13 @@ pub(crate) fn require_nfc_text(source: &RuntimeValue) -> Result<(), Vec<Diagnost
 pub(crate) fn normalize_artifact(
     artifact: &ArtifactEnvelope,
 ) -> Result<(ArtifactEnvelope, LayoutSidecar), Vec<Diagnostic>> {
-    let mut source = norn_ir::runtime::encode(artifact).map_err(|error| {
+    let source = serde_json::to_value(artifact).map_err(|error| {
         vec![invalid_source_diagnostic(
             Some(artifact.artifact_id.clone()),
-            &error,
+            &error.to_string(),
         )]
     })?;
-    extract_inline_layout(&mut source)?;
-    require_nfc_text(&source)?;
+    require_nfc_text(&crate::receipt::semantic_artifact_projection(source))?;
     let ArtifactPayload::Rule(rule) = &artifact.payload else {
         return Ok((artifact.clone(), LayoutSidecar::default()));
     };
