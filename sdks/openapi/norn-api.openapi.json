@@ -5847,11 +5847,11 @@
             "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
           },
           "properties": {
-            "description": "Required properties, in presentation order. Omitted when empty.",
+            "type": "array",
             "items": {
               "$ref": "#/components/schemas/NornIrInterfaceProperty"
             },
-            "type": "array"
+            "description": "Required properties, in presentation order. Omitted when empty."
           },
           "status": {
             "$ref": "#/components/schemas/NornIrResourceStatus2",
@@ -6823,11 +6823,11 @@
             "description": "Generates one stored text component of this key inside the atomic\ncreate commit. Omitted for caller-supplied keys."
           },
           "properties": {
-            "description": "The key's components, in tuple order: one id for a single key, several\nfor a composite key. Each names a stored, non-nullable property of an\nadmissible kind.",
+            "type": "array",
             "items": {
               "$ref": "#/components/schemas/NornIrPropertyId"
             },
-            "type": "array"
+            "description": "The key's components, in tuple order: one id for a single key, several\nfor a composite key. Each names a stored, non-nullable property of an\nadmissible kind."
           },
           "rule": {
             "$ref": "#/components/schemas/NornIrIdentityRule",
@@ -7800,11 +7800,11 @@
             "pattern": "^[a-z][a-z0-9_]*$"
           },
           "properties": {
-            "description": "Link properties: attributes of each link instance (a relationship\nobject), with the shape of object type properties. Omitted when\nempty.",
+            "type": "array",
             "items": {
               "$ref": "#/components/schemas/NornIrProperty"
             },
-            "type": "array"
+            "description": "Link properties: attributes of each link instance (a relationship\nobject), with the shape of object type properties. Omitted when\nempty."
           },
           "target": {
             "type": "string",
@@ -8530,11 +8530,11 @@
             "description": "Link maps. Omitted when empty."
           },
           "properties": {
-            "description": "Property maps. Omitted when empty.",
+            "type": "array",
             "items": {
               "$ref": "#/components/schemas/NornIrPropertyMap"
             },
-            "type": "array"
+            "description": "Property maps. Omitted when empty."
           },
           "source": {
             "$ref": "#/components/schemas/NornIrLogicalSource",
@@ -8640,11 +8640,11 @@
             "description": "Declared owned child collections. Each collection is backed by a\ndeclared many/from-one link and keeps membership and order as part of\nthe parent's transactional write boundary. Omitted when empty."
           },
           "properties": {
-            "description": "Declared properties, in presentation order: new properties, and\nnarrowing overrides of inherited ones (same id). Omitted when empty.",
+            "type": "array",
             "items": {
               "$ref": "#/components/schemas/NornIrProperty"
             },
-            "type": "array"
+            "description": "Declared properties, in presentation order: new properties, and\nnarrowing overrides of inherited ones (same id). Omitted when empty."
           },
           "status": {
             "$ref": "#/components/schemas/NornIrResourceStatus",
@@ -8677,11 +8677,11 @@
             "pattern": "^[a-z][a-z0-9]*$"
           },
           "properties": {
-            "description": "Added properties; each id is `<namespace>__<name>`. Omitted when\nempty.",
+            "type": "array",
             "items": {
               "$ref": "#/components/schemas/NornIrProperty"
             },
-            "type": "array"
+            "description": "Added properties; each id is `<namespace>__<name>`. Omitted when\nempty."
           },
           "target": {
             "type": "string",
