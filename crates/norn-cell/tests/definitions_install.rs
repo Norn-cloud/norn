@@ -5626,6 +5626,8 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_eq!(&bundle.raw, &raw.input);
         norn_testkit::proptest::prop_assert_eq!(bundle.records.len(), 1);
         store.read().recheck_mapping_bundle(&bundle).expect("cell recomputation");
+        let mut unknown_pin = bundle.clone(); unknown_pin.definitions_version = u64::MAX;
+        norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_bundle(&unknown_pin), Err(CellError::MappingBundleMismatch)), "unretained definition pin refuses stably");
         let mut altered = bundle; altered.records.clear();
         norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_bundle(&altered), Err(CellError::MappingBundleMismatch)), "derived output refuses");
         let mut changed = input; changed.partition.push('x');
@@ -5710,6 +5712,47 @@ fn mapping_bundle_processing_refuses_forged_output_without_consumption() {
         cell.process_mapping_bundle(&id)
             .expect("original sealed evidence")
     );
+}
+
+#[test]
+fn mapping_bundle_processing_refuses_delete_and_diagnostics_without_consumption() {
+    for delete in [false, true] {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut store = mapping_bundle_store(&directory.path().join("unsupported.sqlite"));
+        let mut raw = bundle_raw(
+            "MEAS-1",
+            if delete {
+                "1.20"
+            } else {
+                "\"invalid decimal\""
+            },
+        );
+        if delete {
+            raw.input
+                .as_object_mut()
+                .expect("raw object")
+                .insert("kind".into(), Value::from("delete"));
+        }
+        let (id, _) = store
+            .inject_mapping_bundle(&raw, &bundle_input())
+            .expect("retained evidence");
+        let before = store.read().dump().expect("before");
+        let mut cell =
+            norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+        assert!(matches!(
+            cell.process_mapping_bundle(&id),
+            Err(CellError::UnsupportedMappingProfile)
+        ));
+        assert_eq!(cell.store().read().dump().expect("after"), before);
+        assert_eq!(
+            cell.store()
+                .read()
+                .pending_observations()
+                .expect("retained inbox")
+                .len(),
+            1
+        );
+    }
 }
 
 #[test]
@@ -5970,5 +6013,49 @@ fn host_provision_atomic_retry_preserves_later_installs() {
     assert_eq!(
         store.read().active_definitions_version().expect("active"),
         Some(2)
+    );
+}
+
+#[test]
+fn mapping_bundle_refuses_mismatched_delivery_identity_without_consumption() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut source = mapping_bundle_store(&dir.path().join("source.sqlite"));
+    let (id, _) = source
+        .inject_mapping_bundle(&bundle_raw("MEAS-1", "1.20"), &bundle_input())
+        .expect("bundle");
+    let pending = source.read().pending_observations().expect("inbox");
+    let mut observed: norn_kernel::Observed<Value> =
+        norn_ir::runtime::decode(&pending[0].observed).expect("envelope");
+    observed.id.0 = "other-delivery".into();
+    let mut store = mapping_bundle_store(&dir.path().join("target.sqlite"));
+    store
+        .inject(&id, &norn_ir::runtime::encode(&observed).expect("payload"))
+        .expect("untrusted stored envelope");
+    store
+        .inject(
+            "other-delivery",
+            &norn_ir::runtime::encode(&observed).expect("other payload"),
+        )
+        .expect("other inbox row");
+    let mut cell =
+        norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    assert!(matches!(
+        cell.process_mapping_bundle(&id),
+        Err(CellError::MappingBundleMismatch)
+    ));
+    assert_eq!(
+        cell.store()
+            .read()
+            .pending_observations()
+            .expect("inbox")
+            .len(),
+        2
+    );
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("fact")
+            .is_none()
     );
 }
