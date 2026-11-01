@@ -1,6 +1,6 @@
-use crate::EvaluationError;
 use crate::decision_graph::graph::{DecisionGraph, DecisionGraphConfig};
 use crate::nodes::{NodeContext, NodeContextExt, NodeError, NodeHandler, NodeResult};
+use crate::EvaluationError;
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
