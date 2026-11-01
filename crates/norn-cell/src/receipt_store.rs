@@ -247,10 +247,32 @@ mod tests {
             deadline: None,
             payload: dispatched.invocation.clone(),
         };
-        store.commit(&CommitBatch { world: MAIN_WORLD.into(), scope: dispatched.invocation.tenant.clone(), logical_time: 1_790_000_000_000,
-            writes: vec![FactWriteRow::Put { object_type: "norn.FunctionCommand".into(), key: command.id.0.clone(), values: norn_ir::RuntimeObject::from([("state".into(), norn_ir::runtime::encode(&CommandState::dispatched(&dispatched)).expect("state"))]) }],
-            effects: vec![EffectRow::Enqueue { command: OutboxCommand { command_id: command.id.0.clone(), generation: command.generation.0, idempotency_key: command.idempotency_key.0.clone(), deadline: None, command: norn_ir::runtime::encode(&command).expect("command") } }], ..CommitBatch::default()
-        }).expect("enqueue");
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: dispatched.invocation.tenant.clone(),
+                logical_time: 1_790_000_000_000,
+                writes: vec![FactWriteRow::Put {
+                    object_type: "norn.FunctionCommand".into(),
+                    key: command.id.0.clone(),
+                    values: norn_ir::RuntimeObject::from([(
+                        "state".into(),
+                        norn_ir::runtime::encode(&CommandState::dispatched(&dispatched))
+                            .expect("state"),
+                    )]),
+                }],
+                effects: vec![EffectRow::Enqueue {
+                    command: OutboxCommand {
+                        command_id: command.id.0.clone(),
+                        generation: command.generation.0,
+                        idempotency_key: command.idempotency_key.0.clone(),
+                        deadline: None,
+                        command: norn_ir::runtime::encode(&command).expect("command"),
+                    },
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("enqueue");
         let result = receipt.clone();
         let mut cell = Cell::new(store, dispatched.invocation.tenant.clone(), move |_| {
             result.clone()
