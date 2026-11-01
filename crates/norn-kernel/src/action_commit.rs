@@ -915,7 +915,7 @@ where
         Some(ActionEffectProgram::FireTransition {
             accept_receipt: Some(_),
             ..
-        }) => Err(ActionRefusal::UnsupportedEffect {
+        }) | None => Err(ActionRefusal::UnsupportedEffect {
             action_id: action.action_id.clone(),
         }),
         Some(ActionEffectProgram::FireTransition {
@@ -979,9 +979,6 @@ where
             limits,
             meter,
         ),
-        None => Err(ActionRefusal::UnsupportedEffect {
-            action_id: action.action_id.clone(),
-        }),
     }
 }
 
