@@ -11,8 +11,8 @@
 //! with the same [`BudgetExhausted`] value, even if an intermediate caller swallowed
 //! the first error.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use thiserror::Error;
 
 use crate::variable::Variable;

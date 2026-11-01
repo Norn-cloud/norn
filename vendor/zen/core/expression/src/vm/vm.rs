@@ -1,7 +1,7 @@
 use crate::compiler::{Compare, FetchFastTarget, Jump, Opcode};
 use crate::functions::arguments::Arguments;
 use crate::functions::registry::FunctionRegistry;
-use crate::functions::{MethodRegistry, internal};
+use crate::functions::{internal, MethodRegistry};
 use crate::scope::Scope;
 use crate::variable::Variable;
 use crate::variable::Variable::*;
@@ -1148,7 +1148,7 @@ impl VMInner<'_, '_> {
     /// result above it exhausts the meter regardless of the exact value.
     fn data_cost(&self, op: &Opcode, cap: u64, steps: &mut u64) -> u64 {
         use crate::functions::{FunctionKind, InternalFunction as F};
-        use crate::meter::cost::{REGEX_COMPILE, deep_size_capped, nested_size_capped, size};
+        use crate::meter::cost::{deep_size_capped, nested_size_capped, size, REGEX_COMPILE};
         use std::cell::Cell;
 
         let size_of = |n: usize| self.peek(n).map(size).unwrap_or(0);
