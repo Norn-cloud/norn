@@ -15,8 +15,8 @@ ratios, multiple outputs, nullable/computed measures, FX, metric-level freshness
 or disclosure policies, roll-ups and comparisons remain refused by this
 profile. Existing metric admission still diagnoses unsafe fan-out and unit or
 time-grain mismatches before lowering. Unsupported lowering uses
-`core.compute.unsupported_engine`; multiple output grains use
-`core.compute.ambiguous_grain`.
+`core.compute.unsupported_engine`; unsafe fan-out or incompatible measure
+grains additionally emit `core.compute.ambiguous_grain`.
 
 Scenarios in `crates/norn-checker/tests/metric.rs` cover typed keyed lowering,
 fan-out refusal with and without symmetric aggregation, duplicate selections,

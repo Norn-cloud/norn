@@ -947,7 +947,7 @@ fn query_grain_refuses_expansion_implicit_keys_and_unsupported_semantics() {
     definitions.push(other);
     assert_code(
         &admit(&definitions, &multiple, &catalog, 100).expect_err("multiple outputs"),
-        AMBIGUOUS_GRAIN,
+        UNSUPPORTED_ENGINE,
     );
 }
 

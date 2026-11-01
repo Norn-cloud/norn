@@ -91,7 +91,7 @@ pub fn admit(
     }
     let refuse = || refusal(UNSUPPORTED_ENGINE);
     let [selection] = question.metrics.as_slice() else {
-        return Err(refusal(AMBIGUOUS_GRAIN));
+        return Err(refusal(UNSUPPORTED_ENGINE));
     };
     if max_items == 0
         || max_items
