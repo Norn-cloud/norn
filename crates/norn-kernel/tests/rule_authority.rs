@@ -90,7 +90,7 @@ fn forged_rule_identity_or_definition_pin_is_refused() {
         );
     }
     let types: Vec<ObjectTypeDef> = serde_json::from_value(serde_json::json!([{
-        "name": "demo.Order", "properties": [{"id": "half", "type": {"kind": "decimal"}}]
+        "name": "demo.Order", "properties": [{"id": "half", "type": {"kind": "decimal", "scale": 0}}]
     }]))
     .unwrap();
     let slice = FactSlice::from([(
