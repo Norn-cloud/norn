@@ -24,7 +24,9 @@ belong to host wiring; the perimeter performs no IO.
 
 HOST-ADMISSION: `DevHost::new` checks a full source array before initializing a
 fresh tenant store: unrelated residual schema/state refuses. An identical
-initial provisioning request reopens without writing.
+initial provisioning request reopens without writing. Kernel action schemas
+change the provisioning hashes: pre-schema persisted stores require
+reprovisioning; no in-place upgrade is provided.
 Only a successful transactional definition install publishes
 the host. Trusted installs check before taking the exclusive definition epoch;
 failed admission and stale-version installs preserve both revision and ledger.
@@ -105,7 +107,10 @@ leave the complete committed dump unchanged, including call records.
 SURFACE-RETRY-IDENTITY: conflicting MCP argument and metadata identities refuse.
 SURFACE-CLOCK-PIN: turns use the persisted host clock floor.
 SURFACE-SCHEMA-1: kernel call/owned-row schemas are registered by the host;
-tenant definitions cannot replace their reserved names.
+tenant definitions cannot replace their reserved names, including SQLite's
+ASCII case-insensitive equivalents.
+SURFACE-CLOCK-INSTALL: installing definitions advances both the durable clock
+floor and the driver clock used by subsequent host commits.
 
 SURFACE-ALPHA: on three fresh identical admitted alpha cells, create a customer
 and SalesOrder, submit, approve and cancel. Compare call records, complete dumps

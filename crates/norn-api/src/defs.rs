@@ -101,7 +101,11 @@ impl Admitted {
             target.links.extend(extension.links);
         }
         for internal in action_system_types() {
-            if objects.iter().any(|ty| ty.name == internal.name) {
+            if objects.iter().any(|ty| {
+                ty.name
+                    .as_str()
+                    .eq_ignore_ascii_case(internal.name.as_str())
+            }) {
                 return Err(refused("reserved kernel object type"));
             }
             objects.push(internal);
