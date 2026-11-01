@@ -5050,7 +5050,7 @@ fn provision_input() -> InstalledDefinitionInput {
         readmission: None,
         diff: json!({}),
         installed_at: 1,
-        layout: Some("{}".to_owned()),
+        layout: Some(serde_json::to_string(&norn_ir::LayoutSidecar::default()).expect("layout")),
     }
 }
 
