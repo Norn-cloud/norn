@@ -1,7 +1,7 @@
 """Exact checkpoint parity; only evidence-bound reviewed dispositions close a diff."""
 import argparse
 from collections import defaultdict
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from fractions import Fraction
 import hashlib
 import json
@@ -188,7 +188,9 @@ def compare(norn, erpnext, dispositions):
 
 
 def amount(value, scale):
-    return format(Decimal(value).scaleb(-scale), 'f')
+    with localcontext() as context:
+        context.prec = len(str(abs(value))) + scale + 1
+        return format(Decimal(value).scaleb(-scale), 'f')
 
 
 def rate(quantity, value):
@@ -199,8 +201,10 @@ def rate(quantity, value):
     for factor in (2, 5):
         while denominator % factor == 0:
             denominator //= factor
-    return (format(Decimal(ratio.numerator) / Decimal(ratio.denominator), 'f')
-            if denominator == 1 else str(ratio))
+    with localcontext() as context:
+        context.prec = len(str(abs(ratio.numerator))) + len(str(ratio.denominator)) + 1
+        return (format(Decimal(ratio.numerator) / Decimal(ratio.denominator), 'f')
+                if denominator == 1 else str(ratio))
 
 
 def markdown(report):
