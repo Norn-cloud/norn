@@ -189,7 +189,7 @@ fn receipt_effect_admits_reference_and_writer_closure_but_refuses_invalid_bindin
         assert!(
             check(&invalid)
                 .iter()
-                .any(|finding| finding.code.as_str() == "action.validation.target_not_writable")
+                .any(|finding| finding.code.as_str() == "artifact_set.action.target_not_writable")
         );
     }
     let mut body = action.clone();
