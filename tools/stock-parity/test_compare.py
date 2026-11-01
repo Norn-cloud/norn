@@ -57,6 +57,8 @@ class Contract(unittest.TestCase):
     def test_missing_and_unsupported_fail(self):
         self.e['cases'][0]['checkpoints'] = []
         self.assertFalse(self.report()['passed'])
+        self.n['cases'][0]['checkpoints'] = []
+        self.assertFalse(self.report()['passed'])
         self.e['cases'][0]['status'] = 'unsupported'
         self.assertFalse(self.report()['passed'])
         self.e['cases'] = []
