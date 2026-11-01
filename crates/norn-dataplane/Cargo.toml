@@ -1,0 +1,24 @@
+[package]
+name = "norn-dataplane"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "exact observation JSON and deterministic redaction"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Norn1 canonical hashing of observed payloads (re-exported by norn-ir; the
+# skeleton gives this crate no direct norn-canonical edge).
+norn-ir = { path = "../norn-ir" }
+# The raw-observation JSON Schema is generated from the Rust types, never
+# hand-written.
+schemars = { version = "1.2.1", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.20"
+
+[lints]
+workspace = true
