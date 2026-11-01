@@ -244,7 +244,7 @@ fn check_matches_the_checker_called_directly() {
                 .expect("flow source map decodes")
         });
         let direct = check_artifact_set_with_flow_source_map(
-            &decode("artifacts"),
+            &fixture_sources(&decode("artifacts"), &base),
             &EntityArtifactSetContext {
                 registry: &registry,
                 base: &base,
@@ -714,4 +714,18 @@ fn malformed_inline_layout_remains_an_admission_finding() {
             .iter()
             .any(|finding| finding["code"] == "layout.validation.invalid_inline_field")
     );
+}
+
+fn fixture_sources(
+    artifacts: &[norn_ir::ArtifactEnvelope],
+    base: &[norn_ir::ArtifactEnvelope],
+) -> norn_checker::receipt::ReceiptSources {
+    let encode = |values: &[norn_ir::ArtifactEnvelope]| {
+        values
+            .iter()
+            .map(|value| norn_ir::runtime::encode(value).expect("synthetic fixture source"))
+            .collect::<Vec<_>>()
+    };
+    norn_checker::receipt::ReceiptSources::new(&encode(artifacts), &encode(base))
+        .expect("fixture sources")
 }
