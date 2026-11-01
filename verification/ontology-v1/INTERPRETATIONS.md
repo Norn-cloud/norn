@@ -171,3 +171,10 @@ errors refuse. Normal admission and protected executable challenges still refuse
 interpretations. EDGE-NEW/OMIT/NOPROOF and generated omissions exercise this
 boundary; review metadata and echoed inventories never discharge a goal.
 Kani is infeasible for allocated admission/serde/induction generation.
+
+LAYERS-EDGE-CHAIN-1 repeats EDGE-NEW/OMIT/NOPROOF and generated required-member
+refusals against three independently admitted layers, including two extensions.
+The flattened set cannot manufacture retained authority. Changed retained units
+or strengthened inherited-law conditions refuse under the original approval.
+These are production receipt/resolver/challenge conformance checks, not proofs.
+Kani remains infeasible for the allocated receipt/serde/hash pipeline.
