@@ -1643,9 +1643,9 @@ impl<X> DecisionRefusal<X> {
             | Self::AccountingPosting { key, .. }
             | Self::InvariantBudgetExceeded { key, .. }
             | Self::TraversalLimitExceeded { key, .. } => Some(key),
-            Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } | Self::GuardError { key, .. } => {
-                Some(key.as_ref())
-            }
+            Self::InvariantViolation { key, .. }
+            | Self::NotFromState { key, .. }
+            | Self::GuardError { key, .. } => Some(key.as_ref()),
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
