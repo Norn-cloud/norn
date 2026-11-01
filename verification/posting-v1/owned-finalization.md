@@ -138,7 +138,5 @@ one partition per voucher. Conformance checks derived GL, remaining quantity,
 backdating and the byte ceiling. The subsequent kernel join must recompute this
 proposal from authorized reads and seal it; callers cannot submit this proposal.
 
-POST-QUANTITY-SNAPSHOT: all quantity reconstruction reads share one SQLite read
-snapshot, including inside an existing transaction; refusal releases its scope.
-POST-CATALOG-ORDER: extension and property-type order does not change the schema
-pin. Conformance reverses both lists and checks the same pin.
+POST-QUANTITY-SNAPSHOT: all quantity reconstruction reads share one adapter-owned SQLite read snapshot, reusing an existing transaction; refusal releases a newly owned snapshot. SQL transaction-control guards remain unchanged.
+POST-CATALOG-ORDER: extension and property-type order does not change the schema pin. Conformance reverses both lists and checks the same pin.
