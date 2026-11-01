@@ -63,3 +63,5 @@ Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-che
 4. B5 generate initialization/writer/non-vacuity statements; B6 generated Quint jobs; B7 exact result binding; B8 scenario/explanation projection, each separately gated.
 5. Attenuation/revocation chain contract and commit/dispatch enforcement in separate cuts; AUTH-REVOKE and independent-person approvals.
 6. Bind law evaluation to observed finding/quarantine mode under 07, then analytical publication guards under 08; preserve governing law identity in both modes.
+
+**LAYERS-EDGE-PROPERTY-1:** In a checked three-layer chain, properties introduced by extensions on a mapped type belong to that type's effective member contract. A complete explicit binding preserves an unknown conformance proposal; omitting either extension property refuses with `core.composition.mapping_gap`, without granting admission or proof.
