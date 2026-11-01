@@ -314,3 +314,34 @@ fn receipt_shape_refuses_unknown_formats_and_malformed_law_origins() {
         }
     }
 }
+
+#[test]
+fn source_hash_order_is_independent_of_unicode_spelling() {
+    let (_, semantic) = unicode_rule_sources();
+    let first = norn_ir::runtime::encode(&semantic).expect("source");
+    let composed = norn_ir::RuntimeValue::from_json_text(first.canonical_json().expect("Norn1"))
+        .expect("canonical source");
+    let mut other = semantic;
+    other["artifactId"] = json!("test.z");
+    other["payload"]["ruleId"] = json!("test.rule.z");
+    let other = norn_ir::runtime::encode(&other).expect("other source");
+    let receipt = |source| {
+        let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
+            &[source, other.clone()],
+            &[],
+            &BTreeSet::new(),
+            None,
+            &ResourceLimitProfile::norn_limits_v1(),
+            None,
+        )
+        .expect("receipt");
+        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+        checked.receipt
+    };
+    let decomposed = receipt(first);
+    let composed = receipt(composed);
+    assert_eq!(
+        decomposed.content_sha256().expect("hash"),
+        composed.content_sha256().expect("hash")
+    );
+}
