@@ -26,7 +26,9 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         };
         let observed: Observed<RuntimeValue> =
             norn_ir::runtime::decode(&pending.observed).map_err(CellError::Encoding)?;
-        if observed.id.0 != observation_id { return Err(CellError::MappingBundleMismatch); }
+        if observed.id.0 != observation_id {
+            return Err(CellError::MappingBundleMismatch);
+        }
         let bundle: MappingBundle =
             norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
         self.store().read().recheck_mapping_bundle(&bundle)?;
@@ -61,8 +63,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let key = FactKey::new(record.object_type.as_str(), &record.key);
-            let slice =
-                load_slice(self, [key.clone()])?;
+            let slice = load_slice(self, [key.clone()])?;
             let mut values = record
                 .invocations
                 .into_iter()
