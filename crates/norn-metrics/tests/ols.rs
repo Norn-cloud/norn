@@ -18,7 +18,7 @@ fn table(outcomes: &[impl ToString], constant_predictor: bool) -> TemporalTable 
     )
     .expect("artifacts");
     let catalog = EffectiveCatalog::from_artifacts(&artifacts);
-    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0)
+    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "weight", 0)
         .expect("plan");
     let value = |n: String, at| TemporalValue {
         value: RuntimeValue::from_json_text(n.to_string()).expect("number"),
