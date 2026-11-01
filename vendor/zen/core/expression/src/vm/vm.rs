@@ -145,6 +145,13 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                     Opcode::Modulo | Opcode::Exponent | Opcode::CallMethod { .. } => {
                         return Err(failure("operation outside the scaled arithmetic profile"));
                     }
+                    Opcode::CallFunction {
+                        kind:
+                            crate::functions::FunctionKind::Internal(
+                                crate::functions::InternalFunction::String,
+                            ),
+                        ..
+                    } if matches!(self.peek(0), Some(String(_))) => {}
                     Opcode::CallFunction { kind, .. }
                         if !matches!(
                             kind,
