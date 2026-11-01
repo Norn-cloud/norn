@@ -1308,6 +1308,15 @@ pub fn check_sub_decision_closures(
                 // Undeclared (T2) or unresolved (the resolver) elsewhere.
                 continue;
             };
+            if let Some(JdmNode::DecisionNode { content, .. }) = graph.nodes.get(reference.node) {
+                if let Some(fold) = &content.ordered_fold {
+                    if !fold_helper_matches(fold, target) {
+                        findings.push(set_finding(codes::ORDERED_FOLD_INVALID,
+                            "fold helper schemas must equal {accumulator, item, index} -> accumulator",
+                            artifact, &pointer, DiagnosticRemediation::FixDefinition));
+                    }
+                }
+            }
             let Some(nested) = closure_of(target, &pool, &mut memo, &mut BTreeSet::new()) else {
                 findings.push(set_finding(
                     codes::SUB_DECISION_TARGET,
@@ -1622,4 +1631,17 @@ mod tests {
             )]
         );
     }
+}
+
+fn fold_helper_matches(fold: &norn_ir::jdm::OrderedFold, target: &ArtifactEnvelope) -> bool {
+    let Ok((input, output)) = norn_expr::schema::fold_step_schemas(fold) else {
+        return false;
+    };
+    let payload = target.payload.to_json_value();
+    let parse = |name| {
+        payload
+            .get(name)
+            .and_then(|value| norn_expr::schema::Schema::parse(value, name).ok())
+    };
+    parse("inputSchema") == Some(input) && parse("outputSchema") == Some(output)
 }

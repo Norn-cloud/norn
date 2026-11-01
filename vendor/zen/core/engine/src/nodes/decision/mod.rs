@@ -1,6 +1,6 @@
+use crate::EvaluationError;
 use crate::decision_graph::graph::{DecisionGraph, DecisionGraphConfig};
 use crate::nodes::{NodeContext, NodeContextExt, NodeError, NodeHandler, NodeResult};
-use crate::EvaluationError;
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
@@ -42,6 +42,16 @@ impl NodeHandler for DecisionNodeHandler {
         reason = "Norn #3404: each sub-decision node owns its handler and the graph future is driven to completion without re-entering it"
     )]
     async fn handle(&self, ctx: NodeContext<Self::NodeData, Self::TraceData>) -> NodeResult {
+        if let Some(contracts) = &ctx.extensions.contracts {
+            contracts
+                .check(
+                    &ctx.node.key,
+                    &ctx.input,
+                    true,
+                    ctx.extensions.meter.as_ref(),
+                )
+                .node_context(&ctx)?;
+        }
         let mut decision_graph_ref = self.decision_graph.borrow_mut();
 
         if decision_graph_ref.is_none() {
@@ -85,6 +95,16 @@ impl NodeHandler for DecisionNodeHandler {
         let evaluate_result = Box::pin(decision_graph.evaluate(ctx.input.clone())).await;
         match evaluate_result {
             Ok(result) => {
+                if let Some(contracts) = &ctx.extensions.contracts {
+                    contracts
+                        .check(
+                            &ctx.node.key,
+                            &result.result,
+                            false,
+                            ctx.extensions.meter.as_ref(),
+                        )
+                        .node_context(&ctx)?;
+                }
                 ctx.trace(|trace| {
                     *trace = result
                         .trace

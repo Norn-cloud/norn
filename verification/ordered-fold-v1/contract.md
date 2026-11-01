@@ -88,3 +88,12 @@ must validate numeric input/output leaves as well as numeric literal operands.
 `scaled` unit correspondence covers exact results, both midpoint signs,
 negative divisors, inexact refusal, zero division, scale and overflow boundaries,
 and VM dispatch with shared fuel. Fold admission remains refused in this cut.
+
+FOLD-STEP-SCHEMA: helper contract equality compares parsed schemas, independent
+of object or required-member ordering. The checker and runtime admission share
+`fold_step_schemas`; extra, optional, nullable or differently typed step fields
+refuse. Each invocation checks its exact input before running any helper node
+and its complete output before it becomes state. Nested ordinary calls retain
+the fold helper's boundary check. Non-fold helper admission is unchanged.
+The checks charge materialization to shared fuel. No schema failure produces
+an accumulator or effects; the execution-unavailable gate still applies here.

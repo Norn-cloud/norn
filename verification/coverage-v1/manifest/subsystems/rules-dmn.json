@@ -78,6 +78,7 @@
     "crates/norn-decisions/src/evaluate.rs",
     "crates/norn-decisions/src/lib.rs",
     "crates/norn-decisions/src/schema.rs",
+    "crates/norn-decisions/src/step.rs",
     "crates/norn-expr/Cargo.toml",
     "crates/norn-expr/src/actor.rs",
     "crates/norn-expr/src/check.rs",

@@ -466,10 +466,7 @@ fn ordered_fold_is_not_silently_loaded_as_an_ordinary_sub_decision() {
     )]);
     assert!(matches!(
         AdmittedDecision::admit(&root, &subs, binding()),
-        Err(AdmissionError::NodeNotAdmitted {
-            node_type: "orderedFold",
-            ..
-        })
+        Err(AdmissionError::InvalidSchema { .. })
     ));
 }
 

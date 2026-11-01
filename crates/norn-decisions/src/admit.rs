@@ -115,6 +115,7 @@ impl AdmittedDecision {
         let root_graph = decision_graph(root, RuleContractV2::Decide)?;
         let loader = MemoryLoader::default();
         let mut loaded_keys = BTreeSet::new();
+        let mut contracts = crate::step::StepContracts::default();
         // Deepest depth each key has been expanded at: a key is re-expanded
         // only on a deeper path (which may exceed the bound), so the walk is
         // at most MAX_SUB_DECISION_DEPTH expansions per key.
@@ -123,6 +124,22 @@ impl AdmittedDecision {
         while let Some((rule_id, graph, depth)) = stack.pop() {
             for key in sub_decision_keys(graph) {
                 let child_depth = depth.saturating_add(1);
+                let sub = sub_decisions.get(key).ok_or_else(|| {
+                    AdmissionError::UnresolvedSubDecision {
+                        rule_id: rule_id.to_owned(),
+                        key: key.to_owned(),
+                    }
+                })?;
+                let sub_graph = decision_graph(sub, RuleContractV2::SubDecision)?;
+                for node in &graph.nodes {
+                    if let JdmNode::DecisionNode { content, .. } = node {
+                        if content.key == key {
+                            if let Some(fold) = &content.ordered_fold {
+                                contracts.insert_fold(key, sub, fold)?;
+                            }
+                        }
+                    }
+                }
                 if expanded.get(key).is_some_and(|seen| *seen >= child_depth) {
                     continue;
                 }
@@ -133,16 +150,10 @@ impl AdmittedDecision {
                         size: loaded_keys.len(),
                     });
                 }
-                let sub = sub_decisions.get(key).ok_or_else(|| {
-                    AdmissionError::UnresolvedSubDecision {
-                        rule_id: rule_id.to_owned(),
-                        key: key.to_owned(),
-                    }
-                })?;
-                let sub_graph = decision_graph(sub, RuleContractV2::SubDecision)?;
                 if loaded_keys.insert(key) {
                     closed_record(sub, "inputSchema")?;
                     closed_record(sub, "outputSchema")?;
+
                     if loaded_keys.len() > MAX_SUB_DECISION_CLOSURE {
                         return Err(AdmissionError::SubDecisionBound {
                             depth: child_depth,
@@ -170,7 +181,9 @@ impl AdmittedDecision {
         Ok(Self {
             rule_id: root.rule_id.clone(),
             binding,
-            decision: Decision::from(Arc::new(content)).with_loader(Arc::new(loader)),
+            decision: Decision::from(Arc::new(content))
+                .with_loader(Arc::new(loader))
+                .with_contracts(Arc::new(contracts)),
             slice_schema: Arc::new(slice_schema),
             event_schema: Arc::new(event_schema),
             output_schema,
