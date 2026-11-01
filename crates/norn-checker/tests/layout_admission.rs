@@ -156,12 +156,11 @@ fn fixture_sources(
     artifacts: &[norn_ir::ArtifactEnvelope],
     base: &[norn_ir::ArtifactEnvelope],
 ) -> norn_checker::receipt::ReceiptSources {
-    let encode = |values: &[norn_ir::ArtifactEnvelope]| {
-        values
-            .iter()
-            .map(|value| norn_ir::runtime::encode(value).expect("synthetic fixture source"))
-            .collect::<Vec<_>>()
-    };
-    norn_checker::receipt::ReceiptSources::new(&encode(artifacts), &encode(base))
-        .expect("fixture sources")
+    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
+    let installed = norn_ir::runtime::encode(base).unwrap();
+    norn_checker::receipt::ReceiptSources::new(
+        candidates.as_array().unwrap(),
+        installed.as_array().unwrap(),
+    )
+    .unwrap()
 }

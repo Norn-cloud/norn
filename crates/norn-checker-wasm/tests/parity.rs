@@ -374,7 +374,9 @@ fn invalid_input_is_an_error() {
     assert!(output_of("expression-bad-expected-type").starts_with("error: invalid expectedType: "));
     let source = read("fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json");
     let duplicate = source.replacen("\"payload\": {", "\"payload\": {},\"payload\": {", 1);
-    assert!(check_artifact_set_json(&format!("[{duplicate}]"), "null").is_err());
+    assert!(
+        matches!(check_artifact_set_json(&format!("[{duplicate}]"), "null"), Err(norn_checker_wasm::AbiError::Receipt(detail)) if detail.contains("duplicate"))
+    );
 }
 
 #[test]
@@ -720,12 +722,49 @@ fn fixture_sources(
     artifacts: &[norn_ir::ArtifactEnvelope],
     base: &[norn_ir::ArtifactEnvelope],
 ) -> norn_checker::receipt::ReceiptSources {
-    let encode = |values: &[norn_ir::ArtifactEnvelope]| {
-        values
-            .iter()
-            .map(|value| norn_ir::runtime::encode(value).expect("synthetic fixture source"))
-            .collect::<Vec<_>>()
-    };
-    norn_checker::receipt::ReceiptSources::new(&encode(artifacts), &encode(base))
-        .expect("fixture sources")
+    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
+    let installed = norn_ir::runtime::encode(base).unwrap();
+    norn_checker::receipt::ReceiptSources::new(
+        candidates.as_array().unwrap(),
+        installed.as_array().unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn abi_exact_receipt_writer_conformance() {
+    let source = std::fs::read_to_string(
+        repo_root().join("fixtures/ir/retail-reorder-threshold.setting.json"),
+    )
+    .expect("fixture");
+    for (left, right) in [
+        ("9007199254740992", "9007199254740993"),
+        (
+            "0.1234567890123456789012345678",
+            "0.1234567890123456789012345679",
+        ),
+    ] {
+        for in_base in [false, true] {
+            let check = |number: &str| {
+                let mut value: Value = serde_json::from_str(&source).unwrap();
+                value["payload"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("supersedes");
+                value["payload"]["value"] = Value::Null;
+                let text = serde_json::to_string(&value)
+                    .unwrap()
+                    .replace("\"value\":null", &format!("\"value\":{number}"));
+                let (artifacts, context) = if in_base {
+                    ("[]".to_owned(), format!("{{\"base\":[{text}]}}"))
+                } else {
+                    (format!("[{text}]"), "null".to_owned())
+                };
+                let result = json_of(&check_artifact_set_json(&artifacts, &context).unwrap());
+                assert_eq!(result["admitted"], true, "{result}");
+                result["receiptSha256"].clone()
+            };
+            assert_ne!(check(left), check(right));
+        }
+    }
 }

@@ -799,6 +799,12 @@ fn exact_receipt(
 #[test]
 fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
     use norn_checker::receipt::verify_admission_receipt_sources;
+    use norn_checker::{
+        check_artifact_set_for_install as install,
+        check_artifact_set_for_install_with_flow_source_map as install_flow,
+        check_artifact_set_with_flow_source_map as flow, check_artifact_set_with_receipt as write,
+        check_artifact_set_with_verified_receipt as recheck,
+    };
     let limits = ResourceLimitProfile::norn_limits_v1();
     for (left, right) in [
         ("9007199254740992", "9007199254740993"),
@@ -856,30 +862,12 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
             };
             // WRITER-CLOSURE: every public writer requires the same exact set.
             let writers = [
-                norn_checker::check_artifact_set_with_receipt(&sources, &context, &limits),
-                norn_checker::check_artifact_set_with_flow_source_map(
-                    &sources,
-                    &context,
-                    &limits,
-                    Some(&map),
-                ),
-                norn_checker::check_artifact_set_for_install(&sources, &context, &limits, None),
-                norn_checker::check_artifact_set_for_install(
-                    &sources,
-                    &context,
-                    &limits,
-                    Some(&version),
-                ),
-                norn_checker::check_artifact_set_for_install_with_flow_source_map(
-                    &sources,
-                    &context,
-                    &limits,
-                    Some(&version),
-                    Some(&map),
-                ),
-                norn_checker::check_artifact_set_with_verified_receipt(
-                    &sources, &context, &limits, &version,
-                ),
+                write(&sources, &context, &limits),
+                flow(&sources, &context, &limits, Some(&map)),
+                install(&sources, &context, &limits, None),
+                install(&sources, &context, &limits, Some(&version)),
+                install_flow(&sources, &context, &limits, Some(&version), Some(&map)),
+                recheck(&sources, &context, &limits, &version),
             ];
             for written in writers {
                 let written = written.unwrap().receipt;
@@ -907,25 +895,12 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
                 base: &changed_installed,
                 ..context
             };
-            assert!(
-                norn_checker::check_artifact_set_with_verified_receipt(
-                    &substituted,
-                    &changed_context,
-                    &limits,
-                    &version
-                )
-                .is_err()
-            );
+            assert!(recheck(&substituted, &changed_context, &limits, &version).is_err());
             assert_ne!(
-                norn_checker::check_artifact_set_for_install(
-                    &substituted,
-                    &changed_context,
-                    &limits,
-                    Some(&version)
-                )
-                .unwrap()
-                .receipt
-                .artifact_set,
+                install(&substituted, &changed_context, &limits, Some(&version))
+                    .unwrap()
+                    .receipt
+                    .artifact_set,
                 receipt.artifact_set
             );
         }
@@ -1126,14 +1101,13 @@ fn fixture_sources(
     artifacts: &[norn_ir::ArtifactEnvelope],
     base: &[norn_ir::ArtifactEnvelope],
 ) -> norn_checker::receipt::ReceiptSources {
-    let encode = |values: &[norn_ir::ArtifactEnvelope]| {
-        values
-            .iter()
-            .map(|value| norn_ir::runtime::encode(value).expect("synthetic fixture source"))
-            .collect::<Vec<_>>()
-    };
-    norn_checker::receipt::ReceiptSources::new(&encode(artifacts), &encode(base))
-        .expect("fixture sources")
+    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
+    let installed = norn_ir::runtime::encode(base).unwrap();
+    norn_checker::receipt::ReceiptSources::new(
+        candidates.as_array().unwrap(),
+        installed.as_array().unwrap(),
+    )
+    .unwrap()
 }
 
 fn verify_admission_receipt(
