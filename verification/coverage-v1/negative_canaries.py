@@ -7,6 +7,7 @@ import copy
 import importlib.util
 import json
 import os
+import shlex
 import re
 import subprocess
 import sys
@@ -967,7 +968,15 @@ def commitment_deadline_mutation_canary() -> None:
         raise AssertionError("commitment deadline canary target drifted")
     gate = next(g for g in json.loads(GATES.read_text())["gates"]
                 if g["id"] == "core-quantity-commitment-quint")
-    argv = gate["command"].split()
+    runner = (ROOT / "scripts/verify-promoted-subsystems.sh").read_text()
+    block = "run_gate fast core-quantity-commitment-quint " + runner.split(
+        "run_gate fast core-quantity-commitment-quint ", 1)[1].split("\nrun_gate ", 1)[0]
+    tokens = shlex.split(block.replace("\\\n", " "))
+    argv = tokens[5:-2]
+    if tokens[4] != "command" or tokens[-2] != "--out" or not (
+        argv == shlex.split(tokens[3]) == shlex.split(gate["command"])
+    ):
+        raise AssertionError("commitment runner, label and manifest commands must match")
     if "deadlineBreach" not in argv:
         raise AssertionError("commitment gate must check deadlineBreach")
     with tempfile.TemporaryDirectory() as directory:
