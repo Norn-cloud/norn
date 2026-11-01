@@ -270,7 +270,7 @@ fn authored_queries_proofs_verdicts_may_analyze_rejected_sources() {
         "accounting-domain",
         "inventory-domain",
         "certified-domain-law",
-        "soliman",
+        "private-business",
     ] {
         let mut bad = Fixture::new();
         bad.add("renamed.json", b"never admitted", category);
