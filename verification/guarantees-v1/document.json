@@ -71,7 +71,7 @@
           "The exact direct lifecycle predicate is extracted from production Rust and proved in F*, but this does not prove the surrounding HTTP/BAC/storage composition; the Lean active-pointer and checker-receipt theorems remain independent references.",
           "The models abstract artifact content as two collision-free integer hashes and active versions as v1/v2/v3; they do not model persistence crashes, arbitrary concurrent plan mutation, or multi-artifact dependency graphs.",
           "The persisted checker receipt attests only that a fixed deterministic validator accepted exact bytes and declared claims; it is not a proof of arbitrary artifact semantics, and no Rust-to-Lean refinement is claimed.",
-          "The Turso snapshot store, its pre-v7 receipt-less snapshot decoding path, and HTTP transport authentication were removed in PR #2764; no persisted-snapshot migration or transport-authentication claim is retained. Only the in-memory legacy-artifact case (visible for migration, not executable) remains tested."
+          "The Turso snapshot store, its pre-v7 receipt-less snapshot decoding path, and HTTP transport authentication were removed in PR [historical reference]; no persisted-snapshot migration or transport-authentication claim is retained. Only the in-memory legacy-artifact case (visible for migration, not executable) remains tested."
         ],
         "model": "bounded_model_checked",
         "proof": "partial",
@@ -158,7 +158,7 @@
           "The exact direct lifecycle predicate is extracted from production Rust and proved in F*, but this does not prove the surrounding HTTP/BAC/storage composition; the Lean active-pointer and checker-receipt theorems remain independent references.",
           "The models abstract artifact content as two collision-free integer hashes and active versions as v1/v2/v3; they do not model persistence crashes, arbitrary concurrent plan mutation, or multi-artifact dependency graphs.",
           "The persisted checker receipt attests only that a fixed deterministic validator accepted exact bytes and declared claims; it is not a proof of arbitrary artifact semantics, and no Rust-to-Lean refinement is claimed.",
-          "The Turso snapshot store, its pre-v7 receipt-less snapshot decoding path, and HTTP transport authentication were removed in PR #2764; no persisted-snapshot migration or transport-authentication claim is retained. Only the in-memory legacy-artifact case (visible for migration, not executable) remains tested."
+          "The Turso snapshot store, its pre-v7 receipt-less snapshot decoding path, and HTTP transport authentication were removed in PR [historical reference]; no persisted-snapshot migration or transport-authentication claim is retained. Only the in-memory legacy-artifact case (visible for migration, not executable) remains tested."
         ],
         "model": "missing",
         "proof": "implementation_proved",
@@ -243,11 +243,11 @@
         ],
         "model": "bounded_model_checked",
         "proof": "partial",
-        "residual": "Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in #2764 (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, #2583), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted. The L1 reference checks single-object atomic updates, and its extracted successor theorem covers only the version increment/overflow fragment; no whole-transition correspondence is claimed.",
+        "residual": "Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in [historical reference] (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, [historical reference]), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted. The L1 reference checks single-object atomic updates, and its extracted successor theorem covers only the version increment/overflow fragment; no whole-transition correspondence is claimed.",
         "runtime": "missing",
         "subsystem": "transition-authority"
       },
-      "residual": "Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in #2764 (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, #2583), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted. The L1 reference checks single-object atomic updates, and its extracted successor theorem covers only the version increment/overflow fragment; no whole-transition correspondence is claimed.",
+      "residual": "Lean proves the compact one-owner atomic state transition and the bounded model couples effect, event, version, and receipt. Runtime: the whole-snapshot Turso adapter's atomic failure/reopen tests were removed in [historical reference] (not currently covered); no retained runtime test is promoted for this claim. Normalized canonical tables, cell-boundary commit atomicity (T6-DST-1, [historical reference]), and an extracted implementation correspondence argument remain open. Former evidence exercised a deleted subsystem or adapter and is no longer promoted. The L1 reference checks single-object atomic updates, and its extracted successor theorem covers only the version increment/overflow fragment; no whole-transition correspondence is claimed.",
       "statement": "An accepted transition's canonical event, state changes, owner-version increment, idempotency result, and correctness-critical projection changes commit atomically or none becomes authoritative."
     },
     {
@@ -317,11 +317,11 @@
         ],
         "model": "bounded_model_checked",
         "proof": "partial",
-        "residual": "The retained production-bound InMemory ActionIR method loads the exact current verified ActionIR artifact, persisted policy, grant, resource, authorization epoch, replacement receipt, and monotonic trusted logical-time watermark inside one candidate-state commit, runs the deterministic checker, and atomically publishes the action effect plus authorization-bound receipt. Exact replay is mutation-inert but rechecks current artifact/authority and retry time before result disclosure; fresh-commit and post-commit exact-retry revocation races both deny with no duplicate business effect or prior-result disclosure. Tests also cover valid exact and lost-reply replay, revocation/expiry, stale or substituted bindings, owner CAS, and artifact/provenance/receipt tampering. The authenticated HTTP ActionIR route (server-side expectations and trusted logical time) and the Turso injected-persistence-failure and reopen tests were removed in #2764 (not currently covered); trusted logical time is supplied by the test caller. Other mutation families still use narrower authorization boundaries; governed network provisioning, strong-receipt projection in aggregate evidence, effect-program-to-proposed-effect correspondence, and Rust-to-Lean/Quint refinement are not claimed. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+        "residual": "The retained production-bound InMemory ActionIR method loads the exact current verified ActionIR artifact, persisted policy, grant, resource, authorization epoch, replacement receipt, and monotonic trusted logical-time watermark inside one candidate-state commit, runs the deterministic checker, and atomically publishes the action effect plus authorization-bound receipt. Exact replay is mutation-inert but rechecks current artifact/authority and retry time before result disclosure; fresh-commit and post-commit exact-retry revocation races both deny with no duplicate business effect or prior-result disclosure. Tests also cover valid exact and lost-reply replay, revocation/expiry, stale or substituted bindings, owner CAS, and artifact/provenance/receipt tampering. The authenticated HTTP ActionIR route (server-side expectations and trusted logical time) and the Turso injected-persistence-failure and reopen tests were removed in [historical reference] (not currently covered); trusted logical time is supplied by the test caller. Other mutation families still use narrower authorization boundaries; governed network provisioning, strong-receipt projection in aggregate evidence, effect-program-to-proposed-effect correspondence, and Rust-to-Lean/Quint refinement are not claimed. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
         "runtime": "missing",
         "subsystem": "authorization"
       },
-      "residual": "The retained production-bound InMemory ActionIR method loads the exact current verified ActionIR artifact, persisted policy, grant, resource, authorization epoch, replacement receipt, and monotonic trusted logical-time watermark inside one candidate-state commit, runs the deterministic checker, and atomically publishes the action effect plus authorization-bound receipt. Exact replay is mutation-inert but rechecks current artifact/authority and retry time before result disclosure; fresh-commit and post-commit exact-retry revocation races both deny with no duplicate business effect or prior-result disclosure. Tests also cover valid exact and lost-reply replay, revocation/expiry, stale or substituted bindings, owner CAS, and artifact/provenance/receipt tampering. The authenticated HTTP ActionIR route (server-side expectations and trusted logical time) and the Turso injected-persistence-failure and reopen tests were removed in #2764 (not currently covered); trusted logical time is supplied by the test caller. Other mutation families still use narrower authorization boundaries; governed network provisioning, strong-receipt projection in aggregate evidence, effect-program-to-proposed-effect correspondence, and Rust-to-Lean/Quint refinement are not claimed. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "residual": "The retained production-bound InMemory ActionIR method loads the exact current verified ActionIR artifact, persisted policy, grant, resource, authorization epoch, replacement receipt, and monotonic trusted logical-time watermark inside one candidate-state commit, runs the deterministic checker, and atomically publishes the action effect plus authorization-bound receipt. Exact replay is mutation-inert but rechecks current artifact/authority and retry time before result disclosure; fresh-commit and post-commit exact-retry revocation races both deny with no duplicate business effect or prior-result disclosure. Tests also cover valid exact and lost-reply replay, revocation/expiry, stale or substituted bindings, owner CAS, and artifact/provenance/receipt tampering. The authenticated HTTP ActionIR route (server-side expectations and trusted logical time) and the Turso injected-persistence-failure and reopen tests were removed in [historical reference] (not currently covered); trusted logical time is supplied by the test caller. Other mutation families still use narrower authorization boundaries; governed network provisioning, strong-receipt projection in aggregate evidence, effect-program-to-proposed-effect correspondence, and Rust-to-Lean/Quint refinement are not claimed. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
       "statement": "The capability that authorizes a transition is resolved and checked against current authoritative policy/state in the same commit decision; a preflight or UI check is never sufficient."
     },
     {
@@ -594,11 +594,11 @@
         ],
         "model": "bounded_model_checked",
         "proof": "reference_proved",
-        "residual": "Lean proves exact replay is state-preserving, conflicting replay rejects, and a stored receipt blocks a second abstract commit. Retained InMemory receipts bind both the semantic input hash and a canonical authority-effect digest; request-local correlation IDs are normalized out while deterministic action/ledger IDs make lost-reply reconstruction stable. Turso-persisted receipt and reopen evidence was removed in #2764 (not currently covered). The correspondence is not machine-proved, pre-v3 receipts fail closed on replay, and legacy unversioned callers remain. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+        "residual": "Lean proves exact replay is state-preserving, conflicting replay rejects, and a stored receipt blocks a second abstract commit. Retained InMemory receipts bind both the semantic input hash and a canonical authority-effect digest; request-local correlation IDs are normalized out while deterministic action/ledger IDs make lost-reply reconstruction stable. Turso-persisted receipt and reopen evidence was removed in [historical reference] (not currently covered). The correspondence is not machine-proved, pre-v3 receipts fail closed on replay, and legacy unversioned callers remain. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
         "runtime": "missing",
         "subsystem": "transition-authority"
       },
-      "residual": "Lean proves exact replay is state-preserving, conflicting replay rejects, and a stored receipt blocks a second abstract commit. Retained InMemory receipts bind both the semantic input hash and a canonical authority-effect digest; request-local correlation IDs are normalized out while deterministic action/ledger IDs make lost-reply reconstruction stable. Turso-persisted receipt and reopen evidence was removed in #2764 (not currently covered). The correspondence is not machine-proved, pre-v3 receipts fail closed on replay, and legacy unversioned callers remain. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "residual": "Lean proves exact replay is state-preserving, conflicting replay rejects, and a stored receipt blocks a second abstract commit. Retained InMemory receipts bind both the semantic input hash and a canonical authority-effect digest; request-local correlation IDs are normalized out while deterministic action/ledger IDs make lost-reply reconstruction stable. Turso-persisted receipt and reopen evidence was removed in [historical reference] (not currently covered). The correspondence is not machine-proved, pre-v3 receipts fail closed on replay, and legacy unversioned callers remain. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
       "statement": "For one scope and transition identity, every retry returns the same logical terminal result and the transition's domain effects occur at most once."
     },
     {
@@ -746,11 +746,11 @@
         ],
         "model": "bounded_model_checked",
         "proof": "reference_proved",
-        "residual": "The retained InMemory store exercises a general owner-version compare-and-swap envelope, stale-writer rejection, no-partial-effect behavior, and stable replay receipts. The canonical Turso adapter's persistence-failure rollback and reopen tests were removed in #2764 (not currently covered). Legacy callers still use the unversioned compatibility method, Postgres parity and a transport TransitionEnvelope remain open, and the Verus reference has no extracted correspondence proof. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+        "residual": "The retained InMemory store exercises a general owner-version compare-and-swap envelope, stale-writer rejection, no-partial-effect behavior, and stable replay receipts. The canonical Turso adapter's persistence-failure rollback and reopen tests were removed in [historical reference] (not currently covered). Legacy callers still use the unversioned compatibility method, Postgres parity and a transport TransitionEnvelope remain open, and the Verus reference has no extracted correspondence proof. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
         "runtime": "missing",
         "subsystem": "transition-authority"
       },
-      "residual": "The retained InMemory store exercises a general owner-version compare-and-swap envelope, stale-writer rejection, no-partial-effect behavior, and stable replay receipts. The canonical Turso adapter's persistence-failure rollback and reopen tests were removed in #2764 (not currently covered). Legacy callers still use the unversioned compatibility method, Postgres parity and a transport TransitionEnvelope remain open, and the Verus reference has no extracted correspondence proof. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "residual": "The retained InMemory store exercises a general owner-version compare-and-swap envelope, stale-writer rejection, no-partial-effect behavior, and stable replay receipts. The canonical Turso adapter's persistence-failure rollback and reopen tests were removed in [historical reference] (not currently covered). Legacy callers still use the unversioned compatibility method, Postgres parity and a transport TransitionEnvelope remain open, and the Verus reference has no extracted correspondence proof. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
       "statement": "A transition prepared against owner version v cannot commit from any authoritative version other than v, and rejection cannot produce domain effects."
     },
     {
@@ -1370,11 +1370,11 @@
         ],
         "model": "bounded_model_checked",
         "proof": "partial",
-        "residual": "The canonical versioned authority path has retained InMemory tests for exact Relation artifact identity, exact active Relation/Entity pins, endpoint object kinds, existing and same-commit cardinality conflicts, superseded versions, atomic rejection, and immutable-id payload updates; its Turso/reopen variants were removed in #2764 (not currently covered). Quint checks a two-relation abstraction across all four declared cardinalities, exact accepted-version binding, exact endpoint-kind admission, and rejected no-ops; Lean proves compact pairwise reference lemmas. Neither artifact is Rust refinement evidence, a future parallel writer topology must add relation-kind/index-level serialization, and the legacy unversioned migration path remains non-authoritative until disabled. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+        "residual": "The canonical versioned authority path has retained InMemory tests for exact Relation artifact identity, exact active Relation/Entity pins, endpoint object kinds, existing and same-commit cardinality conflicts, superseded versions, atomic rejection, and immutable-id payload updates; its Turso/reopen variants were removed in [historical reference] (not currently covered). Quint checks a two-relation abstraction across all four declared cardinalities, exact accepted-version binding, exact endpoint-kind admission, and rejected no-ops; Lean proves compact pairwise reference lemmas. Neither artifact is Rust refinement evidence, a future parallel writer topology must add relation-kind/index-level serialization, and the legacy unversioned migration path remains non-authoritative until disabled. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
         "runtime": "missing",
         "subsystem": "ontology"
       },
-      "residual": "The canonical versioned authority path has retained InMemory tests for exact Relation artifact identity, exact active Relation/Entity pins, endpoint object kinds, existing and same-commit cardinality conflicts, superseded versions, atomic rejection, and immutable-id payload updates; its Turso/reopen variants were removed in #2764 (not currently covered). Quint checks a two-relation abstraction across all four declared cardinalities, exact accepted-version binding, exact endpoint-kind admission, and rejected no-ops; Lean proves compact pairwise reference lemmas. Neither artifact is Rust refinement evidence, a future parallel writer topology must add relation-kind/index-level serialization, and the legacy unversioned migration path remains non-authoritative until disabled. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "residual": "The canonical versioned authority path has retained InMemory tests for exact Relation artifact identity, exact active Relation/Entity pins, endpoint object kinds, existing and same-commit cardinality conflicts, superseded versions, atomic rejection, and immutable-id payload updates; its Turso/reopen variants were removed in [historical reference] (not currently covered). Quint checks a two-relation abstraction across all four declared cardinalities, exact accepted-version binding, exact endpoint-kind admission, and rejected no-ops; Lean proves compact pairwise reference lemmas. Neither artifact is Rust refinement evidence, a future parallel writer topology must add relation-kind/index-level serialization, and the legacy unversioned migration path remains non-authoritative until disabled. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
       "statement": "Every authoritative relation kind is its exact active Relation artifact identity; endpoint objects match RelationIR from/to through exact active Entity pins; and declared endpoint cardinality holds over persisted plus same-commit candidate relations without double-counting an update to the same immutable relation id."
     },
     {
@@ -1442,11 +1442,11 @@
         ],
         "model": "bounded_model_checked",
         "proof": "partial",
-        "residual": "The normalized cell path appends linked exact negations, checks immutable reversal evidence and reconstructs projections at open. Formal quantity authority models remain reference mathematics; no Rust/SQL refinement proof is claimed (#3303).",
+        "residual": "The normalized cell path appends linked exact negations, checks immutable reversal evidence and reconstructs projections at open. Formal quantity authority models remain reference mathematics; no Rust/SQL refinement proof is claimed ([historical reference]).",
         "runtime": "tested",
         "subsystem": "quantity-ledger"
       },
-      "residual": "The normalized cell path appends linked exact negations, checks immutable reversal evidence and reconstructs projections at open. Formal quantity authority models remain reference mathematics; no Rust/SQL refinement proof is claimed (#3303).",
+      "residual": "The normalized cell path appends linked exact negations, checks immutable reversal evidence and reconstructs projections at open. Formal quantity authority models remain reference mathematics; no Rust/SQL refinement proof is claimed ([historical reference]).",
       "statement": "Posted ledger facts are never updated or deleted; correction is a new linked reversing posting whose exact legs negate the original, followed by an optional replacement posting."
     },
     {
@@ -1513,11 +1513,11 @@
         ],
         "model": "exhaustive_bounded",
         "proof": "missing",
-        "residual": "The pure reopen-observation checker exhausts the admitted partial-record state space, with bounded/reference formal evidence. The Norn-owned snapshot port's failure/lost-reply/reopen tests were removed in #2764 (not currently covered) together with the Turso adapter. No persisted CALA posting transaction or normalized same-transaction CALA bridge exists.",
+        "residual": "The pure reopen-observation checker exhausts the admitted partial-record state space, with bounded/reference formal evidence. The Norn-owned snapshot port's failure/lost-reply/reopen tests were removed in [historical reference] (not currently covered) together with the Turso adapter. No persisted CALA posting transaction or normalized same-transaction CALA bridge exists.",
         "runtime": "partial",
         "subsystem": "cala-boundary"
       },
-      "residual": "The pure reopen-observation checker exhausts the admitted partial-record state space, with bounded/reference formal evidence. The Norn-owned snapshot port's failure/lost-reply/reopen tests were removed in #2764 (not currently covered) together with the Turso adapter. No persisted CALA posting transaction or normalized same-transaction CALA bridge exists.",
+      "residual": "The pure reopen-observation checker exhausts the admitted partial-record state space, with bounded/reference formal evidence. The Norn-owned snapshot port's failure/lost-reply/reopen tests were removed in [historical reference] (not currently covered) together with the Turso adapter. No persisted CALA posting transaction or normalized same-transaction CALA bridge exists.",
       "statement": "A quantity posting, its balance heads and append-only events, the Norn owner version and business effects, action/evidence record, checkpoint, and stable idempotency result commit through one authority transaction or none becomes authoritative."
     },
     {
@@ -1878,11 +1878,11 @@
         ],
         "model": "bounded_model_checked",
         "proof": "reference_proved",
-        "residual": "Quantity v2 admits any conserving signed subset and funds the remaining vector under explicit policies. Runtime timer expiry and cell clock use the shared commit path. The full-only reference models are not refinement evidence for partial resolution, balance CAS or host scheduling (#3303).",
+        "residual": "Quantity v2 admits any conserving signed subset and funds the remaining vector under explicit policies. Runtime timer expiry and cell clock use the shared commit path. The full-only reference models are not refinement evidence for partial resolution, balance CAS or host scheduling ([historical reference]).",
         "runtime": "tested",
         "subsystem": "quantity-ledger"
       },
-      "residual": "Quantity v2 admits any conserving signed subset and funds the remaining vector under explicit policies. Runtime timer expiry and cell clock use the shared commit path. The full-only reference models are not refinement evidence for partial resolution, balance CAS or host scheduling (#3303).",
+      "residual": "Quantity v2 admits any conserving signed subset and funds the remaining vector under explicit policies. Runtime timer expiry and cell clock use the shared commit path. The full-only reference models are not refinement evidence for partial resolution, balance CAS or host scheduling ([historical reference]).",
       "statement": "A pending transfer reserves its amount immediately and has at most one terminal resolution: posted, voided, or expired; every terminal state has zero reserved remainder, and the v0 post transition requires full resolution rather than silently accepting a partial amount."
     },
     {
@@ -2072,11 +2072,11 @@
         ],
         "model": "bounded_model_checked",
         "proof": "reference_proved",
-        "residual": "Whole checker-admitted packs pin exact ontology, unit/dimension terms and precision in immutable Define receipts on the normalized cell path. Legacy authority/profile state was removed in quantity v2. Formal artifacts remain references; #3303 must establish v2 refinement.",
+        "residual": "Whole checker-admitted packs pin exact ontology, unit/dimension terms and precision in immutable Define receipts on the normalized cell path. Legacy authority/profile state was removed in quantity v2. Formal artifacts remain references; [historical reference] must establish v2 refinement.",
         "runtime": "tested",
         "subsystem": "quantity-ledger"
       },
-      "residual": "Whole checker-admitted packs pin exact ontology, unit/dimension terms and precision in immutable Define receipts on the normalized cell path. Legacy authority/profile state was removed in quantity v2. Formal artifacts remain references; #3303 must establish v2 refinement.",
+      "residual": "Whole checker-admitted packs pin exact ontology, unit/dimension terms and precision in immutable Define receipts on the normalized cell path. Legacy authority/profile state was removed in quantity v2. Formal artifacts remain references; [historical reference] must establish v2 refinement.",
       "statement": "Every unit resolves to one pinned unit definition and quantity dimension; addition, conservation, limits, and account balances reject dimensionally incompatible operands."
     },
     {
@@ -2117,11 +2117,11 @@
         ],
         "model": "deferred",
         "proof": "deferred",
-        "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+        "residual": "Retired from active engine assurance by [historical reference]. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
         "runtime": "deferred",
         "subsystem": "rules-dmn"
       },
-      "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+      "residual": "Retired from active engine assurance by [historical reference]. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
       "statement": "An authoritative rule evaluation accepts only the declared closed scalar/schema/condition subset, binds exact active artifact version and explicit scope, and returns deterministic content-addressed evidence without I/O, time, randomness, callbacks, or approximate numeric comparison."
     },
     {
@@ -2162,11 +2162,11 @@
         ],
         "model": "deferred",
         "proof": "deferred",
-        "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+        "residual": "Retired from active engine assurance by [historical reference]. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
         "runtime": "deferred",
         "subsystem": "rules-dmn"
       },
-      "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+      "residual": "Retired from active engine assurance by [historical reference]. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
       "statement": "The production Rust hit-policy admission predicate accepts exactly a nonempty FIRST result or a uniquely matching UNIQUE result; the hax-extracted executable predicate and its F* theorems have the same Boolean boundary."
     },
     {
@@ -2206,11 +2206,11 @@
         ],
         "model": "deferred",
         "proof": "deferred",
-        "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+        "residual": "Retired from active engine assurance by [historical reference]. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
         "runtime": "deferred",
         "subsystem": "rules-dmn"
       },
-      "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+      "residual": "Retired from active engine assurance by [historical reference]. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
       "statement": "First-hit tables select the earliest matching row in declaration order, while unique-hit tables return a result exactly when one row matches and fail closed on overlap."
     },
     {

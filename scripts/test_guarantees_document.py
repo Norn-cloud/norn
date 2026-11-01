@@ -53,6 +53,12 @@ class GuaranteesConformance(unittest.TestCase):
         self.assertEqual(self.row({"id": "law", "residual": "Unbound."})["recordedCoverage"]["limitations"],
                          ["Reference scope only."])
 
+    def test_public_residuals_keep_evidence_links(self):
+        row = self.row({"id": "law", "residual": "No refinement; see #9999.",
+                        "evidence": {"proof": [LINK]}})
+        self.assertEqual(row["residual"], "No refinement; see [historical reference].")
+        self.assertEqual(row["recordedCoverage"]["evidence"]["proof"], [LINK])
+
     def test_document_drift(self):
         payload = render(ROOT)
         self.assertEqual((ROOT / OUTPUT).read_bytes(), payload.encode("utf-8"))

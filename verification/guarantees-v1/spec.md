@@ -19,6 +19,8 @@ only by exact ID. Core statements come from the core obligation registry.
   `unknown`; an issue, planned law, source file or reference is not evidence.
 - `GUAR-SCOPE`: preserve raw coverage, residuals and subsystem limitations.
   No installed definition or inherited receipt is implied by static coverage.
+  Historical tracking references are omitted from public residual/limitation
+  prose; evidence paths, commands, selectors and statuses remain verbatim.
 - `GUAR-DRIFT`: UTF-8 JSON with sorted keys, two-space indentation and a final
   newline regenerates byte-identically. No timestamps or checkout paths.
 

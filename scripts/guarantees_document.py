@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,12 @@ def facet(claim: dict, key: str, status: str, label: str) -> dict:
             "links": entries if recorded.get("status") == status and valid else []}
 
 
+def public_text(value):
+    if isinstance(value, list):
+        return [public_text(item) for item in value]
+    return re.sub(r"#\d+", "[historical reference]", value)
+
+
 def project(coverage: dict, laws: list[dict]) -> dict:
     claims = unique([dict(claim, subsystem=system["id"],
                           limitations=system.get("limitations", []))
@@ -45,6 +52,8 @@ def project(coverage: dict, laws: list[dict]) -> dict:
     rows = []
     for law in sorted(unique(laws).values(), key=lambda x: (LAYERS.index(x["lawLayer"]), x["id"])):
         claim = claims.get(law["id"], {})
+        claim = {key: public_text(value) if key in {"residual", "limitations"} else value
+                 for key, value in claim.items()}
         proof = claim.get("proof")
         model = facet({"modelProof": {"status": "proved" if proof in
                       {"reference_proved", "implementation_proved"} else "unknown",
