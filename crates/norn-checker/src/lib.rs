@@ -36,8 +36,6 @@ pub mod entity_artifacts;
 pub mod entity_instance;
 pub mod entity_lowering;
 pub mod entity_model;
-mod unit_admission;
-mod unit_codes;
 #[allow(
     missing_docs,
     clippy::pedantic,
@@ -82,6 +80,8 @@ pub mod metric_interchange;
 )]
 pub mod posting;
 pub mod table_analysis;
+mod unit_admission;
+mod unit_codes;
 pub use metric::check_metrics_and_questions;
 pub mod law_enrollment;
 pub mod naming_series;

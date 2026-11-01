@@ -7,8 +7,8 @@ mod unit_codes;
 fn missing_vocabulary_and_unknown_system_refuse() {
     let bytes: [u8; 2] = kani::any();
     let code = std::str::from_utf8(&bytes).unwrap_or("");
-    assert!(!unit_codes::admitted(false, code, ["mg", "kg"].into_iter()));
-    assert!(!unit_codes::admitted(true, code, [].into_iter()));
+    assert!(!unit_codes::admitted(false, code, ["mg", "kg"].iter().copied()));
+    assert!(!unit_codes::admitted(true, code, std::iter::empty()));
 }
 
 #[kani::proof]
@@ -17,7 +17,7 @@ fn membership_preserves_exact_spelling() {
     let bytes: [u8; 2] = kani::any();
     if let Ok(code) = std::str::from_utf8(&bytes) {
         assert_eq!(
-            unit_codes::admitted(true, code, ["mg", "kg"].into_iter()),
+            unit_codes::admitted(true, code, ["mg", "kg"].iter().copied()),
             matches!(bytes, [b'm', b'g'] | [b'k', b'g'])
         );
     }

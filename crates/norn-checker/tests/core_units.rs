@@ -112,29 +112,52 @@ proptest! {
 }
 
 fn unit_type(code: &str, system: norn_ir::UnitSystem) -> PropertyType {
-    PropertyType::Decimal { scale: norn_ir::WholeNumber(2),
-        unit: Some(norn_ir::UnitRef { system, code: code.to_owned() }), currency_source: None }
+    PropertyType::Decimal {
+        scale: norn_ir::WholeNumber(2),
+        unit: Some(norn_ir::UnitRef {
+            system,
+            code: code.to_owned(),
+        }),
+        currency_source: None,
+    }
 }
 
 fn declaration(ty: PropertyType) -> norn_ir::ArtifactEnvelope {
     let mut artifact = units::pack().expect("pack");
     artifact.artifact_id = "demo.units".to_owned();
     artifact.namespace = "demo".to_owned();
-    artifact.dependencies = vec![norn_ir::ArtifactDependency { artifact_id: "core.units".to_owned(),
-        kind: norn_ir::ArtifactKind::Entity, version: Some("1.0.0".to_owned()), required: true }];
+    artifact.dependencies = vec![norn_ir::ArtifactDependency {
+        artifact_id: "core.units".to_owned(),
+        kind: norn_ir::ArtifactKind::Entity,
+        version: Some("1.0.0".to_owned()),
+        required: true,
+    }];
     let mut def = catalog().into_iter().next().expect("definition");
     def.name = PropertyTypeName("demo.amount".to_owned());
     def.property_type = ty;
-    let root = norn_ir::PropertyTypeCatalogRootV2 { entity_version: norn_ir::EntityIrVersion::V2_0,
-        property_types: vec![def], extensions: None };
-    artifact.payload = ArtifactPayload::Entity(serde_json::from_str(&serde_json::to_string(&root).expect("typed root")).expect("payload"));
+    let root = norn_ir::PropertyTypeCatalogRootV2 {
+        entity_version: norn_ir::EntityIrVersion::V2_0,
+        property_types: vec![def],
+        extensions: None,
+    };
+    artifact.payload = ArtifactPayload::Entity(
+        serde_json::from_str(&serde_json::to_string(&root).expect("typed root")).expect("payload"),
+    );
     artifact
 }
 
-fn unit_findings(artifact: &norn_ir::ArtifactEnvelope, base: &[norn_ir::ArtifactEnvelope]) -> Vec<norn_checker::Diagnostic> {
-    norn_checker::check_entity_artifacts(std::slice::from_ref(artifact), &norn_checker::EntityArtifactSetContext {
-        registry: &BTreeSet::new(), base, tenant: None,
-    })
+fn unit_findings(
+    artifact: &norn_ir::ArtifactEnvelope,
+    base: &[norn_ir::ArtifactEnvelope],
+) -> Vec<norn_checker::Diagnostic> {
+    norn_checker::check_entity_artifacts(
+        std::slice::from_ref(artifact),
+        &norn_checker::EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base,
+            tenant: None,
+        },
+    )
 }
 
 #[test]
@@ -143,9 +166,17 @@ fn val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins() {
     for (code, _, _, _, _) in units::UNITS {
         let mut artifact = declaration(unit_type(code, norn_ir::UnitSystem::Ucum));
         assert!(unit_findings(&artifact, &base).is_empty());
-        assert!(unit_findings(&artifact, &[]).iter().any(|d| d.code == "core.values.unit_mismatch"));
+        assert!(
+            unit_findings(&artifact, &[])
+                .iter()
+                .any(|d| d.code == "core.values.unit_mismatch")
+        );
         artifact.dependencies.clear();
-        assert!(unit_findings(&artifact, &base).iter().any(|d| d.code == "core.values.unit_mismatch"));
+        assert!(
+            unit_findings(&artifact, &base)
+                .iter()
+                .any(|d| d.code == "core.values.unit_mismatch")
+        );
     }
     for variant in 0..5 {
         let mut artifact = declaration(unit_type("g", norn_ir::UnitSystem::Ucum));
@@ -156,10 +187,18 @@ fn val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins() {
             1 => pin.required = false,
             2 => pin.kind = norn_ir::ArtifactKind::Rule,
             3 => artifact.dependencies.push(duplicate),
-            _ => { let mut hidden = base.clone(); hidden.first_mut().expect("catalog").scope.org_id = Some("other".to_owned());
-                assert!(!unit_findings(&artifact, &hidden).is_empty()); continue; }
+            _ => {
+                let mut hidden = base.clone();
+                hidden.first_mut().expect("catalog").scope.org_id = Some("other".to_owned());
+                assert!(!unit_findings(&artifact, &hidden).is_empty());
+                continue;
+            }
         }
-        assert!(unit_findings(&artifact, &base).iter().any(|d| d.code == "core.values.unit_mismatch"));
+        assert!(
+            unit_findings(&artifact, &base)
+                .iter()
+                .any(|d| d.code == "core.values.unit_mismatch")
+        );
     }
 }
 
