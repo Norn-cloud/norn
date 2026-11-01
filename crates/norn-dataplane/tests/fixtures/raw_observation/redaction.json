@@ -14,8 +14,14 @@
       "mobile_no": "+20 100 000 0000",
       "tax/id": "EG-123",
       "contacts": [
-        { "contact": "C-1", "email_id": "a@example.com" },
-        { "contact": "C-2", "email_id": "b@example.com" }
+        {
+          "contact": "C-1",
+          "email_id": "a@example.com"
+        },
+        {
+          "contact": "C-2",
+          "email_id": "b@example.com"
+        }
       ]
     },
     "extracted_at": 1790841600010,
@@ -24,10 +30,21 @@
   "policy": {
     "id": "pii.customer",
     "version": "2026-10-01",
-    "pointers": ["/mobile_no", "/contacts/*/email_id", "/tax~1id", "/not_present", "/mobile_no"]
+    "pointers": [
+      "/mobile_no",
+      "/contacts/*/email_id",
+      "/tax~1id",
+      "/not_present",
+      "/mobile_no"
+    ]
   },
   "expect": {
-    "redacted": ["/contacts/0/email_id", "/contacts/1/email_id", "/mobile_no", "/tax~1id"],
+    "redacted": [
+      "/contacts/0/email_id",
+      "/contacts/1/email_id",
+      "/mobile_no",
+      "/tax~1id"
+    ],
     "payload": {
       "doctype": "Customer",
       "name": "CUST-0042",
@@ -36,9 +53,16 @@
       "mobile_no": "[redacted]",
       "tax/id": "[redacted]",
       "contacts": [
-        { "contact": "C-1", "email_id": "[redacted]" },
-        { "contact": "C-2", "email_id": "[redacted]" }
+        {
+          "contact": "C-1",
+          "email_id": "[redacted]"
+        },
+        {
+          "contact": "C-2",
+          "email_id": "[redacted]"
+        }
       ]
     }
-  }
+  },
+  "expect_observation_id": "erpnext/Customer/CUST-0042/Customer%2FCUST-0042@2026-10-01 08:00:00.000001"
 }

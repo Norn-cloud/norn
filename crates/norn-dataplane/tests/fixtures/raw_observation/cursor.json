@@ -15,8 +15,13 @@
       "grand_total": 1250.5
     },
     "extracted_at": 1790847000999,
-    "cursor": { "doctype": "Sales Order", "modified": "2026-10-01 09:30:00.100000", "name": "SO-0001" },
+    "cursor": {
+      "doctype": "Sales Order",
+      "modified": "2026-10-01 09:30:00.100000",
+      "name": "SO-0001"
+    },
     "pipeline_version": "norn-dataplane.frappe-sweep/1"
   },
-  "policy": null
+  "policy": null,
+  "expect_observation_id": "erpnext/Sales Order/SO-0001/Sales Order%2FSO-0001@2026-10-01 09:30:00.100000"
 }

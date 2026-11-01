@@ -15,5 +15,6 @@
     "extracted_at": 1790847611204,
     "pipeline_version": "norn-dataplane.frappe-webhook/1"
   },
-  "policy": null
+  "policy": null,
+  "expect_observation_id": "erpnext/Sales Order/SO-0001/Sales Order%2FSO-0001#deleted@2026-10-01 09:40:11.000914"
 }

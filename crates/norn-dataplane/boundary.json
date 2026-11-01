@@ -2,8 +2,7 @@
   "name": "norn-dataplane",
   "ring": "One",
   "allowed_norn": [
-    "norn-ir",
-    "norn-projections"
+    "norn-ir"
   ],
   "dev_only_norn": [],
   "third_party": []
