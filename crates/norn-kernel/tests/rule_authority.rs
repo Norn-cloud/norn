@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    missing_docs,
+    reason = "integration-test fixture setup and assertions"
+)]
+
 //! Correspondence for field_authority.exactRuleBindingTest and forgedOriginRefusedTest.
 
 use std::collections::{BTreeMap, BTreeSet};
