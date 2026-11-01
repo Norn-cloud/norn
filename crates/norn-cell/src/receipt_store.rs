@@ -158,14 +158,43 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Ok(Some(stored))
     }
 
-    pub(crate) fn receipt_for_acceptance(&self, reference: &Digest) -> Result<Option<StoredReceipt>, CellError> {
-        let Some(stored) = self.stored_function_receipt(reference)? else { return Ok(None); };
-        let pending = self.store.read().head_command()?.ok_or_else(|| refused("replayed"))?;
-        let payload = pending.command.command.get("payload").ok_or_else(|| refused("dispatch"))?;
-        if payload.get("type").and_then(RuntimeValue::as_str) != Some("norn.function/v1") { return Err(refused("dispatch")); }
-        let invocation: norn_ir::function::FunctionInvocation = norn_ir::runtime::decode(payload.get("invocation").ok_or_else(|| refused("dispatch"))?).map_err(|_invalid| refused("dispatch"))?;
-        if invocation.tenant != self.scope || invocation.world != MAIN_WORLD || invocation.content_digest().map_err(|_invalid| refused("dispatch"))? != stored.receipt.dispatch
-            || pending.command.command_id != stored.receipt.command_id || pending.command.generation != stored.receipt.run.generation { return Err(refused("dispatch")); }
+    pub(crate) fn receipt_for_acceptance(
+        &self,
+        reference: &Digest,
+    ) -> Result<Option<StoredReceipt>, CellError> {
+        let Some(stored) = self.stored_function_receipt(reference)? else {
+            return Ok(None);
+        };
+        let pending = self
+            .store
+            .read()
+            .head_command()?
+            .ok_or_else(|| refused("replayed"))?;
+        let payload = pending
+            .command
+            .command
+            .get("payload")
+            .ok_or_else(|| refused("dispatch"))?;
+        if payload.get("type").and_then(RuntimeValue::as_str) != Some("norn.function/v1") {
+            return Err(refused("dispatch"));
+        }
+        let invocation: norn_ir::function::FunctionInvocation = norn_ir::runtime::decode(
+            payload
+                .get("invocation")
+                .ok_or_else(|| refused("dispatch"))?,
+        )
+        .map_err(|_invalid| refused("dispatch"))?;
+        if invocation.tenant != self.scope
+            || invocation.world != MAIN_WORLD
+            || invocation
+                .content_digest()
+                .map_err(|_invalid| refused("dispatch"))?
+                != stored.receipt.dispatch
+            || pending.command.command_id != stored.receipt.command_id
+            || pending.command.generation != stored.receipt.run.generation
+        {
+            return Err(refused("dispatch"));
+        }
         Ok(Some(stored))
     }
 
@@ -321,8 +350,13 @@ mod tests {
             Checks(norn_checker::function::admit_function_manifest(&manifest).expect("manifest"));
         let mut invocation: FunctionInvocation = fixture("invocation");
         invocation.freshness = norn_ir::function::FreshnessMode::DestinationCas;
-        invocation.destination = Some(norn_ir::function::Destination { object_type:"test.ReceiptTarget".into(), key:"target-1".into(), expected_owner_version:1 });
-        invocation.dependency.facts.clear(); invocation.dependency.predicates.clear();
+        invocation.destination = Some(norn_ir::function::Destination {
+            object_type: "test.ReceiptTarget".into(),
+            key: "target-1".into(),
+            expected_owner_version: 1,
+        });
+        invocation.dependency.facts.clear();
+        invocation.dependency.predicates.clear();
         let dispatched = DispatchedCommand::pin(invocation, checks.0.execution_profile.clone())
             .expect("dispatch");
         let mut receipt: FunctionReceipt = fixture("receipt");
@@ -553,7 +587,8 @@ mod tests {
         );
         assert!(commit_action(&mut cell, &catalog, &request, &ActionAllow).is_err());
         assert_eq!(cell.store().verified_head().expect("head"), before);
-        request.input
+        request
+            .input
             .insert("receipt".into(), RuntimeValue::String(digest.0));
         if !accepts {
             assert!(commit_action(&mut cell, &catalog, &request, &ActionAllow).is_err());
