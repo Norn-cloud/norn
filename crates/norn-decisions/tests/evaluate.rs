@@ -1608,3 +1608,24 @@ proptest::proptest! {
         }
     }
 }
+
+#[test]
+fn typed_authoring_ordered_fold_executes_the_declared_helper() {
+    let root = repo_root();
+    let compiled = std::process::Command::new("bun")
+        .current_dir(&root)
+        .args(["tools/norn-ts/src/cli.ts", "compile", "tools/norn-ts/fixtures/decisions/ordered-fold.source.ts", "--org", "org_demo", "--env", "dev"])
+        .output().expect("typed authoring compiler is available");
+    assert!(compiled.status.success(), "{}\n{}", String::from_utf8_lossy(&compiled.stdout), String::from_utf8_lossy(&compiled.stderr));
+    let artifacts: Vec<Json> = serde_json::from_slice(&compiled.stdout).unwrap();
+    let rules: BTreeMap<_, _> = artifacts.iter().map(|a| (a["artifactId"].as_str().unwrap().to_owned(), rule(&a["payload"]))).collect();
+    let declared = rules["example.fold.total.rule"].clone();
+    let helpers = BTreeMap::from([("example.fold.step.rule".into(), rules["example.fold.step.rule"].clone())]);
+    let admitted = AdmittedDecision::admit(&declared, &helpers, binding()).unwrap();
+    for count in 0..=8 {
+        let items: Vec<_> = (0..count).rev().map(|n| json!({"id":format!("id{n}"),"amount":n})).collect();
+        let result = run(&admitted, value(&json!({"items":items,"initial":{"total":0,"count":0,"ids":[]}})), event(), EvaluationBudget::new(100_000)).unwrap();
+        let expected = value(&json!({"actionId":"total","state":{"total":count * (count - 1) / 2,"count":count,"ids":(0..count).map(|n| format!("id{n}")).collect::<Vec<_>>()}}));
+        assert_eq!(result.output.commands[0], norn_decisions::value_to_runtime(&expected).unwrap());
+    }
+}

@@ -11,7 +11,7 @@ export const Step = Norn.decision({
 
 export const Fold = Norn.decision({
   id: "example.fold.total", title: "Ordered total", version: "1.0.0", contract: "decide",
-  input: Schema.Struct({ slice: Schema.Struct({ items: Schema.Array(Item), initial: State }), event: Schema.Struct({}) }),
+  input: Schema.Struct({ slice: Schema.Struct({ items: Schema.Array(Item), initial: State }), event: Schema.Struct({ kind: Schema.String }) }),
   output: Schema.Struct({ facts: Schema.Array(Schema.Struct({})), commands: Schema.Array(Schema.Struct({ actionId: Schema.String, state: State })), timers: Schema.Array(Schema.Struct({})) }),
   scopeRequired: ["orgId", "environmentId"],
 }, input => {
