@@ -642,6 +642,7 @@ export interface components {
             quantityEffect?: components["schemas"]["NornIrActionQuantityEffect"];
             scopeRequired: string[];
             slice?: components["schemas"]["NornIrSliceDeclaration"][];
+            stockPost?: components["schemas"]["NornIrActionStockPost"];
             title?: string;
             uiEffects?: components["schemas"]["NornIrActionUiEffects"];
             writes?: components["schemas"]["NornIrActionWrite"][];
@@ -713,6 +714,25 @@ export interface components {
              * @description Scale expected by the pinned template parameter.
              */
             scale: number;
+        };
+        /**
+         * @description Supported stock operations; templates are selected by the kernel.
+         * @enum {string}
+         */
+        NornIrActionStockOperation: "receipt" | "delivery";
+        /** @description Receipt/delivery declaration; paths start at an owned voucher line. */
+        NornIrActionStockPost: {
+            /** @description Link paths ending in text account identities on admitted masters. */
+            accounts: components["schemas"]["NornIrStockAccountPaths"];
+            /** @description Authoritative owned collection, never a caller-provided line list. */
+            collection: string;
+            /**
+             * @description The closed stock operation.
+             * @enum {string}
+             */
+            operation: "receipt" | "delivery";
+            /** @description Link paths selecting the item and warehouse masters. */
+            partition: components["schemas"]["NornIrStockPartitionPaths"];
         };
         /**
          * @description Versioned, closed declarations for UI-facing effects that cannot be
@@ -4741,6 +4761,22 @@ export interface components {
         /** @description Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected. */
         NornIrSourceSchemaPayloadPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /** @description Account identities selected through master links, with no template override. */
+        NornIrStockAccountPaths: {
+            /** @description Cost of goods sold account on the company. */
+            cogs: string[];
+            /** @description Stock received but not billed account on the company. */
+            srbnb: string[];
+            /** @description Stock asset account on the warehouse. */
+            stock: string[];
+        };
+        /** @description Partition masters, resolved from each owned line. */
+        NornIrStockPartitionPaths: {
+            /** @description Required to-one links to the item. */
+            item: string[];
+            /** @description Required to-one links to the warehouse. */
+            warehouse: string[];
         };
         /** @description Optional time-dimension declaration for a Derived view. */
         NornIrTemporalScope: {
