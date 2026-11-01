@@ -5592,3 +5592,29 @@ fn mapping_bundle_processing_refuses_forged_output_without_consumption() {
     assert!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("fact").is_none());
     assert!(cell.process_mapping_bundle(&id).expect("original sealed evidence"));
 }
+
+#[test]
+fn instance_source_provenance_rechecks_bundle_and_disclosure_for_exact_version() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&directory.path().join("lineage.sqlite"));
+    let raw = bundle_raw("MEAS-1", "1.20");
+    let (id, _) = store.inject_mapping_bundle(&raw, &bundle_input()).expect("capture");
+    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    assert!(cell.process_mapping_bundle(&id).expect("processing"));
+    let reader = cell.store().read();
+    let instance = reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("instance").expect("captured");
+    let fact = norn_ir::FactRef::new("quality.Measurement", "MEAS-1", instance.version);
+    let budget = || DecodeBudget::new(100, 10_000_000);
+    assert!(reader.instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(false)).expect("withheld").is_none());
+    let evidence = reader.instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true)).expect("checked source lineage").expect("bundle");
+    assert_eq!(id, format!("mapping-bundle:{}", evidence.bundle_digest));
+    assert_eq!(evidence.source_record_ref.record, "MEAS-1");
+    assert_eq!(evidence.document_ref.record, "MEAS-1");
+    assert_eq!(evidence.document_digest, raw.input.get("payload_digest").and_then(Value::as_str).expect("source digest"));
+    assert_eq!(evidence.mapping_pin.artifact_id, "quality.mapping");
+    assert_eq!(evidence.mapping_pin.version, "1.0.0");
+    assert!(!evidence.field_provenance.is_empty());
+    assert!(reader.instance_source_provenance("other-world", &fact, &mut budget(), |_| panic!("no disclosure of an unproven world")).is_err());
+    let unknown = norn_ir::FactRef {version:fact.version + 1, ..fact};
+    assert!(reader.instance_source_provenance(MAIN_WORLD, &unknown, &mut budget(), |_| panic!("no disclosure of an unproven version")).is_err());
+}

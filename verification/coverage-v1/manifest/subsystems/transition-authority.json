@@ -280,6 +280,7 @@
     "crates/norn-cell/src/reactive_read.rs",
     "crates/norn-cell/src/read.rs",
     "crates/norn-cell/src/restore.rs",
+    "crates/norn-cell/src/source_provenance.rs",
     "crates/norn-cell/src/store.rs",
     "crates/norn-cell/src/system.rs",
     "crates/norn-cell/src/write.rs",
