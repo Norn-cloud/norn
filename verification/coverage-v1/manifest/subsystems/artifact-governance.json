@@ -180,6 +180,8 @@
     "scripts/verify-artifact-governance-extraction.sh",
     "tools/norn-ts/corpus/accept/schema-tool-toolkit.ts",
     "tools/norn-ts/corpus/reject/schema-projection.ts",
+    "tools/norn-ts/fixtures/parameters/binding.source.ts",
+    "tools/norn-ts/fixtures/parameters/tax.source.ts",
     "tools/norn-ts/fixtures/schema/closed.source.ts",
     "tools/norn-ts/fixtures/schema/invalid-closed/decimal.ts",
     "tools/norn-ts/fixtures/schema/invalid-closed/exponential.ts",

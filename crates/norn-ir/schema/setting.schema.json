@@ -61,8 +61,7 @@
     {
       "properties": {
         "value": {
-          "type": "number",
-          "format": "double"
+          "$ref": "#/$defs/DecimalLiteral"
         },
         "valueType": {
           "const": "number"
@@ -100,6 +99,11 @@
     "scopeRequired"
   ],
   "$defs": {
+    "DecimalLiteral": {
+      "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
     "IrVersion01": {
       "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
       "type": "string",
@@ -192,7 +196,7 @@
       ]
     },
     "SettingValueType": {
-      "description": "The JSON type of a setting's `value`.",
+      "description": "The setting value kind; numbers use exact decimal-string literals.",
       "type": "string",
       "enum": [
         "text",

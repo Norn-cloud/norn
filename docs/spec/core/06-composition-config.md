@@ -26,6 +26,12 @@ Source-record mappings and term correspondence stay distinct from law interpreta
 5. Overlays are scoped conjunctions on pinned definitions, independent of declaration order; contradictory guards or impossible progress refuse within the supported analysis profile. New behavior has a new action identity. Restrictiveness is logical implication: effective guard = `base ∧ overlay`, monotone by construction; no numeric order is inferred or declared. The initial analysis profile is specified below.
 6. Plan migration against pinned definitions/data. Keep in-flight instances/pending effects on their original version unless explicitly transformed; preflight keys, links, states, settings, authority and laws. Atomically activate within a cell with conflict checks and projection generation switch. Larger migrations expose governed resumable availability; rollback is a new validated migration. Never reinterpret old event bytes silently.
 
+### Parameter slice contract
+
+`SliceKey::Parameter {from, settingKey, effectiveAt, precedence: Vec<ScopeRef>, defaultFrom?}` projects one numeric setting from an earlier complete authorized link-list slice. `effectiveAt` names the action's input timestamp; `defaultFrom`, when present, names an earlier single-object setting slice. Scope ordering is explicit and closed; no aliases or globals are inferred. Candidate data and link membership stay in the transaction read set.
+
+The initial native numeric-setting fact profile uses `setting_key`, exact numeric `value`, `effective_from`, nullable `effective_to`, `review_state`, and five present nullable scope fields (`org_id`, `tenant_id`, `workspace_id`, `environment_id`, `business_unit_id`) projected to `ScopeRef`. It projects to the existing `SettingRoot`; source facts are changed only by ordinary governed actions. PARAM-PIN-1: every candidate fact and source membership is fenced by the ordinary action transaction. The selected fact identity and revision are retained as `parameterReads` on the immutable action receipt. Exact replay returns that original pin; rule bindings remain unsupported.
+
 ### Initial overlay analysis profile
 
 Per the [coordinator ruling, point 2](https://github.com/Norn-cloud/norn/issues/344#issuecomment-6559163104):
@@ -59,7 +65,7 @@ Evidence: structural identity/admission, runtime activation/parameter pins, gene
 
 ## Main and gaps
 
-Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, `crates/norn-checker/src/obligations/`, `crates/norn-cell/src/migration.rs`. Settings and live-data migration are real substrate. `SettingValue::Number(f64)` is not an exact economic parameter. B1–B3 remain the [design on #213](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558465085); generic pack instances, protected law transport and complete in-flight migration are gaps.
+Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, `crates/norn-checker/src/obligations/`, `crates/norn-cell/src/migration.rs`. Settings and live-data migration are real substrate. PARAM-EXACT-1: numeric settings use Core 01 exact decimal strings and refusals; native setting facts retain exact runtime numbers without a binary float conversion. B1–B3 remain the [design on #213](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558465085); generic pack instances, protected law transport and complete in-flight migration are gaps.
 
 ## Work breakdown (each PR ≤400 lines)
 

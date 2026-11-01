@@ -485,6 +485,13 @@
       "tier": "T3"
     },
     {
+      "code": "core.values.inexact",
+      "message": "value cannot be represented in the shared exact decimal profile",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T1"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",
