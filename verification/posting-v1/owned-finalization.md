@@ -150,7 +150,7 @@ transaction. Lines, manifests, masters and complete history memberships retain
 CAS fences. Quantity uses the exact typed pack and current balance fences.
 POST-RETRY-PIN: stock receipts bind the admitting definition and full call scope;
 identical retry still requires current voucher and stock-read authorization.
-A changed binding refuses without writes. POST-P4 is the durable engine
+POST-RETRY-KEY-EXACT commits raw idempotency-key bytes to posting identity; a changed binding refuses without writes. POST-P4 is the durable engine
 conformance scenario for this join; surface acceptance is separate.
 
 POST-CP1-ENGINE: file-backed commit_action receives 2 @ 10 + 3 @ 20 (Dr stock 80 / Cr SRBNB 80), delivers 4 (Dr COGS 60 / Cr stock 60), leaving 1 worth 20; POST-QUANTITY reads the committed quantity.
