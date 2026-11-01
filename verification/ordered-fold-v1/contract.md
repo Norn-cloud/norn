@@ -52,6 +52,8 @@ branch, bounds, rounding mode, declaration digest and semantics version.
 
 FOLD-GENERIC: capacities 5 and 5, demand 7 produce allocations 5 and 2 and residual
 capacity 3. Reversing enumeration with unchanged keys gives the identical result.
+The capacity declaration refuses zero or negative grants, including a bad grant
+after a successful step; later positive grants cannot conceal a negative allocation.
 FOLD-CP1: receipts 2 at 10 and 3 at 20, demand 4 produce value 60 and residual
 quantity 1/value 20. These are declarations, never evaluator purpose switches.
 Preserve the moving-average, transfer, original-cost partial-return and reversal
