@@ -1851,7 +1851,7 @@ fn check_document_root(
 ) {
     if matches!(payload, ArtifactPayload::Mapping(_)) {
         check_root!(
-            norn_ir::mapping::MappingIr,
+            norn_ir::mapping::MappingDocument,
             "mapping.validation.invalid_document",
             object,
             diagnostics,

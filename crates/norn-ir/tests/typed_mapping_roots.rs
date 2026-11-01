@@ -6,8 +6,67 @@
     reason = "integration-test crate"
 )]
 
-use norn_ir::{ArtifactEnvelope, mapping::MappingIr};
+use norn_ir::{
+    ArtifactEnvelope, ArtifactKind, ArtifactPayload,
+    mapping::{
+        InterpretationEndpoint, InterpretationFormat, InterpretationRole, LawInterpretationIr,
+        MappingDocument, MappingIr,
+    },
+};
 use serde_json::json;
+
+fn interpretation() -> LawInterpretationIr {
+    let endpoint = |id: &str| InterpretationEndpoint {
+        artifact_id: id.to_owned(),
+        version: "1.0.0".to_owned(),
+        sha256: "a".repeat(64),
+    };
+    LawInterpretationIr {
+        format: InterpretationFormat::V1,
+        role: InterpretationRole::LawInterpretation,
+        source_layer: endpoint("toy.capacity"),
+        target_layer: endpoint("toy.credit"),
+    }
+}
+
+#[test]
+fn map_roles_interpretation_survives_closed_root_without_becoming_source_records() {
+    let document = interpretation();
+    let wire = serde_json::to_value(&document).expect("typed interpretation serializes");
+    let root = ArtifactPayload::from_kind_json(
+        &ArtifactKind::Mapping,
+        serde_json::from_value(wire.clone()).expect("JSON tree"),
+    )
+    .expect("mapping root");
+    assert!(root.unknown_fields().is_empty());
+    assert_eq!(root.to_json_value(), wire);
+    assert_eq!(
+        serde_json::from_value::<MappingDocument>(wire.clone()).expect("strict document"),
+        MappingDocument::LawInterpretation(document)
+    );
+    assert!(serde_json::from_value::<MappingIr>(wire).is_err());
+}
+
+#[test]
+fn map_roles_and_pins_decode_strictly() {
+    let wire = serde_json::to_value(interpretation()).expect("typed interpretation serializes");
+    for role in ["source_record", "term_correspondence"] {
+        let mut invalid = wire.clone();
+        invalid["role"] = json!(role);
+        assert!(serde_json::from_value::<MappingDocument>(invalid).is_err());
+    }
+    for field in ["artifactId", "version", "sha256"] {
+        let mut invalid = wire.clone();
+        invalid["sourceLayer"]
+            .as_object_mut()
+            .expect("endpoint")
+            .remove(field);
+        assert!(serde_json::from_value::<MappingDocument>(invalid).is_err());
+    }
+    let mut invalid = wire;
+    invalid["targetLayer"]["inferredNamespace"] = json!("toy");
+    assert!(serde_json::from_value::<MappingDocument>(invalid).is_err());
+}
 
 #[test]
 fn mapping_entitlements_and_identity_bindings_roundtrip_through_envelope_root() {

@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
-use norn_ir::mapping::MappingIr;
+use norn_ir::mapping::{MappingDocument, MappingIr};
 use norn_ir::source_schema::SourceSchemaIr;
 use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload};
 
@@ -47,6 +47,22 @@ pub fn check_mapping_artifacts(
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for artifact in artifacts {
+        if artifact.kind == ArtifactKind::Mapping
+            && matches!(
+                serde_json::from_value::<MappingDocument>(artifact.payload.to_json_value()),
+                Ok(MappingDocument::LawInterpretation(_))
+            )
+        {
+            out.push(in_payload(
+                error(
+                    "mapping.interpretation.unsupported",
+                    "law interpretations require member conformance and preservation obligations"
+                        .to_owned(),
+                    Span::pointer("/role"),
+                ),
+                artifact,
+            ));
+        }
         if let Some(document) = source_payload(artifact) {
             out.extend(
                 check_source_schema(&document)
