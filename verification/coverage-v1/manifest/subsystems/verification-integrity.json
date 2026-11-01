@@ -450,6 +450,8 @@
     "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
     "verification/stripmine-2026-08-22/scripts/validate.sh",
+    "tools/norn-ts/fixtures/stock/stock.source.ts",
+    "tools/norn-ts/test/stock-definitions.test.ts",
     "crates/norn-checker/src/obligations/induction.rs"
   ]
 }
