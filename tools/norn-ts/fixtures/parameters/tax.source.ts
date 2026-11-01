@@ -1,18 +1,18 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 import { Setting, Registry } from "./binding.source.ts"
-const RateInput = Schema.Struct({ id: Schema.String, setting_key: Schema.String, value: Schema.Finite, effective_from: Schema.String, effective_to: Schema.String, review_state: Schema.Literal("approved"), org_id: Schema.String, environment_id: Schema.String, tenant_id: Schema.Null, workspace_id: Schema.Null, business_unit_id: Schema.Null })
+const RateValue = Schema.Struct({ value: Schema.Finite })
+export const TaxRate = Norn.type({ name: "demo.TaxRate", title: "Tax rate", version: "1.0.0", extends: Setting, properties: Schema.Struct({}), invariants: [{ id: "tax_rate_range", expression: Norn.expression(RateValue, input => input.value >= 0 && input.value <= 1), message: "Tax rate is between zero and one." }] })
+const RateInput = Schema.Struct({ id: Schema.String, setting_key: Schema.String, value: Schema.Finite, effective_from: Schema.String, effective_to: Schema.String, review_state: Schema.String, org_id: Schema.String, environment_id: Schema.String, tenant_id: Schema.Null, workspace_id: Schema.Null, business_unit_id: Schema.Null })
 export const SetRate = Norn.action({
   id: "demo.tax.set", title: "Set tax rate", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   input: RateInput, output: Schema.Struct({ id: Schema.String }),
-  preconditions: [Norn.expression(RateInput, input => input.value >= 0 && input.value <= 1)],
-  writes: [{ type: Setting, change: "created" }, { type: Setting, change: "modified" }],
-  effect: { kind: "upsert_input_object", type: Setting, objectIdField: "id", writeMode: { kind: "upsert" } },
+  writes: [{ type: TaxRate, change: "created" }, { type: TaxRate, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: TaxRate, objectIdField: "id", writeMode: { kind: "upsert" } },
 })
 export const Configure = Norn.action({
   id: "demo.tax.configure", title: "Configure tax settings", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
-  input: Schema.Struct({ id: Schema.String, june: Schema.String, july: Schema.String }), output: Schema.Struct({ id: Schema.String }),
-  createLinks: [{ link: "settings", targetType: Setting, targetIdField: "june" }, { link: "settings", targetType: Setting, targetIdField: "july" }],
+  input: Schema.Struct({ id: Schema.String }), output: Schema.Struct({ id: Schema.String }),
   writes: [{ type: Registry, change: "created" }],
   effect: { kind: "upsert_input_object", type: Registry, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
@@ -20,7 +20,7 @@ export const Invoice = Norn.type({
   name: "demo.TaxInvoice", title: "Tax invoice", version: "1.0.0", identity: [{ name: "primary", properties: ["id"] }],
   properties: Schema.Struct({ id: Schema.String, currency: Schema.String, net: Norn.decimal(2, { currency: "currency" }), tax: Norn.decimal(2, { currency: "currency" }), gross: Norn.decimal(2, { currency: "currency" }), rate: Norn.decimal(4), effective_at: Norn.timestamp("utc") }),
 })
-const Input = Schema.Struct({ id: Schema.String, registry: Schema.String, currency: Schema.Literal("USD"), net: Schema.Finite, tax: Schema.Finite, gross: Schema.Finite, rate: Schema.Finite, effective_at: Schema.String })
+const Input = Schema.Struct({ id: Schema.String, registry: Schema.String, currency: Schema.String, net: Schema.Finite, tax: Schema.Finite, gross: Schema.Finite, rate: Schema.Finite, effective_at: Schema.String })
 const Context = Schema.Struct({ input: Input, slice: Schema.Struct({ selected: Schema.Struct({ value: Schema.Finite }) }) })
 export const PostInvoice = Norn.action({
   id: "demo.tax.post", title: "Post tax invoice", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,

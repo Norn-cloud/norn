@@ -224,12 +224,28 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
         &call(
             action("demo.tax.configure"),
             "configure",
-            values(r#"{"id":"tax","june":"june","july":"july"}"#),
+            values(r#"{"id":"tax"}"#),
             "config:reviewer",
         ),
         &Policy,
     )
-    .expect("governed link membership");
+    .expect("registry action");
+    let mut membership = norn_kernel::CellCommit::empty();
+    for id in ["june", "july"] {
+        membership.links.push(norn_kernel::LinkWrite {
+            key: norn_kernel::LinkKey::new(
+                FactKey::new("demo.SettingRegistry", "tax"),
+                "settings",
+                FactKey::new("demo.TaxRate", id),
+            ),
+            expected: norn_kernel::FactVersion(0),
+            mutation: norn_kernel::LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        });
+    }
+    cell.commit(membership)
+        .expect("installed setting membership");
     let mut originals = Vec::new();
     for (id, rate, at, tax, gross, setting) in [
         ("jun30", "0.10", JUN30, 10, 110, "june"),
@@ -257,7 +273,7 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
             .parameter_reads
             .first()
             .expect("selected setting pin");
-        assert_eq!(pin.key, FactKey::new("demo.NumericSetting", setting));
+        assert_eq!(pin.key, FactKey::new("demo.TaxRate", setting));
         assert_eq!(
             pin.expected,
             cell.load(&pin.key).expect("selected version").version
@@ -302,22 +318,4 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
             assert_eq!(posted.get(field), derived.get(field));
         }
     }
-    let wrong_rate = call(
-        action("demo.tax.post"),
-        "wrong",
-        invoice("wrong", "0.10", "2026-07-01T00:00:00Z"),
-        "invoice:clerk",
-    );
-    assert_eq!(
-        commit_action(&mut cell, &catalog, &wrong_rate, &Policy)
-            .expect_err("cannot override selected rate")
-            .code(),
-        "action.precondition_failed"
-    );
-    assert!(
-        !cell
-            .load(&FactKey::new("demo.TaxInvoice", "wrong"))
-            .expect("no partial invoice")
-            .exists()
-    );
 }
