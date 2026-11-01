@@ -1064,8 +1064,10 @@ where
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
-    let ReceiptChanges { reference: receipt, facts: mut changes } =
-        receipt_changes(host, catalog, call, &preparation.effective_input, &target)?;
+    let ReceiptChanges {
+        reference: receipt,
+        facts: mut changes,
+    } = receipt_changes(host, catalog, call, &preparation.effective_input, &target)?;
     let change = FactChange::Transition {
         object_type,
         key: object_id.clone(),
@@ -1115,7 +1117,10 @@ fn receipt_changes<H: CellHost + ?Sized>(
         ..
     }) = &call.action.effect_program
     else {
-        return Ok(ReceiptChanges { reference: None, facts: Vec::new() });
+        return Ok(ReceiptChanges {
+            reference: None,
+            facts: Vec::new(),
+        });
     };
     let invalid = || ActionRefusal::InvalidInput {
         field: declaration.reference_field.clone(),
@@ -1126,14 +1131,20 @@ fn receipt_changes<H: CellHost + ?Sized>(
     let value = input
         .get(&declaration.reference_field)
         .ok_or_else(invalid)?;
-    let reference =
-        crate::receipt_binding::ReceiptReference::parse(value).map_err(|_invalid_reference| invalid())?;
+    let reference = crate::receipt_binding::ReceiptReference::parse(value)
+        .map_err(|_invalid_reference| invalid())?;
     let binding = host
         .resolve_accepted_receipt(&reference, &declaration.manifest_digest)
         .map_err(host_failure)?
         .ok_or_else(invalid)?;
     let (digest, result, acceptance) = binding.into_parts();
-    if acceptance.destination.as_ref().is_some_and(|pin| &pin.key != target) { return Err(invalid()); }
+    if acceptance
+        .destination
+        .as_ref()
+        .is_some_and(|pin| &pin.key != target)
+    {
+        return Err(invalid());
+    }
     let mut values = JsonObject::new();
     values.insert(
         declaration.digest_property.0.clone(),
@@ -1160,7 +1171,10 @@ fn receipt_changes<H: CellHost + ?Sized>(
             value,
         })
         .collect();
-    Ok(ReceiptChanges { reference: Some(reference), facts: changes })
+    Ok(ReceiptChanges {
+        reference: Some(reference),
+        facts: changes,
+    })
 }
 
 fn upsert_stored_input(
