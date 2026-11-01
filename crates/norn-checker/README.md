@@ -25,6 +25,5 @@ Raw callers use `check_artifact_sources_with_receipt` and `verify_admission_rece
 Conformance in `tests/check_receipt.rs`: EXACT-INTEGER (`9007199254740992` / `9007199254740993`),
 EXACT-DECIMAL (`0.1234567890123456789012345678` / `0.1234567890123456789012345679`),
 EXACT-LITERAL (`25` / `26`), EXACT-VERIFY (substitution refusal), EXACT-ORDER (key reordering).
-Both candidate and base positions are covered. Writers emit @5 (mapless), @6 (flow map),
-@7 (law origins). Readers retain @1–@4 hash semantics until a later contract change.
+Both positions are covered. Writers emit @5 (mapless), @6 (flow map), @7 (law origins); readers retain @1–@4 until contract cleanup.
 LEGACY-INLINE: verify original inline-layout source, then recheck after extraction; `old_receipt_hashes_recover_and_recheck_after_inline_layout_extraction` covers it.
