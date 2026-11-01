@@ -445,3 +445,256 @@ mod defs_read {
     }
 }
 
+#[cfg(all(test, feature = "native", feature = "http-host"))]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::too_many_lines,
+    missing_docs,
+    reason = "CP1 surface correspondence scenario"
+)]
+mod cp1_surface {
+    use super::*;
+    use crate::authz::{AccessRequest, Authorizer, DenyAll};
+    use norn_cell::{CommitBatch, FactWriteRow, LinkChange, engine::NativeEngine};
+    use norn_ir::{ArtifactEnvelope, ArtifactPayload, EntityIrVersion, EntityRootV2};
+    use norn_kernel::{
+        ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
+        DecisionTurn, FactKey, OWNED_ROWS_TYPE, TypeCatalog, World, owned_rows_manifest_key,
+    };
+    use serde_json::{Value, json};
+    use std::collections::BTreeMap;
+    struct Demo;
+    impl Authorizer for Demo {
+        fn authorize(&self, r: &AccessRequest<'_>) -> Result<(), Refusal> {
+            if r.actor == Some("demo") {
+                Ok(())
+            } else {
+                DenyAll.authorize(r)
+            }
+        }
+        fn action(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+        fn action_read(&self, _: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+        fn action_read_type(&self, _: &ActionReadTypeAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+    }
+    fn host() -> DevHost<NativeEngine> {
+        let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../../tools/norn-ts/fixtures/stock/stock.artifacts.json"
+        ))
+        .expect("authored stock");
+        for ty in norn_kernel::stock_posting::stock_output_types() {
+            let mut artifact = artifacts
+                .iter()
+                .find(|a| a.kind() == norn_ir::ArtifactKind::Entity)
+                .expect("entity")
+                .clone();
+            artifact.artifact_id = format!("{}.entity", ty.name.as_str());
+            artifact.name = ty.name.as_str().into();
+            let root = EntityRootV2 {
+                entity_version: EntityIrVersion::V2_0,
+                object_type: ty,
+                mutation_authority: None,
+                extensions: None,
+            };
+            let payload = serde_json::to_value(root).expect("typed");
+            artifact.payload =
+                ArtifactPayload::Entity(serde_json::from_value(payload).expect("payload"));
+            artifacts.retain(|a| a.artifact_id != artifact.artifact_id);
+            artifacts.push(artifact);
+        }
+        let host = DevHost::new(
+            NativeEngine::open_in_memory().expect("engine"),
+            &serde_json::to_string(&artifacts).expect("source"),
+            CellScope {
+                org_id: "org_demo".into(),
+                environment_id: "dev".into(),
+            },
+            LogicalTime::EPOCH,
+        )
+        .expect("admitted host")
+        .with_authorizer(Demo);
+        {
+            let mut cell = host.cell().expect("cell");
+            seed(cell.store_mut());
+            let rules = norn_kernel::admit_stock_rules(&artifacts).expect("rules");
+            let model = cell.store().model().clone();
+            let catalog = TypeCatalog::new(model.object_types()).with_stock_rules(&rules);
+            let rule = catalog.stock_action("stock.receipt.submit").expect("rule");
+            let scope = BTreeMap::from([
+                ("orgId".into(), "org_demo".into()),
+                ("environmentId".into(), "dev".into()),
+            ]);
+            let turn = DecisionTurn {
+                id: "prepare".into(),
+                now: LogicalTime::EPOCH,
+                world: World::Main,
+                consumes: None,
+            };
+            let call = rule.call("pr", scope, "demo".into(), "prepare".into(), turn);
+            let snapshot = norn_kernel::action_commit::stock::prepare_stock_snapshot(
+                &*cell,
+                &catalog,
+                &call,
+                &crate::actions::Policy(&Demo),
+            )
+            .expect("partition");
+            use norn_ir::quantity_ledger::{
+                QUANTITY_CELL_VERSION, QuantityOperation, QuantityRequest,
+            };
+            cell.commit_quantity(
+                &QuantityRequest {
+                    version: QUANTITY_CELL_VERSION.into(),
+                    ledger_id: format!("stock/{}", snapshot.partitions[0].witness.key),
+                    balance_versions: vec![],
+                    operation: QuantityOperation::Define {
+                        account_limit: 3,
+                        pack: norn_kernel::stock_posting::stock_quantity_pack("ea").expect("pack"),
+                        unrestricted_accounts: vec!["external-source".into()],
+                    },
+                },
+                "configure",
+            )
+            .expect("quantity configuration");
+        }
+        host
+    }
+    fn put(ty: &str, id: &str, values: Value) -> FactWriteRow {
+        FactWriteRow::Put {
+            object_type: ty.into(),
+            key: id.into(),
+            values: serde_json::from_value(values).expect("exact fixture values"),
+        }
+    }
+    fn link(ty: &str, id: &str, name: &str, target_type: &str, target: &str) -> LinkChange {
+        LinkChange::Add {
+            object_type: ty.into(),
+            source: id.into(),
+            link: name.into(),
+            target_type: Some(target_type.into()),
+            target: target.into(),
+            values: BTreeMap::new(),
+        }
+    }
+    fn seed(store: &mut CellStore) {
+        let mut writes = vec![
+            put(
+                "stock.Company",
+                "c",
+                json!({"id":"c","name":"Demo","currency":"USD","book_id":"book","graph_id":"graph","graph_version":1,"srbnb_account":"srbnb","cogs_account":"cogs"}),
+            ),
+            put(
+                "stock.Warehouse",
+                "w",
+                json!({"id":"w","name":"Demo","stock_account":"stock"}),
+            ),
+            put(
+                "stock.Item",
+                "i",
+                json!({"id":"i","name":"Demo","uom":"ea","valuation_method":"fifo"}),
+            ),
+            put(
+                "stock.Party",
+                "party",
+                json!({"id":"party","name":"Demo","role":"supplier"}),
+            ),
+        ];
+        let mut links = vec![link(
+            "stock.Warehouse",
+            "w",
+            "company",
+            "stock.Company",
+            "c",
+        )];
+        for (ty, child, id, quantities) in [
+            (
+                "stock.PurchaseReceipt",
+                "stock.ReceiptLine",
+                "pr",
+                vec![(2, 10), (3, 20)],
+            ),
+            (
+                "stock.DeliveryNote",
+                "stock.DeliveryLine",
+                "dn",
+                vec![(4, 0)],
+            ),
+            (
+                "stock.DeliveryNote",
+                "stock.DeliveryLine",
+                "over",
+                vec![(2, 0)],
+            ),
+        ] {
+            writes.push(put(ty,id,json!({"id":id,"request_id":id,"effective_at":"2026-11-01T00:00:00Z","status":"draft"})));
+            links.push(link(ty, id, "company", "stock.Company", "c"));
+            links.push(link(
+                ty,
+                id,
+                if id == "pr" { "supplier" } else { "customer" },
+                "stock.Party",
+                "party",
+            ));
+            let mut rows = Vec::new();
+            for (index, (q, rate)) in quantities.into_iter().enumerate() {
+                let row = format!("{id}-{index}");
+                rows.push(row.clone());
+                let mut values =
+                    json!({"id":row,"line_number":index.saturating_add(1),"quantity":q});
+                if id == "pr" {
+                    values["rate"] = json!(rate);
+                }
+                writes.push(put(child, &row, values));
+                links.extend([
+                    link(ty, id, "lines", child, &row),
+                    link(child, &row, "voucher", ty, id),
+                    link(child, &row, "item", "stock.Item", "i"),
+                    link(
+                        child,
+                        &row,
+                        if id == "pr" { "destination" } else { "source" },
+                        "stock.Warehouse",
+                        "w",
+                    ),
+                ]);
+            }
+            let key =
+                owned_rows_manifest_key(&FactKey::new(ty, id), "lines").expect("manifest identity");
+            writes.push(put(
+                OWNED_ROWS_TYPE,
+                &key.key,
+                json!({"parentType":ty,"parentKey":id,"collectionId":"lines","rowIds":rows}),
+            ));
+        }
+        store
+            .commit(&CommitBatch {
+                world: "main".into(),
+                scope: "org_demo/dev".into(),
+                writes,
+                links,
+                ..CommitBatch::default()
+            })
+            .expect("seed drafts");
+    }
+
+    #[test]
+    fn surface_stock_fixture_is_admitted_and_quantity_configured() {
+        let host = host();
+        assert_eq!(
+            host.cell()
+                .expect("cell")
+                .store()
+                .read()
+                .list("main", "stock.PurchaseReceipt", 10)
+                .expect("draft")
+                .len(),
+            1
+        );
+    }
+}
