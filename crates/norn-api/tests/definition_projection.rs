@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 fn checked(number: &str, reverse_keys: bool) -> Admitted {
     let text = format!(
-        r#"{{"irVersion":"0.1","artifactId":"test.setting","kind":"setting","namespace":"test","name":"Setting","version":"0.1.0","lifecycle":"draft","scope":{{}},"dependencies":[],"provenance":{{"source":"authoring_sdk"}},"payload":{{"settingVersion":"0.1","settingKey":"test.value","valueType":"number","value":{number},"effectiveFrom":"2026-01-01T00:00:00Z","review":{{"state":"approved","reviewedBy":"reviewer","reviewedAt":"2026-01-01T00:00:00Z","reason":"synthetic"}},"scopeRequired":[]}}}}"#
+        r#"{{"irVersion":"0.1","artifactId":"test.setting","kind":"setting","namespace":"test","name":"Setting","version":"0.1.0","lifecycle":"draft","scope":{{"orgId":"org_demo","environmentId":"dev"}},"dependencies":[],"provenance":{{"source":"authoring_sdk"}},"payload":{{"settingVersion":"0.1","settingKey":"test.value","valueType":"number","value":{number},"effectiveFrom":"2026-01-01T00:00:00Z","review":{{"state":"approved","reviewedBy":"reviewer","reviewedAt":"2026-01-01T00:00:00Z","reason":"synthetic"}},"scopeRequired":["orgId","environmentId"]}}}}"#
     );
     let mut source = RuntimeValue::from_json_text(&text).unwrap();
     if reverse_keys {
@@ -104,6 +104,19 @@ fn host_definition_wire_keeps_empty_collections_and_revision_names() {
     let mut admitted = checked("25", false);
     admitted.canonical_set = "[]".into();
     admitted.artifacts.clear();
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
+        base: &[],
+        tenant: None,
+    };
+    let checked =
+        check_artifact_set_with_receipt(&[], &context, &ResourceLimitProfile::norn_limits_v1())
+            .unwrap();
+    assert!(checked.receipt.admitted);
+    admitted.receipt = serde_json::from_slice(&checked.receipt.canonical_json().unwrap()).unwrap();
+    admitted.receipt_sha256 = checked.receipt.content_sha256().unwrap();
+    admitted.diagnostics = diagnostics_to_json(&checked.diagnostics);
     admitted.layout_diagnostics.clear();
     let response = defs_response(&admitted, 2, 9).unwrap();
     let wire = serde_json::to_value(&response).unwrap();
