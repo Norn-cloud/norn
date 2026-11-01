@@ -256,8 +256,7 @@ describe("opt-in literal marking translation validation", () => {
   test("unmatched closers cannot offset the nesting budget", () => {
     const malformed = "}".repeat(2_000) + "[".repeat(2_000)
     const result = validateMarkingsTranslation(malformed, candidate(), context)
-    expect(result.status).toBe("unsupported")
-    expect(result.reason).toBe("unbalanced brackets")
+    expect(result).toEqual({ status: "unsupported", evidence: "unknown", reason: "unbalanced brackets" })
   })
 
   test("budget exhaustion never becomes checked", () => {
