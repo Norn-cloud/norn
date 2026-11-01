@@ -53,22 +53,52 @@ fn measured<T>(
     Err(failure("native resource meter unavailable"))
 }
 
-fn encoded_outcome(result: Result<ForecastSummary, ForecastFailure>) -> Result<(FunctionOutcome, u64), ForecastFailure> {
+fn encoded_outcome(
+    result: Result<ForecastSummary, ForecastFailure>,
+) -> Result<(FunctionOutcome, u64), ForecastFailure> {
     let (code, value) = match result {
         Ok(summary) => (None, norn_ir::runtime::encode(&summary).map_err(failure)?),
-        Err(error) => { let value = norn_ir::runtime::encode(&error).map_err(failure)?; (Some(error.code), value) }
+        Err(error) => {
+            let value = norn_ir::runtime::encode(&error).map_err(failure)?;
+            (Some(error.code), value)
+        }
     };
-    let object = value.as_object().cloned().ok_or_else(|| failure("result object"))?;
-    let bytes = u64::try_from(norn_ir::canonical::canonical_json_of(&object).map_err(failure)?.len()).map_err(failure)?;
+    let object = value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| failure("result object"))?;
+    let bytes = u64::try_from(
+        norn_ir::canonical::canonical_json_of(&object)
+            .map_err(failure)?
+            .len(),
+    )
+    .map_err(failure)?;
     let outcome = match code {
-        None => FunctionOutcome::Success(SuccessOutcome { output_manifest: output_manifest_digest(&[], &object).map_err(failure)?, outputs: vec![], summary: object }),
-        Some(code) => FunctionOutcome::Failure(FailureOutcome { code, detail: object }),
+        None => FunctionOutcome::Success(SuccessOutcome {
+            output_manifest: output_manifest_digest(&[], &object).map_err(failure)?,
+            outputs: vec![],
+            summary: object,
+        }),
+        Some(code) => FunctionOutcome::Failure(FailureOutcome {
+            code,
+            detail: object,
+        }),
     };
     Ok((outcome, bytes))
 }
 
-fn prepare(invocation: &FunctionInvocation, export: &ForecastExport<'_>, executor: &str, now_millis: u64)
-    -> Result<((norn_checker::function::AdmittedFunction, FunctionOutcome), u64), ForecastFailure> {
+fn prepare(
+    invocation: &FunctionInvocation,
+    export: &ForecastExport<'_>,
+    executor: &str,
+    now_millis: u64,
+) -> Result<
+    (
+        (norn_checker::function::AdmittedFunction, FunctionOutcome),
+        u64,
+    ),
+    ForecastFailure,
+> {
     let admitted =
         norn_checker::function::admit_function_manifest(&crate::host::manifest().map_err(failure)?)
             .map_err(failure)?;
@@ -99,20 +129,18 @@ fn prepare(invocation: &FunctionInvocation, export: &ForecastExport<'_>, executo
     Ok(((admitted, outcome), output_bytes))
 }
 
-/// Execute the real forecast and return its bound receipt for `CellHost::perform`.
-/// ANALYTICS-FUNCTION-2: metadata comes from a host-resolved export, statistics
-/// only from norn-metrics, and accounting from the native meter. RSS is the
-/// conservative process peak (Linux KiB), rather than isolated model allocation.
-/// Late evidence returns an assessment with no fabricated model or score.
+/// ANALYTICS-FUNCTION-2: real metered evidence for `CellHost::perform`.
+/// RSS is the Linux process peak; invalid temporal evidence leaves scores absent.
 /// # Errors
-/// Unavailable meter, invalid scope/dispatch/table pins, or receipt encoding.
+/// Invalid scope/dispatch/table pins, metering, or encoding.
 pub fn perform_forecast(
     invocation: &FunctionInvocation,
     export: &ForecastExport<'_>,
     executor: &str,
     now_millis: u64,
 ) -> Result<FunctionReceipt, ForecastFailure> {
-    let ((admitted, outcome), resources) = measured(|| prepare(invocation, export, executor, now_millis))?;
+    let ((admitted, outcome), resources) =
+        measured(|| prepare(invocation, export, executor, now_millis))?;
     let bounds = &admitted.manifest.bounds;
     let exhausted = [
         (
@@ -173,7 +201,12 @@ mod tests {
         CellStore, CommitBatch, EffectRow, Model, OutboxCommand, SqliteCell, StoreOptions,
     };
     use norn_kernel::{CellHost, Command, CommandId, FreshnessPolicy, Generation, IdempotencyKey};
-    fn export<'a>(plan: &'a crate::temporal::TemporalPlan, rows: &'a [crate::temporal::TemporalRow], digest: &norn_ir::function::Digest, version: u64) -> ForecastExport<'a> {
+    fn export<'a>(
+        plan: &'a crate::temporal::TemporalPlan,
+        rows: &'a [crate::temporal::TemporalRow],
+        digest: &norn_ir::function::Digest,
+        version: u64,
+    ) -> ForecastExport<'a> {
         let tenant = "tenant_acme";
         ForecastExport {
             tenant,
@@ -194,7 +227,12 @@ mod tests {
     }
     fn enqueue(invocation: &FunctionInvocation) -> CellStore {
         let model = Model::from_definitions(&[], &[]).expect("model");
-        let mut store = CellStore::open(std::path::Path::new(":memory:"), model, StoreOptions::default()).expect("store");
+        let mut store = CellStore::open(
+            std::path::Path::new(":memory:"),
+            model,
+            StoreOptions::default(),
+        )
+        .expect("store");
         let command = Command {
             id: CommandId(invocation.command_id.clone()),
             generation: Generation(invocation.run.generation),
@@ -223,82 +261,82 @@ mod tests {
         store
     }
     proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
-    #[test]
-    fn native_report_is_recorded_by_perform_and_wrong_pins_refuse(version in 1u64..1_000_000) {
-        let (plan, rows) = crate::producer::tests::fixture();
-        let digest = crate::host::implementation_digest().expect("code");
-        let tenant = "tenant_acme";
-        let admitted = norn_checker::function::admit_function_manifest(
-            &crate::host::manifest().expect("manifest"),
-        )
-        .expect("admit");
-        let mut invocation: FunctionInvocation = serde_json::from_str(include_str!(
-            "../../../fixtures/function/invocation.effectful.json"
-        ))
-        .expect("dispatch fixture");
-        let (input, blob) = export(&plan, &rows, &digest, version).input(6_000_000).expect("export");
-        invocation.manifest = admitted.digest.clone();
-        invocation.retry.max_attempts = 1;
-        invocation.provenance_commit = 1;
-        invocation.inputs = norn_ir::runtime::encode(&input)
-            .expect("input")
-            .as_object()
-            .expect("object")
-            .clone();
-        invocation.blobs = [("table".into(), blob)].into();
-        let mut wrong = invocation.clone();
-        wrong.tenant = "another-tenant".into();
-        assert!(perform_forecast(&wrong, &export(&plan, &rows, &digest, version), "unit-host", 10_000).is_err());
-        wrong = invocation.clone();
-        wrong.inputs.insert("tableVersion".into(), norn_ir::runtime::encode(&version.saturating_add(1)).expect("bounded version"));
-        assert!(perform_forecast(&wrong, &export(&plan, &rows, &digest, version), "unit-host", 10_000).is_err());
-        wrong = invocation.clone();
-        wrong.blobs.clear();
-        assert!(perform_forecast(&wrong, &export(&plan, &rows, &digest, version), "unit-host", 10_000).is_err());
-        let store = enqueue(&invocation);
-        let mut cell: SqliteCell<RuntimeValue, RuntimeValue, FunctionReceipt> =
-            SqliteCell::new(store, tenant, move |command: &Command<RuntimeValue>| {
-                let actual: FunctionInvocation = norn_ir::runtime::decode(
-                    command.payload.get("invocation").expect("host envelope"),
-                )
-                .expect("invocation");
-                let export = export(&plan, &rows, &digest, version);
-                perform_forecast(&actual, &export, "unit-host", 10_000).expect("real execution")
-            })
-            .expect("cell");
-        let performed = cell.perform().expect("perform").expect("result");
-        assert!(
-            norn_checker::function::check_function_receipt(
-                &performed.input,
-                &invocation,
-                &admitted
+        #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+        #[test]
+        fn native_report_is_recorded_by_perform_and_wrong_pins_refuse(version in 1u64..1_000_000) {
+            let (plan, rows) = crate::producer::tests::fixture();
+            let digest = crate::host::implementation_digest().expect("code");
+            let tenant = "tenant_acme";
+            let admitted = norn_checker::function::admit_function_manifest(
+                &crate::host::manifest().expect("manifest"),
             )
-            .is_empty()
-        );
-        let recorded: FunctionReceipt = norn_ir::runtime::decode(
-            &cell
-                .store()
-                .read()
-                .head_command()
-                .expect("head")
-                .expect("command")
-                .result
-                .expect("persisted result"),
-        )
-        .expect("receipt");
-        assert_eq!(recorded, performed.input);
-        assert!(recorded.resources.peak_memory_bytes > 0 && recorded.resources.fuel.is_none());
-        let FunctionOutcome::Success(success) = recorded.outcome else {
-            panic!("native forecast success")
-        };
-        let summary: ForecastSummary =
-            norn_ir::runtime::decode(&RuntimeValue::Object(success.summary))
-                .expect("typed summary");
-        assert_eq!(summary.rmse_nanos, Some(800_000_000));
-        assert_eq!(summary.table_digest, input.table_digest);
-        assert_eq!(summary.table_version, version.to_string());
-        assert!(cell.perform().expect("recorded retry").is_some());
+            .expect("admit");
+            let mut invocation: FunctionInvocation = serde_json::from_str(include_str!(
+                "../../../fixtures/function/invocation.effectful.json"
+            ))
+            .expect("dispatch fixture");
+            let (input, blob) = export(&plan, &rows, &digest, version).input(6_000_000).expect("export");
+            invocation.manifest = admitted.digest.clone();
+            invocation.retry.max_attempts = 1;
+            invocation.provenance_commit = 1;
+            invocation.inputs = norn_ir::runtime::encode(&input)
+                .expect("input")
+                .as_object()
+                .expect("object")
+                .clone();
+            invocation.blobs = [("table".into(), blob)].into();
+            let mut wrong = invocation.clone();
+            wrong.tenant = "another-tenant".into();
+            assert!(perform_forecast(&wrong, &export(&plan, &rows, &digest, version), "unit-host", 10_000).is_err());
+            wrong = invocation.clone();
+            wrong.inputs.insert("tableVersion".into(), norn_ir::runtime::encode(&version.saturating_add(1)).expect("bounded version"));
+            assert!(perform_forecast(&wrong, &export(&plan, &rows, &digest, version), "unit-host", 10_000).is_err());
+            wrong = invocation.clone();
+            wrong.blobs.clear();
+            assert!(perform_forecast(&wrong, &export(&plan, &rows, &digest, version), "unit-host", 10_000).is_err());
+            let store = enqueue(&invocation);
+            let mut cell: SqliteCell<RuntimeValue, RuntimeValue, FunctionReceipt> =
+                SqliteCell::new(store, tenant, move |command: &Command<RuntimeValue>| {
+                    let actual: FunctionInvocation = norn_ir::runtime::decode(
+                        command.payload.get("invocation").expect("host envelope"),
+                    )
+                    .expect("invocation");
+                    let export = export(&plan, &rows, &digest, version);
+                    perform_forecast(&actual, &export, "unit-host", 10_000).expect("real execution")
+                })
+                .expect("cell");
+            let performed = cell.perform().expect("perform").expect("result");
+            assert!(
+                norn_checker::function::check_function_receipt(
+                    &performed.input,
+                    &invocation,
+                    &admitted
+                )
+                .is_empty()
+            );
+            let recorded: FunctionReceipt = norn_ir::runtime::decode(
+                &cell
+                    .store()
+                    .read()
+                    .head_command()
+                    .expect("head")
+                    .expect("command")
+                    .result
+                    .expect("persisted result"),
+            )
+            .expect("receipt");
+            assert_eq!(recorded, performed.input);
+            assert!(recorded.resources.peak_memory_bytes > 0 && recorded.resources.fuel.is_none());
+            let FunctionOutcome::Success(success) = recorded.outcome else {
+                panic!("native forecast success")
+            };
+            let summary: ForecastSummary =
+                norn_ir::runtime::decode(&RuntimeValue::Object(success.summary))
+                    .expect("typed summary");
+            assert_eq!(summary.rmse_nanos, Some(800_000_000));
+            assert_eq!(summary.table_digest, input.table_digest);
+            assert_eq!(summary.table_version, version.to_string());
+            assert!(cell.perform().expect("recorded retry").is_some());
+        }
     }
-}
 }
