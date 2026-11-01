@@ -2,18 +2,33 @@ name: Public core
 on:
   pull_request:
   pull_request_target:
+  # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.
+  issue_comment:
+    types: [created, edited, deleted]
+  # Branch heads are checked by their pull_request run; a branch push run
+  # would duplicate the full gate on the same commit.
   push:
+    branches: [main]
   merge_group:
   workflow_dispatch:
 permissions:
   contents: read
+# A newer push to a pull request cancels the run of its older head. Every other
+# event (merge-queue groups, main, the comment and trusted lanes) gets a group
+# of its own, so concurrency never cancels or holds it back.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   core:
-    if: github.event_name != 'pull_request_target'
+    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 110
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -25,39 +40,305 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.14
+      # Compiler outputs (sccache on the Actions cache: runs read the scopes of
+      # their own ref, its base and main, and write only their own), the Cargo
+      # home with registry and installed tools (saved only by main) and Bun's
+      # package store.
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.19.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-targets: false
+          shared-key: cargo-registry
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}
       - run: bash scripts/ci/core.sh cheap
+  # The full gate: `core.sh all` split into parallel jobs. The plan comes from
+  # core.sh itself, so CI runs exactly its shards and phases (all but formal).
+  # Tests narrow on pull requests (the affected packages' tests), the full
+  # set in the merge queue and on main.
+  plan:
+    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: plan
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+        run: |
+          if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE"); else plan=$(bash scripts/ci/core.sh plan); fi
+          echo "plan=$plan" >> "$GITHUB_OUTPUT"
+          echo "$plan"
+  test:
+    needs: plan
+    if: fromJSON(needs.plan.outputs.plan).shard[0] != null
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}
+      NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.plan).shard }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+      # Compiler outputs (sccache on the Actions cache: runs read the scopes of
+      # their own ref, its base and main, and write only their own), the Cargo
+      # home with registry and installed tools (saved only by main) and Bun's
+      # package store.
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.19.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-targets: false
+          shared-key: cargo-registry
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: nextest@0.9.150
+      - run: bash scripts/ci/core.sh test ${{ matrix.shard }}
+  phase:
+    needs: plan
+    if: fromJSON(needs.plan.outputs.plan).phase[0] != null
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: ${{ fromJSON(needs.plan.outputs.plan).phase }}
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      # Shrink-only baselines compare against the commit this one lands on
+      # (main for a manual run).
+      NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+      # Compiler outputs (sccache on the Actions cache: runs read the scopes of
+      # their own ref, its base and main, and write only their own), the Cargo
+      # home with registry and installed tools (saved only by main) and Bun's
+      # package store.
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.19.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-targets: false
+          # Phases that `cargo install` pinned tools keep their own Cargo home,
+          # so the saved bin directory holds those tools.
+          shared-key: cargo-${{ (matrix.phase == 'guards' || matrix.phase == 'integration') && matrix.phase || 'registry' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: nextest@0.9.150
+      - run: bash scripts/ci/core.sh ${{ matrix.phase }}
+  # The single required verdict: every planned job ran and passed, and outside
+  # pull requests the plan was the full one. A cancelled pull request run ends
+  # without it, so the run that superseded it never waits behind a verdict job
+  # in the runner queue. Every other cancelled run still writes failure, and
+  # the merge queue's own run must pass the full plan.
+  full:
+    needs: [core, plan, test, phase]
+    if: >-
+      always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' &&
+      !(cancelled() && github.event_name == 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          EVENT: ${{ github.event_name }}
+          PLAN: ${{ needs.plan.outputs.plan }}
+          CORE: ${{ needs.core.result }}
+          PLANNED: ${{ needs.plan.result }}
+          TEST: ${{ needs.test.result }}
+          PHASE: ${{ needs.phase.result }}
+        run: |
+          set -euo pipefail
+          # A job may be skipped only when the plan gave it nothing to run.
+          ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
+          [ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
+          mode=$(jq -er .mode <<<"$PLAN")
+          [ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+          ran "$TEST" "$(jq -er '.shard | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
+          ran "$PHASE" "$(jq -er '.phase | length' <<<"$PLAN")" || { echo "phase ended $PHASE"; exit 1; }
+          echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
   trusted-policy:
+    # Write access serves only the last step, which removes a failing pull
+    # request from the merge queue. No step runs candidate code.
     permissions:
-      contents: read
+      contents: write
+      issues: read
+      pull-requests: write
       statuses: write
-    if: github.event_name == 'pull_request_target'
+    # An edit re-runs when either the new or the previous body mentions the
+    # command, so removing an approval re-evaluates and fails closed. `contains`
+    # also covers bodies the gate accepts after trimming.
+    # Evaluate relevant events without an implicit success() precondition.
+    # A cancelled run still cannot begin another policy evaluation.
+    if: >-
+      !cancelled() && (
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      (contains(github.event.comment.body, '/approve-gates') ||
+      (github.event.action == 'edited' && contains(github.event.changes.body.from, '/approve-gates')))))
+    # One trusted-policy run per pull request at a time: a newer run (a push, or
+    # an approval posted, edited or deleted) cancels the older one, whose
+    # always() reporter then writes failure, so a stale approval run can never
+    # publish success after a revocation.
+    concurrency:
+      group: trusted-policy-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # A comment event carries the issue, not the pull request: read the PR
+      # from the API, taking base and head from the same snapshot.
+      - name: Resolve the pull request
+        id: pr
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          retries: 3
+          script: |
+            const event = context.payload.pull_request;
+            const number = event ? event.number : context.payload.issue.number;
+            const { data } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number });
+            core.setOutput('number', String(data.number));
+            core.setOutput('base_sha', data.base.sha);
+            core.setOutput('head_sha', data.head.sha);
+            core.setOutput('head_repository', data.head.repo ? data.head.repo.full_name : '');
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
           path: trusted
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ steps.pr.outputs.head_repository }}
+          ref: ${{ steps.pr.outputs.head_sha }}
           path: candidate
           persist-credentials: false
-      - name: Validate candidate as data with base-owned policy
-        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate
-      - name: Report trusted policy on the exact PR head
-        if: always()
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+      # Workflow and gate changes need a same-repository head and an unedited
+      # `/approve-gates <head sha>` comment from an admin; re-run this job after
+      # commenting. Without this evidence such changes fail closed; data-only PRs
+      # never need it.
+      - name: Record admin approvals of the exact PR head
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
+            const { owner, repo } = context.repo;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: Number('${{ steps.pr.outputs.number }}') });
+            // A commenter the API does not know as a user (a bot) has no
+            // permission; any other API failure fails closed.
+            const permissions = new Map();
+            const permission = async (username) => {
+              if (!permissions.has(username)) {
+                const level = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username })
+                  .then(({ data }) => data.permission, (error) => {
+                    if (error.status === 404) return 'none';
+                    throw error;
+                  });
+                permissions.set(username, level);
+              }
+              return permissions.get(username);
+            };
+            const comments = [];
+            for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
+              if (!comment.user || !(comment.body || '').trim().startsWith('/approve-gates')) continue;
+              comments.push({ user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
+            }
+            require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify({
+              repository: `${owner}/${repo}`,
+              head_repository: pr.head.repo ? pr.head.repo.full_name : null,
+              head_sha: pr.head.sha,
+              comments
+            }));
+      - name: Validate candidate as data with base-owned policy
+        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
+      - name: Report trusted policy on the exact PR head
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            // If resolution failed there is no validated head: look it up again so
+            // the failure still replaces any earlier success on that head.
+            let sha = '${{ steps.pr.outputs.head_sha }}';
+            if (!sha) {
+              const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
+              sha = (await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number })).data.head.sha;
+            }
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: context.payload.pull_request.head.sha,
+              sha,
               state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
               context: 'trusted-policy',
               description: 'Base-owned policy over candidate data',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
+      # A pull request whose head fails trusted-policy (for example after its
+      # approval is revoked) leaves the merge queue, so no queued group built
+      # from it lands on an earlier success. Inside this job, the per-PR
+      # concurrency group orders it with every newer verdict; a superseded
+      # (cancelled) run never dequeues.
+      - name: Remove a failing pull request from the merge queue
+        if: failure() && steps.pr.outputs.head_sha != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            const { owner, repo } = context.repo;
+            const number = Number('${{ steps.pr.outputs.number }}');
+            const { repository } = await github.graphql(
+              'query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id headRefOid mergeQueueEntry { id } } } }',
+              { owner, repo, number });
+            const pr = repository.pullRequest;
+            // A newer head gets its own run, which decides for it.
+            if (!pr.mergeQueueEntry || pr.headRefOid !== '${{ steps.pr.outputs.head_sha }}') return;
+            await github.graphql('mutation($id: ID!) { dequeuePullRequest(input: { id: $id }) { clientMutationId } }', { id: pr.id });
+            core.notice(`Removed #${number} from the merge queue: trusted-policy failed on its head.`);

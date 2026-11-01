@@ -49,9 +49,13 @@ async fn cold_resume_requires_the_exact_local_journal_and_remote_head() {
     foreign
         .bind("scope", "org_other/dev")
         .expect("foreign scope");
-    foreign.commit(&input).expect("foreign commit");
+    let mut foreign_input = input.clone();
+    foreign_input.scope = "org_other/dev".to_owned();
+    foreign.commit(&foreign_input).expect("foreign commit");
+    let mut foreign_empty = batch(None, vec![]);
+    foreign_empty.scope = "org_other/dev".to_owned();
     foreign
-        .commit(&batch(None, vec![]))
+        .commit(&foreign_empty)
         .expect("foreign empty commit");
     assert!(matches!(
         cold.resume_from_journal(|seq| foreign.export_record(seq))

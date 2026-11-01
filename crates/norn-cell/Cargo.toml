@@ -20,7 +20,7 @@ norn-kernel = { path = "../norn-kernel" }
 norn-projections = { path = "../norn-projections" }
 # The default host adapter. Bundled SQLite, no default features (no statement
 # cache, no wasm32 backend).
-rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks"], optional = true }
+rusqlite = { version = "0.41.0", default-features = false, features = ["bundled", "hooks"], optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 thiserror = "2.0.20"

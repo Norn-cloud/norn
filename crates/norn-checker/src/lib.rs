@@ -27,8 +27,11 @@ pub mod action_set;
 pub mod artifact_set;
 pub mod codes;
 pub mod connector_path;
+pub mod consistency;
 pub mod definitions_diff;
+pub mod deontic;
 mod diagnostic;
+pub mod duties;
 pub mod entity_artifacts;
 pub mod entity_instance;
 pub mod entity_lowering;
@@ -79,7 +82,9 @@ pub mod posting;
 pub mod table_analysis;
 pub use metric::check_metrics_and_questions;
 pub mod naming_series;
+pub mod norm_precedence;
 pub mod object_types;
+pub mod obligations;
 #[allow(
     missing_docs,
     clippy::pedantic,
@@ -132,6 +137,7 @@ pub mod sealing;
 mod source_commands;
 pub mod source_schema;
 pub mod typed_roots;
+pub mod ui_interaction;
 pub mod verification;
 pub mod widget_ux;
 
@@ -178,8 +184,8 @@ pub use markings::marking_catalog_from_artifacts;
 pub use naming_series::{NamingPatternError, NamingPatternToken, parse_naming_series_pattern};
 pub use object_types::check_object_type_defs;
 pub use ontology::{
-    ontology_term_is_a, validate_ontology_instance, validate_ontology_instance_in_registry,
-    validate_ontology_pack, validate_ontology_registry,
+    LinkCoverage, ontology_term_is_a, validate_link_registry, validate_ontology_instance,
+    validate_ontology_instance_in_registry, validate_ontology_pack, validate_ontology_registry,
 };
 pub use property_types::{check_property_type_defs, resolved_property_type};
 pub use receipt::{

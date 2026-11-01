@@ -127,10 +127,12 @@ pub struct CedarSchemaProjection {
 #[must_use]
 pub fn project_cedar_schema(
     object_types: &[ObjectTypeDef],
+    interfaces: &[norn_ir::InterfaceDef],
     actions: &[ActionRoot],
 ) -> CedarSchemaProjection {
     project_cedar_schema_with_catalog_and_principal_attributes(
         object_types,
+        interfaces,
         &[],
         actions,
         &BTreeMap::new(),
@@ -142,11 +144,13 @@ pub fn project_cedar_schema(
 #[must_use]
 pub fn project_cedar_schema_with_principal_attributes(
     object_types: &[ObjectTypeDef],
+    interfaces: &[norn_ir::InterfaceDef],
     actions: &[ActionRoot],
     principal_attributes: &BTreeMap<String, CedarPrincipalAttribute>,
 ) -> CedarSchemaProjection {
     project_cedar_schema_with_catalog_and_principal_attributes(
         object_types,
+        interfaces,
         &[],
         actions,
         principal_attributes,
@@ -166,11 +170,13 @@ pub fn project_cedar_schema_with_principal_attributes(
 #[must_use]
 pub fn project_cedar_schema_with_catalog(
     object_types: &[ObjectTypeDef],
+    interfaces: &[norn_ir::InterfaceDef],
     property_types: &[PropertyTypeDef],
     actions: &[ActionRoot],
 ) -> CedarSchemaProjection {
     project_cedar_schema_with_catalog_and_principal_attributes(
         object_types,
+        interfaces,
         property_types,
         actions,
         &BTreeMap::new(),
@@ -182,6 +188,7 @@ pub fn project_cedar_schema_with_catalog(
 #[must_use]
 pub fn project_cedar_schema_with_catalog_and_principal_attributes(
     object_types: &[ObjectTypeDef],
+    interfaces: &[norn_ir::InterfaceDef],
     property_types: &[PropertyTypeDef],
     actions: &[ActionRoot],
     principal_attributes: &BTreeMap<String, CedarPrincipalAttribute>,
@@ -191,7 +198,7 @@ pub fn project_cedar_schema_with_catalog_and_principal_attributes(
     let (catalog, duplicate_catalog_names) = property_type_catalog(property_types);
     let mut attributes =
         project_object_attributes(&types, &catalog, &duplicate_catalog_names, &mut losses);
-    project_inverse_attributes(&types, &mut attributes, &mut losses);
+    project_inverse_attributes(&types, interfaces, &mut attributes, &mut losses);
 
     let principal_attributes = project_principal_attributes(principal_attributes, &mut losses);
 
@@ -377,6 +384,7 @@ fn project_object_attributes(
 
 fn project_inverse_attributes(
     types: &CedarObjectTypes<'_>,
+    interfaces: &[norn_ir::InterfaceDef],
     attributes: &mut BTreeMap<String, BTreeMap<String, CedarAttribute>>,
     losses: &mut BTreeSet<CedarLoss>,
 ) {
@@ -404,10 +412,22 @@ fn project_inverse_attributes(
                 } else {
                     types.lineages.get(candidate_name).is_some_and(|lineage| {
                         lineage.iter().any(|ancestor| {
-                            ancestor
-                                .implements
-                                .iter()
-                                .any(|interface| interface.as_str() == target_name)
+                            ancestor.implements.iter().any(|interface| {
+                                interface.as_str() == target_name
+                                    || interfaces
+                                        .iter()
+                                        .find(|definition| definition.name == *interface)
+                                        .is_some_and(|definition| {
+                                            definition
+                                                .contract_owners(|name| {
+                                                    interfaces
+                                                        .iter()
+                                                        .find(|parent| parent.name == *name)
+                                                })
+                                                .iter()
+                                                .any(|parent| parent.name.as_str() == target_name)
+                                        })
+                            })
                         })
                     })
                 };
