@@ -61,6 +61,9 @@ fn share(quantity: u128, layer: &FifoLayer) -> Option<u128> {
 }
 
 /// Apply one movement without mutating the caller's state on success or refusal.
+///
+/// # Errors
+/// Returns invalid input/overflow or insufficient stock without changing layers.
 pub fn allocate_fifo(
     layers: &[FifoLayer],
     movement: &FifoMovement,
@@ -127,6 +130,9 @@ pub fn allocate_fifo(
 }
 
 /// Reconstruct inventory from the same immutable sequence; no stored snapshot needed.
+///
+/// # Errors
+/// Returns the first invalid movement or insufficient-stock refusal in the history.
 pub fn replay_fifo(movements: &[FifoMovement]) -> Result<Vec<FifoLayer>, FifoError> {
     movements.iter().try_fold(Vec::new(), |layers, movement| {
         allocate_fifo(&layers, movement).map(|result| result.layers)
