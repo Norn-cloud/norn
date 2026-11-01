@@ -844,6 +844,24 @@ fn ambiguous_installed_mapping_targets_never_select_a_version() {
     )
     .expect("read-only projection");
     assert!(projection.mappings.is_empty());
+    let old = sales_order();
+    let mut new = serde_json::to_value(&old).expect("envelope");
+    new["version"] = json!("2.0.0");
+    let mut mapping = serde_json::to_value(example_mapping()).expect("mapping");
+    mapping["dependencies"] = json!([{ "artifactId": "commerce.SalesOrder.entity", "kind": "entity", "version": "2.0.0", "required": true }]);
+    let pinned = project(
+        &[envelope(mapping)],
+        &[old, envelope(new)],
+        &BTreeSet::new(),
+    )
+    .expect("pinned projection");
+    assert!(!pinned.mappings.is_empty());
+    assert!(
+        pinned
+            .mappings
+            .iter()
+            .all(|row| row.target.version == "2.0.0")
+    );
 }
 
 #[test]
