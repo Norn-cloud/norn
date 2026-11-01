@@ -5660,7 +5660,8 @@
         "enum": [
           "refuse",
           "toward_zero",
-          "half_even"
+          "half_even",
+          "half_away_from_zero"
         ]
       },
       "NornIrGapReason": {
