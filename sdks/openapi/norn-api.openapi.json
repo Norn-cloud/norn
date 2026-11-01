@@ -2230,6 +2230,13 @@
           "extensions": {
             "$ref": "#/components/schemas/NornIrCompositionPackRootPropertyExtensions"
           },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPackInstance"
+            },
+            "description": "Declarations in the retained scoped graph; omitted when there are none."
+          },
           "packId": {
             "type": "string"
           },
@@ -5921,6 +5928,30 @@
         },
         "additionalProperties": false
       },
+      "NornIrInterpretationEndpoint": {
+        "type": "object",
+        "description": "Exact Norn1 semantic envelope identity of an interpretation endpoint.",
+        "required": [
+          "artifactId",
+          "version",
+          "sha256"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "description": "Retained artifact, resolved without namespace inference."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Receipt-profile semantic content digest."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact artifact version."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrInvariant": {
         "type": "object",
         "description": "One declared invariant of an object type or interface.",
@@ -9243,6 +9274,97 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrPackInstance": {
+        "type": "object",
+        "description": "A scoped declaration; imports and contained instances reference this same model.\nIdentity survives release upgrades. Structural admission grants no execution authority.",
+        "required": [
+          "instanceId",
+          "scope",
+          "pack",
+          "imports",
+          "instances"
+        ],
+        "properties": {
+          "imports": {
+            "$ref": "#/components/schemas/NornIrPackInstancePropertyImports"
+          },
+          "instanceId": {
+            "type": "string"
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPackInstanceRef"
+            }
+          },
+          "pack": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NornIrPackInstancePropertyScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPackInstancePropertyImports": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrPackInstanceRef"
+        }
+      },
+      "NornIrPackInstancePropertyScope": {
+        "type": "object",
+        "properties": {
+          "businessUnitId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "orgId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenantId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspaceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPackInstanceRef": {
+        "type": "object",
+        "description": "PACK-PIN-1: an opaque instance identity, pinned separately from its release.",
+        "required": [
+          "instanceId",
+          "pack"
+        ],
+        "properties": {
+          "instanceId": {
+            "type": "string"
+          },
+          "pack": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrPolicyObligation": {
         "type": "object",
