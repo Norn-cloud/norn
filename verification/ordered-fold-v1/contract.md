@@ -89,3 +89,8 @@ must validate numeric input/output leaves as well as numeric literal operands.
 `scaled` unit correspondence covers exact results, both midpoint signs,
 negative divisors, inexact refusal, zero division, scale and overflow boundaries,
 and VM dispatch with shared fuel. Fold admission remains refused in this cut.
+
+FOLD-VM-BOUNDARY: a profiled VM checks numeric leaves in its base scope, locals
+and complete result, including identity/negation and nested records/lists. The
+iterative walk charges nodes and pending children before allocating traversal
+work. No caller can attach a profile and pass excess-precision values through.
