@@ -121,14 +121,6 @@ pub struct QueryResult {
     pub context: QueryContext,
 }
 
-pub(crate) struct QuestionInputs {
-    pub revision: LedgerHead,
-    pub query_pin: String,
-    pub definition_pin: String,
-    pub contributions: Contributions,
-    pub source_members: BTreeMap<String, u64>,
-}
-
 pub(crate) type Contributions = BTreeMap<String, (u64, Contribution)>;
 fn refused(code: &'static str) -> CellError {
     CellError::ComputeRefused(code)
@@ -149,26 +141,6 @@ impl<E: SqlEngine> CellStore<E> {
         context: QueryContext,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<QueryResult, CellError> {
-        let inputs = self.question_inputs(plan, &context, &mut visible)?;
-        debug_assert!(
-            inputs.source_members.len() <= usize::try_from(plan.max_items()).unwrap_or(0)
-        );
-        materialize(
-            plan,
-            context,
-            inputs.revision,
-            inputs.query_pin,
-            inputs.definition_pin,
-            &inputs.contributions,
-        )
-    }
-
-    pub(crate) fn question_inputs(
-        &self,
-        plan: &QuestionPlan,
-        context: &QueryContext,
-        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
-    ) -> Result<QuestionInputs, CellError> {
         self.conn.transaction(|| {
             if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
                 return Err(refused(UNSUPPORTED_ENGINE));
@@ -197,7 +169,6 @@ impl<E: SqlEngine> CellStore<E> {
                 return Err(refused("core.compute.bound_exceeded"));
             }
             let mut contributions = BTreeMap::new();
-            let mut source_members = BTreeMap::new();
             for (id, _) in ids {
                 let BudgetedRead::Found(record) = reader.object_with_budget(
                     &context.world,
@@ -211,7 +182,6 @@ impl<E: SqlEngine> CellStore<E> {
                 if record.scope != context.scope {
                     return Err(refused("core.compute.stale_input"));
                 }
-                source_members.insert(id.clone(), record.version);
                 if !visible(&record)? || context.exclusions.contains_key(&id) {
                     continue;
                 }
@@ -219,30 +189,21 @@ impl<E: SqlEngine> CellStore<E> {
                     contributions.insert(id, (record.version, value));
                 }
             }
-            let definition_pin = match reader.active_definitions_version()? {
-                Some(version) => {
-                    reader
-                        .installed_definitions(version)?
-                        .ok_or_else(|| refused("core.compute.stale_input"))?
-                        .receipt_sha256
-                }
-                None => self.model().model_hash().to_owned(),
-            };
             let query_pin = crate::codec::hash_json(&(
-                &definition_pin,
                 self.model().model_hash(),
                 plan.question(),
                 plan.definitions(),
                 plan.max_items(),
                 "norn.query/1",
             ))?;
-            Ok(QuestionInputs {
+            materialize(
+                plan,
+                context,
                 revision,
                 query_pin,
-                definition_pin,
-                contributions,
-                source_members,
-            })
+                self.model().model_hash().to_owned(),
+                &contributions,
+            )
         })
     }
 }
