@@ -411,7 +411,7 @@ impl RawObservation {
     }
 }
 
-/// What a host posts to `POST /v1/observations/{source}` (norn-api, #2893).
+/// What a host posts to `POST /v1/observations/{source}` (norn-api).
 ///
 /// It serializes to the request body fields this crate owns (`sourceId`,
 /// `eventId`, `mappingVersion`, `payload`); `source` is the path segment and
