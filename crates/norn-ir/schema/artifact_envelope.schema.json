@@ -1483,6 +1483,13 @@
             "$ref": "#/$defs/JsonValue"
           }
         },
+        "instances": {
+          "description": "Declarations in the retained scoped graph; omitted when there are none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PackInstance"
+          }
+        },
         "packId": {
           "type": "string"
         },
@@ -4555,6 +4562,30 @@
         "type"
       ]
     },
+    "InterpretationEndpoint": {
+      "description": "Exact Norn1 semantic envelope identity of an interpretation endpoint.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "description": "Retained artifact, resolved without namespace inference.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Receipt-profile semantic content digest.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Exact artifact version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version",
+        "sha256"
+      ]
+    },
     "Invariant": {
       "description": "One declared invariant of an object type or interface.",
       "type": "object",
@@ -7441,6 +7472,91 @@
         "artifactId",
         "kind",
         "version"
+      ]
+    },
+    "PackInstance": {
+      "description": "A scoped declaration; imports and contained instances reference this same model.\nIdentity survives release upgrades. Structural admission grants no execution authority.",
+      "type": "object",
+      "properties": {
+        "imports": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PackInstanceRef"
+          }
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "instances": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PackInstanceRef"
+          }
+        },
+        "pack": {
+          "$ref": "#/$defs/InterpretationEndpoint"
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "businessUnitId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "environmentId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "orgId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tenantId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspaceId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "instanceId",
+        "scope",
+        "pack",
+        "imports",
+        "instances"
+      ]
+    },
+    "PackInstanceRef": {
+      "description": "PACK-PIN-1: an opaque instance identity, pinned separately from its release.",
+      "type": "object",
+      "properties": {
+        "instanceId": {
+          "type": "string"
+        },
+        "pack": {
+          "$ref": "#/$defs/InterpretationEndpoint"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "instanceId",
+        "pack"
       ]
     },
     "PolicyObligation": {
