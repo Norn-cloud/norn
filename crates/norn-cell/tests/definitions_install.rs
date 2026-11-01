@@ -5232,19 +5232,10 @@ fn capture_purity(
         world: World::Main,
         consumes: Some(pending.consumed()),
     };
-    commit_observed_snapshot(
-        cell,
-        &catalog,
-        &slice,
-        &turn,
-        ObservedSnapshot {
-            key: &key,
-            values: &values,
-            lifecycles: &[],
-            provenance: &provenance,
-        },
-    )
-    .expect("source violation remains captured");
+    let snapshot = ObservedSnapshot {key: &key, values: &values, lifecycles: &[], provenance: &provenance};
+    let first = commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot).expect("source violation remains captured");
+    let retry = commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot).expect("exact retry");
+    assert_eq!(first, retry, "retry retains its original normalized receipt");
 }
 
 // OBS-EVIDENCE-1: local delivery/restart metadata cannot duplicate a persisted finding.
