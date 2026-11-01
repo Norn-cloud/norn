@@ -2278,6 +2278,7 @@
         "crates/norn-ir/tests/typed_remaining_roots.rs",
         "crates/norn-ir/tests/typed_setting_business_pack_roots.rs",
         "crates/norn-kernel/tests/action_commit.rs",
+        "crates/norn-kernel/tests/posting_model.rs",
         "crates/norn-kernel/tests/action_preconditions.rs",
         "crates/norn-kernel/tests/action_preparation.rs",
         "crates/norn-kernel/tests/action_series_context.rs",
