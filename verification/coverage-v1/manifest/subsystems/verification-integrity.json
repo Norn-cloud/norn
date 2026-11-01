@@ -453,6 +453,8 @@
     "tools/norn-ts/fixtures/stock-parity/scenarios.ts",
     "tools/norn-ts/src/parity/stock-trace.ts",
     "tools/norn-ts/test/stock-trace.test.ts",
+    "tools/norn-ts/fixtures/stock/stock.source.ts",
+    "tools/norn-ts/test/stock-definitions.test.ts",
     "crates/norn-checker/src/obligations/induction.rs"
   ]
 }
