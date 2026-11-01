@@ -366,7 +366,11 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
             .quantity_balance_versions("main", &funding)
             .expect("funding fences");
         cell.commit_quantity(&funding, "fund").expect("fund");
-        let request = quantity_support::reserve(2, "hold", amount, 11000);
+        let request = if direct_post {
+            quantity_support::post(2, "hold", "ship", amount)
+        } else {
+            quantity_support::reserve(2, "hold", amount, 11000)
+        };
         let versions = cell
             .store()
             .read()

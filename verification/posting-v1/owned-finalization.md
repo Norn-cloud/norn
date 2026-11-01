@@ -30,12 +30,10 @@ receipt/delivery conformance in part (d). Direct Post and protected rule-output
 admission remain subsequent changes.
 
 ## Declared direct Post expansion
-
 A quantity-backed action may select `Post` with a definition-pinned template,
 posting identity field and exact parameter bindings. The configured ledger's
 certificate, funding checks and caller balance fences still govern admission.
 The same binding validator covers owned-row and ordinary business effects.
-No configuration or opening operation is admitted through this declaration.
 
 POST-ATOMIC and POST-IDENTITY conformance extends the native owned-row witness
 to direct Post: the ledger gains exactly one commit containing the parent,
@@ -49,7 +47,6 @@ alpha invoke/replay remain obligations of the stock-specific wiring.
 Typed TypeScript authoring exposes this direct Post declaration through
 `Norn.action.quantityEffect`. The syntax compiler preserves its closed bindings
 and rejects unsupported operation kinds, extra members and invalid scales.
-Reserve/PostReservation remain available through the existing Rust IR.
 
 POST-REFUSAL-REASON: typed quantity refusals survive the host/commit/decision
 boundaries. The public refusal retains insufficiency as a readable precondition;
