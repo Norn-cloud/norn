@@ -114,6 +114,10 @@ def main():
                 git('checkout', '--ours', '--', path)
                 subprocess.run(['cargo', 'update', '-w', '--offline'], check=True)
                 git('add', '--', path)
+                record = PROVENANCE + path + '.json'
+                if record not in pending:
+                    value = json.loads(Path(record).read_text())
+                    write(record, provenance(record, value, value, value, conflicts()))
         except (ValueError, OSError, subprocess.CalledProcessError) as error:
             print(f'{path}: {error}', file=sys.stderr)
     remaining = conflicts()
