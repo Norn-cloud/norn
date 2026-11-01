@@ -1,11 +1,5 @@
 {
-<<<<<<< HEAD
-  "sha256": "f4be8e3b8dc2dd8aa63f150235a6496aff4f33a3dd83ab51564fb6c48d27d8a7",
-||||||| a5b4cee7f
-  "sha256": "3fec89d9f447eef6a29738bb4cc290acc844fe0df28b8afef94f8fe5699806dd",
-=======
-  "sha256": "4f7f331a4f43530986e306d7ac17cb5a44fd29a0ff5aa406dd54b27d5dbfaae5",
->>>>>>> fix/source-decode-verbatim
+  "sha256": "ab3624762054630516ebc0043c3ca57f5d9174ed8dc1cd9c19a9283ab02760c1",
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",
