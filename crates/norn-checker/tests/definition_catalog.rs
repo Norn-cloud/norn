@@ -1234,4 +1234,3 @@ fn graph_catalog_roles_follow_declarations_not_lifecycle_shape() {
             .all(|row| row.role == norn_ir::ConceptRole::Happening)
     );
 }
-
