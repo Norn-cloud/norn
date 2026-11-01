@@ -454,3 +454,21 @@ fn parameter_exact_1_decimal_literals_survive_envelope_and_runtime() {
         assert!(!decodes::<SettingRoot>(payload), "{value}");
     }
 }
+
+proptest::proptest! {
+    #[test]
+    fn parameter_exact_1_generated_literals_preserve_value(
+        whole in 0_u64..1_000_000_000_000,
+        fraction in 0_u32..100_000_000,
+        negative in proptest::bool::ANY,
+    ) {
+        let literal = format!("{}{whole}.{fraction:08}", if negative { "-" } else { "" });
+        let mut payload = payload_json(SETTING_FIXTURE);
+        payload["value"] = json!(&literal);
+        let setting: SettingRoot = serde_json::from_value(payload.clone()).expect("exact setting");
+        proptest::prop_assert_eq!(
+            setting.value.runtime_value().expect("exact runtime"),
+            norn_ir::RuntimeValue::from_json_text(&literal).expect("exact decimal"));
+        proptest::prop_assert_eq!(serde_json::to_value(setting).expect("encode"), payload);
+    }
+}
