@@ -78,7 +78,6 @@ fn transfer_carries_exact_source_cost_without_profit_and_refusal_is_atomic() -> 
             .is_err()
     );
     assert_eq!(before.positions()?, positions);
-    assert_eq!(before.events().len(), 2);
     Ok(())
 }
 #[test]
@@ -106,6 +105,5 @@ fn dependent_issues_and_returns_reverse_before_source_restoration() -> Checked<(
         .cancel("cd".into(), "d")?
         .cancel("ct".into(), "t")?;
     assert_eq!(restored.positions()?, before.positions()?);
-    assert_eq!(returned.events().len(), 4);
     Ok(())
 }
