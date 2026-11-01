@@ -19,7 +19,8 @@ the existing scalar codec. It introduces no alternate numeric representation.
   qualified here. Vocabulary membership and dimension-aware arithmetic remain
   missing capabilities; syntax-only unit validation does not prove VAL-UNIT-1.
 - Explicit `round(value, 2)` uses midpoint-away-from-zero: `1.005` → `1.01`,
-  `-1.005` → `-1.01`. Division by zero returns an evaluator error.
+  `-1.005` → `-1.01`. Division by zero evaluates to null in the current profile; admission
+  refuses it as a required number. This does not establish runtime refusal.
   Existing `norn-zen/6` implicit arithmetic scale reduction is unchanged;
   declared rounding-site admission and half-even authoring are not qualified.
 
@@ -31,8 +32,8 @@ inputs instead of erasing it into a generic value-kind mismatch.
 
 Correspondence: `val_roundtrip_runtime_tokens_reach_the_real_evaluator_exactly`
 checks runtime token → actual evaluator, including both profile boundaries;
-`val_round_explicit_midpoint_away_and_zero_divisor` checks explicit rounding
-and zero division; `val_roundtrip_transport_codec_commit_and_reopen` checks
+`val_round_explicit_midpoint_away_and_zero_divisor_admission` checks explicit
+rounding, required-number admission refusal and current null evaluation; `val_roundtrip_transport_codec_commit_and_reopen` checks
 `9007199254740993` and `0.10` through JSON, scalar encoding, SQLite commit,
 ledger/hash verification and reopen. These are sampled executable checks,
 not a universal proof or qualification of every API/CLI/MCP ingress.

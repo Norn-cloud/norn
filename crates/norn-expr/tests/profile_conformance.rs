@@ -745,19 +745,20 @@ fn val_roundtrip_runtime_tokens_reach_the_real_evaluator_exactly() {
 }
 
 #[test]
-fn val_round_explicit_midpoint_away_and_zero_divisor() {
+fn val_round_explicit_midpoint_away_and_zero_divisor_admission() {
     admitted("round(input.a, 2)", &Type::Number);
     for (input, expected) in [("1.005", "1.01"), ("-1.005", "-1.01")] {
         assert_eq!(eval("round(input, 2)", num(input)).unwrap(), num(expected));
     }
-    admitted("input.a / input.b", &Type::Number);
-    assert!(matches!(
+    refused("input.a / 0", &Type::Number, &[codes::RESULT_MISMATCH]);
+    assert_eq!(
         eval(
             "input.a / input.b",
             Value::object([("a", num("1.005")), ("b", num("0"))])
-        ),
-        Err(ExprError::Evaluation { .. })
-    ));
+        )
+        .unwrap(),
+        Value::Null
+    );
 }
 
 #[test]
