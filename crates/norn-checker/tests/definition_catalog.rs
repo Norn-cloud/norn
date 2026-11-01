@@ -8,13 +8,13 @@
 
 //! Correspondence to verification/definition-catalog-v1/SPEC.md.
 use norn_checker::definition_catalog::project;
-use norn_checker::resolve_artifact_set;
-use norn_ir::ArtifactEnvelope;
+use norn_checker::{EntityArtifactSetContext, check_artifact_set, resolve_artifact_set};
 use norn_ir::definition_catalog::{
     ArtifactKey, DefinitionCatalog, DependencyVia, DependsOnRow, LawBinding, MapRule, Member,
     MemberRef, TypeKind, WriteVia,
 };
 use norn_ir::mapping::GapReason;
+use norn_ir::{ArtifactEnvelope, PropertyTypeName};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
@@ -734,6 +734,230 @@ fn a_subtype_row_mutation_writes_its_inherited_child_types() {
             "shop.OrderLine.entity type:shop.OrderLine",
             "shop.RushOrder.entity type:shop.RushOrder"
         ]
+    );
+}
+
+#[test]
+fn two_installed_versions_of_one_type_bind_only_what_admission_binds() {
+    // The checker does not admit two definitions of one type name: the
+    // entity model reports a duplicate and neither version has an effective
+    // view, so inherited members and owned collections fail closed. The
+    // catalog binds exactly what admission binds: the pinned type's own
+    // row, and nothing it would have to derive.
+    let [parent, child] = request_types();
+    let mut newer_child = serde_json::to_value(&child).expect("envelope encodes");
+    newer_child["version"] = json!("2.0.0");
+    let base = [envelope(newer_child), child, parent];
+    let effective = norn_checker::EffectiveCatalog::from_artifacts(&base);
+    assert!(matches!(
+        effective.object_type("shop.RushRequest.entity"),
+        Some(Err(_))
+    ));
+    let action = approve_action(
+        "shop.approve.action",
+        "shop.RushRequest",
+        "shop.RushRequest.entity",
+        "1.0.0",
+    );
+    let catalog = catalog(&[action], &base);
+    // `approve` is inherited from `shop.Request`; with no admitted lineage
+    // it binds nothing.
+    assert!(catalog.writes.is_empty());
+}
+
+#[test]
+fn a_decide_graph_writes_an_installed_type_it_names() {
+    // The decision names `commerce.PurchaseOrder`, which only the installed
+    // base defines, and declares no envelope dependency on it.
+    let order = envelope(read_json(
+        "fixtures/ir/entity-v2/artifact-set/commerce-purchase-order.entity.json",
+    ));
+    let rule = envelope(read_json(
+        "fixtures/rule-ir-v2/valid/purchase-order-approval.rule.json",
+    ));
+    let catalog = catalog(&[rule], &[order]);
+    let mut writes: Vec<(String, String, WriteVia)> = catalog
+        .writes
+        .iter()
+        .map(|row| {
+            (
+                row.target.artifact_id.clone(),
+                row.target.member.id(),
+                row.via,
+            )
+        })
+        .collect();
+    writes.sort();
+    assert_eq!(
+        writes,
+        [
+            (
+                "commerce.PurchaseOrder.entity".to_owned(),
+                "transition:commerce.PurchaseOrder#status/approve".to_owned(),
+                WriteVia::FactTransition
+            ),
+            (
+                "commerce.PurchaseOrder.entity".to_owned(),
+                "transition:commerce.PurchaseOrder#status/submit".to_owned(),
+                WriteVia::FactTransition
+            ),
+            (
+                "commerce.PurchaseOrder.entity".to_owned(),
+                "type:commerce.PurchaseOrder".to_owned(),
+                WriteVia::FactObject
+            ),
+        ]
+    );
+    assert!(
+        catalog
+            .writes
+            .iter()
+            .all(|row| catalog.contains(&row.target))
+    );
+}
+
+fn case_artifact(entry: &Value) -> ArtifactEnvelope {
+    let (fixture, overrides) = match entry {
+        Value::String(path) => (path.as_str(), None),
+        Value::Object(object) => (
+            object["fixture"].as_str().expect("fixture path"),
+            object.get("patch").and_then(Value::as_object),
+        ),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_)) => {
+            panic!("unexpected case artifact {other}")
+        }
+    };
+    let mut value = read_json(&format!("fixtures/{fixture}"));
+    for (key, member) in overrides.into_iter().flatten() {
+        value[key] = member.clone();
+    }
+    envelope(value)
+}
+
+fn admitted_write_types(writer: &ArtifactEnvelope) -> BTreeSet<String> {
+    let payload = serde_json::to_value(writer.payload.to_json_value()).expect("payload encodes");
+    let strings = |value: &Value| -> Vec<String> {
+        value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if payload.get("effectProgram").is_some() {
+        payload["writes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|write| write["entityKind"].as_str().map(str::to_owned))
+            .collect()
+    } else {
+        strings(&payload["outputSchema"]["properties"]["facts"]["items"]["properties"]["objectType"]["enum"])
+            .into_iter()
+            .collect()
+    }
+}
+
+#[test]
+fn over_every_admitted_fixture_set_the_catalog_writes_what_admission_admits() {
+    let dir = format!("{ROOT}/fixtures/ir/artifact-set");
+    let mut checked = 0;
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .expect("case directory")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| path.to_string_lossy().ends_with(".case.json"))
+        .collect();
+    paths.sort();
+    for path in paths {
+        let case: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("case reads"))
+                .expect("case parses");
+        // Admitted registry-layer sets (a tenant layer needs its own context).
+        if case["expect"]
+            .as_array()
+            .is_none_or(|expect| !expect.is_empty())
+            || case.get("tenant").is_some()
+        {
+            continue;
+        }
+        let load = |key: &str| -> Vec<ArtifactEnvelope> {
+            case[key]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(case_artifact)
+                .collect()
+        };
+        let (artifacts, base) = (load("artifacts"), load("base"));
+        let registry: BTreeSet<PropertyTypeName> = case["registry"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|name| PropertyTypeName(name.as_str().expect("registry name").to_owned()))
+            .collect();
+        let findings = check_artifact_set(
+            &artifacts,
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: &base,
+                tenant: None,
+            },
+        );
+        assert!(
+            findings.is_empty(),
+            "{} is admitted: {:?}",
+            path.display(),
+            findings
+                .iter()
+                .map(|finding| finding.code.as_str())
+                .collect::<Vec<_>>()
+        );
+        let catalog = project(&artifacts, &base, &registry).expect("catalog projects");
+        for writer in artifacts.iter().chain(&base) {
+            let written: BTreeSet<String> = catalog
+                .writes
+                .iter()
+                .filter(|row| row.writer.artifact_id == writer.artifact_id)
+                .filter_map(|row| match &row.target.member {
+                    Member::Type { type_name }
+                    | Member::Property { type_name, .. }
+                    | Member::Transition { type_name, .. } => Some(type_name.clone()),
+                    Member::Artifact {}
+                    | Member::Link { .. }
+                    | Member::State { .. }
+                    | Member::ObjectMap { .. }
+                    | Member::Law { .. } => None,
+                })
+                .collect();
+            let is_writer = matches!(
+                writer.kind(),
+                norn_ir::ArtifactKind::Action | norn_ir::ArtifactKind::Rule
+            );
+            if !is_writer || (written.is_empty() && admitted_write_types(writer).is_empty()) {
+                continue;
+            }
+            assert_eq!(
+                written,
+                admitted_write_types(writer),
+                "{}: {}",
+                path.display(),
+                writer.artifact_id
+            );
+            assert!(
+                catalog
+                    .writes
+                    .iter()
+                    .all(|row| catalog.contains(&row.target))
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 3,
+        "the admitted fixture sets exercise writers ({checked})"
     );
 }
 #[test]
