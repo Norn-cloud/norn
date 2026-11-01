@@ -22,7 +22,7 @@ module field_authority {
   }
   action write(kind: str, producer: str, supplies: bool, nextValue: int): bool = {
     val allowed = if (kind == "create") not(present) and (not(protected) or not(supplies) or producer == "rule")
-      else present and not(immutable) and (kind == "delete" or not(protected) or producer == "rule")
+      else present and not(immutable) and (not(protected) or producer == "rule")
     all {
       beforeExists' = present, beforeValue' = stored, immutable' = immutable, protected' = protected,
       refused' = not(allowed), op' = kind, origin' = producer,
@@ -39,7 +39,12 @@ module field_authority {
   }
   def invariant = (refused implies (present == beforeExists and stored == beforeValue))
     and ((immutable and beforeExists) implies (present and stored == beforeValue))
-    and ((protected and beforeExists and op == "set" and origin != "rule") implies refused)
+    and ((protected and beforeExists and (op == "set" or op == "delete") and origin != "rule") implies refused)
+  run deleteThenRecreateRefusedTest = initial(false, true)
+    .then(write("create", "rule", true, 2))
+    .then(write("delete", "action", false, 0))
+    .then(all { assert(invariant and refused and present and stored == 2), write("create", "action", false, 0) })
+    .then(all { assert(invariant and refused and present and stored == 2), write("set", "rule", true, 2) })
   run ruleCanUpdateProtectedTest = initial(false, true)
     .then(write("create", "rule", true, 1))
     .then(write("set", "action", true, 2))
