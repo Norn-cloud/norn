@@ -4019,4 +4019,3 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
             .exists()
     );
 }
-

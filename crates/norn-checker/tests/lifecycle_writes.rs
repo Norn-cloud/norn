@@ -838,4 +838,3 @@ fn generated_series_key_cannot_be_written_by_input_derivation() {
         ))
     );
 }
-
