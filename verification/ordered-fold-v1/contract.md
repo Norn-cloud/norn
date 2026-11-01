@@ -107,3 +107,8 @@ the reachable closure; an internal-plan collision refuses before evaluation.
 FOLD-ORDER-FUEL: sorting charges both key vectors before each comparison (one
 per integer, one plus UTF-8 bytes per string). Inserting canonical identity n
 charges n times one plus its bytes, conservatively bounding identity searches.
+
+FOLD-VM-BOUNDARY: a profiled VM checks numeric leaves in its base scope, locals
+and complete result, including identity/negation and nested records/lists. The
+iterative walk charges nodes and pending children before allocating traversal
+work. No caller can attach a profile and pass excess-precision values through.
