@@ -100,6 +100,35 @@ fn unwinding_rolls_back_native_transaction() {
 }
 
 #[test]
+fn a_double_quoted_name_that_matches_no_column_is_an_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for engine in [
+        NativeEngine::open_in_memory().expect("open"),
+        NativeEngine::open(
+            &dir.path().join("cell.sqlite"),
+            norn_cell::StoreOptions::default(),
+        )
+        .expect("open file"),
+    ] {
+        engine
+            .execute_batch("CREATE TABLE item (\"p:weight\" INTEGER)")
+            .expect("schema");
+        engine
+            .execute("INSERT INTO item VALUES (?1)", &[SqlValue::Integer(7)])
+            .expect("insert");
+        let error = engine
+            .query_row("SELECT \"weight\" FROM item", &[], |row| {
+                row.get::<String>(0)
+            })
+            .expect_err("a stale column name must not read back as text");
+        assert!(error.to_string().contains("no such column"), "{error}");
+        engine
+            .execute_batch("CREATE INDEX stale ON item (\"weight\")")
+            .expect_err("DDL must not take a stale column name as text either");
+    }
+}
+
+#[test]
 fn integer_boundary_is_exact_in_both_directions() {
     let engine = NativeEngine::open_in_memory().expect("open");
     for integer in [-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER] {
@@ -695,7 +724,7 @@ fn full_range_integers_round_trip_without_crossing_the_seam_as_integers() {
     let object_storage = verifier
         .query_row(
             &format!(
-                "SELECT typeof(\"amount\"), CAST(\"amount\" AS TEXT) FROM {} WHERE {} = ?1 AND {} = ?2",
+                "SELECT typeof(\"p:amount\"), CAST(\"p:amount\" AS TEXT) FROM {} WHERE {} = ?1 AND {} = ?2",
                 quote_identifier(&object_table),
                 quote_identifier(WORLD_COLUMN),
                 quote_identifier(ID_COLUMN),
@@ -708,7 +737,7 @@ fn full_range_integers_round_trip_without_crossing_the_seam_as_integers() {
     let link_storage = verifier
         .query_row(
             &format!(
-                "SELECT typeof(\"weight\"), CAST(\"weight\" AS TEXT) FROM {} WHERE {} = ?1 AND {} = ?2 AND {} = ?3",
+                "SELECT typeof(\"p:weight\"), CAST(\"p:weight\" AS TEXT) FROM {} WHERE {} = ?1 AND {} = ?2 AND {} = ?3",
                 quote_identifier(&link_table),
                 quote_identifier(WORLD_COLUMN),
                 quote_identifier(SOURCE_COLUMN),
@@ -730,7 +759,7 @@ fn full_range_integers_round_trip_without_crossing_the_seam_as_integers() {
         corruptor
             .execute(
                 &format!(
-                    "UPDATE {} SET \"amount\" = ?1 WHERE {} = ?2 AND {} = ?3",
+                    "UPDATE {} SET \"p:amount\" = ?1 WHERE {} = ?2 AND {} = ?3",
                     quote_identifier(&object_table),
                     quote_identifier(WORLD_COLUMN),
                     quote_identifier(ID_COLUMN),
@@ -869,7 +898,9 @@ fn wide_integer_projections_split_before_the_statement_limit() {
     use norn_cell::reactive::{BudgetedRead, DecodeBudget, ReactiveLimits};
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD};
     use norn_ir::RuntimeValue as Value;
-    use norn_projections::sqlite_ddl::{ID_COLUMN, WORLD_COLUMN, quote_identifier};
+    use norn_projections::sqlite_ddl::{
+        ID_COLUMN, WORLD_COLUMN, property_column_name, quote_identifier,
+    };
     use serde_json::json;
     use std::collections::BTreeMap;
 
@@ -901,7 +932,10 @@ fn wide_integer_projections_split_before_the_statement_limit() {
     );
     let reactive_projection_bytes: usize = property_ids
         .iter()
-        .map(|property| format!("COALESCE(octet_length({}), 8)", quote_identifier(property)).len())
+        .map(|property| {
+            let column = quote_identifier(&property_column_name(property));
+            format!("COALESCE(octet_length({column}), 8)").len()
+        })
         .sum();
     let reactive_suffix = format!(
         " FROM {} WHERE {} = ?1 AND {} = ?2",

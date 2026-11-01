@@ -2,6 +2,7 @@
 //! by the commit path (the guard and the writer read through the same
 //! functions inside the commit transaction).
 
+use crate::payload_storage::EVENT_BYTES;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -29,8 +30,8 @@ use crate::store::{Consumption, OutboxCommand, Receipt, ReceiptBody, TimerEntry}
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
     DEFINITION_VERSION, GENESIS_HASH, INBOX, LEDGER, LINK_CREATION, LINK_VERSIONS, MARKING_CURRENT,
-    MARKING_OCCURRENCE, MARKING_SNAPSHOT, MARKING_VERSION, OUTBOX, PENDING_LINK_INDEX,
-    PERFORM_CLAIM, RECEIPT, RUN, TIMER, VERSIONS,
+    MARKING_OCCURRENCE, MARKING_SNAPSHOT, MARKING_SUBJECT, MARKING_VERSION, OUTBOX,
+    PENDING_LINK_INDEX, PERFORM_CLAIM, RECEIPT, RUN, TIMER, VERSIONS, marking_subject,
 };
 
 const MAX_LINK_PAGE_CANDIDATES: usize = 1_000;
@@ -237,6 +238,24 @@ pub enum LinkDirection {
     In,
     /// Links with the requested object at either endpoint.
     Both,
+}
+
+/// Count the objects of one concrete type in `root_table` whose current version
+/// has a current marking row for property `?3`. Each object resolves its marking
+/// subject through the unique `(world, object_type, id)` index, then seeks that
+/// subject's current row by the full primary key: no per-row correlated scan.
+fn marking_property_rows_sql(root_table: &str) -> String {
+    format!(
+        "SELECT COUNT(*) FROM {root} AS o \
+         JOIN \"{MARKING_SUBJECT}\" AS ms ON ms.\"world\" = o.{world} AND ms.\"object_type\" = o.{ty} AND ms.\"id\" = o.{id} \
+         JOIN \"{MARKING_CURRENT}\" AS m ON m.\"world\" = o.{world} AND m.\"object_type\" = o.{ty} AND m.\"subject\" = ms.\"subject\" AND m.\"property\" = ?3 AND m.\"version\" = o.{version} \
+         WHERE o.{world} = ?1 AND o.{ty} = ?2",
+        root = quote_identifier(root_table),
+        world = quote_identifier(WORLD_COLUMN),
+        ty = quote_identifier(TYPE_COLUMN),
+        id = quote_identifier(ID_COLUMN),
+        version = quote_identifier(VERSION_COLUMN),
+    )
 }
 
 #[allow(
@@ -1468,15 +1487,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         } else {
             MARKING_VERSION
         };
+        let subject = marking_subject(self.conn, world, object_type, id)?;
         let sql = format!(
-            "SELECT \"property\", \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"version\" = ?4 ORDER BY \"property\""
+            "SELECT \"property\", \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"version\" = ?4 ORDER BY \"property\""
         );
         let rows = self.conn.query(
             &sql,
             params![
                 world,
                 object_type,
-                id,
+                subject,
                 to_i64(version, "marking snapshot version")?
             ],
         )?;
@@ -1529,11 +1549,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             Some(version) => version,
             None => self.version(world, object_type, id)?,
         };
+        let subject = marking_subject(self.conn, world, object_type, id)?;
         let encoded: Option<String> = self.conn.query_optional(
             &format!(
-                "SELECT \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
+                "SELECT \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
             ),
-            params![world, object_type, id, MARKING_OCCURRENCE, to_i64(version, "marking snapshot version")?],
+            params![world, object_type, subject, MARKING_OCCURRENCE, to_i64(version, "marking snapshot version")?],
             |row| row.get(0),
         )?;
         encoded
@@ -1595,20 +1616,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 params![world, concrete_type],
                 |row| row.get(0),
             )?.ok_or_else(|| CellError::Engine("marking snapshot count query returned no row".to_owned()))?;
-            let property_rows: i64 = self.conn.query_optional(
-                &format!(
-                    "SELECT COUNT(*) FROM {} AS o JOIN \"{MARKING_CURRENT}\" AS m ON m.\"world\" = o.{} AND m.\"object_type\" = o.{} AND m.\"id\" = o.{} AND m.\"version\" = o.{} AND m.\"property\" = ?3 WHERE o.{} = ?1 AND o.{} = ?2",
-                    quote_identifier(&root.table),
-                    quote_identifier(WORLD_COLUMN),
-                    quote_identifier(TYPE_COLUMN),
-                    quote_identifier(ID_COLUMN),
-                    quote_identifier(VERSION_COLUMN),
-                    quote_identifier(WORLD_COLUMN),
-                    quote_identifier(TYPE_COLUMN),
-                ),
-                params![world, concrete_type, property],
-                |row| row.get(0),
-            )?.ok_or_else(|| CellError::Engine("current marking count query returned no row".to_owned()))?;
+            let property_rows: i64 = self
+                .conn
+                .query_optional(
+                    &marking_property_rows_sql(&root.table),
+                    params![world, concrete_type, property],
+                    |row| row.get(0),
+                )?
+                .ok_or_else(|| {
+                    CellError::Engine("current marking count query returned no row".to_owned())
+                })?;
             if actual != snapshots || actual != property_rows {
                 return Ok(None);
             }
@@ -2198,15 +2215,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             }));
         };
         let mut names: Vec<String> = self.model.chain(&concrete)?.to_vec();
-        for name in self.model.chain(&concrete)? {
-            names.extend(
-                self.model
-                    .def(name)?
-                    .implements
-                    .iter()
-                    .map(|interface| interface.as_str().to_owned()),
-            );
-        }
+        names.extend(
+            self.model
+                .interface_aliases(&concrete)
+                .into_iter()
+                .map(str::to_owned),
+        );
 
         // The read admits stored interface targets as well as concrete types.
         // Capture those same aliases even for an empty edge range.
@@ -2680,15 +2694,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             return Ok(Vec::new());
         };
         let mut names: Vec<String> = self.model.chain(&concrete)?.to_vec();
-        for name in self.model.chain(&concrete)? {
-            names.extend(
-                self.model
-                    .def(name)?
-                    .implements
-                    .iter()
-                    .map(|interface| interface.as_str().to_owned()),
-            );
-        }
+        names.extend(
+            self.model
+                .interface_aliases(&concrete)
+                .into_iter()
+                .map(str::to_owned),
+        );
         let rows = self.conn.query(
             &format!(
                 "SELECT \"link_table\", \"source\", \"target\", \"link\", \"source_type\", \"target_type\" FROM \"{LINK_VERSIONS}\" WHERE \"world\" = ?1 AND (\"source\" = ?2 OR \"target\" = ?2) ORDER BY \"link_table\", \"source\", \"target\""
@@ -3026,7 +3037,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         let page_limit_sql = i64::try_from(limit).unwrap_or(MAX_SAFE_INTEGER);
         let length_rows = self.conn.query(
             &format!(
-                "SELECT \"seq\", COALESCE(octet_length(\"world\"), 0), COALESCE(octet_length(\"event\"), 0), COALESCE(octet_length(\"prev_hash\"), 0), COALESCE(octet_length(\"hash\"), 0) FROM \"{LEDGER}\" WHERE \"seq\" > ?1 ORDER BY \"seq\" LIMIT ?2"
+                "SELECT \"seq\", COALESCE(octet_length(\"world\"), 0), COALESCE({EVENT_BYTES}, 0), COALESCE(octet_length(\"prev_hash\"), 0), COALESCE(octet_length(\"hash\"), 0) FROM \"{LEDGER}\" WHERE \"seq\" > ?1 ORDER BY \"seq\" LIMIT ?2"
             ),
             params![to_i64(after, "seq")?, page_limit_sql],
         )?;
@@ -3076,7 +3087,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         // Check end-of-history even with no rows left: exactly exhausting the
         // admitted scan is valid, but another real ledger row must refuse.
         let lengths = self.conn.query(
-            &format!("SELECT \"seq\", \"commit_seq\", json_extract(\"event\", '$.op') IN ('data_quality_finding', 'observed_out_of_band'), json_extract(\"event\", '$.type') = 'observation.recorded', octet_length(\"event\") + octet_length(\"world\") + octet_length(\"prev_hash\") + octet_length(\"hash\") + 64 FROM \"{LEDGER}\" WHERE \"seq\" > ?1 ORDER BY \"seq\" LIMIT ?2"),
+            &format!("SELECT \"seq\", \"commit_seq\", json_extract(\"event\", '$.op') IN ('data_quality_finding', 'observed_out_of_band'), json_extract(\"event\", '$.type') = 'observation.recorded', {EVENT_BYTES} + octet_length(\"world\") + octet_length(\"prev_hash\") + octet_length(\"hash\") + 64 FROM \"{LEDGER}\" WHERE \"seq\" > ?1 ORDER BY \"seq\" LIMIT ?2"),
             params![to_i64(after, "seq")?, i64::try_from(limit.min(budget.remaining_rows().saturating_add(1))).unwrap_or(MAX_SAFE_INTEGER)],
         )?;
         if lengths.len() > budget.remaining_rows() {
@@ -3103,7 +3114,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 } else {
                     let remaining = budget.remaining_rows().saturating_sub(work_rows);
                     let lookup = self.conn.query(
-                        &format!("SELECT CASE WHEN json_extract(\"event\", '$.op') IN ('data_quality_finding', 'observed_out_of_band') THEN octet_length(\"event\") + octet_length(\"world\") + octet_length(\"prev_hash\") + octet_length(\"hash\") + 64 ELSE NULL END FROM \"{LEDGER}\" WHERE \"commit_seq\" = ?1 ORDER BY \"seq\" LIMIT ?2"),
+                        &format!("SELECT CASE WHEN json_extract(\"event\", '$.op') IN ('data_quality_finding', 'observed_out_of_band') THEN {EVENT_BYTES} + octet_length(\"world\") + octet_length(\"prev_hash\") + octet_length(\"hash\") + 64 ELSE NULL END FROM \"{LEDGER}\" WHERE \"commit_seq\" = ?1 ORDER BY \"seq\" LIMIT ?2"),
                         params![to_i64(commit, "commit_seq")?, i64::try_from(remaining.saturating_add(1)).unwrap_or(MAX_SAFE_INTEGER)],
                     )?;
                     if lookup.len() > remaining {
@@ -3267,10 +3278,31 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 seq: to_u64(row.get(0)?, "seq")?,
                 commit_seq: to_u64(row.get(1)?, "commit_seq")?,
                 world: row.get(2)?,
-                event: serde_json::from_str(&event)?,
+                event: crate::payload_storage::decode_event(
+                    self.conn,
+                    to_u64(row.get(0)?, "seq")?,
+                    &row.get::<String>(2)?,
+                    &event,
+                )?,
                 prev_hash: row.get(4)?,
                 hash: row.get(5)?,
             };
+            // Result placeholders must never escape when their encoding index
+            // is missing or changed. Valid legacy lookalikes retain their own hash.
+            if entry.event.get("type").and_then(Value::as_str) == Some("command.result")
+                && entry_hash(
+                    entry.seq,
+                    entry.commit_seq,
+                    &entry.world,
+                    &entry.event,
+                    &entry.prev_hash,
+                )? != entry.hash
+            {
+                return Err(CellError::LedgerCorrupt {
+                    seq: entry.seq,
+                    reason: "command result payload does not verify".to_owned(),
+                });
+            }
             self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
             out.push(entry);
         }
@@ -3342,6 +3374,47 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             params![to_i64(after, "commit_seq")?, limit],
         )?;
         decode_receipts(rows)
+    }
+
+    /// Iterate retained receipts in bounded pages, including an unfiltered first
+    /// page so malformed nonpositive sequence numbers cannot be hidden.
+    pub(crate) fn receipt_stream(&self) -> impl Iterator<Item = Result<Receipt, CellError>> + '_ {
+        self.receipt_stream_from(0)
+    }
+
+    fn receipt_stream_from(
+        &self,
+        checkpoint: u64,
+    ) -> impl Iterator<Item = Result<Receipt, CellError>> + '_ {
+        let mut page = std::collections::VecDeque::new();
+        let mut after = (checkpoint != 0).then_some(checkpoint);
+        let mut done = false;
+        std::iter::from_fn(move || {
+            if let Some(receipt) = page.pop_front() {
+                return Some(Ok(receipt));
+            }
+            if done {
+                return None;
+            }
+            let fetched = match after {
+                Some(after) => self.receipts_after(after, 32),
+                None => self.conn.query(
+                    &format!("SELECT \"commit_seq\", \"world\", \"idempotency_key\", \"request_hash\", \"receipt\", \"receipt_hash\" FROM \"{RECEIPT}\" ORDER BY \"commit_seq\" LIMIT 32"), params![]
+                ).and_then(decode_receipts),
+            };
+            match fetched {
+                Ok(receipts) => {
+                    after = receipts.last().map(|receipt| receipt.body.commit_seq);
+                    done = receipts.is_empty();
+                    page = receipts.into();
+                    page.pop_front().map(Ok)
+                }
+                Err(error) => {
+                    done = true;
+                    Some(Err(error))
+                }
+            }
+        })
     }
 
     /// Read a bounded receipt page only when all receipt bodies fit the
@@ -3551,80 +3624,52 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             seq: base,
             reason: "the verified checkpoint no longer anchors the ledger".to_owned(),
         };
-        // The anchor event (none for an empty prefix), then the suffix.
-        let mut entries = self.ledger(base)?;
         if base == 0 {
-            // Commits that appended no events leave the genesis hash; their
-            // last receipt is checked as the anchor below.
             if checkpoint.hash != GENESIS_HASH {
                 return Err(anchor_corrupt());
             }
         } else {
-            match entries.first() {
-                Some(anchor) if anchor.seq == base && anchor.hash == checkpoint.hash => {}
-                _ => return Err(anchor_corrupt()),
+            let anchor = self.ledger_range(base, Some(1))?;
+            if !anchor
+                .first()
+                .is_some_and(|entry| entry.seq == base && entry.hash == checkpoint.hash)
+            {
+                return Err(anchor_corrupt());
             }
-            entries.remove(0);
         }
-        let mut heads: Vec<String> = Vec::with_capacity(entries.len());
-        let mut prev = checkpoint.hash.clone();
-        let mut expected_seq = base;
-        for entry in &entries {
-            expected_seq = next(expected_seq, "seq")?;
-            let corrupt = |reason: &str| CellError::LedgerCorrupt {
-                seq: entry.seq,
-                reason: reason.to_owned(),
-            };
-            if entry.seq != expected_seq {
-                return Err(corrupt("sequence gap"));
-            }
-            if entry.prev_hash != prev {
-                return Err(corrupt("previous hash does not chain"));
-            }
-            let hash = entry_hash(
-                entry.seq,
-                entry.commit_seq,
-                &entry.world,
-                &entry.event,
-                &prev,
-            )?;
-            if hash != entry.hash {
-                return Err(corrupt("entry hash does not verify"));
-            }
-            prev = hash;
-            heads.push(prev.clone());
-        }
-        // The suffix index of event `seq` (`seq > base`).
-        let suffix_index = |seq: u64| {
-            seq.checked_sub(base)
-                .and_then(|offset| offset.checked_sub(1))
-                .and_then(|index| usize::try_from(index).ok())
-        };
-        // The anchor receipt (none for an empty prefix), then the suffix.
-        // Receipts must tile the ledger: contiguous spans from the event
-        // after the checkpoint, each event belonging to its receipt's commit
-        // and world, no orphans.
-        let mut receipts = self.receipts_from(checkpoint.commits)?;
         if checkpoint.commits > 0 {
-            match receipts.first() {
-                Some(anchor)
-                    if anchor.body.commit_seq == checkpoint.commits
-                        && anchor.body.ledger_head == checkpoint.hash
-                        && anchor
-                            .body
-                            .first_event_seq
-                            .checked_add(anchor.body.event_count)
-                            == base.checked_add(1)
-                        && hash_json(&anchor.body)? == anchor.hash => {}
-                _ => return Err(anchor_corrupt()),
+            let anchor = self.receipts_after(checkpoint.commits.saturating_sub(1), 1)?;
+            if !anchor.first().is_some_and(|receipt| {
+                receipt.body.commit_seq == checkpoint.commits
+                    && receipt.body.ledger_head == checkpoint.hash
+                    && receipt
+                        .body
+                        .first_event_seq
+                        .checked_add(receipt.body.event_count)
+                        == base.checked_add(1)
+                    && hash_json(&receipt.body).is_ok_and(|hash| hash == receipt.hash)
+            }) {
+                return Err(anchor_corrupt());
             }
-            receipts.remove(0);
         } else if base != 0 {
             return Err(anchor_corrupt());
         }
+
+        let mut boundary = self
+            .quantity_boundary
+            .filter(|boundary| boundary.seq <= base);
+        if base > 0 && self.quantity_boundary.is_none() {
+            boundary = crate::quantity::format_boundary(self.conn)?
+                .filter(|boundary| boundary.seq <= base);
+        }
+        let mut expected_seq = base;
         let mut expected_commit = checkpoint.commits;
-        let mut next_event = next(base, "seq")?;
-        for receipt in &receipts {
+        let mut prev = checkpoint.hash.clone();
+        // Consume one receipt and one event at a time. Memory is bounded by the
+        // receipt page plus the largest individual retained event, not history.
+        let receipts = self.receipt_stream_from(checkpoint.commits);
+        for receipt in receipts {
+            let receipt = receipt?;
             expected_commit = next(expected_commit, "commit_seq")?;
             let corrupt = |reason: &str| CellError::LedgerCorrupt {
                 seq: receipt.body.commit_seq,
@@ -3641,110 +3686,114 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             if hash_json(&receipt.body)? != receipt.hash {
                 return Err(corrupt("receipt hash does not verify"));
             }
-            if receipt.body.first_event_seq != next_event {
+            if receipt.body.first_event_seq != next(expected_seq, "seq")? {
                 return Err(corrupt("receipt span does not continue the ledger"));
             }
-            let end = next_event
+            let end = receipt
+                .body
+                .first_event_seq
                 .checked_add(receipt.body.event_count)
                 .ok_or_else(|| corrupt("event span out of range"))?;
-            for seq in next_event..end {
-                let entry = suffix_index(seq)
-                    .and_then(|index| entries.get(index))
+            for seq in receipt.body.first_event_seq..end {
+                let entry = self
+                    .ledger_range(
+                        if expected_seq == 0 {
+                            0
+                        } else {
+                            next(expected_seq, "seq")?
+                        },
+                        Some(1),
+                    )?
+                    .into_iter()
+                    .next()
                     .ok_or_else(|| corrupt("receipt names events past the ledger head"))?;
+                let event_corrupt = |reason: &str| CellError::LedgerCorrupt {
+                    seq: entry.seq,
+                    reason: reason.to_owned(),
+                };
+                if entry.seq != seq {
+                    return Err(event_corrupt("sequence gap"));
+                }
+                if entry.prev_hash != prev {
+                    return Err(event_corrupt("previous hash does not chain"));
+                }
                 if entry.commit_seq != receipt.body.commit_seq || entry.world != receipt.body.world
                 {
                     return Err(corrupt("an event does not belong to its receipt"));
                 }
+                let hash = entry_hash(
+                    entry.seq,
+                    entry.commit_seq,
+                    &entry.world,
+                    &entry.event,
+                    &prev,
+                )?;
+                if hash != entry.hash {
+                    return Err(event_corrupt("entry hash does not verify"));
+                }
+                if receipt.body.quantity.is_some() {
+                    if let Some(marker) = crate::quantity::boundary_marker(&entry, &receipt.body)?
+                        && boundary.replace(marker).is_some()
+                    {
+                        return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
+                    }
+                    if seq.checked_add(1) == Some(end) {
+                        let request = receipt
+                            .body
+                            .quantity
+                            .as_ref()
+                            .ok_or(norn_kernel::quantity::QuantityError::Corrupt)?;
+                        if boundary
+                            .is_none_or(|boundary| receipt.body.first_event_seq < boundary.seq)
+                            || entry.event != crate::quantity::transition_event(request)?
+                        {
+                            return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
+                        }
+                    } else if entry.event.get("type").and_then(Value::as_str)
+                        == Some("quantity.transition")
+                    {
+                        return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
+                    }
+                }
+                prev = hash;
+                expected_seq = seq;
             }
-            // The head after the commit: the hash at its last event, or the
-            // head before it when the commit appended nothing.
-            let last = end
-                .checked_sub(1)
-                .ok_or_else(|| corrupt("event span out of range"))?;
-            let head = if last == base {
-                Some(checkpoint.hash.as_str())
-            } else {
-                suffix_index(last)
-                    .and_then(|index| heads.get(index))
-                    .map(String::as_str)
-            }
-            .ok_or_else(|| corrupt("receipt names events past the ledger head"))?;
-            if head != receipt.body.ledger_head {
+            if receipt.body.ledger_head != prev {
                 return Err(corrupt("receipt head does not match the ledger"));
             }
-            next_event = end;
+            if let Some(request) = &receipt.body.quantity {
+                if receipt.body.event_count == 0 {
+                    return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
+                }
+                if base > 0 {
+                    crate::quantity::verify_transition_projection(
+                        self.conn,
+                        &receipt.body.world,
+                        receipt.body.commit_seq,
+                        request,
+                    )?;
+                }
+            }
         }
-        if next_event != next(expected_seq, "seq")? {
+        if let Some(entry) = self
+            .ledger_range(
+                if expected_seq == 0 {
+                    0
+                } else {
+                    next(expected_seq, "seq")?
+                },
+                Some(1),
+            )?
+            .first()
+        {
             return Err(CellError::LedgerCorrupt {
-                seq: next_event,
+                seq: entry.seq,
                 reason: "ledger events without a receipt".to_owned(),
             });
         }
-        let mut boundary = self
-            .quantity_boundary
-            .filter(|boundary| boundary.seq <= base);
-        // A caller may supply a verified checkpoint obtained through another
-        // handle, before this handle has cached that handle's upgrade.
-        if base > 0 && self.quantity_boundary.is_none() {
-            boundary = crate::quantity::format_boundary(self.conn)?
-                .filter(|boundary| boundary.seq <= base);
-        }
-        let typed_receipts = receipts
-            .iter()
-            .filter(|receipt| receipt.body.quantity.is_some())
-            .map(|receipt| (receipt.body.commit_seq, &receipt.body))
-            .collect::<std::collections::BTreeMap<_, _>>();
-        for entry in &entries {
-            let Some(receipt) = typed_receipts.get(&entry.commit_seq) else {
-                continue;
-            };
-            if let Some(marker) = crate::quantity::boundary_marker(entry, receipt)?
-                && boundary.replace(marker).is_some()
-            {
-                return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
-            }
-        }
         crate::quantity::validate_boundary(self.conn, boundary)?;
-        for receipt in typed_receipts.values() {
-            let last_seq = receipt
-                .first_event_seq
-                .checked_add(receipt.event_count)
-                .and_then(|end| end.checked_sub(1))
-                .ok_or(norn_kernel::quantity::QuantityError::Corrupt)?;
-            let last = suffix_index(last_seq)
-                .and_then(|index| entries.get(index))
-                .ok_or(norn_kernel::quantity::QuantityError::Corrupt)?;
-            let request = receipt
-                .quantity
-                .as_ref()
-                .ok_or(norn_kernel::quantity::QuantityError::Corrupt)?;
-            if receipt.event_count == 0
-                || boundary.is_none_or(|boundary| receipt.first_event_seq < boundary.seq)
-                || last.event != crate::quantity::transition_event(request)?
-            {
-                return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
-            }
-            for seq in receipt.first_event_seq..last_seq {
-                if suffix_index(seq)
-                    .and_then(|index| entries.get(index))
-                    .and_then(|entry| entry.event.get("type"))
-                    .and_then(Value::as_str)
-                    == Some("quantity.transition")
-                {
-                    return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
-                }
-            }
-            if base > 0 {
-                crate::quantity::verify_transition_projection(
-                    self.conn,
-                    &receipt.world,
-                    receipt.commit_seq,
-                    request,
-                )?;
-            }
-        }
         if base == 0 {
-            crate::quantity::verify_projections(self.conn, &receipts)?;
+            crate::quantity::verify_projections(self.conn, self.receipt_stream())?;
         }
         Ok((
             LedgerHead {
@@ -3818,7 +3867,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                     command: serde_json::from_str(&command)?,
                 },
                 result: result
-                    .map(|result| serde_json::from_str(&result))
+                    .map(|result| {
+                        crate::payload_storage::decode_result(
+                            self.conn,
+                            &result,
+                            Some(&crate::payload_storage::receipt_world(
+                                self.conn,
+                                to_u64(row.get(1)?, "commit_seq")?,
+                            )?),
+                        )
+                    })
                     .transpose()?,
             });
         }
@@ -3975,7 +4033,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 command_id: command_id.to_owned(),
                 generation: to_u64(row.get(0)?, "generation")?,
                 attempt: to_u64(row.get(1)?, "attempt")?,
-                outcome: serde_json::from_str(&outcome)?,
+                outcome: crate::payload_storage::decode_result(
+                    self.conn,
+                    &outcome,
+                    crate::payload_storage::command_world(
+                        self.conn,
+                        command_id,
+                        to_u64(row.get(0)?, "generation")?,
+                    )?
+                    .as_deref(),
+                )?,
                 consumed_commit_seq: consumed
                     .map(|value| to_u64(value, "commit_seq"))
                     .transpose()?,
@@ -4189,6 +4256,58 @@ mod link_candidate_index_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn marking_property_rows_seek_subjects_and_current_rows_by_key() {
+        let engine = NativeEngine::open_in_memory().expect("opens SQLite");
+        for statement in SYSTEM_DDL {
+            engine
+                .execute(statement, &[])
+                .expect("creates system schema");
+        }
+        engine
+            .execute(
+                r#"CREATE TABLE "o:test.Item" ("_world" TEXT NOT NULL, "_id" TEXT NOT NULL, "_type" TEXT NOT NULL, "_version" INTEGER NOT NULL, PRIMARY KEY ("_world", "_id"))"#,
+                &[],
+            )
+            .expect("creates root table");
+        let sql = super::marking_property_rows_sql("o:test.Item");
+        let bindings = [
+            SqlValue::Text("main".to_owned()),
+            SqlValue::Text("test.Item".to_owned()),
+            SqlValue::Text("name".to_owned()),
+        ];
+        let plan = engine
+            .query(&format!("EXPLAIN QUERY PLAN {sql}"), &bindings)
+            .expect("explains marking count");
+        let details = plan
+            .iter()
+            .filter_map(|row| match row.get(3) {
+                Some(SqlValue::Text(detail)) => Some(detail.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        // A per-object correlated lookup re-scans every matching marking row
+        // (about 800x more SQLite work at 1,000 objects).
+        assert!(
+            details.iter().all(|detail| !detail.contains("CORRELATED")),
+            "no correlated subquery: {details:?}"
+        );
+        // Every table is reached by a keyed search, whichever join order SQLite picks,
+        // so the work is linear in the driving rows.
+        for table in ["o ", "ms ", "m "] {
+            assert!(
+                details
+                    .iter()
+                    .any(|detail| detail.starts_with(&format!("SEARCH {table}"))),
+                "{table}is searched by key: {details:?}"
+            );
+        }
+        assert!(
+            details.iter().all(|detail| !detail.starts_with("SCAN")),
+            "no full scan: {details:?}"
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@ use norn_projections::sqlite_ddl::{
     ID_COLUMN, SCOPE_COLUMN, TYPE_COLUMN, WORLD_COLUMN, quote_identifier,
 };
 use norn_projections::sqlite_ddl::{LinkTable, ObjectTable, PropertyColumn, SqliteDdlInput};
-use norn_projections::{SqliteSchema, project_sqlite_ddl};
+use norn_projections::{SqliteSchema, project_logical_sqlite_ddl, project_sqlite_ddl};
 use serde::{Deserialize, Serialize};
 
 use crate::codec::hash_json;
@@ -57,13 +57,14 @@ fn binding_property_index_name(table: &str, property: &str, direction: &str) -> 
 fn binding_property_index_statement(
     table: &str,
     property: &str,
+    column: &str,
     descending: bool,
     root_owned: bool,
 ) -> String {
     let direction = if descending { "DESC" } else { "ASC" };
     let mut columns = vec![
         quote_identifier(WORLD_COLUMN),
-        format!("{} {direction}", quote_identifier(property)),
+        format!("{} {direction}", quote_identifier(column)),
         format!("{} ASC", quote_identifier(ID_COLUMN)),
     ];
     if root_owned {
@@ -125,11 +126,11 @@ fn append_binding_indexes(
                 property: index.property_id.clone(),
             });
         };
-        if column_name.is_none() {
+        let Some(column_name) = column_name else {
             return Err(CellError::OutOfRange(
                 "binding property index requires a physical column",
             ));
-        }
+        };
         if index.sort
             && (owner_name != root
                 || !matches!(
@@ -151,6 +152,7 @@ fn append_binding_indexes(
             let statement = binding_property_index_statement(
                 &table_name,
                 &index.property_id,
+                &column_name,
                 false,
                 owner_is_root,
             );
@@ -167,6 +169,7 @@ fn append_binding_indexes(
                 let statement = binding_property_index_statement(
                     &table_name,
                     &index.property_id,
+                    &column_name,
                     true,
                     owner_is_root,
                 );
@@ -189,9 +192,9 @@ fn append_binding_indexes(
 struct ReplayDefinitions<'a> {
     object_types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     property_types: BTreeMap<&'a str, &'a PropertyTypeDef>,
-    /// Only interfaces with invariants affect the model hash. Omitting this
-    /// field when empty preserves legacy object/property-only hashes while all
-    /// interfaces remain available to commit admission and snapshots.
+    /// Inheritance models pin all interface contracts, including owners with no
+    /// invariants of their own. Flat models retain the invariant-only hash so
+    /// existing object/property-only histories keep their identity.
     #[serde(skip_serializing_if = "Option::is_none")]
     interfaces: Option<BTreeMap<&'a str, &'a InterfaceDef>>,
     /// Query access paths projected from admitted widget bindings. Omitting
@@ -240,6 +243,7 @@ pub struct Model {
     /// self-referential catalog.
     effective_objects: BTreeMap<String, EffectiveObjectType>,
     effective_links: BTreeMap<String, Vec<EffectiveLink>>,
+    ddl_sql: String,
     ddl_hash: String,
     definitions_hash: String,
 }
@@ -295,7 +299,12 @@ impl Model {
         }
         let binding_indexes = canonical_binding_indexes(binding_indexes);
         append_binding_indexes(&mut schema, &types, &binding_indexes)?;
-        let ddl_hash = hash_json(&schema.to_sql())?;
+        // Identity is the logical rendering, so physical column naming never
+        // changes a recorded DDL hash, export record, or definition version.
+        let mut logical = project_logical_sqlite_ddl(input)?;
+        append_binding_indexes(&mut logical, &types, &binding_indexes)?;
+        let ddl_sql = logical.to_sql();
+        let ddl_hash = hash_json(&ddl_sql)?;
         let definitions_hash = hash_json(&ReplayDefinitions {
             object_types: defs
                 .iter()
@@ -307,9 +316,11 @@ impl Model {
                 .map(|def| (def.name.as_str(), def))
                 .collect(),
             interfaces: {
+                let has_interface_inheritance =
+                    interfaces.iter().any(|def| !def.extends.is_empty());
                 let invariant_interfaces: BTreeMap<_, _> = interfaces
                     .iter()
-                    .filter(|def| !def.invariants.is_empty())
+                    .filter(|def| has_interface_inheritance || !def.invariants.is_empty())
                     .map(|def| (def.name.as_str(), def))
                     .collect();
                 (!invariant_interfaces.is_empty()).then_some(invariant_interfaces)
@@ -348,6 +359,7 @@ impl Model {
             binding_indexes,
             effective_objects,
             effective_links,
+            ddl_sql,
             ddl_hash,
             definitions_hash,
         })
@@ -418,7 +430,15 @@ impl Model {
         &self.schema
     }
 
-    /// Norn1 hash of the projected DDL; recorded in the file and checked on
+    /// The logical DDL ([`project_logical_sqlite_ddl`] plus binding
+    /// indexes): the schema's identity, exported as `ddlSql`. Never executed;
+    /// [`Self::schema`] holds the physical statements.
+    #[must_use]
+    pub fn ddl_sql(&self) -> &str {
+        &self.ddl_sql
+    }
+
+    /// Norn1 hash of [`Self::ddl_sql`]; recorded in the file and checked on
     /// reopen.
     #[must_use]
     pub fn ddl_hash(&self) -> &str {
@@ -426,9 +446,9 @@ impl Model {
     }
 
     /// Norn1 hash of object, property-type, and invariant-bearing interface
-    /// definitions, indexed by name. Interfaces without invariants remain
-    /// available through [`Self::interfaces`] and snapshots but are omitted
-    /// from the hash to preserve legacy model identity. Includes semantics
+    /// definitions, indexed by name. Models using interface inheritance pin all
+    /// interfaces; flat models omit invariant-free interfaces to retain existing
+    /// history identities. All interfaces remain in snapshots. Includes semantics
     /// absent from projected DDL. Definition-list order is irrelevant; order
     /// within definitions is retained.
     #[must_use]
@@ -761,15 +781,30 @@ impl Model {
     /// Whether the admitted `object_type` is `ancestor` or a subtype of it.
     ///
     /// This schema query includes the type itself and transitive object-type
-    /// inheritance. It returns `false` if either name is absent from the model,
+    /// inheritance and interface ancestry. It returns `false` if either name is absent from the model,
     /// including when both names are the same unknown type. Read projections
     /// can use it to match declared type ranges against concrete record types;
     /// it does not check record existence, scope, or authorization.
     #[must_use]
     pub fn is_a(&self, object_type: &str, ancestor: &str) -> bool {
-        self.types
+        self.types.get(object_type).is_some_and(|entry| {
+            entry.chain.iter().any(|name| name.as_str() == ancestor)
+                || self.interface_aliases(object_type).contains(&ancestor)
+        })
+    }
+
+    /// Interface aliases of the checker-admitted effective contract.
+    pub(crate) fn interface_aliases(&self, object_type: &str) -> Vec<&str> {
+        self.effective_objects
             .get(object_type)
-            .is_some_and(|entry| entry.chain.iter().any(|name| name.as_str() == ancestor))
+            .into_iter()
+            .flat_map(|definition| {
+                definition
+                    .interfaces
+                    .iter()
+                    .map(norn_ir::InterfaceName::as_str)
+            })
+            .collect()
     }
 
     /// The table of `object_type`.

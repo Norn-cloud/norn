@@ -1,0 +1,26 @@
+{
+  "sha256": "c019b06aca4e57a8fc697aa78a6f9ebb2c6381f60f38084ade94dcf1532d2b47",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-expr/tests/corpus.rs",
+    "crates/norn-expr/tests/fixtures/zen_corpus.json",
+    "crates/norn-expr/tests/support/mod.rs"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [
+    {
+      "path": "vendor/zen/LICENSE",
+      "sha256": "2493262dd0c053f65dea03b3286a3c835f98c24264cda6d5c5b444d8ea5af6b3"
+    }
+  ],
+  "connector": null
+}
