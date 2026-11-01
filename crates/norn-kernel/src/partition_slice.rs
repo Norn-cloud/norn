@@ -44,7 +44,7 @@ impl PartitionSlice {
     }
 }
 
-/// Load point reads plus every member of each declared source/link partition.
+/// FENCE-BOUNDS: load point reads and complete partitions through bounded host reads.
 /// Empty partitions are fenced too. Host list reads must be complete; `None`
 /// (unsupported, incomplete or over bound) refuses before evaluation.
 ///
@@ -65,11 +65,11 @@ pub fn load_partition_slice<H: CellHost + ?Sized>(
     };
     let mut meter = SliceMeter::new(limits);
     for key in points {
-        capture_fact(host, &key, &mut slice.facts, &mut meter)?;
+        capture_fact(host, &key, &mut slice.facts, &mut meter, limits)?;
     }
     let model = crate::CommitModel::new(catalog);
     for (source, link) in partitions {
-        capture_fact(host, source, &mut slice.facts, &mut meter)?;
+        capture_fact(host, source, &mut slice.facts, &mut meter, limits)?;
         let max_targets = usize::try_from(limits.max_records.saturating_sub(meter.records()))
             .unwrap_or(usize::MAX);
         let targets = host
@@ -95,7 +95,13 @@ pub fn load_partition_slice<H: CellHost + ?Sized>(
             return Err(unavailable("non-canonical partition membership snapshot"));
         }
         for target in &targets {
-            capture_fact(host, &target.key.target, &mut slice.facts, &mut meter)?;
+            capture_fact(
+                host,
+                &target.key.target,
+                &mut slice.facts,
+                &mut meter,
+                limits,
+            )?;
             if !slice
                 .facts
                 .get(&target.key.target)
@@ -136,11 +142,19 @@ fn capture_fact<H: CellHost + ?Sized>(
     key: &FactKey,
     facts: &mut FactSlice,
     meter: &mut SliceMeter,
+    limits: SliceLimits,
 ) -> Result<(), DecisionRefusal<H::Error>> {
     if facts.contains_key(key) {
         return Ok(());
     }
-    let state = host.load(key).map_err(DecisionRefusal::Host)?;
+    let state = host
+        .load_bounded(
+            key,
+            limits.max_canonical_bytes.saturating_sub(meter.bytes()),
+        )
+        .map_err(DecisionRefusal::Host)?
+        .ok_or_else(|| unavailable("complete bounded fact snapshot unavailable"))?
+        .state;
     let bytes = norn_ir::runtime::encode(&(key, &state))
         .map_err(|reason| unavailable(&reason))?
         .canonical_json()
