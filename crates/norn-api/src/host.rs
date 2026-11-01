@@ -456,7 +456,10 @@ mod defs_read {
 )]
 mod cp1_surface {
     use super::*;
-    use crate::authz::{AccessRequest, Authorizer, DenyAll};
+    use crate::{
+        authz::{AccessRequest, Authorizer, DenyAll},
+        routes::router,
+    };
     use norn_cell::{CommitBatch, FactWriteRow, LinkChange, engine::NativeEngine};
     use norn_ir::{ArtifactEnvelope, ArtifactPayload, EntityIrVersion, EntityRootV2};
     use norn_kernel::{
@@ -465,6 +468,8 @@ mod cp1_surface {
     };
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use tower::ServiceExt;
     struct Demo;
     impl Authorizer for Demo {
         fn authorize(&self, r: &AccessRequest<'_>) -> Result<(), Refusal> {
@@ -683,18 +688,199 @@ mod cp1_surface {
             .expect("seed drafts");
     }
 
-    #[test]
-    fn surface_stock_fixture_is_admitted_and_quantity_configured() {
-        let host = host();
-        assert_eq!(
-            host.cell()
-                .expect("cell")
+    async fn invoke(
+        app: &axum::Router,
+        surface: &str,
+        url: &str,
+        actor: &str,
+        call: [&str; 3],
+    ) -> (Value, bool) {
+        let [action, id, key] = call;
+        let args = json!({"actionId":action,"input":{"id":id},"version":1,"idempotencyKey":key});
+        if surface == "cli" {
+            let url = format!("{url}/mcp");
+            let actor = actor.to_owned();
+            let key = key.to_owned();
+            let result = tokio::task::spawn_blocking(move || {
+                use std::io::Write;
+                let mut child = std::process::Command::new(
+                    std::env::var("NORN_CLI").expect("NORN_CLI compiled binary"),
+                )
+                .args([
+                    "remote",
+                    "--url",
+                    &url,
+                    "--org",
+                    "org_demo",
+                    "--env",
+                    "dev",
+                    "--dev-actor",
+                    &actor,
+                    "call",
+                    "call_action",
+                    "--idempotency-key",
+                    &key,
+                ])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .expect("CLI");
+                child
+                    .stdin
+                    .take()
+                    .expect("stdin")
+                    .write_all(args.to_string().as_bytes())
+                    .expect("write");
+                let output = child.wait_with_output().expect("CLI exit");
+                (
+                    serde_json::from_slice::<Value>(&output.stdout).expect("CLI JSON"),
+                    !output.status.success(),
+                )
+            })
+            .await
+            .expect("CLI process");
+            return (result.0["result"]["structuredContent"].clone(), result.1);
+        }
+        let body = if surface == "api" {
+            args
+        } else {
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"call_action","arguments":args,"_meta":{"norn/idempotencyKey":key}}})
+        };
+        let request = http::Request::builder()
+            .method("POST")
+            .uri(if surface == "api" {
+                "/v1/actions"
+            } else {
+                "/mcp"
+            })
+            .header("x-norn-org-id", "org_demo")
+            .header("x-norn-environment-id", "dev")
+            .header("x-norn-actor", actor)
+            .body(axum::body::Body::from(body.to_string()))
+            .expect("request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        let failed = !response.status().is_success();
+        let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
+            .await
+            .expect("response body");
+        let value: Value = serde_json::from_slice(&bytes).expect("JSON");
+        if surface == "api" || failed {
+            (value, failed)
+        } else {
+            (
+                value["result"]["structuredContent"].clone(),
+                value["result"]["isError"] == true,
+            )
+        }
+    }
+    fn dump(host: &DevHost<NativeEngine>) -> BTreeMap<String, Vec<String>> {
+        host.cell()
+            .expect("cell")
+            .store()
+            .read()
+            .dump()
+            .expect("dump")
+    }
+    #[tokio::test]
+    #[ignore = "requires the built remote CLI; run CP1-surface Boat command in README"]
+    async fn surface_cp1_fifo_and_surface_deny_1() {
+        let mut states = Vec::new();
+        let mut refusals = Vec::new();
+        for surface in ["api", "mcp", "cli"] {
+            let host = Arc::new(host());
+            let app = router(Arc::clone(&host));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("listener");
+            let url = format!("http://{}", listener.local_addr().expect("address"));
+            let server_app = app.clone();
+            let server =
+                tokio::spawn(
+                    async move { axum::serve(listener, server_app).await.expect("serve") },
+                );
+            for (action, id, key) in [
+                ("stock.receipt.submit", "pr", "receive"),
+                ("stock.delivery.submit", "dn", "deliver"),
+            ] {
+                let (result, failed) = invoke(&app, surface, &url, "demo", [action, id, key]).await;
+                assert!(!failed, "{surface}: {result}");
+            }
+            let before = dump(&host);
+            let (refused, failed) = invoke(
+                &app,
+                surface,
+                &url,
+                "demo",
+                ["stock.delivery.submit", "over", "over"],
+            )
+            .await;
+            assert!(failed, "POST-OVERDELIVERY {surface}");
+            assert!(
+                refused["message"]
+                    .as_str()
+                    .expect("readable")
+                    .contains("available"),
+                "{refused}"
+            );
+            let (denied, failed) = invoke(
+                &app,
+                surface,
+                &url,
+                "forbidden",
+                ["stock.receipt.submit", "pr", "denied"],
+            )
+            .await;
+            assert!(failed, "SURFACE-DENY-1 {surface}");
+            assert_eq!(denied["code"], "authz.denied");
+            assert_eq!(before, dump(&host), "SURFACE-DENY-1/POST-NO-WRITES");
+            let cell = host.cell().expect("cell");
+            let partition = cell
                 .store()
                 .read()
-                .list("main", "stock.PurchaseReceipt", 10)
-                .expect("draft")
-                .len(),
-            1
+                .list("main", "stock.Partition", 10)
+                .expect("partition");
+            assert_eq!(partition.len(), 1);
+            assert_eq!(
+                partition[0].values.get("quantity"),
+                Some(&norn_ir::RuntimeValue::from_json(json!(1)).expect("quantity"))
+            );
+            assert_eq!(
+                partition[0].values.get("value"),
+                Some(&norn_ir::RuntimeValue::from_json(json!(20)).expect("value"))
+            );
+            let legs = cell
+                .store()
+                .read()
+                .list("main", "stock.GLLeg", 10)
+                .expect("GL");
+            let mut amounts = BTreeMap::<String, i64>::new();
+            for row in legs {
+                let leg: norn_ir::posting::AccountingLegIr =
+                    norn_ir::runtime::decode(row.values.get("leg").expect("leg"))
+                        .expect("typed leg");
+                *amounts.entry(leg.account.account_id).or_default() +=
+                    leg.amount_unscaled.parse::<i64>().expect("cents");
+            }
+            assert_eq!(
+                amounts,
+                BTreeMap::from([
+                    ("cogs".into(), 6000),
+                    ("stock".into(), 2000),
+                    ("srbnb".into(), -8000)
+                ]),
+                "POST-GL receipt 80 / COGS 60 / remaining 20"
+            );
+            states.push(before);
+            refusals.push((refused, denied));
+            server.abort();
+        }
+        assert!(
+            states.windows(2).all(|s| s[0] == s[1]),
+            "SURFACE-ACTION-1 committed state parity"
+        );
+        assert!(
+            refusals.windows(2).all(|r| r[0] == r[1]),
+            "SURFACE-ACTION-1 refusal parity"
         );
     }
 }
