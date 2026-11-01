@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { parseFragment } from "parse5"
-import { renderDefinitionsDocument, type DefinitionEntry } from "../src/definitions.ts"
+import { renderDefinitionsDocument, readDefinitions, type DefinitionEntry } from "../src/definitions.ts"
 
 const entry: DefinitionEntry = {
   metadata: { artifactId: "alpha.SalesOrder", kind: "entity", name: "Sales order", version: "0.1.0" },
@@ -100,4 +100,39 @@ test("D6: transition labels never cross definition versions", () => {
   expect(html).toContain("No action supplied")
   expect(html).not.toContain("Send parcel<br>— send →")
   expect(html).not.toContain("positive: self.mass")
+})
+
+
+test("D9–D10: live reads preserve exact numeric source and fail closed", async () => {
+  const source = '{"admitted":true,"artifacts":[{"artifactId":"demo.X","kind":"entity","name":"X","version":"1","dependencies":[],"payload":{"entityVersion":"2.0","objectType":{"name":"demo.X"}},"n":9007199254740993}]}'
+  const server = Bun.serve({ port: 0, fetch(request) {
+    return request.headers.get("authorization") === "Bearer read-token"
+      ? new Response(source) : new Response("denied", { status: 403 })
+  } })
+  try {
+    const entries = await readDefinitions(server.url.href, "read-token")
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.source).toContain('"n":9007199254740993')
+    expect(renderDefinitionsDocument({ entries })).toContain("demo.X")
+    await expect(readDefinitions(server.url.href, "wrong")).rejects.toThrow("HTTP 403")
+  } finally { server.stop(true) }
+})
+
+test("D11–D12: badges and posting bindings reflect supplied declarations only", () => {
+  const protectedEntity: DefinitionEntry = { ...entity, definition: { kind: "entity", dependencies: [], payload: { entityVersion: "2.0", objectType: {
+    name: "demo.Counter", properties: [
+      { id: "count", type: { kind: "integer" }, protected: true },
+      { id: "total", type: { kind: "integer" }, computed: "self.count + 1" },
+    ],
+  } } } } as DefinitionEntry
+  const posting = { ...action, definition: { ...action.definition, kind: "action", dependencies: [], payload: {
+    ...action.definition?.payload, stockPost: { operation: "receive", partition: { companyField: "company" }, accounts: { inventory: "Stock", clearing: "Clearing" } },
+  } } }
+  const html = renderDefinitionsDocument({ entries: [protectedEntity] })
+  expect(html).toContain('class="badge">Rule-owned')
+  expect(html).toContain('class="badge">Derived')
+  // The stock binding is an admitted forward-compatible payload extension.
+  const bound = renderDefinitionsDocument({ entries: [posting as DefinitionEntry] })
+  for (const label of ["Declared stock posting", "receive", "partition", "companyField", "accounts", "Clearing"]) expect(bound).toContain(label)
+  expect(renderDefinitionsDocument({ entries: [action] })).not.toContain("Declared stock posting")
 })

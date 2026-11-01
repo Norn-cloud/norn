@@ -1,3 +1,4 @@
+import { parseTree, findNodeAtLocation, type ParseError } from "jsonc-parser"
 import type { Schemas } from "../../norn-sdk/src/index.ts"
 
 type Artifact = Schemas["NornArtifactEnvelope"]
@@ -57,7 +58,10 @@ th { color: #52635b; font-weight: 500; }
 .states li, .transitions li { padding: .5rem .75rem; border: 1px solid #d5dcd4; border-radius: 4px; }
 .states .initial { border-left: 3px solid #23664c; }
 .states .terminal { border-style: double; border-width: 3px; }
-.transitions li { display: flex; gap: .75rem; align-items: center; background: #fafbf8; }
+.transitions { display: grid; }
+.transitions li { display: grid; grid-template-columns: minmax(5rem, 1fr) minmax(10rem, 2fr) minmax(5rem, 1fr); gap: .75rem; align-items: center; background: #fafbf8; }
+.transitions li > h3, .transitions li > ul { grid-column: 1 / -1; margin: 0; }
+.badge { display: inline-block; margin-left: .5rem; padding: .05rem .4rem; border: 1px solid #d5dcd4; border-radius: 3px; color: #52635b; font-size: .75rem; font-weight: 400; }
 .edge { color: #52635b; text-align: center; font-size: .8rem; }
 .source { border-top: 1px solid #e0e5de; }
 .empty { padding: 2rem; border: 1px dashed #a4b1a7; line-height: 1.6; }
@@ -171,7 +175,7 @@ function describe({ metadata, definition }: DefinitionEntry, entries: readonly D
       const object = payload.objectType
       return `${object.description ? `<p>${escape(object.description)}</p>` : ""}
         ${object.extends ? `<p>Extends ${text(object.extends)}</p>` : ""}
-        <h3>Properties</h3><table><thead><tr><th>Name</th><th>Type / unit</th><th>Derivation</th></tr></thead><tbody>${(object.properties ?? []).map((property) => `<tr><td>${escape(property.id)}</td><td>${escape(typeLabel(property.type))}</td><td>${property.computed ? text(property.computed) : ""}</td></tr>`).join("")}</tbody></table>
+        <h3>Properties</h3><table><thead><tr><th>Name</th><th>Type / unit</th><th>Derivation</th></tr></thead><tbody>${(object.properties ?? []).map((property) => `<tr><td>${escape(property.id)}${property.computed ? '<span class="badge">Derived</span>' : ""}${"protected" in property && property.protected === true ? '<span class="badge">Rule-owned</span>' : ""}</td><td>${escape(typeLabel(property.type))}</td><td>${property.computed ? text(property.computed) : ""}</td></tr>`).join("")}</tbody></table>
         ${list("Relationships", (object.links ?? []).map((link) => `${text(link.id)} → ${text(link.target)} · ${escape(link.cardinality.from)}:${escape(link.cardinality.to)}${link.cardinality.required ? " · required" : ""}`))}
         ${lifecycleView(object, metadata, entries)}
         ${list("Invariants", (object.invariants ?? []).map((law) => `${text(law.id)} · ${escape(law.message)} — ${text(law.expression)}`))}${dependencies}`
@@ -191,6 +195,7 @@ function describe({ metadata, definition }: DefinitionEntry, entries: readonly D
       }) : []
       return `${action.description ? `<p>${escape(action.description)}</p>` : ""}
         ${effect?.kind === "fire_transition" ? `<h3>Performs transition</h3><p>${text(effect.objectKind)} · ${text(effect.lifecycle)} · ${text(effect.transition)}</p>${list("State change", transitions.map(text))}` : ""}
+        ${"stockPost" in action && action.stockPost != null ? `<h3>Declared stock posting</h3>${tree(action.stockPost)}` : ""}
         <h3>Inputs</h3>${tree(action.inputSchema)}
         ${list("Must satisfy", [...(action.preconditions ?? []), ...constraints].map(text))}
         ${action.access ? `<h3>Access policy</h3><p>${text(action.access.artifactId)}</p>` : ""}${dependencies}`
@@ -207,4 +212,48 @@ function describe({ metadata, definition }: DefinitionEntry, entries: readonly D
     case "derived": return `<h3>Derives</h3>${tree(definition.payload.calc)}<h3>Outputs</h3>${tree(definition.payload.outputSchema)}${dependencies}`
     default: return tree(definition.payload) + dependencies
   }
+}
+
+
+/** Read only the configured host document; refusals never become fixture data. */
+export async function readDefinitions(endpoint: string, token: string): Promise<DefinitionEntry[]> {
+  const response = await fetch(endpoint, {
+    headers: { Authorization: `Bearer ${token}` }, redirect: "error", signal: AbortSignal.timeout(10000),
+  })
+  if (!response.ok) throw new Error(`Definitions read refused (HTTP ${response.status})`)
+  const source = await response.text()
+  const errors: ParseError[] = []
+  const root = parseTree(source, errors, { disallowComments: true, allowTrailingComma: false })
+  const admitted = root && findNodeAtLocation(root, ["admitted"])
+  const artifacts = root && findNodeAtLocation(root, ["artifacts"])
+  if (errors.length || admitted?.value !== true || artifacts?.type !== "array") throw new Error("Invalid admitted definitions document")
+  return (artifacts.children ?? []).map((node) => {
+    const raw = source.slice(node.offset, node.offset + node.length)
+    const value: unknown = JSON.parse(raw)
+    if (typeof value !== "object" || value === null || !("artifactId" in value) || typeof value.artifactId !== "string"
+      || !("name" in value) || typeof value.name !== "string" || !("version" in value) || typeof value.version !== "string"
+      || !("kind" in value) || typeof value.kind !== "string" || !("payload" in value) || typeof value.payload !== "object" || value.payload === null
+      || !("dependencies" in value) || !Array.isArray(value.dependencies)) throw new Error("Invalid admitted artifact envelope")
+    // Payload conformance belongs to server admission; this boundary checks the transport envelope.
+    const artifact = value as Artifact
+    return { metadata: artifact, definition: artifact, source: raw }
+  })
+}
+
+if (import.meta.main) {
+  const endpoint = process.env.NORN_DEFS_URL ?? "http://127.0.0.1:4174/v1/defs?orgId=org_demo&environmentId=dev"
+  const token = process.env.NORN_DEMO_TOKEN
+  if (!token) throw new Error("NORN_DEMO_TOKEN is required")
+  Bun.serve({ hostname: "127.0.0.1", port: 4175, async fetch(request) {
+    if (new URL(request.url).pathname !== "/") return new Response("Not found", { status: 404 })
+    try {
+      return new Response(renderDefinitionsDocument({ entries: await readDefinitions(endpoint, token) }), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+      })
+    } catch {
+      return new Response("Definitions unavailable. The server read failed; reload to retry.", {
+        status: 502, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+      })
+    }
+  } })
 }
