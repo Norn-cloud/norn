@@ -37,6 +37,14 @@ printf '\nhax Rust toolchain\n'
 hax_rustc="$RUSTUP_HOME/toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu/bin/rustc"
 test "$($hax_rustc --version)" = "$expected_hax_rustc"
 printf '%s\n' "$expected_hax_rustc"
+printf '\nAeneas\n'
+test "$(aeneas -version)" = 'aeneas 74a460a2'
+test "$(git -C "$tool_root/sources/aeneas" rev-parse HEAD)" = 74a460a2f80ecea481bbdf1a08f881633c3bb097
+require_clean_source_tree "Aeneas" "$tool_root/sources/aeneas"
+printf '\nCharon\n'
+test "$(charon version)" = '0.1.240'
+test "$(git -C "$tool_root/sources/aeneas/charon" rev-parse HEAD)" = a1d989057b50b0429ccd96c5b4c4428b9b218b21
+require_clean_source_tree "Charon" "$tool_root/sources/aeneas/charon"
 printf '\nopam repository\n'
 rg -F "github.com/ocaml/opam-repository.git#$expected_opam_repository_commit" \
   "$OPAMROOT/repo/repos-config"
