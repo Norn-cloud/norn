@@ -140,7 +140,7 @@ impl Harness {
             environment_hash: "sha256:test".to_owned(),
         };
         Self {
-            decision: AdmittedRule::admit(&rule(), &BTreeMap::new(), binding).unwrap(),
+            decision: AdmittedRule::admit(&rule(), &BTreeMap::new(), binding, None).unwrap(),
             types: types(),
             cell: MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone()),
             turns: 0,
