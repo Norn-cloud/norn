@@ -3058,14 +3058,14 @@ fn law_commit_direct_violation_refuses_without_business_writes() {
     let laws = vec![direct_amount_law()];
     let key = FactKey::new(ITEM, "direct-law");
     let values = object(json!({"item_id":"direct-law", "amount":101, "status":"draft"}));
-    let mut native = cell().with_governing_laws(laws.clone());
+    let mut native = cell().with_governing_laws(laws);
     let refusal = native
         .commit(CellCommit {
             writes: vec![FactWrite {
-                key: key.clone(),
+                key,
                 expected: FactVersion::ABSENT,
                 mutation: FactMutation::Put {
-                    values: values.clone(),
+                    values,
                 },
             }],
             ..CellCommit::empty()
