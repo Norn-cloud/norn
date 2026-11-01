@@ -1259,3 +1259,106 @@ fn result_reconciliation_binds_only_accepted_results_into_the_vertical_flow() {
     assert!(facts.is_empty() && commands.is_empty());
     assert_eq!(run_state, Some(completed));
 }
+
+#[derive(Clone, Copy)]
+enum ReceiptLookup {
+    Accepted,
+    Replayed,
+    Unknown,
+}
+struct ReceiptStore<'a> {
+    acceptance: &'a Acceptance,
+    receipt: &'a FunctionReceipt,
+    state: ReceiptLookup,
+}
+impl norn_kernel::receipt_binding::AcceptedReceiptStore for ReceiptStore<'_> {
+    type Error = Infallible;
+    fn resolve(
+        &self,
+        reference: &Digest,
+    ) -> Result<norn_kernel::receipt_binding::ReceiptResolution<'_>, Self::Error> {
+        use norn_kernel::receipt_binding::ReceiptResolution;
+        Ok(match self.state {
+            ReceiptLookup::Replayed => ReceiptResolution::Replayed,
+            ReceiptLookup::Accepted if reference == &self.acceptance.record.receipt => {
+                ReceiptResolution::Accepted {
+                    acceptance: self.acceptance,
+                    receipt: self.receipt,
+                }
+            }
+            ReceiptLookup::Accepted | ReceiptLookup::Unknown => ReceiptResolution::Unknown,
+        })
+    }
+}
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClassificationSummary {
+    confidence: RuntimeValue,
+    intent: String,
+    labels: Vec<String>,
+}
+
+#[test]
+fn receipt_binding_requires_a_reference_and_authentic_unconsumed_typed_acceptance() {
+    use norn_kernel::receipt_binding::{
+        ReceiptBindingError, ReceiptReference, ReferenceError, bind_receipt,
+    };
+    let case = case("wasm");
+    let acceptance = accepted(run(&case));
+    let reference =
+        ReceiptReference::parse(&RuntimeValue::from(acceptance.record.receipt.0.clone()))
+            .expect("reference");
+    let mut store = ReceiptStore {
+        acceptance: &acceptance,
+        receipt: &case.receipt,
+        state: ReceiptLookup::Accepted,
+    };
+    let (digest, summary, pins) = bind_receipt::<ClassificationSummary, _>(&store, &reference)
+        .expect("typed binding")
+        .into_parts();
+    assert_eq!(digest, acceptance.record.receipt);
+    assert_eq!(pins, acceptance);
+    assert_eq!(summary.intent, "order.modify");
+    assert_eq!(summary.labels, ["order", "quantity"]);
+    assert_eq!(
+        summary.confidence,
+        RuntimeValue::from_json_text("0.92").expect("exact summary decimal")
+    );
+    assert!(matches!(
+        bind_receipt::<u64, _>(&store, &reference),
+        Err(ReceiptBindingError::ResultType)
+    ));
+    store.state = ReceiptLookup::Replayed;
+    assert!(matches!(
+        bind_receipt::<ClassificationSummary, _>(&store, &reference),
+        Err(ReceiptBindingError::Replayed)
+    ));
+    store.state = ReceiptLookup::Unknown;
+    assert!(matches!(
+        bind_receipt::<ClassificationSummary, _>(&store, &reference),
+        Err(ReceiptBindingError::Unknown)
+    ));
+    let body = norn_ir::runtime::encode(&case.receipt).expect("body");
+    assert_eq!(
+        ReceiptReference::parse(&body),
+        Err(ReferenceError::BodyForbidden)
+    );
+    assert_eq!(
+        ReceiptReference::parse(&RuntimeValue::from("mutable-receipt")),
+        Err(ReferenceError::InvalidDigest)
+    );
+}
+
+norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::prelude::ProptestConfig::with_cases(32))]
+    #[test]
+    fn changed_receipt_content_cannot_borrow_an_acceptance(nonce in 1_u64..u64::MAX) {
+        use norn_kernel::receipt_binding::{bind_receipt, ReceiptReference, ReceiptBindingError};
+        let mut case = case("wasm");
+        let acceptance = accepted(run(&case));
+        let reference = ReceiptReference::parse(&RuntimeValue::from(acceptance.record.receipt.0.clone())).expect("reference");
+        case.receipt.resources.cpu_millis ^= nonce;
+        let store = ReceiptStore { acceptance: &acceptance, receipt: &case.receipt, state: ReceiptLookup::Accepted };
+        norn_testkit::proptest::prop_assert!(matches!(bind_receipt::<ClassificationSummary,_>(&store, &reference), Err(ReceiptBindingError::Mismatch)));
+    }
+}
