@@ -453,6 +453,8 @@
     "tools/norn-ts/fixtures/definitions/decimal-input.source.ts",
     "tools/norn-ts/fixtures/schema/invalid/decimal-output.ts",
     "tools/norn-ts/test/decimal-input.test.ts",
+    "tools/norn-ts/fixtures/stock/stock.source.ts",
+    "tools/norn-ts/test/stock-definitions.test.ts",
     "crates/norn-checker/src/obligations/induction.rs"
   ]
 }
