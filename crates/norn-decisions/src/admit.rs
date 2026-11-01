@@ -120,14 +120,9 @@ impl AdmittedDecision {
         // only on a deeper path (which may exceed the bound), so the walk is
         // at most MAX_SUB_DECISION_DEPTH expansions per key.
         let mut expanded: BTreeMap<&str, usize> = BTreeMap::new();
-        let mut checked = BTreeMap::new();
         let mut stack = vec![(root.rule_id.as_str(), root_graph, 0_usize)];
         while let Some((rule_id, graph, depth)) = stack.pop() {
-            for node in &graph.nodes {
-                let JdmNode::DecisionNode { content, .. } = node else {
-                    continue;
-                };
-                let key = content.key.as_str();
+            for key in sub_decision_keys(graph) {
                 let child_depth = depth.saturating_add(1);
                 let sub = sub_decisions.get(key).ok_or_else(|| {
                     AdmissionError::UnresolvedSubDecision {
@@ -136,9 +131,14 @@ impl AdmittedDecision {
                     }
                 })?;
                 let sub_graph = decision_graph(sub, RuleContractV2::SubDecision)?;
-                if let Some(fold) = &content.ordered_fold {
-                    refuse_nested_folds(key, sub, sub_decisions, 0, &mut checked)?;
-                    contracts.insert_fold(key, sub, fold)?;
+                for node in &graph.nodes {
+                    if let JdmNode::DecisionNode { content, .. } = node
+                        && content.key == key
+                        && let Some(fold) = &content.ordered_fold
+                    {
+                        refuse_nested_folds(sub, sub_decisions, 0)?;
+                        contracts.insert_fold(key, sub, fold)?;
+                    }
                 }
                 if expanded.get(key).is_some_and(|seen| *seen >= child_depth) {
                     continue;
@@ -865,26 +865,14 @@ fn same_up_to_f64(decoded: &JsonValue, source: &RuntimeValue) -> bool {
 }
 
 fn refuse_nested_folds(
-    key: &str,
     rule: &RuleRoot,
     closure: &BTreeMap<String, RuleRoot>,
     depth: usize,
-    checked: &mut BTreeMap<String, usize>,
 ) -> Result<(), AdmissionError> {
     if depth > MAX_SUB_DECISION_DEPTH {
         return Err(AdmissionError::SubDecisionBound {
             depth,
             size: closure.len(),
-        });
-    }
-    if checked.get(key).is_some_and(|seen| *seen >= depth) {
-        return Ok(());
-    }
-    checked.insert(key.to_owned(), depth);
-    if checked.len() > MAX_SUB_DECISION_CLOSURE {
-        return Err(AdmissionError::SubDecisionBound {
-            depth,
-            size: checked.len(),
         });
     }
     let graph = decision_graph(rule, RuleContractV2::SubDecision)?;
@@ -895,9 +883,11 @@ fn refuse_nested_folds(
             "unsupported nested step graph",
         ));
     }
-    for key in sub_decision_keys(graph) {
-        if let Some(child) = closure.get(key) {
-            refuse_nested_folds(key, child, closure, depth.saturating_add(1), checked)?;
+    for node in &graph.nodes {
+        if let JdmNode::DecisionNode { content, .. } = node
+            && let Some(child) = closure.get(&content.key)
+        {
+            refuse_nested_folds(child, closure, depth.saturating_add(1))?;
         }
     }
     Ok(())
