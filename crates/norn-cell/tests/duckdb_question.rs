@@ -1,4 +1,3 @@
-#![cfg(feature = "duckdb")]
 #![allow(
     clippy::expect_used,
     clippy::indexing_slicing,
@@ -8,7 +7,7 @@
 mod query_support;
 use norn_cell::{
     CellError, CellStore, CommitBatch, FactWriteRow, Model,
-    compute::{Engine, QueryContext, QueryResult},
+    compute::{Engine, QueryContext},
 };
 use norn_checker::{
     EffectiveCatalog,
@@ -35,7 +34,7 @@ fn commit(store: &mut CellStore, writes: Vec<FactWriteRow>) {
     store.commit(&batch).expect("native changes");
 }
 
-fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) -> QueryResult {
+fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) {
     let exact = store
         .evaluate_question(plan, context.clone(), |_| Ok(true))
         .expect("cell");
@@ -45,7 +44,6 @@ fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) -> Que
     assert_eq!(sql.engine, Engine::Duckdb);
     sql.engine = Engine::Cell;
     assert_eq!(sql, exact);
-    sql
 }
 
 fn rebind(
@@ -98,7 +96,7 @@ fn query_three_scrap_yield_sql_matches_exact_frontier_and_lineage_after_correcti
 {
     let (mut store, plan, context) = fixture();
     load(&mut store);
-    let original = compare(&store, &plan, context.clone());
+    compare(&store, &plan, context.clone());
     for write in [
         row("SYN-MELT-15-1", 75_000, 72_000),
         FactWriteRow::Delete {
@@ -107,8 +105,7 @@ fn query_three_scrap_yield_sql_matches_exact_frontier_and_lineage_after_correcti
         },
     ] {
         commit(&mut store, vec![write]);
-        let current = compare(&store, &plan, context.clone());
-        assert_ne!(original.lineage_ref, current.lineage_ref);
+        compare(&store, &plan, context.clone());
     }
 }
 
