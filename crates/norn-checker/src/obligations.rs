@@ -66,6 +66,8 @@ pub struct DefinitionSource {
     artifacts: Vec<ArtifactEnvelope>,
     base: Vec<ArtifactEnvelope>,
     exact_digest: String,
+    receipt_sources: Vec<norn_ir::RuntimeValue>,
+    base_sources: Vec<norn_ir::RuntimeValue>,
 }
 
 impl DefinitionSource {
@@ -77,7 +79,7 @@ impl DefinitionSource {
         if artifacts.len().saturating_add(base.len()) > 8_388_608 {
             return Err(ChallengeError::Limit);
         }
-        let decode = |text: &str| -> Result<Vec<ArtifactEnvelope>, ChallengeError> {
+        let decode = |text: &str| -> Result<_, ChallengeError> {
             numeric_budget(text)?;
             let exact = norn_canonical::parse_json_verbatim(text.as_bytes())
                 .map_err(|_error| ChallengeError::LossyInput)?;
@@ -88,7 +90,12 @@ impl DefinitionSource {
             let projected = norn_canonical::parse_json_verbatim(&projected_bytes)
                 .map_err(|_error| ChallengeError::LossyInput)?;
             check_numbers(&exact, &projected)?;
-            Ok(typed)
+            let exact = norn_ir::RuntimeValue::from_canonical(&exact)
+                .map_err(|_error| ChallengeError::LossyInput)?;
+            let norn_ir::RuntimeValue::Array(sources) = exact else {
+                return Err(ChallengeError::NotAdmitted);
+            };
+            Ok((typed, sources))
         };
         // Commit the original UTF-8 documents, including escapes, whitespace and
         // exact number spellings. Never pass executable text through Norn1 first.
@@ -96,8 +103,8 @@ impl DefinitionSource {
             b"definition-source",
             &[artifacts.as_bytes(), base.as_bytes()],
         )?;
-        let artifacts = decode(artifacts)?;
-        let base = decode(base)?;
+        let (artifacts, receipt_sources) = decode(artifacts)?;
+        let (base, base_sources) = decode(base)?;
         // Qualify inputs before ordinary admission can construct diagnostics or
         // dependency closures. This is a proof-ingress resource profile, not an
         // expansion of the ordinary definition admission surface.
@@ -120,6 +127,8 @@ impl DefinitionSource {
             artifacts,
             base,
             exact_digest,
+            receipt_sources,
+            base_sources,
         })
     }
 }
@@ -283,7 +292,7 @@ impl ApprovedContract {
             base: &source.base,
             tenant: None,
         };
-        admit(artifacts, context)?;
+        admit(source, context)?;
         for profile in [&semantics, &assumptions, &assurance] {
             if profile.as_object().is_none_or(serde_json::Map::is_empty) {
                 return Err(ChallengeError::MissingProfile);
@@ -327,7 +336,7 @@ impl ApprovedContract {
             base: &source.base,
             tenant: None,
         };
-        let receipt = admit(artifacts, context)?;
+        let receipt = admit(source, context)?;
         if law_refs(artifacts, context.base)? != self.laws
             || reference_contracts(artifacts, context.base)? != self.reference_contracts
         {
@@ -428,7 +437,7 @@ fn preflight_goal_bytes(
 }
 
 fn admit(
-    artifacts: &[ArtifactEnvelope],
+    source: &DefinitionSource,
     context: &EntityArtifactSetContext<'_>,
 ) -> Result<String, ChallengeError> {
     if !context.base.is_empty() {
@@ -440,7 +449,8 @@ fn admit(
             ..*context
         };
         let checked = check_artifact_set_with_receipt(
-            context.base,
+            &crate::receipt::ReceiptSources::new(&source.base_sources, &[])
+                .map_err(|_error| ChallengeError::NotAdmitted)?,
             &full_context,
             &ResourceLimitProfile::norn_limits_v1(),
         )
@@ -466,7 +476,8 @@ fn admit(
         }
     }
     let checked = check_artifact_set_with_receipt(
-        artifacts,
+        &crate::receipt::ReceiptSources::new(&source.receipt_sources, &source.base_sources)
+            .map_err(|_error| ChallengeError::NotAdmitted)?,
         context,
         &ResourceLimitProfile::norn_limits_v1(),
     )

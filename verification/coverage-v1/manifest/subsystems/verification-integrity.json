@@ -454,6 +454,9 @@
     "tools/norn-ts/fixtures/stock/stock.source.ts",
     "tools/norn-ts/test/stock-definitions.test.ts",
     "crates/norn-checker/src/obligations/induction.rs",
+    "scripts/demo/run.sh",
+    "scripts/demo/jewelry.source.ts",
+    "crates/norn-checker/examples/jewelry_demo.rs",
     "crates/norn-checker/src/controls.rs",
     "crates/norn-ir/src/entity_v2/controls.rs",
     "crates/norn-ir/tests/controls.rs"

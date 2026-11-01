@@ -20,12 +20,14 @@ use norn_ir::quantity_ledger::*;
 use norn_ir::{Diagnostic, DiagnosticRemediation, DiagnosticSeverity};
 
 mod boundary;
+mod decimal;
 mod expression;
 pub use boundary::{
     LedgerPackSeal, classify_quantity_replay, conservation_certificate_sha256, ledger_pack_sha256,
     ledger_unit_bindings_sha256, prepare_quantity_posting, seal_ledger_pack,
     verify_conservation_certificate, verify_quantity_commit_observation,
 };
+use decimal::checked_pow10;
 pub use expression::lower_ledger_amount_expression;
 
 /// Stable diagnostic codes emitted by [`validate_ledger_pack`].
@@ -1400,14 +1402,6 @@ fn parse_i128(
         return None;
     }
     Some(parsed)
-}
-
-fn checked_pow10(exponent: u8) -> Option<i128> {
-    let mut value = 1_i128;
-    for _ in 0..exponent {
-        value = value.checked_mul(10)?;
-    }
-    Some(value)
 }
 
 fn validate_identifier(

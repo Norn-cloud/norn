@@ -91,8 +91,9 @@ pub use business_pack::{
     CorrespondenceRelation, LinkResidual, LinkedPack, MappingRelation, OntologyLinkKind,
     OntologyLinkRoot, OntologyMapping, OntologyPackKind, OntologyPackRoot, OntologyShape,
     OntologyShapeField, OntologySource, OntologySourceFile, OntologyTerm, OntologyTermKind,
-    OntologyTermStatus, PackArtifactKind, PackArtifactRef, ResidualReason, SemanticAuthority,
-    ShapeValueType, SourceImportMode, SourceImporter, SourceRedistribution, TermCorrespondence,
+    OntologyTermStatus, PackArtifactKind, PackArtifactRef, PackInstance, PackInstanceRef,
+    ResidualReason, SemanticAuthority, ShapeValueType, SourceImportMode, SourceImporter,
+    SourceRedistribution, TermCorrespondence,
 };
 pub use connector::{
     ApiKeyFormat, ConnectorAuth, ConnectorChildMergeProfile, ConnectorCommand,
@@ -1298,6 +1299,7 @@ define_payload_root!(
         pack_kind => "packKind" as BusinessPackKind,
         provides => "provides" as Vec<String>,
         artifacts => "artifacts" as Vec<PackArtifactRef>,
+        instances => "instances" as Vec<PackInstance>,
         sources => "sources" as Vec<OntologySource>,
         terms => "terms" as Vec<OntologyTerm>,
         mappings => "mappings" as Vec<OntologyMapping>,
