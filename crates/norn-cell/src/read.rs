@@ -4215,6 +4215,38 @@ mod link_candidate_index_tests {
     use crate::system::SYSTEM_DDL;
     use std::cmp::Ordering;
 
+    #[test]
+    fn post_quantity_read_snapshot_releases_on_refusal_inside_transaction() {
+        let store = crate::CellStore::open_in_memory(
+            crate::Model::from_definitions(&[], &[]).expect("model"),
+        )
+        .expect("store");
+        let request = serde_json::from_value(serde_json::json!({"version":"norn.quantity.commit/2","ledgerId":"stock","balanceVersions":[],"operation":{"kind":"post","postingId":"x","templateId":"missing","parameters":[]}})).expect("request");
+        let read = || store.read().quantity_state("main", &request);
+        assert!(matches!(
+            read(),
+            Err(crate::CellError::Quantity(
+                norn_kernel::quantity::QuantityError::InvalidContract
+            ))
+        ));
+        store
+            .conn
+            .transaction(|| {
+                assert!(matches!(
+                    read(),
+                    Err(crate::CellError::Quantity(
+                        norn_kernel::quantity::QuantityError::InvalidContract
+                    ))
+                ));
+                Ok::<(), crate::CellError>(())
+            })
+            .expect("nested read snapshot releases after refusal");
+        store
+            .conn
+            .transaction(|| Ok::<(), crate::CellError>(()))
+            .expect("read left no transaction open");
+    }
+
     #[allow(
         clippy::too_many_arguments,
         reason = "each input selects one SQL index plan dimension"
