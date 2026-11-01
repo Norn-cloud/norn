@@ -101,8 +101,9 @@ pub fn call_action_in_epoch<E: SqlEngine>(
     let mut actions = Vec::new();
     for artifact in &artifacts {
         if let norn_ir::ArtifactPayload::Action(payload) = &artifact.payload {
-            let action: norn_ir::ActionRoot =
-                norn_ir::runtime::decode(&payload.to_json_value()).map_err(Refusal::host)?;
+            let action: norn_ir::ActionRoot = serde_json::to_value(payload.to_json_value())
+                .and_then(serde_json::from_value)
+                .map_err(Refusal::host)?;
             actions.push((artifact, action));
         }
     }
