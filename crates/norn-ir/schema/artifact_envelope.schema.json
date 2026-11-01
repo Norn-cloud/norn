@@ -5417,6 +5417,13 @@
           "description": "Closed format discriminator.",
           "$ref": "#/$defs/InterpretationFormat"
         },
+        "members": {
+          "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberInterpretation"
+          }
+        },
         "role": {
           "description": "Explicit semantic role.",
           "$ref": "#/$defs/InterpretationRole"
@@ -5435,7 +5442,8 @@
         "format",
         "role",
         "sourceLayer",
-        "targetLayer"
+        "targetLayer",
+        "members"
       ]
     },
     "LawModality": {
@@ -6465,6 +6473,219 @@
             "kind"
           ]
         }
+      ]
+    },
+    "Member": {
+      "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id.",
+      "oneOf": [
+        {
+          "description": "The artifact as a whole (an action, a decision, a mapping).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An object type or interface.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "type"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName"
+          ]
+        },
+        {
+          "description": "A property of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "property"
+            },
+            "property": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "property"
+          ]
+        },
+        {
+          "description": "A link of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "link"
+            },
+            "link": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "link"
+          ]
+        },
+        {
+          "description": "A state of a type's lifecycle (a value of its lifecycle property).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "state"
+          ]
+        },
+        {
+          "description": "A declared transition of a type's lifecycle.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transition"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "transition": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "transition"
+          ]
+        },
+        {
+          "description": "An object map of a mapping.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_map"
+            },
+            "map": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "map"
+          ]
+        },
+        {
+          "description": "A law.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "law"
+            },
+            "law": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "law"
+          ]
+        }
+      ]
+    },
+    "MemberInterpretation": {
+      "description": "One interpretation between exact catalog members, never a coverage claim.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "Source type, property, link, lifecycle state or transition identity.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "target": {
+          "description": "Corresponding target identity, resolved within the pinned target layer.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "transform": {
+          "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target"
+      ]
+    },
+    "MemberRef": {
+      "description": "A member of one exact artifact.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "member": {
+          "$ref": "#/$defs/Member"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version",
+        "member"
       ]
     },
     "Multiplicity": {
