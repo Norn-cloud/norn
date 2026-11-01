@@ -7,7 +7,7 @@ import { checker, CHECKER_PKG_ENV } from "./checker.ts"
 import { fineMass, purity, MAX_FINE_TICKS } from "../fixtures/jewelry/exact.ts"
 
 const files = ["stock/stock.source.ts", "jewelry/jewelry.source.ts"].map(path => join(TOOL_ROOT, "fixtures", path))
-const options = { scope: { orgId: "org_demo", environmentId: "dev" } }
+const options = { sourcePath: "tools/norn-ts/fixtures/jewelry/jewelry.source.ts", scope: { orgId: "org_demo", environmentId: "dev" } }
 function compile() {
   return compileDefinitionFiles(files, options).flatMap(result => {
     if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
