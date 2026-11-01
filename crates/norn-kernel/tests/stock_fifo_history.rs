@@ -1,5 +1,6 @@
 //! FIFO provenance dependency and layer restoration specification.
 use norn_kernel::{
+    stock_average::StockAmount,
     stock_fifo::{FifoLayer, FifoMovement},
     stock_fifo_history::FifoState,
     stock_history::{StockHistory, StockHistoryError, StockOperation},
@@ -53,6 +54,25 @@ fn cross_layer_transfer_conserves_exact_value_and_restores_after_dependents_reve
                     "t".into(),
                     StockOperation::Transfer("a".into(), "b".into(), quantity),
                 )?;
+                let totals = |book: &Book| -> Checked<StockAmount> {
+                    let positions = book.positions()?;
+                    positions.values().flat_map(FifoState::layers).try_fold(
+                        StockAmount::default(),
+                        |sum, layer| {
+                            Ok(StockAmount {
+                                quantity: sum
+                                    .quantity
+                                    .checked_add(layer.quantity)
+                                    .ok_or("quantity overflow")?,
+                                value: sum
+                                    .value
+                                    .checked_add(layer.value)
+                                    .ok_or("value overflow")?,
+                            })
+                        },
+                    )
+                };
+                assert_eq!(totals(&transferred)?, totals(&before)?);
                 let event = transferred.events().last().ok_or("missing transfer")?;
                 let mut changes = event.changes.iter();
                 let out = changes.next().ok_or("missing source")?;

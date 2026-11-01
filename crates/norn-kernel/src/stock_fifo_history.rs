@@ -72,6 +72,9 @@ impl Valuation for FifoState {
     fn delivery(_: &str, quantity: u128) -> Self::Movement {
         FifoMovement::Delivery(quantity)
     }
+    fn transfer(&self, id: &str, quantity: u128) -> Result<(Self, StockEffect), StockHistoryError> {
+        self.apply(&Self::delivery(id, quantity))
+    }
     fn receipt(id: &str, amount: StockAmount) -> Self::Movement {
         FifoMovement::Receipt(FifoLayer {
             receipt: id.into(),
