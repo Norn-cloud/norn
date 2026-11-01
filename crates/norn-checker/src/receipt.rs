@@ -711,7 +711,9 @@ fn verify_receipt(
     } else {
         ArtifactSetRef::of(artifacts, base)?
     };
-    if parsed.artifact_set != receipt_artifact_set {
+    if norn_canonical::serialize(&parsed.artifact_set.to_canonical_value())?
+        != norn_canonical::serialize(&receipt_artifact_set.to_canonical_value())?
+    {
         return Err(invalid_receipt(
             "receipt artifact-set identity does not match the persisted definitions",
         ));
@@ -1493,6 +1495,34 @@ fn validate_stored_receipt_format(
                 "law receipt requires identifierProfile and nonempty lawEnrollment",
             ));
         }
+        for entry in law_enrollment
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let entry = exact_object(entry, "law enrollment", &["inherited_from"], &[])?;
+            let origin = exact_object(
+                required_value(entry, "inherited_from", "law enrollment")?,
+                "law origin",
+                &[
+                    "pack_id",
+                    "pack_version",
+                    "artifact_id",
+                    "artifact_digest",
+                    "law_id",
+                ],
+                &[],
+            )?;
+            for field in [
+                "pack_id",
+                "pack_version",
+                "artifact_id",
+                "artifact_digest",
+                "law_id",
+            ] {
+                required_string(origin, field, "law origin")?;
+            }
+        }
     } else if law_enrollment.is_some() {
         return Err(invalid_receipt(
             "lawEnrollment requires a law receipt format",
@@ -1518,7 +1548,14 @@ fn validate_stored_receipt_format(
                 "mapped receipt requires identifierProfile and flowSourceMap",
             ));
         }
-        _ => {}
+        LEGACY_RECEIPT_FORMAT
+        | RECEIPT_FORMAT
+        | FLOAT_RECEIPT_FORMAT
+        | FLOW_SOURCE_MAP_RECEIPT_FORMAT
+        | FLOAT_FLOW_RECEIPT_FORMAT
+        | LAW_ENROLLMENT_RECEIPT_FORMAT
+        | FLOAT_LAW_RECEIPT_FORMAT => {}
+        _ => return Err(invalid_receipt("unsupported receipt format")),
     }
     Ok(())
 }

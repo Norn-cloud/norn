@@ -180,6 +180,12 @@ fn source_decode_verbatim_and_hash_correspondence() {
         json!("short ? ['cafe\u{301}'] : []");
     let mut raw = semantic.clone();
     add_inline_layout(&mut raw);
+    for edge in semantic["payload"]["graph"]["edges"]
+        .as_array_mut()
+        .expect("edges")
+    {
+        edge.as_object_mut().expect("edge").remove("type");
+    }
     let source = norn_ir::runtime::encode(&raw).expect("source");
     let prepared = norn_checker::prepare_artifact_source(source.clone()).expect("preparation");
     assert_eq!(
@@ -224,7 +230,8 @@ fn source_decode_verbatim_and_hash_correspondence() {
         };
         assert_eq!(refs[0].artifact_id, "test.cafe\u{301}");
         assert_eq!(refs[0].sha256, expected_hash);
-        let body = serde_json::to_string(&checked.receipt).expect("receipt JSON");
+        let body = String::from_utf8(checked.receipt.canonical_json().expect("receipt JSON"))
+            .expect("receipt UTF-8");
         verify_admission_receipt_sources(
             &body,
             &checked.receipt.content_sha256().expect("receipt hash"),
@@ -233,6 +240,25 @@ fn source_decode_verbatim_and_hash_correspondence() {
             &limits,
         )
         .expect("writer to source verification");
+        let mut changed = raw.clone();
+        changed["payload"]["graph"]["nodes"][4]["content"]["expressions"][0]["value"] =
+            json!("short ? ['changed'] : []");
+        let changed = [norn_ir::runtime::encode(&changed).expect("changed source")];
+        let (changed_candidates, changed_base): (&[RuntimeValue], &[RuntimeValue]) = if in_base {
+            (&[], &changed)
+        } else {
+            (&changed, &[])
+        };
+        assert!(
+            verify_admission_receipt_sources(
+                &body,
+                &checked.receipt.content_sha256().expect("receipt hash"),
+                changed_candidates,
+                changed_base,
+                &limits,
+            )
+            .is_err()
+        );
         let documents = serde_json::to_string(&[raw.clone()]).expect("source documents");
         let (candidate_text, base_text) = if in_base {
             ("[]", documents.as_str())
@@ -249,5 +275,57 @@ fn source_decode_verbatim_and_hash_correspondence() {
             json!({"test":"assurance"}),
         )
         .expect("challenge and source writer share the verbatim model");
+    }
+}
+
+#[test]
+fn receipt_shape_refuses_unknown_formats_and_malformed_law_origins() {
+    let source = norn_ir::runtime::encode(&valid_rule()).expect("source");
+    let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
+        &[source],
+        &[],
+        &BTreeSet::new(),
+        None,
+        &ResourceLimitProfile::norn_limits_v1(),
+        None,
+    )
+    .expect("receipt");
+    let mut receipt: Value =
+        serde_json::from_slice(&checked.receipt.canonical_json().expect("bytes")).expect("JSON");
+    receipt["format"] = json!("norn-checker/receipt@999");
+    assert!(norn_checker::receipt::validate_receipt_shape(&receipt).is_err());
+    let valid = json!({"inherited_from": {
+        "pack_id":"test.pack", "pack_version":"0.1.0", "artifact_id":"test.law",
+        "artifact_digest":"a".repeat(64), "law_id":"test.member"
+    }});
+    for format in ["norn-checker/receipt@4", "norn-checker/receipt@7"] {
+        receipt["format"] = json!(format);
+        receipt["lawEnrollment"] = json!([valid.clone()]);
+        norn_checker::receipt::validate_receipt_shape(&receipt).expect("valid wire shape");
+        for invalid in [Value::Null, json!({}), json!({"inherited_from": null})] {
+            receipt["lawEnrollment"] = json!([invalid]);
+            assert!(norn_checker::receipt::validate_receipt_shape(&receipt).is_err());
+        }
+        for field in [
+            "pack_id",
+            "pack_version",
+            "artifact_id",
+            "artifact_digest",
+            "law_id",
+        ] {
+            for invalid in [Value::Null, json!(5)] {
+                let mut entry = valid.clone();
+                entry["inherited_from"][field] = invalid;
+                receipt["lawEnrollment"] = json!([entry]);
+                assert!(norn_checker::receipt::validate_receipt_shape(&receipt).is_err());
+            }
+            let mut entry = valid.clone();
+            entry["inherited_from"]
+                .as_object_mut()
+                .expect("origin")
+                .remove(field);
+            receipt["lawEnrollment"] = json!([entry]);
+            assert!(norn_checker::receipt::validate_receipt_shape(&receipt).is_err());
+        }
     }
 }
