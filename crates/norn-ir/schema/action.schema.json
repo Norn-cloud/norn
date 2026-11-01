@@ -326,14 +326,7 @@
           "properties": {
             "acceptReceipt": {
               "description": "Bind a host-authenticated Function result before firing the transition.",
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ReceiptAcceptance"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "$ref": "#/$defs/ReceiptAcceptance"
             },
             "entityArtifactId": {
               "type": "string"

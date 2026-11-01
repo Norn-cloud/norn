@@ -647,6 +647,7 @@ pub enum ActionEffectProgram {
             skip_serializing_if = "Option::is_none",
             deserialize_with = "crate::members::present_non_null"
         )]
+        #[schemars(with = "ReceiptAcceptance")]
         accept_receipt: Option<ReceiptAcceptance>,
     },
     /// Atomically mutate a parent and its declared ordered child rows.
