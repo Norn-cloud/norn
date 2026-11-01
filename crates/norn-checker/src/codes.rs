@@ -506,6 +506,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "Query semantics are unsupported by the selected compute profile.",
         "0.2.0",
     ),
+    introduced(
+        "core.laws.unresolved_scope",
+        Tier::T3,
+        "retained instance membership is missing, ambiguous, stale or exceeds its budget",
+        "0.2.0",
+    ),
     entry(
         "customization.validation.invalid_payload",
         Tier::T2,

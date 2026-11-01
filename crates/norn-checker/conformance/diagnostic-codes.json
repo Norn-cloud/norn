@@ -499,6 +499,13 @@
       "tier": "T3"
     },
     {
+      "code": "core.laws.unresolved_scope",
+      "message": "retained instance membership is missing, ambiguous, stale or exceeds its budget",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",

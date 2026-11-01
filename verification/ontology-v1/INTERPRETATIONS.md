@@ -138,3 +138,14 @@ producer evidence supplies membership. Named LAW-CONTAINED contract/refusal
 tests and generated paths verify round trips. This contract cut leaves
 retained app/pack resolution unsupported. Kani is inapplicable to this
 allocated serde/schema contract; resolver verification follows separately.
+
+LAW-CONTAINED-1 resolves a pack/app root by its stable instance ID in the
+exact retained scoped graph from #392. Membership traverses only explicit
+imports/instances, verifies every pack pin and member version/kind, and
+retains every path through import diamonds. Unrelated installed packs grant
+no membership. Unknown/duplicate roots, stale pins, missing members, implicit
+nested packs, scope mismatches, cycles and exhausted traversal budgets refuse
+with `core.laws.unresolved_scope`; no partial membership is returned. Named
+LAW-CONTAINED refusals and generated graph orderings check this pure resolver.
+Kani cannot execute the dynamic serde/semantic-hash pipeline; evidence is
+sampled conformance. This query grants no proof or activation authority.
