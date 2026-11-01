@@ -323,6 +323,7 @@
     "crates/norn-ir/src/metric.rs",
     "crates/norn-ir/src/osi.rs",
     "crates/norn-ir/src/provenance.rs",
+    "crates/norn-ir/src/requirement_display.rs",
     "crates/norn-ir/src/rule.rs",
     "crates/norn-ir/src/runtime.rs",
     "crates/norn-ir/src/sealing.rs",

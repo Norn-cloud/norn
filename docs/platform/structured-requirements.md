@@ -33,3 +33,18 @@ Consumers must retain the complete wrapper including its commit timing, then
 perform ordinary LawIR admission. No FRET compatibility or timed-liveness
 claim is made. Terminal commitment persistence is a state invariant; deadline
 breach needs a separate future clock-aware requirement.
+
+Bilingual view conformance:
+
+- **SR6 View identity:** `RequirementView` retains the complete typed requirement;
+  text is derived deterministically, never parsed back heuristically. A locale
+  switch changes labels/templates and direction only. Law and semantic slot IDs
+  remain stable; expressions and source identities use Unicode bidi isolates.
+- **SR7 One target:** English and Arabic views round-trip to the same requirement,
+  including scope, exact predicates, timing, grade and sources. Arabic is a view,
+  not a separate proof target. Consumers apply `direction()` to the display.
+- The corpus covers all seven physics rows, with immutable-history prohibition
+  and compensating-correction obligation as separate requirements. Inputs are
+  typed bounded collections/totals for one declared partition/dimension/currency;
+  these are authoring conformance cases, not admitted aggregate proofs. Terminal
+  outcomes use persistent state, not a fictitious event trigger or deadline.
