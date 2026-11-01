@@ -81,7 +81,8 @@ quotient uses the declared rounding and exact remainder, never decimal division.
 
 FOLD-NUMERIC-CLOSURE: the scaled VM permits the four arithmetic operators,
 negation, comparisons, conditional/list/record construction and the non-arithmetic
-`len`/`flatten` functions. Other numeric functions, methods, modulo and power
+`len`/`flatten` functions. Compiler-generated record keys permit string-to-string
+conversion; converting other types is refused. Other numeric functions, methods, modulo and power
 refuse rather than escape the declared arithmetic. This policy shares the caller's
 fuel counter; it never changes another clone's arithmetic policy. The evaluator
 must validate numeric input/output leaves as well as numeric literal operands.
