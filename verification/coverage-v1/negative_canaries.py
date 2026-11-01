@@ -512,11 +512,14 @@ def core_physics_closure_canaries() -> None:
 def jewelry_closure_canaries() -> None:
     registry = json.loads((ROOT / "verification/jewelry-v1/obligations.json").read_text())
     coverage = json.loads(COVERAGE.read_text())
-    coverage["subsystems"] = [s for s in coverage["subsystems"] if s["id"] != "jewelry"]
+    jewelry = next(s for s in coverage["subsystems"] if s["id"] == "jewelry")
+    removed = jewelry["obligations"].pop()
+    jewelry["obligationClaims"] = [c for c in jewelry["obligationClaims"] if c["id"] != removed]
     with tempfile.TemporaryDirectory() as directory:
         candidate = Path(directory) / "coverage.json"
         candidate.write_text(json.dumps(coverage))
         expect_coverage_validator_rejection("missing jewelry coverage", coverage_path=candidate)
+        candidate.write_text(COVERAGE.read_text())
         registry["obligations"].pop()
         obligations = Path(directory) / "obligations.json"
         obligations.write_text(json.dumps(registry))
