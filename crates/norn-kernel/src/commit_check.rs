@@ -1828,7 +1828,13 @@ fn check_required_links<E, C, T, V: CommitView + ?Sized>(
                 .catalog
                 .ancestry(&concrete)
                 .into_iter()
-                .flat_map(|def| def.links.iter().map(|link| link.id.as_str()))
+                .flat_map(|def| {
+                    model
+                        .catalog
+                        .declared_links(&def.name)
+                        .into_iter()
+                        .map(|link| link.id.as_str())
+                })
                 .collect();
             roles
                 .into_iter()

@@ -980,32 +980,60 @@ fn scalar_put_still_checks_required_inherited_owned_links() {
 }
 
 #[test]
-fn extension_links_share_declaration_owner_and_empty_fence_admission()
+fn extension_links_preserve_shape_owner_fences_and_required_roles()
 -> Result<(), Box<dyn std::error::Error>> {
-    struct EmptyAdjacency;
-    impl CommitView for EmptyAdjacency {
+    struct ExtensionView(Option<ObjectTypeName>);
+    impl CommitView for ExtensionView {
         type Error = Infallible;
         fn pending(&self, _: &Consumed) -> Result<bool, Infallible> {
             Ok(false)
         }
         fn version(&self, _: &FactKey) -> Result<FactVersion, Infallible> {
-            Ok(FactVersion::ABSENT)
+            Ok(if self.0.is_some() {
+                FactVersion(1)
+            } else {
+                FactVersion::ABSENT
+            })
         }
         fn concrete(&self, _: &FactKey) -> Result<Option<ObjectTypeName>, Infallible> {
-            Ok(None)
+            Ok(self.0.clone())
         }
         fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Infallible> {
-            Ok(FactVersion::ABSENT)
+            Ok(if self.0.is_some() {
+                FactVersion(1)
+            } else {
+                FactVersion::ABSENT
+            })
         }
-        fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Infallible> {
-            Ok(vec![])
+        fn links_of(&self, key: &FactKey) -> Result<Vec<LinkKey>, Infallible> {
+            let edge = LinkKey::new(
+                FactKey::new(LAW_THING, "source"),
+                "demo__peer",
+                FactKey::new(LAW_THING, "target"),
+            );
+            Ok(
+                if self.0.is_some() && (edge.source == *key || edge.target == *key) {
+                    vec![edge]
+                } else {
+                    vec![]
+                },
+            )
         }
         fn link_targets(
             &self,
-            _: &FactKey,
-            _: &str,
+            source: &FactKey,
+            link: &str,
         ) -> Result<Option<Vec<norn_kernel::cell_host::LinkReadTarget>>, Infallible> {
-            Ok(Some(vec![]))
+            Ok(Some(
+                self.links_of(source)?
+                    .into_iter()
+                    .filter(|edge| edge.source == *source && edge.link == link)
+                    .map(|key| norn_kernel::cell_host::LinkReadTarget {
+                        key,
+                        version: FactVersion(1),
+                    })
+                    .collect(),
+            ))
         }
     }
     let types = law_object_types();
@@ -1036,16 +1064,64 @@ fn extension_links_share_declaration_owner_and_empty_fence_admission()
             }],
             ..CellCommit::empty()
         };
-        assert!(check_commit(&commit, &model, &EmptyAdjacency).is_ok());
+        assert!(check_commit(&commit, &model, &ExtensionView(None)).is_ok());
         commit.link_reads = vec![LinkReadExpectation {
             source,
             link: "demo__missing".into(),
             targets: vec![],
         }];
         assert!(matches!(
-            check_commit(&commit, &model, &EmptyAdjacency),
+            check_commit(&commit, &model, &ExtensionView(None)),
             Err(CommitError::InvalidLinkRead { .. })
         ));
+    }
+    let mut required = extension.clone();
+    required
+        .links
+        .first_mut()
+        .ok_or("missing fixture link")?
+        .cardinality
+        .required = true;
+    let required_catalog = TypeCatalog::new(&types).with_extensions([&required]);
+    let required_model = CommitModel::new(&required_catalog);
+    for source_type in [LAW_THING, LAW_CHILD] {
+        let source = FactKey::new(source_type, "source");
+        let missing = CellCommit::<(), (), ()> {
+            writes: vec![FactWrite {
+                key: source.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: law_values(7),
+                },
+            }],
+            ..CellCommit::empty()
+        };
+        assert!(
+            matches!(
+                check_commit(&missing, &required_model, &ExtensionView(None)),
+                Err(CommitError::LinkRequired { .. })
+            ),
+            "POST-LINK-REQUIRED: missing on create"
+        );
+        let remove = CellCommit::<(), (), ()> {
+            links: vec![LinkWrite {
+                key: LinkKey::new(source, "demo__peer", FactKey::new(LAW_THING, "target")),
+                expected: FactVersion(1),
+                mutation: LinkMutation::Remove,
+            }],
+            ..CellCommit::empty()
+        };
+        assert!(
+            matches!(
+                check_commit(
+                    &remove,
+                    &required_model,
+                    &ExtensionView(Some(ObjectTypeName(source_type.into())))
+                ),
+                Err(CommitError::LinkRequired { .. })
+            ),
+            "POST-LINK-REQUIRED: last target removal"
+        );
     }
     Ok(())
 }
