@@ -21,7 +21,7 @@ fn table(outcomes: &[impl ToString], constant_predictor: bool) -> TemporalTable 
     let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "weight", 0)
         .expect("plan");
     let value = |n: String, at| TemporalValue {
-        value: RuntimeValue::from_json_text(n.to_string()).expect("number"),
+        value: RuntimeValue::from_json_text(&n).expect("number"),
         valid_at: at,
         recorded_at: at,
         source: format!("synthetic:{n}:{at}"),
