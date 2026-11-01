@@ -182,3 +182,15 @@ unit must qualify a fresh fork with the final configuration and lifecycle budget
 `test_report_unavailable_and_disposition_reason` correspond to these items.
 A report from synthetic Norn data must be labelled as a stub by its publisher;
 only a real dump from the Norn driver qualifies cross-engine parity.
+
+- **CP2-fresh-scheduler-dispatch:** a fresh fork with the committed 10-second
+  scheduler tick and once-per-minute valuation Cron reproduced a queued repost
+  on cancellation. Native diagnostics reported scheduler enabled and one worker
+  online, but both valuation jobs had no `last_execution` and Scheduled Job Log
+  was empty. The scheduler process was running and its logs were empty. This
+  falsifies stale errors from the earlier development fork as the sole cause.
+  An operational cache-clear probe is diagnostic only; it does not qualify the
+  committed bootstrap. Investigate scheduler dispatch before increasing budgets
+  or changing valuation semantics. Cancellation remains unsupported/incomplete,
+  never an intentional difference or a demonstrated ERPNext valuation bug.
+  See native [scheduler diagnostics](https://docs.frappe.io/framework/user/en/bench/guides/diagnosing-the-scheduler).
