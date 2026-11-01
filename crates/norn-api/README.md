@@ -66,7 +66,7 @@ that compiles stock, starts the command and checks both namespaces via `/v1/defs
 From the repository root (fixture sources require #147 and #227):
 
 ```sh
-(cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile) && mkdir -p ~/.cache/agent-scratch/norn-demo-host && bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/stock --org org_demo --env dev --out ~/.cache/agent-scratch/norn-demo-host/stock.json && NORN_DEMO_TOKEN=local-demo cargo run --locked -p norn-api --example fixture-server -- fixtures/engine-alpha/sales-order.definitions.json ~/.cache/agent-scratch/norn-demo-host/stock.json
+(cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile) && mkdir -p ~/.cache/agent-scratch/norn-demo-host && bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/engine-alpha --org org_demo --env dev --out ~/.cache/agent-scratch/norn-demo-host/alpha.json && bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/stock --org org_demo --env dev --out ~/.cache/agent-scratch/norn-demo-host/stock.json && NORN_DEMO_TOKEN=local-demo cargo run --locked -p norn-api --example fixture-server -- ~/.cache/agent-scratch/norn-demo-host/alpha.json ~/.cache/agent-scratch/norn-demo-host/stock.json
 ```
 
 Read with `Authorization: Bearer local-demo` at
@@ -84,3 +84,6 @@ still precedes store reads. HTTP correspondence covers allowed/denied actors.
 HOST-CACHE-PRIVATE: all definition HTTP responses, including refusals, declare
 `Cache-Control: no-store`; scope/actor-sensitive results never authorize shared
 cache reuse. The HTTP success/refusal matrices assert the header.
+
+HOST-FIXTURE-SCOPE: both authored sets compile with the same explicit scope;
+the original org_alpha golden is never adopted by the org_demo host.
