@@ -114,13 +114,6 @@ fn a_decide_graph_writes_only_the_declared_members_its_schema_admits() {
     );
 }
 
-fn entity(id: &str, payload: &Value) -> ArtifactEnvelope {
-    envelope(json!({
-        "irVersion": "0.1", "artifactId": id, "kind": "entity", "namespace": "shop",
-        "name": id, "version": "1.0.0", "lifecycle": "draft", "scope": {},
-        "dependencies": [], "provenance": { "source": "system" }, "payload": payload
-    }))
-}
 #[test]
 fn entity_projection_preserves_identity_declarations_and_order() {
     let artifact: ArtifactEnvelope = serde_json::from_str(include_str!(
