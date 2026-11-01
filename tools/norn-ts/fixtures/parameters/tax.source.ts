@@ -18,6 +18,7 @@ export const Configure = Norn.action({
   effect: { kind: "upsert_input_object", type: Registry, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
 export const Invoice = Norn.type({
+  links: [{ id: "configuration", target: Registry, cardinality: { to: "one", from: "many", required: true } }],
   name: "demo.TaxInvoice", title: "Tax invoice", version: "1.0.0", identity: [{ name: "primary", properties: ["id"] }],
   properties: Schema.Struct({ id: Schema.String, currency: Schema.String, net: Norn.decimal(2, { currency: "currency" }), tax: Norn.decimal(2, { currency: "currency" }), gross: Norn.decimal(2, { currency: "currency" }), rate: Norn.decimal(4), effective_at: Norn.timestamp("utc") }),
 })
@@ -32,6 +33,7 @@ export const PostInvoice = Norn.action({
     { name: "settings", type: Setting, key: { link: { from: "registry", link: "settings" } } },
     { name: "selected", type: Setting, key: { parameter: { from: "settings", settingKey: "tax.rate", effectiveAt: "effective_at", precedence: [{ orgId: "org_demo", environmentId: "dev" }, { orgId: "org_demo" }, {}] } } },
   ],
+  createLinks: [{ link: "configuration", targetType: Registry, targetIdField: "registry" }],
   preconditions: [Norn.expression(Context, context => context.input.currency === "USD" && context.input.rate === context.slice.selected.value)],
   writes: [{ type: Invoice, change: "created" }],
   effect: { kind: "upsert_input_object", type: Invoice, objectIdField: "id", writeMode: { kind: "create_only" } },

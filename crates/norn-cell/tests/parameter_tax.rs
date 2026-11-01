@@ -185,18 +185,8 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
         .expect("native cell")
     };
     let mut cell = open();
-    let june = rate(
-        "june",
-        "0.10",
-        "2026-01-01T00:00:00Z",
-        "2026-07-01T00:00:00Z",
-    );
-    let july = rate(
-        "july",
-        "0.12",
-        "2026-07-01T00:00:00Z",
-        "2099-01-01T00:00:00Z",
-    );
+    let june = rate("june", "0.10", "2026-01-01T00:00:00Z", JUL01);
+    let july = rate("july", "0.12", JUL01, "2099-01-01T00:00:00Z");
     let denied = commit_action(
         &mut cell,
         &catalog,
