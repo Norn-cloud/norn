@@ -214,10 +214,10 @@ proptest! {
         let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
         let fact = FactKey::new("proof.Item", "item");
         let mut recorded_at = first_recorded_at;
-        let mut version = 1;
+        let mut version = 1_u64;
         for correction in corrections {
-            recorded_at += 1;
-            version += 1;
+            recorded_at = recorded_at.checked_add(1).expect("bounded clock");
+            version = version.checked_add(1).expect("bounded history");
             store.commit(&CommitBatch {
                 logical_time: recorded_at,
                 ..batch(vec![put("proof.Item", "item", &correction.to_string())])
