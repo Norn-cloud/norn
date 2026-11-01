@@ -1995,6 +1995,7 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
             CommitError::EventLimitExceeded { limit, actual }
         }
         CommitError::Overflow => CommitError::Overflow,
+        CommitError::Quantity(reason) => CommitError::Quantity(reason),
         CommitError::Host(error) => return Err(error),
     })
 }
