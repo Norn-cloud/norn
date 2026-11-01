@@ -78,6 +78,42 @@ fn an_action_effect_is_an_authored_write_of_the_pinned_transition() {
     assert!(catalog.contains(&catalog.writes[0].target));
 }
 
+#[test]
+fn a_decide_graph_writes_only_the_declared_members_its_schema_admits() {
+    let order = envelope(read_json(
+        "fixtures/ir/entity-v2/artifact-set/commerce-purchase-order.entity.json",
+    ));
+    let rule = envelope(read_json(
+        "fixtures/rule-ir-v2/valid/purchase-order-approval.rule.json",
+    ));
+    let catalog = catalog(&[order, rule], &[]);
+    let mut writes: Vec<(String, WriteVia)> = catalog
+        .writes
+        .iter()
+        .map(|row| (row.target.member.id(), row.via))
+        .collect();
+    writes.sort();
+    // `create` writes the object; `transition` writes `submit` and `approve`
+    // of `status`, the only lifecycle the schema names.
+    assert_eq!(
+        writes,
+        [
+            (
+                "transition:commerce.PurchaseOrder#status/approve".to_owned(),
+                WriteVia::FactTransition
+            ),
+            (
+                "transition:commerce.PurchaseOrder#status/submit".to_owned(),
+                WriteVia::FactTransition
+            ),
+            (
+                "type:commerce.PurchaseOrder".to_owned(),
+                WriteVia::FactObject
+            ),
+        ]
+    );
+}
+
 fn entity(id: &str, payload: &Value) -> ArtifactEnvelope {
     envelope(json!({
         "irVersion": "0.1", "artifactId": id, "kind": "entity", "namespace": "shop",
