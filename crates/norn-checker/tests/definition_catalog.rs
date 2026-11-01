@@ -460,8 +460,8 @@ fn a_parent_row_mutation_writes_its_child_types() {
         "scope": {}, "dependencies": [{ "artifactId": "shop.OrderLine.entity", "kind": "entity", "required": true, "version": "1.0.0" }], "provenance": { "source": "system" },
         "payload": {
             "actionId": "shop.edit_order", "scopeRequired": ["orgId"], "idempotent": false,
-            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "values": { "type": "object", "additionalProperties": true }, "rows": { "type": "array", "items": { "type": "object", "additionalProperties": true } }, "version": { "type": "string" } }, "required": ["id", "values", "rows", "version"] },
-            "outputSchema": { "type": "object", "properties": {} },
+            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "values": { "type": ["null", "boolean", "number", "string", "array", "object"] }, "rows": { "type": "array", "items": { "type": ["null", "boolean", "number", "string", "array", "object"] } }, "version": { "type": "string" } }, "required": ["id", "values", "rows", "version"], "additionalProperties": false },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "writes": [{ "entityKind": "shop.Order", "change": "created" }, { "entityKind": "shop.Order", "change": "modified" }, { "entityKind": "shop.OrderLine", "change": "created" }, { "entityKind": "shop.OrderLine", "change": "modified" }, { "entityKind": "shop.OrderLine", "change": "deleted" }],
             "effectProgram": {
                 "kind": "mutate_parent_with_rows", "objectIdField": "id",
@@ -605,8 +605,8 @@ fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
         "scope": {}, "dependencies": [], "provenance": { "source": "system" },
         "payload": {
             "actionId": "shop.approve_rush", "scopeRequired": ["orgId"], "idempotent": false,
-            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] },
-            "outputSchema": { "type": "object", "properties": {} },
+            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"], "additionalProperties": false },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "writes": [{ "entityKind": "shop.RushRequest", "change": "modified" }],
             "effectProgram": {
                 "kind": "fire_transition", "objectIdField": "id",
@@ -1051,6 +1051,20 @@ fn entity_projection_preserves_identity_declarations_and_order() {
         catalog,
         project(&[artifact], &[], &BTreeSet::new()).expect("repeat")
     );
+}
+
+#[test]
+fn ambiguous_installed_mapping_targets_never_select_a_version() {
+    let old = sales_order();
+    let mut new = serde_json::to_value(&old).expect("envelope");
+    new["version"] = json!("2.0.0");
+    let projection = project(
+        &[example_mapping()],
+        &[old, envelope(new)],
+        &BTreeSet::new(),
+    )
+    .expect("read-only projection");
+    assert!(projection.mappings.is_empty());
 }
 
 #[test]
