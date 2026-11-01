@@ -1475,6 +1475,16 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             .concrete(&model.canonical(&write.key))
             .map_err(CommitError::Host)?
             && concrete != write.key.object_type
+            && (matches!(write.mutation, FactMutation::Put { .. })
+                || model
+                    .catalog
+                    .effective_type(&concrete)
+                    .is_some_and(|effective| {
+                        effective
+                            .properties
+                            .iter()
+                            .any(norn_checker::EffectiveProperty::protected)
+                    }))
         {
             return Err(CommitError::TypeMismatch {
                 key: write.key.clone(),

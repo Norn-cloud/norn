@@ -4022,48 +4022,56 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
 
 #[test]
 fn protected_subtype_cannot_be_deleted_through_ancestor() {
-    let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
-        { "name": "test.Base", "properties": [] },
-        { "name": "test.Counter", "extends": "test.Base", "properties": [
-            { "id": "total", "type": { "kind": "integer" }, "protected": true }
-        ] }
-    ]))
-    .unwrap();
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-        .with_types(types.clone());
-    let concrete = FactKey::new("test.Counter", "one");
-    cell.commit(CellCommit {
-        writes: vec![FactWrite {
-            key: concrete.clone(),
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: serde_json::from_value(json!({"total": 2})).unwrap(),
-            },
-        }],
-        ..CellCommit::empty()
-    })
-    .unwrap();
-    let alias = FactKey::new("test.Base", "one");
-    let before = cell.load(&concrete).unwrap();
-    let ledger = cell.ledger().len();
-    let slice = FactSlice::from([(alias.clone(), cell.load(&alias).unwrap())]);
-    let turn = DecisionTurn {
-        id: "delete-alias".into(),
-        now: LogicalTime::from_millis(1),
-        world: World::Main,
-        consumes: None,
-    };
-    let output = norn_ir::DecisionOutput {
-        facts: vec![norn_ir::FactChange::Delete {
-            object_type: alias.object_type.clone(),
-            key: alias.key.clone(),
-        }],
-        ..Default::default()
-    };
-    let error = commit_decision(&mut cell, &catalog, &slice, &turn, &output).unwrap_err();
-    assert_eq!(error.code(), "decision.invalid_output");
-    assert_eq!(cell.load(&concrete).unwrap(), before);
-    assert_eq!(cell.load(&alias).unwrap(), before);
-    assert_eq!(cell.ledger().len(), ledger);
+    for protected in [false, true] {
+        let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
+            { "name": "test.Base", "properties": [] },
+            { "name": "test.Counter", "extends": "test.Base", "properties": [
+                { "id": "total", "type": { "kind": "integer" }, "protected": protected }
+            ] }
+        ]))
+        .unwrap();
+        let catalog = TypeCatalog::new(&types);
+        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+            .with_types(types.clone());
+        let concrete = FactKey::new("test.Counter", "one");
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: concrete.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: serde_json::from_value(json!({"total": 2})).unwrap(),
+                },
+            }],
+            ..CellCommit::empty()
+        })
+        .unwrap();
+        let alias = FactKey::new("test.Base", "one");
+        let before = cell.load(&concrete).unwrap();
+        let ledger = cell.ledger().len();
+        let slice = FactSlice::from([(alias.clone(), cell.load(&alias).unwrap())]);
+        let turn = DecisionTurn {
+            id: "delete-alias".into(),
+            now: LogicalTime::from_millis(1),
+            world: World::Main,
+            consumes: None,
+        };
+        let output = norn_ir::DecisionOutput {
+            facts: vec![norn_ir::FactChange::Delete {
+                object_type: alias.object_type.clone(),
+                key: alias.key.clone(),
+            }],
+            ..Default::default()
+        };
+        let result = commit_decision(&mut cell, &catalog, &slice, &turn, &output);
+        if protected {
+            assert_eq!(result.unwrap_err().code(), "decision.invalid_output");
+            assert_eq!(cell.load(&concrete).unwrap(), before);
+            assert_eq!(cell.load(&alias).unwrap(), before);
+            assert_eq!(cell.ledger().len(), ledger);
+        } else {
+            result.unwrap();
+            assert!(cell.load(&concrete).unwrap().values.is_none());
+            assert_eq!(cell.ledger().len(), ledger + 1);
+        }
+    }
 }
