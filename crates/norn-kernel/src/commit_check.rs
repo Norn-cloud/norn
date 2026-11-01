@@ -99,12 +99,13 @@ impl<'m, 'a> CommitModel<'m, 'a> {
     }
 
     /// The nearest declaration of `link` on `source`'s lineage (a subtype may
-    /// narrow an inherited link).
+    /// narrow an inherited link), including extension-added members.
     #[must_use]
     pub fn link(&self, source: &ObjectTypeName, link: &str) -> Option<&'a Link> {
         self.catalog.ancestry(source).into_iter().find_map(|def| {
-            def.links
-                .iter()
+            self.catalog
+                .declared_links(&def.name)
+                .into_iter()
                 .find(|declared| declared.id.as_str() == link)
         })
     }
@@ -118,8 +119,9 @@ impl<'m, 'a> CommitModel<'m, 'a> {
             .into_iter()
             .rev()
             .find_map(|def| {
-                def.links
-                    .iter()
+                self.catalog
+                    .declared_links(&def.name)
+                    .into_iter()
                     .any(|declared| declared.id.as_str() == link)
                     .then(|| def.name.clone())
             })
