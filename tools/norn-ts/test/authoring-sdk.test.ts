@@ -7,7 +7,7 @@ import { compileDefinitions } from "../src/compiler/definitions.ts"
 import type { MappingSourceContract } from "../src/builder/mapping.ts"
 import { sourceMappedDiagnostics } from "../src/checker-abi.ts"
 import { compileModule } from "../src/compile-stdin.ts"
-import { compilePack } from "../src/pack.ts"
+import { checkPack, compilePack } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker } from "./checker.ts"
 
