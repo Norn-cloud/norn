@@ -59,7 +59,7 @@ The Norn dump may be a stub for conformance; that does not establish live parity
   no epsilon, floating point, final-only netting or cross-request cancellation.
   Native identities are excluded across engines; raw GL legs remain separately
   in JSON. Refusal preserves stock/GL contents and native identity sets locally.
-- **DIFF-REVIEW:** each differing field has a SHA-256 binding case, method, step,
+- **DIFF-REVIEW:** each differing request/account or request/line/warehouse group binds case, method, step,
   field and both observed values. Dispositions are an array keyed by fingerprint;
   duplicates, stale entries or missing evidence fail. Each entry needs `reviewer`
   (GitHub login), `review` (public review URL), and exactly one `bucket`:
