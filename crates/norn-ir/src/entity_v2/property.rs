@@ -157,6 +157,11 @@ pub enum PropertyType {
         #[schemars(with = "crate::metric::DimensionPath")]
         currency_source: Option<crate::metric::DimensionPath>,
     },
+    /// Interface-only exact Decimal: this group shares the implementor's explicit unit and scale.
+    DecimalBinding {
+        /// Same-name members in one interface bind identically.
+        group: String,
+    },
     /// `true` or `false`.
     Boolean {},
     /// An instant in time with an explicit timezone policy.
@@ -196,6 +201,22 @@ pub enum PropertyType {
 }
 
 impl PropertyType {
+    /// Whether this type contains an interface-only Decimal binding.
+    #[must_use]
+    pub fn contains_decimal_binding(&self) -> bool {
+        let mut pending = vec![self];
+        while let Some(kind) = pending.pop() {
+            match kind {
+                Self::DecimalBinding { .. } => return true,
+                Self::Record { members } => {
+                    pending.extend(members.iter().map(|m| &m.property_type))
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// The wire `kind` tag.
     #[must_use]
     pub const fn kind(&self) -> PropertyKind {
@@ -203,6 +224,7 @@ impl PropertyType {
             Self::Text { .. } => PropertyKind::Text,
             Self::Integer {} => PropertyKind::Integer,
             Self::Decimal { .. } => PropertyKind::Decimal,
+            Self::DecimalBinding { .. } => PropertyKind::DecimalBinding,
             Self::Boolean {} => PropertyKind::Boolean,
             Self::Timestamp { .. } => PropertyKind::Timestamp,
             Self::Date {} => PropertyKind::Date,
@@ -222,6 +244,7 @@ pub enum PropertyKind {
     Text,
     Integer,
     Decimal,
+    DecimalBinding,
     Boolean,
     Timestamp,
     Date,
@@ -234,10 +257,11 @@ pub enum PropertyKind {
 
 impl PropertyKind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Text,
         Self::Integer,
         Self::Decimal,
+        Self::DecimalBinding,
         Self::Boolean,
         Self::Timestamp,
         Self::Date,
@@ -255,6 +279,7 @@ impl PropertyKind {
             Self::Text => "text",
             Self::Integer => "integer",
             Self::Decimal => "decimal",
+            Self::DecimalBinding => "decimal-binding",
             Self::Boolean => "boolean",
             Self::Timestamp => "timestamp",
             Self::Date => "date",
