@@ -107,11 +107,12 @@ export const ReturnLine = Norn.type({
   links: [
     { id: "voucher", target: SalesReturn, cardinality: { to: "one", from: "many", required: true } },
     { id: "original_line", target: DeliveryLine, cardinality: { to: "one", from: "many", required: true } },
+    { id: "destination", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
   ],
 })
 export const ReconciliationLine = Norn.type({
   name: "stock.ReconciliationLine", title: "Reconciliation line", version: "0.1.0", extends: VoucherLine,
-  properties: Schema.Struct({ counted_quantity: Norn.decimal(6), rate: Norn.decimal(6) }),
+  properties: Schema.Struct({ counted_quantity: Norn.decimal(6), target_value: Norn.decimal(6) }),
   links: [
     { id: "voucher", target: StockReconciliation, cardinality: { to: "one", from: "many", required: true } },
     { id: "warehouse", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
