@@ -918,6 +918,10 @@ fn query_grain_refuses_expansion_implicit_keys_and_unsupported_semantics() {
         &admit(&definitions, &expanded, &catalog, 100).expect_err("fanout"),
         codes::FAN_OUT,
     );
+    assert_code(
+        &admit(&definitions, &expanded, &catalog, 100).expect_err("grain"),
+        AMBIGUOUS_GRAIN,
+    );
     let mut symmetric = definitions.clone();
     symmetric[0].norn.safe_aggregation = Some(norn_ir::metric::SafeAggregation::Symmetric);
     assert_code(
@@ -949,10 +953,17 @@ fn query_grain_refuses_expansion_implicit_keys_and_unsupported_semantics() {
 
 proptest::proptest! {
     #[test]
-    fn compute_deterministic_ratio_lowering_ignores_definition_order(reverse in proptest::bool::ANY, rotation in 0usize..3, max_items in 1u32..=1000) {
+    fn compute_deterministic_ratio_lowering_ignores_definition_order(reverse in proptest::bool::ANY, rotation in 0usize..3, filter_key in 0u32..32, max_items in 1u32..=1000) {
         use norn_checker::metric::compute::admit;
         let (mut definitions, mut question, catalog) = keyed_compute_fixture();
+        let filter = norn_ir::metric::MetricFilter {
+            path: norn_ir::metric::DimensionPath { links: vec![], property: norn_ir::PropertyId("name".into()) },
+            operator: norn_ir::metric::FilterOperator::Eq,
+            value: norn_ir::RuntimeValue::from(format!("row-{filter_key}")),
+        };
+        definitions[0].norn.default_filters = vec![filter.clone()];
         let mut denominator = definitions[0].clone();
+        denominator.norn.default_filters.clear();
         denominator.name = "erpnext.other".into();
         let mut ratio: MetricDefinition = decode(&ratio());
         ratio.norn.time_dimension = definitions[0].norn.time_dimension.clone();
@@ -963,6 +974,8 @@ proptest::proptest! {
         definitions.rotate_left(rotation);
         let actual = admit(&definitions, &question, &catalog, max_items).expect("reordered ratio");
         proptest::prop_assert_eq!(actual.sums().iter().map(|s| &s.name).collect::<Vec<_>>(), expected.sums().iter().map(|s| &s.name).collect::<Vec<_>>());
+        proptest::prop_assert_eq!(actual.sums()[0].filters.as_slice(), &[filter]);
+        proptest::prop_assert!(actual.sums()[1].filters.is_empty());
         proptest::prop_assert_eq!(actual.grain(), expected.grain());
         proptest::prop_assert_eq!(actual.max_items(), max_items);
     }

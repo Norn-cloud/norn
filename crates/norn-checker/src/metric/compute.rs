@@ -74,8 +74,18 @@ pub fn admit(
     catalog: &EffectiveCatalog,
     max_items: u32,
 ) -> Result<QuestionPlan, Vec<Diagnostic>> {
-    let findings =
+    let mut findings =
         check_metrics_and_questions(definitions, std::slice::from_ref(question), catalog);
+    if findings.iter().any(|finding| {
+        [
+            super::codes::FAN_OUT,
+            super::codes::GRAIN_MISMATCH,
+            super::codes::FAN_OUT_ROLLUP,
+        ]
+        .contains(&finding.code.as_str())
+    }) {
+        findings.extend(refusal(AMBIGUOUS_GRAIN));
+    }
     if !findings.is_empty() {
         return Err(findings);
     }
