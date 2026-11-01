@@ -3046,6 +3046,13 @@ mod cp1_stock {
                             .expect("typed custody fixture"),
                         )
                         .expect("typed custody fixture");
+                        if ty.name.as_str() == "stock.VoucherLine" {
+                            ty.links
+                                .iter_mut()
+                                .find(|l| l.id.as_str() == "item")
+                                .expect("inherited item link")
+                                .target = norn_ir::ObjectTypeName("jewelry.MetalLot".into());
+                        }
                         if ["stock.PurchaseReceipt", "stock.DeliveryNote"]
                             .contains(&ty.name.as_str())
                         {
@@ -3450,8 +3457,10 @@ mod cp1_stock {
         let mut sale_artifacts = artifacts.clone();
         for artifact in &mut sale_artifacts {
             if let ArtifactPayload::Action(payload) = &mut artifact.payload {
-                let mut action: norn_ir::ActionRoot =
-                    serde_json::from_value(payload.to_json_value()).expect("action");
+                let mut action: norn_ir::ActionRoot = serde_json::from_value(
+                    serde_json::to_value(payload.to_json_value()).expect("action"),
+                )
+                .expect("action");
                 if let Some(post) = &mut action.stock_post {
                     post.operation = norn_ir::ActionStockOperation::Delivery;
                 }
