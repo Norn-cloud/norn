@@ -452,7 +452,7 @@ fn ordered_fold_is_not_silently_loaded_as_an_ordinary_sub_decision() {
         identity: "id".to_owned(),
         item_schema: BTreeMap::new(),
         accumulator_schema: BTreeMap::new(),
-        initial: "{}".into(),
+        initial: norn_ir::ZenExpression("{}".to_owned()),
         max_items: 1,
         max_accumulator_bytes: 100,
         arithmetic: norn_ir::jdm::FoldArithmetic {
