@@ -74,21 +74,7 @@ pub fn check_controls(
                             .zip(policies.as_ref())
                             .and_then(|(actions, policies)| {
                                 project(object, actions, policies).map(|(graph, concrete)| {
-                                    let check = check_duties(&graph, &path.actions, 100_000);
-                                    let (verdict, reachability) =
-                                        crate::controls::evidence(&check, concrete);
-                                    let trace = match check {
-                                        crate::duties::DutyCheck::Counterexample {
-                                            trace, ..
-                                        } => trace
-                                            .into_iter()
-                                            .map(|step| {
-                                                format!("{}:{}", step.role, step.edge.action)
-                                            })
-                                            .collect(),
-                                        _ => Vec::new(),
-                                    };
-                                    (verdict, reachability, trace)
+                                    evaluate_path(&graph, &path.actions, concrete)
                                 })
                             })
                     } else {
@@ -162,9 +148,10 @@ fn project(
             for condition in &rule.all_of {
                 if let AccessCondition::Role(role) = condition {
                     let next: BTreeSet<_> = role.any_of.iter().cloned().collect();
-                    roles = Some(roles.map_or(next.clone(), |prior| {
-                        prior.intersection(&next).cloned().collect()
-                    }));
+                    roles = Some(roles.map_or_else(
+                        || next.clone(),
+                        |prior| prior.intersection(&next).cloned().collect(),
+                    ));
                 } else {
                     concrete = false;
                 }
@@ -213,4 +200,24 @@ fn empty_schema(schema: &norn_ir::rule::JsonObject) -> bool {
         == Some(serde_json::json!({
             "type": "object", "properties": {}, "required": [], "additionalProperties": false
         }))
+}
+
+fn evaluate_path(
+    graph: &DutyGraph,
+    path: &[String],
+    concrete: bool,
+) -> (ControlStatus, Reachability, Vec<String>) {
+    let check = check_duties(graph, path, 100_000);
+    let (verdict, reachability) = crate::controls::evidence(&check, concrete);
+    let trace = match check {
+        crate::duties::DutyCheck::Counterexample { trace, .. } => trace
+            .into_iter()
+            .map(|step| format!("{}:{}", step.role, step.edge.action))
+            .collect(),
+        crate::duties::DutyCheck::Separated { .. }
+        | crate::duties::DutyCheck::Unreachable
+        | crate::duties::DutyCheck::Invalid
+        | crate::duties::DutyCheck::Exhausted => Vec::new(),
+    };
+    (verdict, reachability, trace)
 }
