@@ -1,11 +1,5 @@
 {
-<<<<<<< HEAD
-  "sha256": "6affce50ed9e0ae00b60cccdc78893202e0356bdc9c9a6d9e71cd814ac274832",
-||||||| 438d260af
-  "sha256": "060afd60c7350dc93b91b89694db45c1d7a84f18d2b93ee78f9f2441468613ce",
-=======
-  "sha256": "0c4981a2b02b0ba8636849b47e863e52fa0ff4603c04cd220b844c65c16d13e9",
->>>>>>> demo/stock-transfer-valuation
+  "sha256": "dde53b3c4d573c944fc2b4bdcabdc386f6b1646de2082a17a924f41ba8970ab2",
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",

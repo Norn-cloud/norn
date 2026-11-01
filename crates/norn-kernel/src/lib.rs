@@ -71,7 +71,6 @@ pub mod result_reconciliation;
 pub mod snapshot_observe;
 pub mod stock_average;
 pub mod stock_history;
-||||||| 438d260af
 pub mod stock_valuation;
 mod version_check;
 // Hosts and the dependency-bounded reference harness share the input codec
