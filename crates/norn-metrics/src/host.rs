@@ -83,8 +83,6 @@ pub struct ForecastSummary {
     pub diagnostics_passed: bool,
     /// UCUM outcome code; 1 denotes a dimensionless integer column.
     pub error_unit: String,
-    /// Ontology-resolved outcome unit, including dimensionless/unknown absence.
-    pub unit: Option<norn_ir::UnitRef>,
     /// RMSE in billionths of the declared outcome unit; absent without a fit.
     pub rmse_nanos: Option<i64>,
     /// Training-mean baseline in the same units; absent without a fit.
