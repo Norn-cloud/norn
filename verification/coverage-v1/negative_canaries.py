@@ -959,6 +959,28 @@ def selector_gate_order_canaries() -> None:
         raise AssertionError(f"{profile} selector check accepted before its producers")
 
 
+def commitment_deadline_mutation_canary() -> None:
+    model = ROOT / "verification/core-physics-v1/models/core-quantity-commitment.qnt"
+    source = model.read_text(encoding="utf-8")
+    original = 'else if (c.due <= t and c.state == "promised") { state: "breached", due: c.due }'
+    if source.count(original) != 1:
+        raise AssertionError("commitment deadline canary target drifted")
+    gate = next(g for g in json.loads(GATES.read_text())["gates"]
+                if g["id"] == "core-quantity-commitment-quint")
+    argv = gate["command"].split()
+    if "deadlineBreach" not in argv:
+        raise AssertionError("commitment gate must check deadlineBreach")
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / model.name
+        candidate.write_text(source.replace(original, original.replace('"breached"', '"cancelled"')),
+                             encoding="utf-8")
+        argv[0] = str(QUINT)
+        argv[2] = str(candidate)
+        run = run_quint_mutation(argv, cwd=Path(directory), label="promised expiry becomes cancellation")
+    if not counterexampled(run):
+        raise AssertionError(f"commitment deadline mutant survived: {run.output[-1200:]}")
+
+
 def gate_binding_canaries() -> None:
     writer = load_module("norn_write_verification_result_canary", WRITER)
     result_validator = load_module("norn_validate_result_canary", RESULT_VALIDATOR)
@@ -1275,6 +1297,7 @@ def main() -> int:
     workflow_canaries()
     quint_apalache_retry_canaries()
     ontology_quint_semantic_mutation_canaries()
+    commitment_deadline_mutation_canary()
     selector_gate_order_canaries()
     gate_binding_canaries()
     proof_hole_canaries()
