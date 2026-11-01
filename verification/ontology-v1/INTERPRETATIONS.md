@@ -179,3 +179,6 @@ or strengthened inherited-law conditions refuse under the original approval.
 Named independent node/edge/step exhaustion cases also refuse retained membership.
 These are production receipt/resolver/challenge conformance checks, not proofs.
 Kani remains infeasible for the allocated receipt/serde/hash pipeline.
+App/pack law roots resolve during private approval construction. Exact retained
+base and protected-law digests carry that checked fact into edge proposals; an
+unresolved root cannot obtain approval or edit/reuse a previous approval.

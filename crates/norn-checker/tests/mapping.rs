@@ -413,6 +413,55 @@ fn edge_new_omit_noproof_generate_complete_unknown_proposals() {
 }
 
 #[test]
+fn layers_edge_unknown_retained_roots_cannot_obtain_or_reuse_approval() {
+    use norn_checker::obligations::{ApprovedContract, ChallengeError};
+    let (approved, retained, candidate) = edge_fixture();
+    for root in [
+        norn_ir::LawRoot::App("missing-app".to_owned()),
+        norn_ir::LawRoot::Pack("missing-pack".to_owned()),
+    ] {
+        let mut law = candidate.first().expect("law").clone();
+        let mut declaration: norn_ir::LawIR = serde_json::from_value(
+            serde_json::to_value(law.payload.to_json_value()).expect("wire"),
+        )
+        .expect("law");
+        declaration.scope.root = root;
+        law.payload = norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Law,
+            serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
+        )
+        .expect("payload");
+        let mut artifacts = vec![law];
+        let source = edge_source(&artifacts, &retained);
+        assert_eq!(
+            ApprovedContract::approve_retained(
+                &source,
+                &retained,
+                json!({"semantics":"identity"}),
+                json!({"assumptions":[]}),
+                json!({"required":"checked-proof"}),
+            )
+            .err(),
+            Some(ChallengeError::Closure)
+        );
+        let (document, _) = complete_member_interpretation();
+        let (mut edge, _) = pinned_interpretation();
+        edge.payload = norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Mapping,
+            serde_json::from_value(serde_json::to_value(document).expect("edge")).expect("tree"),
+        )
+        .expect("payload");
+        artifacts.push(edge);
+        assert_eq!(
+            approved
+                .interpretation_challenge(&edge_source(&artifacts, &retained), &retained)
+                .err(),
+            Some(ChallengeError::InvalidSubmission)
+        );
+    }
+}
+
+#[test]
 fn layers_edge_complete_chain_refuses_changed_units_and_inherited_conditions() {
     use norn_checker::obligations::{ChallengeError, DefinitionSource};
     let (approved, retained, mut candidate) = edge_fixture();
