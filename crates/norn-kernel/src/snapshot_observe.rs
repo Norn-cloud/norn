@@ -1121,13 +1121,21 @@ pub fn verify_finding_values(
 /// # Errors
 /// Unsupported semantics, exhausted evaluation fuel or invalid finding construction.
 pub fn finding_rule_is_violated(
-    catalog: &TypeCatalog<'_>, key: &FactKey, values: &JsonObject, finding: &DataQualityFinding,
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &JsonObject,
+    finding: &DataQualityFinding,
 ) -> Result<bool, ObservationRefusal> {
-    Ok(reevaluate_finding(catalog, key, values, finding)?.iter().any(|expected| expected.rule_ref == finding.rule_ref))
+    Ok(reevaluate_finding(catalog, key, values, finding)?
+        .iter()
+        .any(|expected| expected.rule_ref == finding.rule_ref))
 }
 
 fn reevaluate_finding(
-    catalog: &TypeCatalog<'_>, key: &FactKey, values: &JsonObject, finding: &DataQualityFinding,
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &JsonObject,
+    finding: &DataQualityFinding,
 ) -> Result<Vec<DataQualityFinding>, ObservationRefusal> {
     let mut remaining = EvaluationBudget::default().units();
     let failures = evaluate_invariants(catalog, key, values, &mut remaining).map_err(|error| {
@@ -1156,7 +1164,6 @@ fn reevaluate_finding(
         "verified-history",
         &failures,
     )
-
 }
 
 const TEMPORAL_PROPERTY_RULE_ID: &str = "norn.temporal.property_validity";

@@ -25,8 +25,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// # Errors
     /// Missing/corrupt historical definitions or unsupported recovery evaluation.
-    pub fn observation_is_quarantined(&self, world: &str, record: &ObjectRecord) -> Result<bool, CellError> {
-        Ok(self.review_findings(world, &record.object_type, &record.id)?.iter().any(|(finding, quarantines)| *quarantines && finding.status == DataQualityFindingStatus::Open))
+    pub fn observation_is_quarantined(
+        &self,
+        world: &str,
+        record: &ObjectRecord,
+    ) -> Result<bool, CellError> {
+        Ok(self
+            .review_findings(world, &record.object_type, &record.id)?
+            .iter()
+            .any(|(finding, quarantines)| {
+                *quarantines && finding.status == DataQualityFindingStatus::Open
+            }))
     }
 
     /// Authoritative projection selection excludes quarantined observations.
@@ -88,11 +97,25 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
-        Ok(self.review_findings(world, object_type, key)?.into_iter().map(|(finding, _)| finding).collect())
+        Ok(self
+            .review_findings(world, object_type, key)?
+            .into_iter()
+            .map(|(finding, _)| finding)
+            .collect())
     }
 
-    fn review_findings(&self, world: &str, object_type: &str, key: &str) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
+    fn review_findings(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+    ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
         let current = self.object(world, object_type, key)?;
+        if let Some(record) = &current
+            && self.object_at_version(world, object_type, key, record.version)?.as_ref() != Some(record)
+        {
+            return Err(CellError::QualityEvaluation("unproven correction values".into()));
+        }
         let mut seen = BTreeSet::new();
         let mut findings = Vec::new();
         let mut after = 0i64;
@@ -118,21 +141,31 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     .map_err(CellError::Encoding)?;
                     if seen.insert(finding.id.clone()) {
                         let model = self.retained_definition_model(definitions_version)?;
-                        let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces()).with_property_types(model.property_types()).with_governing_laws(model.law_artifacts());
+                        let catalog = TypeCatalog::new(model.object_types())
+                            .with_interfaces(model.interfaces())
+                            .with_property_types(model.property_types())
+                            .with_governing_laws(model.law_artifacts());
                         let class = catalog.classify_data_quality_rule(&finding.rule_ref)?;
-                        let quarantines = class == norn_kernel::DataQualityRuleClassification::Integrity || (class == norn_kernel::DataQualityRuleClassification::Builtin && finding.severity == norn_ir::DataQualitySeverity::Error);
-                        if let Some(record) = &current {
-                            if !norn_kernel::snapshot_observe::finding_rule_is_violated(
-                                &catalog, &FactKey::new(object_type, key), &record.values, &finding,
-                            ).map_err(|error| CellError::QualityEvaluation(error.to_string()))?
+                        let quarantines = class
+                            == norn_kernel::DataQualityRuleClassification::Integrity
+                            || (class == norn_kernel::DataQualityRuleClassification::Builtin
+                                && finding.severity == norn_ir::DataQualitySeverity::Error);
+                        if let Some(record) = &current
+                            && !norn_kernel::snapshot_observe::finding_rule_is_violated(
+                                &catalog,
+                                &FactKey::new(object_type, key),
+                                &record.values,
+                                &finding,
+                            )
+                            .map_err(|error| CellError::QualityEvaluation(error.to_string()))?
                             {
-                                finding.status = if class == norn_kernel::DataQualityRuleClassification::Unverified
+                                finding.status = if class
+                                    == norn_kernel::DataQualityRuleClassification::Unverified
                                 {
                                     DataQualityFindingStatus::Superseded
                                 } else {
                                     DataQualityFindingStatus::Resolved
                                 };
-                            }
                         }
                         findings.push((finding, quarantines));
                     }
@@ -150,8 +183,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         else {
             return Ok(None);
         };
-        let Some(event) = self.verified_history_event(&entry)? else { return Ok(None); };
-        let receipt = self.receipt_at(entry.commit_seq)?.ok_or(CellError::OutOfRange("finding receipt"))?;
+        let Some(event) = self.verified_history_event(&entry)? else {
+            return Ok(None);
+        };
+        let receipt = self
+            .receipt_at(entry.commit_seq)?
+            .ok_or(CellError::OutOfRange("finding receipt"))?;
         Ok(Some((event, receipt.body.definitions_version)))
     }
 }
@@ -209,4 +246,3 @@ pub(crate) fn deduplicate<E: SqlEngine>(
     }
     Ok(())
 }
-
