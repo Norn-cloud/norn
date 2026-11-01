@@ -33,6 +33,21 @@ pub(crate) struct StoredReceipt {
     pub(crate) source: u64,
 }
 
+struct Bound<'a>(&'a StoredReceipt);
+impl norn_kernel::receipt_binding::AcceptedReceiptStore for Bound<'_> {
+    type Error = CellError;
+    fn resolve(
+        &self,
+        _: &Digest,
+    ) -> Result<norn_kernel::receipt_binding::ReceiptResolution<'_>, CellError>
+    {
+        Ok(norn_kernel::receipt_binding::ReceiptResolution::Accepted {
+            acceptance: &self.0.acceptance,
+            receipt: &self.0.receipt,
+        })
+    }
+}
+
 pub(crate) fn refused(reason: &str) -> CellError {
     CellError::Engine(format!("action.receipt_{reason}"))
 }
@@ -71,7 +86,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         let reference = completion
             .receipt
             .content_digest()
-            .map_err(|_| refused("digest"))?;
+            .map_err(|_invalid| refused("digest"))?;
         let scope = self.scope.clone();
         let now = self.now;
         let batch = CommitBatch {
@@ -86,16 +101,16 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         self.store.commit_guarded(&batch, |reader| -> Result<(), CellError> {
             if dispatched.invocation.tenant != scope || dispatched.invocation.world != MAIN_WORLD { return Err(refused("scope")); }
             let pending = reader.head_command()?.ok_or_else(|| refused("unknown"))?;
-            let invocation = norn_ir::runtime::encode(&dispatched.invocation).map_err(|_| refused("dispatch"))?;
-            let receipt = norn_ir::runtime::encode(completion.receipt).map_err(|_| refused("body"))?;
+            let invocation = norn_ir::runtime::encode(&dispatched.invocation).map_err(|_invalid| refused("dispatch"))?;
+            let receipt = norn_ir::runtime::encode(completion.receipt).map_err(|_invalid| refused("body"))?;
             if pending.command.command_id != dispatched.invocation.command_id
                 || pending.command.generation != dispatched.generation().0
                 || pending.command.command.get("payload") != Some(&invocation)
                 || pending.result.as_ref() != Some(&receipt) { return Err(refused("dispatch")); }
             let command = reader.object(MAIN_WORLD, "norn.FunctionCommand", &dispatched.invocation.command_id)?.ok_or_else(|| refused("state"))?;
-            let state: CommandState = norn_ir::runtime::decode(command.values.get("state").ok_or_else(|| refused("state"))?).map_err(|_| refused("state"))?;
+            let state: CommandState = norn_ir::runtime::decode(command.values.get("state").ok_or_else(|| refused("state"))?).map_err(|_invalid| refused("state"))?;
             let context = ReconcileContext { tenant: &scope, world: MAIN_WORLD, now, policy: ReconcilePolicy::DEFAULT };
-            let Reconciliation::Accepted(mut acceptance) = reconcile(&context, dispatched, &state, completion, checks, &ReceiptView(reader)).map_err(|_| refused("reconciliation"))? else { return Err(refused("not_authenticated")); };
+            let Reconciliation::Accepted(mut acceptance) = reconcile(&context, dispatched, &state, completion, checks, &ReceiptView(reader)).map_err(|_invalid| refused("reconciliation"))? else { return Err(refused("not_authenticated")); };
             acceptance.reads.push(norn_kernel::FactExpectation { key: FactKey::new("norn.FunctionCommand", &dispatched.invocation.command_id), expected: FactVersion(command.version) });
             let source = reader.next_commit_seq()?;
             let frontier = source.checked_add(1).ok_or_else(|| refused("frontier"))?;
@@ -114,7 +129,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         &self,
         reference: &Digest,
     ) -> Result<Option<StoredReceipt>, CellError> {
-        let row = self.store.conn.query_optional("SELECT body FROM _norn_function_receipt WHERE reference=?1 AND scope=?2 AND length(body)<=?3", params![reference.0, self.scope, i64::try_from(LIMIT).map_err(|_| refused("limit"))?], |row| row.get::<String>(0))?;
+        let row = self.store.conn.query_optional("SELECT body FROM _norn_function_receipt WHERE reference=?1 AND scope=?2 AND length(body)<=?3", params![reference.0, self.scope, i64::try_from(LIMIT).map_err(|_invalid| refused("limit"))?], |row| row.get::<String>(0))?;
         let Some(body) = row else {
             return Ok(None);
         };
@@ -122,7 +137,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         if stored
             .receipt
             .content_digest()
-            .map_err(|_| refused("digest"))?
+            .map_err(|_invalid| refused("digest"))?
             != *reference
         {
             return Err(refused("digest"));
@@ -167,23 +182,9 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         ) {
             return Err(refused("replayed_or_stale"));
         }
-        struct Bound<'a>(&'a StoredReceipt);
-        impl norn_kernel::receipt_binding::AcceptedReceiptStore for Bound<'_> {
-            type Error = CellError;
-            fn resolve(
-                &self,
-                _: &Digest,
-            ) -> Result<norn_kernel::receipt_binding::ReceiptResolution<'_>, CellError>
-            {
-                Ok(norn_kernel::receipt_binding::ReceiptResolution::Accepted {
-                    acceptance: &self.0.acceptance,
-                    receipt: &self.0.receipt,
-                })
-            }
-        }
         norn_kernel::receipt_binding::bind_receipt(&Bound(&stored), reference)
             .map(Some)
-            .map_err(|_| refused("binding"))
+            .map_err(|_invalid| refused("binding"))
     }
 
     /// Export retained receipt evidence with its authenticated recorded clock.
@@ -468,6 +469,6 @@ pub(crate) fn claim<S: SqlEngine>(
     if retained != body || !crate::receipt_fence::usable(consumed.is_some(), stored.frontier, current) {
         return Err(refused("replayed_or_stale"));
     }
-    reader.conn.execute("UPDATE _norn_function_receipt SET consumed_commit_seq=?1 WHERE reference=?2 AND scope=?3 AND body=?4 AND consumed_commit_seq IS NULL", params![i64::try_from(current).map_err(|_| refused("frontier"))?, reference.0, scope, body])?;
+    reader.conn.execute("UPDATE _norn_function_receipt SET consumed_commit_seq=?1 WHERE reference=?2 AND scope=?3 AND body=?4 AND consumed_commit_seq IS NULL", params![i64::try_from(current).map_err(|_invalid| refused("frontier"))?, reference.0, scope, body])?;
     Ok(())
 }
