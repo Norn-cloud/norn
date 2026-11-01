@@ -1860,8 +1860,6 @@ impl<'a> Admission<'a> {
             .map(|defined| AdmittedType { defined })
     }
 
-    /// The definition an entity artifact id declares (mapping targets).
-
     /// The definition an action effect pins, when its pinned entity artifact
     /// defines the effect's object kind ([`effect_target_findings`]).
     pub(crate) fn effect_target(
