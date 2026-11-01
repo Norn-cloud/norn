@@ -28,6 +28,7 @@ norn-testkit = { path = "../norn-testkit" }
 # support only; SKELETON already admits norn-kernel <- norn-decisions.
 norn-decisions = { path = "../norn-decisions" }
 serde_json = "1.0.150"
+proptest = "1.11.0"
 
 [lints]
 workspace = true
