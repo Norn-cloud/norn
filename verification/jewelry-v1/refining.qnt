@@ -1,6 +1,6 @@
 // One metal, company and one custody owner; 0..6 exact normalized fine ticks.
-// Fine ticks represent micrograms * purity numerator / 24,000,000 without
-// division or rounding. All bounded amounts fit signed i128; parsing and
+// Fine ticks are micrograms * purity numerator; denominator 24,000,000 is
+// implicit, with no division or rounding. All bounded amounts fit signed i128; parsing and
 // overflow refusal in the runtime are unbound. Synthetic valuation: 1 per tick.
 module jewelry_refining {
   type Book = { received: List[int], stock: List[int], lost: List[int],
