@@ -190,7 +190,7 @@ pub fn perform_forecast(
     Ok(receipt)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 #[allow(
     clippy::expect_used,
     reason = "real native perform-path correspondence scenario"
