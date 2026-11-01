@@ -32,7 +32,7 @@ admission remain subsequent changes.
 ## Declared direct Post expansion
 A quantity-backed action may select `Post` with a definition-pinned template,
 posting identity field and exact parameter bindings. The configured ledger's
-certificate, funding checks and caller balance fences still govern admission.
+certificate, funding and complete debit/credit balance fences govern admission.
 The same binding validator covers owned-row and ordinary business effects.
 
 POST-ATOMIC and POST-IDENTITY conformance extends the native owned-row witness
