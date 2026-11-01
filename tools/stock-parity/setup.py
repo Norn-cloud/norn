@@ -22,6 +22,8 @@ def provision(api, trace):
     ensure(api, 'Item Group', 'All Item Groups', item_group_name='All Item Groups', is_group=1)
     ensure(api, 'Supplier Group', 'All Supplier Groups', supplier_group_name='All Supplier Groups', is_group=1)
     ensure(api, 'Customer Group', 'All Customer Groups', customer_group_name='All Customer Groups', is_group=1)
+    ensure(api, 'Customer Group', 'Parity Customers', customer_group_name='Parity Customers',
+           parent_customer_group='All Customer Groups', is_group=0)
     ensure(api, 'Territory', 'All Territories', territory_name='All Territories', is_group=1)
     api.update('System Settings', 'System Settings', float_precision=6, currency_precision=2, time_zone='UTC', language='en')
     api.update('Stock Settings', 'Stock Settings', allow_negative_stock=0)
@@ -50,7 +52,7 @@ def provision(api, trace):
     supplier = api.create('Supplier', supplier_name='Supplier ' + suffix,
                           supplier_group='All Supplier Groups', supplier_type='Company')['name']
     customer = api.create('Customer', customer_name='Customer ' + suffix, customer_type='Company',
-                          customer_group='All Customer Groups', territory='All Territories')['name']
+                          customer_group='Parity Customers', territory='All Territories')['name']
     years = {c['effectiveAt'][:4] for s in trace['steps'] for c in
              ([s['command']] if s['kind'] == 'serial' else s['commands'])}
     for year in years:
