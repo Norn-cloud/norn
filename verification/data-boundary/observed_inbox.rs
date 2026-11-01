@@ -110,3 +110,18 @@ fn dataplane_submission_enters_the_cell_only_through_observed_inbox() {
     drop(host);
     std::fs::remove_dir_all(directory).expect("cleanup");
 }
+
+// OBS-EVIDENCE-1: exercise the real host identity boundary over generated trusted streams.
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn source_stream_identity_survives_redelivery(connector in "[a-z%/]{1,12}", partition in "[a-z%/]{1,12}", event in "[a-z%/]{1,12}") {
+        let scope = CellScope {org_id:"org_demo".into(), environment_id:"dev".into()};
+        let host = DevHost::new(NativeEngine::open_in_memory().expect("engine"), "[]", scope.clone(), LogicalTime::from_millis(1)).expect("host");
+        let checked = || Ok(Observed {id:ObservationId(event.clone()), provenance:Provenance {source:"synthetic".into(),source_id:"row".into(),mapping_version:"pipeline/1".into(),observed_at:LogicalTime::from_millis(1)},input:RuntimeValue::Null});
+        let stream = ObservationStream {connector_instance:&connector, partition:&partition};
+        norn_testkit::proptest::prop_assert!(host.observe_submission(&scope, stream, checked).expect("capture"));
+        norn_testkit::proptest::prop_assert!(!host.observe_submission(&scope, stream, checked).expect("replay"));
+        norn_testkit::proptest::prop_assert!(host.observe_submission(&scope, ObservationStream {connector_instance:&format!("x{connector}"), ..stream}, checked).expect("other connector"));
+        norn_testkit::proptest::prop_assert!(host.observe_submission(&scope, ObservationStream {partition:&format!("x{partition}"), ..stream}, checked).expect("other partition"));
+    }
+}

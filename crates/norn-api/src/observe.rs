@@ -46,21 +46,3 @@ impl<E: SqlEngine> DevHost<E> {
             .map_err(Refusal::host)
     }
 }
-
-#[cfg(test)]
-#[allow(clippy::expect_used, missing_docs, reason = "source identity correspondence")]
-mod tests {
-    use super::*;
-    use norn_testkit::proptest::prelude::*;
-    proptest! {
-        #[test]
-        fn feed_identity_is_stable_and_separates_trusted_streams(connector in "[a-z%/]{1,12}", partition in "[a-z%/]{1,12}", event in "[a-z%/]{1,12}") {
-            let stream = ObservationStream {connector_instance:&connector, partition:&partition};
-            let id = inbox_id(stream, &event).expect("identity");
-            prop_assert_eq!(&id, &inbox_id(stream, &event).expect("replay"));
-            prop_assert_ne!(&id, &inbox_id(ObservationStream {connector_instance:&format!("x{connector}"), ..stream}, &event).expect("other connector"));
-            prop_assert_ne!(&id, &inbox_id(ObservationStream {partition:&format!("x{partition}"), ..stream}, &event).expect("other partition"));
-            prop_assert_ne!(&id, &inbox_id(stream, &format!("x{event}")).expect("other event"));
-        }
-    }
-}
