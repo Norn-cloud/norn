@@ -203,7 +203,8 @@ fn source_decode_verbatim_and_hash_correspondence() {
         };
         assert_eq!(refs[0].artifact_id, "test.cafe\u{301}");
         assert_eq!(refs[0].sha256, expected_hash);
-        let body = serde_json::to_string(&checked.receipt).expect("receipt JSON");
+        let body = String::from_utf8(checked.receipt.canonical_json().expect("receipt JSON"))
+            .expect("receipt UTF-8");
         verify_admission_receipt_sources(
             &body,
             &checked.receipt.content_sha256().expect("receipt hash"),
