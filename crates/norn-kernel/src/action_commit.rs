@@ -4901,7 +4901,8 @@ fn action_slice_key<X>(
                 .saturating_add(1);
             (depth, None)
         }
-        SliceKey::TriggerObject
+        SliceKey::Parameter { .. }
+        | SliceKey::TriggerObject
         | SliceKey::TriggerBefore
         | SliceKey::TriggerAfter
         | SliceKey::TriggerChanges => {
