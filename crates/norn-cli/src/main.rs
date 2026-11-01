@@ -1,6 +1,7 @@
 //! Native entrypoint for the same checker ABI used by typed TypeScript authoring.
 use std::io::{BufRead as _, Write as _};
 mod eval;
+mod remote;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -14,6 +15,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Discover and invoke a remote server's live MCP catalog.
+    Remote(remote::RemoteArgs),
     /// Check a JSON artifact array using the shared checker and resource limits.
     Check {
         /// JSON array emitted by typed authoring.
@@ -47,6 +50,7 @@ enum Command {
 
 fn run(command: Command) -> Result<(String, bool), String> {
     match command {
+        Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),
         Command::Openapi => norn_api::openapi::openapi_json()
             .map(|document| (document, true))
             .map_err(|error| error.to_string()),
