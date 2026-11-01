@@ -1,7 +1,7 @@
 //! Deterministic, conservative lowering of normative declarations (#3563/#3320).
 //! This is not signature verification, admission, a proof or an evaluator.
 use norn_ir::deontic::{DeonticModality, DeonticRule, RuleSourceSpan};
-use norn_ir::{LawIR, LawModality};
+use norn_ir::{LawIR, LawModality, LawResponse, LawRoot};
 
 /// Why a declaration cannot be represented faithfully as an ordinary law.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,14 +40,7 @@ pub struct LoweredDeonticLaw {
 /// # Errors
 /// Returns a typed refusal rather than silently weakening unsupported semantics.
 pub fn lower_deontic_law(rule: &DeonticRule) -> Result<LoweredDeonticLaw, LawLoweringRefusal> {
-    if rule.source.artifact_id.trim().is_empty()
-        || !valid_pointer(&rule.source.pointer)
-        || rule
-            .source
-            .bytes
-            .as_ref()
-            .is_some_and(|range| range.start > range.end)
-    {
+    if !valid_source(&rule.source) {
         return Err(LawLoweringRefusal::InvalidSource);
     }
     if !rule.exceptions.is_empty() || !rule.defeated_by.is_empty() {
@@ -100,6 +93,12 @@ pub fn lower_theorem_candidate(
         return Err(LawLoweringRefusal::UnsupportedProofFragment);
     }
     Ok(candidate)
+}
+
+fn valid_source(source: &RuleSourceSpan) -> bool {
+    !source.artifact_id.trim().is_empty()
+        && valid_pointer(&source.pointer)
+        && source.bytes.as_ref().is_none_or(|r| r.start <= r.end)
 }
 
 fn valid_pointer(pointer: &str) -> bool {
@@ -162,6 +161,9 @@ pub fn check_requirement(
     use norn_expr::{Expression, Type, check_expression};
     let rule = &requirement.norm;
     let law = &rule.law;
+    let root = match &law.scope.root {
+        LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
+    };
     if law.timing.is_some()
         || !matches!(law.modality, LawModality::Always {} | LawModality::Never {})
     {
@@ -172,37 +174,43 @@ pub fn check_requirement(
     {
         return Err(R::ModalityMismatch);
     }
-    if [
+    let ids = [
         &law.id,
         &law.subject,
         &rule.authority_id,
         &rule.authority_version,
-        &rule.source.artifact_id,
-    ]
-    .iter()
-    .any(|s| s.trim().is_empty())
+        root,
+    ];
+    if ids.iter().any(|s| s.trim().is_empty())
         || law.scope.object_types.is_empty()
-        || !valid_pointer(&rule.source.pointer)
-        || rule.source.bytes.as_ref().is_some_and(|r| r.start > r.end)
+        || law.scope.object_types.iter().any(|id| id.trim().is_empty())
+        || !valid_source(&rule.source)
+        || rule
+            .exceptions
+            .iter()
+            .any(|e| e.id.trim().is_empty() || !valid_source(&e.source))
     {
         return Err(R::InvalidBinding);
     }
-    let words = &requirement.wording;
-    if [
-        &words.scope,
-        &words.activation,
-        &words.component,
-        &words.response,
-    ]
-    .iter()
-    .any(|w| w.en.trim().is_empty() || w.ar.trim().is_empty())
+    let w = &requirement.wording;
+    if [&w.scope, &w.activation, &w.component, &w.response]
+        .iter()
+        .any(|w| w.en.trim().is_empty() || w.ar.trim().is_empty())
     {
         return Err(R::MissingTemplate);
     }
     let response = match &law.response {
-        norn_ir::LawResponse::Predicate { expression } => Some(expression),
-        norn_ir::LawResponse::Invariant { .. } => None,
-        norn_ir::LawResponse::Action { .. } | norn_ir::LawResponse::Transition { .. } => {
+        LawResponse::Predicate { expression } => Some(expression),
+        LawResponse::Invariant {
+            object_type,
+            invariant_id,
+        } => {
+            if object_type.trim().is_empty() || invariant_id.trim().is_empty() {
+                return Err(R::InvalidBinding);
+            }
+            None
+        }
+        LawResponse::Action { .. } | LawResponse::Transition { .. } => {
             return Err(R::UnsupportedResponse);
         }
     };

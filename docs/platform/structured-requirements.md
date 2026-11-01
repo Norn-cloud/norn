@@ -10,6 +10,7 @@ Invariants:
 
 - **SR1 Identity:** serialization preserves every law, source, scope and numeric
   expression byte. English/Arabic templates cannot alter semantic fields.
+  Structural identities must be nonblank and all source spans well formed.
 - **SR2 Timing:** only every-committed-state and same-commit safety are supported.
   Both interpret the condition pointwise in the candidate state; same-commit
   never means an event edge. Eventually, until and any deadline refuse with
