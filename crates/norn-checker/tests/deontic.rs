@@ -284,6 +284,7 @@ fn structured_nested_bindings_must_identify_real_slots() {
     });
     let wire = serde_json::to_value(r).expect("typed fixture");
     for (pointer, value) in [
+        ("/norm/law/owner", json!("")),
         ("/norm/law/scope/root/id", json!("")),
         ("/norm/law/scope/objectTypes/0", json!(" ")),
         ("/norm/exceptions/0/id", json!("")),
