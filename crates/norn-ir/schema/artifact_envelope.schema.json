@@ -1508,6 +1508,21 @@
         "artifacts"
       ]
     },
+    "ConceptRole": {
+      "description": "Semantic role of an ordinary concept, independent of lifecycle presence.",
+      "oneOf": [
+        {
+          "description": "A persistent thing.",
+          "type": "string",
+          "const": "thing"
+        },
+        {
+          "description": "A concept that occurs, runs or terminates in time.",
+          "type": "string",
+          "const": "happening"
+        }
+      ]
+    },
     "ConnectorAuth": {
       "description": "How the connector authenticates to its source. Secrets are references only.",
       "oneOf": [
@@ -4480,6 +4495,10 @@
             "$ref": "#/$defs/InterfaceProperty"
           }
         },
+        "role": {
+          "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+          "$ref": "#/$defs/ConceptRole"
+        },
         "status": {
           "description": "The definition's resource status. Omitted means `active`.",
           "$ref": "#/$defs/ResourceStatus2"
@@ -6774,6 +6793,10 @@
           "items": {
             "$ref": "#/$defs/Property"
           }
+        },
+        "role": {
+          "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+          "$ref": "#/$defs/ConceptRole"
         },
         "status": {
           "description": "The definition's resource status. Omitted means `active` (the\ncanonical form omits it).",
