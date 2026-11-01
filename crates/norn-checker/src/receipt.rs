@@ -1897,7 +1897,7 @@ mod tests {
         let mut normalized_raw = raw;
         crate::layout::extract_inline_layout(&mut normalized_raw).expect("inline layout migration");
         let rechecked = super::check_artifact_set_with_verified_receipt(
-            &ReceiptSources::new(&[normalized_raw], &[]).expect("retained source"),
+            &super::ReceiptSources::new(&[normalized_raw], &[]).expect("retained source"),
             &context,
             &limits,
             &verified,

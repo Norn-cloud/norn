@@ -896,13 +896,9 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
                 ..context
             };
             assert!(recheck(&substituted, &changed_context, &limits, &version).is_err());
-            assert_ne!(
-                install(&substituted, &changed_context, &limits, Some(&version))
-                    .unwrap()
-                    .receipt
-                    .artifact_set,
-                receipt.artifact_set
-            );
+            let changed_install =
+                install(&substituted, &changed_context, &limits, Some(&version)).unwrap();
+            assert_ne!(changed_install.receipt.artifact_set, receipt.artifact_set);
         }
     }
 }
