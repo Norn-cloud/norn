@@ -122,11 +122,11 @@ pub fn implementation_digest() -> Result<Digest, CanonicalJsonError> {
         .map(|hex| Digest::from_hex(&hex))
 }
 
-fn schema<T: JsonSchema>(id: &str) -> Result<SchemaRef, CanonicalJsonError> {
+fn schema<T: JsonSchema>(id: &str, version: u32) -> Result<SchemaRef, CanonicalJsonError> {
     let bytes = norn_ir::canonical::canonical_json_of(&schemars::schema_for!(T))?;
     Ok(SchemaRef {
         id: id.to_owned(),
-        version: 1,
+        version,
         digest: Digest::of_json_document(bytes)?,
     })
 }
@@ -158,9 +158,9 @@ pub fn manifest() -> Result<FunctionManifest, CanonicalJsonError> {
         abi: FUNCTION_ABI_V1.into(),
         function_id: "core.analytics.ols_forecast".into(),
         version: 1,
-        input_schema: schema::<ForecastInput>("core.analytics.ForecastInput")?,
-        output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary")?,
-        error_schema: schema::<ForecastFailure>("core.analytics.ForecastFailure")?,
+        input_schema: schema::<ForecastInput>("core.analytics.ForecastInput", 1)?,
+        output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary", 2)?,
+        error_schema: schema::<ForecastFailure>("core.analytics.ForecastFailure", 1)?,
         implementation: Implementation {
             format: ImplementationFormat::Host,
             digest: implementation.clone(),
