@@ -73,6 +73,19 @@ class GuaranteesScenarios(unittest.TestCase):
         self.assertEqual(row["level"], "unknown")
         self.assertEqual(row["law"], challenge["lawStatements"][0])
 
+    def test_guarantees_edge_goal_without_a_law_index_is_retained(self):
+        rows = matrix.challenge_rows({"lawStatements": [], "obligations": [
+            {"goal": {"kind": "mapping_totality"}, "statement": {"edge": "mapping"}}]})
+        self.assertIsNone(rows[0]["law"])
+        self.assertEqual(rows[0]["level"], "unknown")
+
+    def test_guarantees_partial_tests_retain_unknown_overall_scope(self):
+        coverage, statements, pins, checked = fixture()
+        coverage["subsystems"][0]["obligationClaims"][0]["runtime"] = "partial"
+        row = matrix.project(coverage, statements, pins, checked)["rows"][0]
+        self.assertEqual(row["level"], "unknown")
+        self.assertEqual(row["tests"], {"level": "tested", "scope": "partial"})
+
     def test_generated_evidence_removal_never_increases_assurance(self):
         rng = random.Random(213)
         rank = {"unknown": 0, "tested": 1, "proved": 2}

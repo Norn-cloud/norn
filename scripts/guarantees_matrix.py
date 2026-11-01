@@ -84,14 +84,14 @@ def project(coverage: dict, statements: dict, pins: dict, checked: dict | None) 
             proof = claim.get("proof")
             proved = proof in {"reference_proved", "implementation_proved"} and supported(
                 system["id"], "proof", links.get("proof", []))
-            tested = claim.get("runtime") in {"tested", "tested-under-simulation"} and supported(
+            tested = claim.get("runtime") in {"tested", "tested-under-simulation", "partial"} and supported(
                 system["id"], "runtime", links.get("runtime", []))
             rows.append({
                 "law": statement.get("law"), "obligation": identity,
                 "statement": statement.get("statement", "Unknown statement"),
-                "level": "proved" if proved and proof == "implementation_proved" else "tested" if tested else "unknown",
+                "level": "proved" if proved and proof == "implementation_proved" else "tested" if tested and claim.get("runtime") != "partial" else "unknown",
                 "proof": {"level": "proved" if proved else "unknown", "scope": proof if proved else None},
-                "tests": {"level": "tested" if tested else "unknown"},
+                "tests": {"level": "tested" if tested else "unknown", "scope": claim.get("runtime") if tested else None},
                 "evidence": {layer: links.get(layer, []) if valid else []
                              for layer, valid in [("proof", proved), ("runtime", tested)]},
                 "assumptions": statement.get("assumptions", []),
@@ -109,7 +109,7 @@ def project(coverage: dict, statements: dict, pins: dict, checked: dict | None) 
 def challenge_rows(challenge: dict) -> list[dict]:
     """An obligation inventory or transition-frame assessment is never checked proof."""
     laws = challenge["lawStatements"]
-    return [{"law": laws[goal["law"]], "obligation": index,
+    return [{"law": laws[goal["law"]] if "law" in goal else None, "obligation": index,
              "statement": goal["statement"], "goal": goal["goal"],
              "level": "unknown", "statementDigest": digest(goal["statement"])}
             for index, goal in enumerate(challenge["obligations"])]
