@@ -9,6 +9,7 @@
 //! Correspondence to verification/definition-catalog-v1/SPEC.md.
 use norn_checker::definition_catalog::project;
 use norn_checker::{EntityArtifactSetContext, check_artifact_set, resolve_artifact_set};
+use norn_ir::ArtifactEnvelope;
 use norn_ir::definition_catalog::{
     ArtifactKey, DefinitionCatalog, DependencyVia, DependsOnRow, LawBinding, MapRule, Member,
     MemberRef, TypeKind, WriteVia,
@@ -221,9 +222,8 @@ fn dependencies_resolve_to_exact_versions_including_the_base() {
     assert!(catalog.contains(&invoice_transition()));
 }
 
-#[test]
-fn a_mapping_observes_members_and_declares_gaps() {
-    let mapping = envelope(json!({
+fn example_mapping() -> ArtifactEnvelope {
+    envelope(json!({
         "irVersion": "0.1",
         "artifactId": "erpnext.sales_order.mapping",
         "kind": "mapping",
@@ -257,7 +257,12 @@ fn a_mapping_observes_members_and_declares_gaps() {
                 "gaps": [{ "member": "amended_from", "reason": "deferred" }]
             }]
         }
-    }));
+    }))
+}
+
+#[test]
+fn a_mapping_observes_members_and_declares_gaps() {
+    let mapping = example_mapping();
     let catalog = catalog(&[sales_order(), mapping], &[]);
     let mut rows: Vec<(String, MapRule)> = catalog
         .mappings
@@ -453,7 +458,7 @@ fn a_parent_row_mutation_writes_its_child_types() {
     let action = envelope(json!({
         "irVersion": "0.1", "artifactId": "shop.edit_order.action", "kind": "action",
         "namespace": "shop", "name": "edit", "version": "1.0.0", "lifecycle": "draft",
-        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "scope": {}, "dependencies": [{ "artifactId": "shop.OrderLine.entity", "kind": "entity", "required": true, "version": "1.0.0" }], "provenance": { "source": "system" },
         "payload": {
             "actionId": "shop.edit_order", "scopeRequired": [], "idempotent": false,
             "ledgered": false, "inputSchema": { "type": "object" },
@@ -469,7 +474,19 @@ fn a_parent_row_mutation_writes_its_child_types() {
     }));
     // The child type is installed and reached only through the owned
     // collection; it is projected and pinned like any other reference.
-    let catalog = catalog(&[parent, action], &[child]);
+    let artifacts = [parent, action];
+    let base = [child];
+    let registry = BTreeSet::new();
+    let findings = check_artifact_set(
+        &artifacts,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &base,
+            tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+    let catalog = catalog(&artifacts, &base);
     assert!(catalog.artifact("shop.OrderLine.entity", "1.0.0").is_some());
     let targets: Vec<String> = catalog
         .writes
@@ -541,13 +558,25 @@ fn a_law_on_an_inherited_transition_binds_the_declaring_supertype() {
         panic!("laws.json is a list");
     };
     let mut law = laws[0].clone();
-    law["dependencies"] = json!([]);
+    law["dependencies"] = json!([{ "artifactId": "shop.RushRequest.entity", "kind": "entity", "required": true, "version": "1.0.0" }]);
+    law["payload"]["scope"]["objectTypes"] = json!(["shop.RushRequest"]);
     law["payload"]["subject"] = json!("shop.RushRequest");
     law["payload"]["response"] = json!({
         "kind": "transition", "objectType": "shop.RushRequest",
         "property": "status", "transitionId": "approve"
     });
-    let catalog = catalog(&[parent, child, envelope(law)], &[]);
+    let artifacts = [parent, child, envelope(law)];
+    let registry = BTreeSet::new();
+    let findings = check_artifact_set(
+        &artifacts,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+    let catalog = catalog(&artifacts, &[]);
     let Some(LawBinding::Transition { target }) = &catalog.laws[0].binds else {
         panic!("the law binds a transition");
     };
@@ -588,7 +617,36 @@ fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
         "lifecycles": [{ "property": "status", "state": "input.status" }],
         "gaps": [{ "member": "nowhere", "reason": "deferred" }]
     }]));
-    let catalog = catalog(&[parent, child, action, mapping], &[]);
+    let mut source = read_json("fixtures/ir/synthetic-contact.source_schema.json");
+    source["artifactId"] = json!("shop.source");
+    source["scope"] = json!({});
+    source["payload"]["datasets"][0]["id"] = json!("requests");
+    source["payload"]["datasets"][0]["nativeName"] = json!("requests");
+    let field = source["payload"]["fields"][0].clone();
+    source["payload"]["fields"] = json!([
+        { "dataset": "requests", "name": "id", "nativeType": "text", "ordinal": 0, "required": true, "typeCandidate": field["typeCandidate"] },
+        { "dataset": "requests", "name": "status", "nativeType": "text", "ordinal": 1, "required": true, "typeCandidate": field["typeCandidate"] }
+    ]);
+    let source = envelope(source);
+    let mut mapping = serde_json::to_value(mapping).expect("mapping");
+    mapping["payload"]["interfaces"] = json!(["shop.RushRequest.entity"]);
+    mapping["payload"]["source"]["sha256"] = json!(
+        norn_checker::receipt::ArtifactRef::of(&source)
+            .expect("source hash")
+            .sha256
+    );
+    let artifacts = [parent, child, action, envelope(mapping), source];
+    let registry = BTreeSet::new();
+    let findings = check_artifact_set(
+        &artifacts,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+    let catalog = catalog(&artifacts, &[]);
     assert_eq!(
         catalog.writes[0].target,
         request_member(Member::Transition {
@@ -1037,4 +1095,18 @@ fn local_lifecycle_states_keep_inherited_property_ownership() {
             .iter()
             .any(|row| row.at.member.id() == "property:commerce.SalesOrder#status")
     );
+}
+
+#[test]
+fn ambiguous_installed_mapping_targets_never_select_a_version() {
+    let old = sales_order();
+    let mut new = serde_json::to_value(&old).expect("envelope");
+    new["version"] = json!("2.0.0");
+    let projection = project(
+        &[example_mapping()],
+        &[old, envelope(new)],
+        &BTreeSet::new(),
+    )
+    .expect("read-only projection");
+    assert!(projection.mappings.is_empty());
 }
