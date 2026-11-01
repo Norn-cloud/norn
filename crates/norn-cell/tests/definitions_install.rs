@@ -5527,8 +5527,11 @@ norn_testkit::proptest::proptest! {
         let input = bundle_input();
         let (id, inserted) = store.inject_mapping_bundle(&raw, &input).expect("capture");
         norn_testkit::proptest::prop_assert!(inserted);
-        for _ in 1..deliveries {
-            let (replayed, inserted) = store.inject_mapping_bundle(&raw, &input).expect("replay");
+        for delivery in 1..deliveries {
+            let mut redelivery = raw.clone();
+            redelivery.id.0 = format!("local-delivery-{delivery}");
+            redelivery.provenance.observed_at = norn_kernel::LogicalTime::from_millis(u64::try_from(delivery).expect("metadata"));
+            let (replayed, inserted) = store.inject_mapping_bundle(&redelivery, &input).expect("replay");
             norn_testkit::proptest::prop_assert_eq!(&replayed, &id);
             norn_testkit::proptest::prop_assert!(!inserted);
         }
@@ -5545,4 +5548,20 @@ norn_testkit::proptest::proptest! {
         let (different, _) = store.inject_mapping_bundle(&raw, &changed).expect("other pins");
         norn_testkit::proptest::prop_assert_ne!(different, id);
     }
+}
+
+#[test]
+fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&dir.path().join("invalid.sqlite"));
+    let raw = bundle_raw("MEAS-1", "\"invalid decimal\"");
+    store.inject_mapping_bundle(&raw, &bundle_input()).expect("capture malformed source value");
+    let pending = store.read().pending_observations().expect("inbox");
+    let observed: norn_kernel::Observed<Value> = norn_ir::runtime::decode(&pending[0].observed).expect("observed");
+    let bundle: norn_cell::mapping_bundle::MappingBundle = norn_ir::runtime::decode(&observed.input).expect("bundle");
+    assert_eq!(bundle.raw, raw.input);
+    assert!(bundle.records.is_empty());
+    assert!(!bundle.diagnostics.is_empty());
+    assert!(bundle.diagnostics.iter().all(|d| d.get("code").is_some() && d.get("span").is_some() && d.get("severity").is_some()));
+    store.read().recheck_mapping_bundle(&bundle).expect("same diagnostics at processing");
 }
