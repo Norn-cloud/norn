@@ -26,7 +26,7 @@ test("ANALYSIS-PUBLISH-1 declares publication states, law and reference-only gov
   expect(artifacts.find(artifact => artifact.artifactId === "core.analytics.publication_policy.law")?.payload).toMatchObject({
     modality: { kind: "always" }, response: { kind: "invariant", invariantId: "publication_policy" },
   })
-  expect(artifacts.find(artifact => artifact.artifactId === "core.analytics.publication.access")?.payload).toMatchObject({
+  expect(artifacts.find(artifact => artifact.artifactId === "core.analytics.publication.access.policy")?.payload).toMatchObject({
     rules: [{ allOf: [{ role: { anyOf: ["AnalyticsReviewer"] } }] }],
   })
 })

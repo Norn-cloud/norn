@@ -1,0 +1,69 @@
+{
+  "artifactId": "core.analytics.publish.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Publish qualified analysis",
+  "namespace": "core",
+  "payload": {
+    "actionId": "core.analytics.publish",
+    "description": "Fail-closed declaration: acceptReceipt must bind the referenced Function result before this transition can succeed.",
+    "effectProgram": {
+      "entityArtifactId": "core.analytics.Publication.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "core.analytics.Publication",
+      "transition": "publish"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "receipt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "receipt"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Publish qualified analysis",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "core.analytics.Publication"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.publish.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

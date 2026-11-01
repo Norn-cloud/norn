@@ -43,8 +43,8 @@ export const PublicationEvidence = Norn.interfaceType({
 
 /** ANALYSIS-PUBLISH-1: recorded Function evidence precedes projection authority.
  * No ordinary create/update action authors these evidence fields. Until the
- * acceptReceipt effect binds authenticated results, the empty receipt pin keeps
- * publication fail-closed. PUBLISH accepts only a receipt reference and an ID.
+ * acceptReceipt effect binds authenticated results atomically, PUBLISH keeps
+ * an explicit closed gate. PUBLISH accepts only a receipt reference and an ID.
  */
 export const Publication = Norn.type({
   name: "core.analytics.Publication", title: "Analytical publication", version: "0.1.0",
@@ -53,6 +53,7 @@ export const Publication = Norn.type({
   lifecycles: [{ property: "status", initial: ["proposed"], terminal: ["published", "refused"], transitions: [
     { id: "publish", from: ["proposed"], to: "published", guardRefusalCode: "core.projection.publication_guard",
       guards: [
+        Norn.expression(Evidence, () => false),
         Norn.expression(Evidence, self => self.receipt_digest !== ""),
         Norn.expression(Evidence, self => self.table_version !== "" && self.table_digest !== "" && self.source_digest !== "" &&
           self.result_table_version === self.table_version && self.result_table_digest === self.table_digest &&
