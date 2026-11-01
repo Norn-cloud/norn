@@ -221,3 +221,20 @@ fn schema_publishes_every_kind_and_closed_members() {
         "bounds are strings"
     );
 }
+
+#[test]
+fn val_round_uses_the_shared_enum_and_keeps_omission_distinct_from_null() {
+    use norn_ir::{Rounding, WholeNumber};
+    let default = PropertyType::Decimal { scale: WholeNumber(2), rounding: None, unit: None, currency_source: None };
+    let value = serde_json::to_value(&default).expect("wire");
+    assert!(value.get("rounding").is_none());
+    for rounding in [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero] {
+        let mut value = value.clone(); value["rounding"] = serde_json::to_value(rounding).expect("shared enum");
+        let ty: PropertyType = serde_json::from_value(value.clone()).expect("rounding declaration");
+        assert_eq!(serde_json::to_value(ty).expect("roundtrip"), value);
+    }
+    for invalid in [serde_json::Value::Null, serde_json::json!("ambient"), serde_json::json!("halfEven")] {
+        let mut value = value.clone(); value["rounding"] = invalid;
+        assert!(serde_json::from_value::<PropertyType>(value).is_err());
+    }
+}

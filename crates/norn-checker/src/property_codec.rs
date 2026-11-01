@@ -28,6 +28,9 @@ pub enum PropertyCodecError {
     Runtime(RuntimeValueError),
 }
 
+/// VAL-EXACT-1: stable diagnostic for a refused exact-number conversion.
+pub const INEXACT: &str = "core.values.inexact";
+
 /// Materialize the persisted representation before checking its constraints.
 pub(crate) fn stored_value(
     kind: PropertyKind,

@@ -456,7 +456,13 @@ pub(crate) fn check_type_members(
                 check_type_members(&pointer, &member.property_type, out);
             }
         }
-        PropertyType::Decimal { scale, unit, .. } => {
+        PropertyType::Decimal { scale, unit, rounding, .. } => {
+            // VAL-ROUND: a decoded policy cannot activate legacy expression arithmetic.
+            if rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse) {
+                out.push(error(crate::property_codec::INEXACT,
+                    "VAL-ROUND: rounding requires the exact-site expression/store profile; this declaration is not yet executable".to_owned(),
+                    span_at(base, &["type", "rounding"])));
+            }
             if scale.0 > MAX_DECIMAL_SCALE {
                 out.push(error(
                     codes::SCALE_OUT_OF_RANGE,

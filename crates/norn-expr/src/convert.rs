@@ -26,6 +26,23 @@ pub(crate) fn canonical_engine_number(input: &str) -> Result<String, String> {
     }
 }
 
+/// VAL-ROUND: lower a declared mode to the one shared scaled arithmetic core.
+pub(crate) fn rescale_number(value: &Number, scale: u64, rounding: norn_ir::Rounding) -> Result<Number, ExprError> {
+    let invalid = |reason: String| ExprError::InvalidNumber { input: value.as_str().to_owned(), reason };
+    let scale = u32::try_from(scale).map_err(|_| invalid("unsupported exact-site scale".to_owned()))?;
+    use zen_expression::scaled::{Rounding, ScaledArithmetic};
+    let rounding = match rounding {
+        norn_ir::Rounding::Refuse => Rounding::Refuse,
+        norn_ir::Rounding::TowardZero => Rounding::TowardZero,
+        norn_ir::Rounding::HalfEven => Rounding::HalfEven,
+        norn_ir::Rounding::HalfAwayFromZero => Rounding::HalfAwayFromZero,
+    };
+    let parsed = value.as_str().parse().map_err(|error| invalid(format!("{error}")))?;
+    let result = ScaledArithmetic { scale, rounding }.rescale(parsed)
+        .map_err(|reason| invalid(reason.to_owned()))?;
+    Ok(Number::from_canonical(result.normalize().to_string()))
+}
+
 /// Converts a Norn value to the engine's form. Strings and keys are
 /// NFC-normalized, the form Norn1 canonicalizes them to, so every string the
 /// evaluator sees is at most as long as its canonical bytes (the static cost

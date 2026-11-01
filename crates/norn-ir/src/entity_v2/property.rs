@@ -139,6 +139,10 @@ pub enum PropertyType {
         /// the exact range of ZEN Expression's decimal (checked by
         /// `norn-checker`).
         scale: WholeNumber,
+        /// VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.
+        #[serde(default, deserialize_with = "present_non_null", skip_serializing_if = "Option::is_none")]
+        #[schemars(with = "crate::Rounding")]
+        rounding: Option<crate::Rounding>,
         #[serde(
             default,
             deserialize_with = "present_non_null",

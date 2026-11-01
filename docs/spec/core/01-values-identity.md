@@ -17,6 +17,8 @@ Reuse `PropertyType`, `PropertyConstraints`, `DecimalLiteral`, `UnitRef`, `Runti
 
 Definition identity is exact artifact/version/digest plus stable member ID. Renaming a label changes presentation only. A same-version edit changes digest and invalidates admission/evidence; it cannot replace an immutable published release.
 
+The Decimal wire declaration accepts optional `rounding` using the shared `Rounding` modes (`refuse`, `toward_zero`, `half_even`, `half_away_from_zero`); omission means exact/refuse. The declared scale is the sole scale authority. The Norn-owned rescale adapter delegates to `ScaledArithmetic` at scales 0–18; the existing exact storage/transport range remains 0–28. Until expression/store binding is qualified, artifact admission refuses non-refuse declarations as `core.values.inexact`: wire decoding alone does not activate a rounding policy.
+
 ## Evaluation and enforcement
 
 1. Construction decodes exact numeric tokens without a float round trip; rejects non-finite, range/scale overflow and unknown units. Canonical equality ignores representational trailing zeroes but preserves declared type/unit and original source evidence bytes separately.

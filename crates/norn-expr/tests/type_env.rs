@@ -106,6 +106,7 @@ fn every_binding_and_option_changes_the_hash() {
         scale: norn_ir::WholeNumber(3),
         unit: None,
         currency_source: None,
+        rounding: None,
     };
     assert_ne!(changed.env().content_sha256().unwrap(), base_hash);
 }
