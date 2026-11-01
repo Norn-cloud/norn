@@ -254,8 +254,8 @@ mod tests {
             json!({"a":42})
         );
         assert_eq!(
-            parse_exact_json(br#"9007199254740993"#).expect("exact integer"),
-            json!(9007199254740993_u64)
+            parse_exact_json(b"9007199254740993").expect("exact integer"),
+            json!(9_007_199_254_740_993_u64)
         );
         let original = json!({"a":{"secret":1},"a/b":{"secret":2},"c":{"secret":3}});
         for pointers in [vec!["/a", "x"], vec!["/a", ""]] {
