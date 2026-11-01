@@ -5286,8 +5286,9 @@ norn_testkit::proptest::proptest! {
     }
 }
 
+norn_testkit::proptest::proptest! {
 #[test]
-fn obs_recovery_upgrade_uses_each_findings_retained_model() {
+fn obs_recovery_upgrade_uses_each_findings_retained_model(fraction in 501u16..1000) {
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("upgrade.sqlite");
     let mut cell = purity_quality_host(&path);
@@ -5313,7 +5314,7 @@ fn obs_recovery_upgrade_uses_each_findings_retained_model() {
     assert_eq!(review(&cell)[0].status, norn_ir::DataQualityFindingStatus::Open);
     capture_purity(&mut cell, "still-invalid", "1.30");
     assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Open));
-    capture_purity(&mut cell, "passes-old-law", "0.80");
+    capture_purity(&mut cell, "passes-old-law", &format!("0.{fraction:03}"));
     let findings = review(&cell);
     assert_eq!(findings.iter().find(|f| f.id == original.id).expect("original retained").status, norn_ir::DataQualityFindingStatus::Resolved);
     assert!(findings.iter().any(|f| f.status == norn_ir::DataQualityFindingStatus::Open));
@@ -5323,6 +5324,8 @@ fn obs_recovery_upgrade_uses_each_findings_retained_model() {
     assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("recovered").is_some());
     let original_event = cell.store().read().ledger_page(0, 100).expect("history").into_iter().find(|e| e.event.get("fact").and_then(|f| f.get("id")).and_then(Value::as_str) == Some(original.id.as_str())).expect("original event");
     assert_eq!(original_event.event.get("fact").and_then(|f| f.get("status")).and_then(Value::as_str), Some("open"));
+}
+
 }
 
 #[test]

@@ -26,7 +26,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// Missing/corrupt historical definitions or unsupported recovery evaluation.
     pub fn observation_is_quarantined(&self, world: &str, record: &ObjectRecord) -> Result<bool, CellError> {
-        Ok(self.observation_findings(world, &record.object_type, &record.id)?.iter().any(|finding| finding.status == DataQualityFindingStatus::Open && finding.severity == norn_ir::DataQualitySeverity::Error))
+        Ok(self.review_findings(world, &record.object_type, &record.id)?.iter().any(|(finding, quarantines)| *quarantines && finding.status == DataQualityFindingStatus::Open))
     }
 
     /// Authoritative projection selection excludes quarantined observations.
@@ -88,6 +88,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
+        Ok(self.review_findings(world, object_type, key)?.into_iter().map(|(finding, _)| finding).collect())
+    }
+
+    fn review_findings(&self, world: &str, object_type: &str, key: &str) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
         let current = self.object(world, object_type, key)?;
         let mut seen = BTreeSet::new();
         let mut findings = Vec::new();
@@ -115,14 +119,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     if seen.insert(finding.id.clone()) {
                         let model = self.retained_definition_model(definitions_version)?;
                         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces()).with_property_types(model.property_types()).with_governing_laws(model.law_artifacts());
+                        let class = catalog.classify_data_quality_rule(&finding.rule_ref)?;
+                        let quarantines = class == norn_kernel::DataQualityRuleClassification::Integrity || (class == norn_kernel::DataQualityRuleClassification::Builtin && finding.severity == norn_ir::DataQualitySeverity::Error);
                         if let Some(record) = &current {
                             if !norn_kernel::snapshot_observe::finding_rule_is_violated(
                                 &catalog, &FactKey::new(object_type, key), &record.values, &finding,
                             ).map_err(|error| CellError::QualityEvaluation(error.to_string()))?
                             {
-                                finding.status = if catalog
-                                    .classify_data_quality_rule(&finding.rule_ref)?
-                                    == norn_kernel::DataQualityRuleClassification::Unverified
+                                finding.status = if class == norn_kernel::DataQualityRuleClassification::Unverified
                                 {
                                     DataQualityFindingStatus::Superseded
                                 } else {
@@ -130,7 +134,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                                 };
                             }
                         }
-                        findings.push(finding);
+                        findings.push((finding, quarantines));
                     }
                 }
             }
