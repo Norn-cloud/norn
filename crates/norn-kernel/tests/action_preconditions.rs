@@ -910,7 +910,7 @@ fn parameter_projection_pins_selected_revision_and_replays_original_evidence() {
     let mut definitions = Vec::<ObjectTypeDef>::new();
     let mut selected_action = None;
     for artifact in artifacts {
-        let payload = serde_json::to_value(artifact.payload).expect("payload");
+        let payload = artifact.payload.to_json_value();
         if let Some(object) = payload.get("objectType") {
             definitions.push(serde_json::from_value(object.clone()).expect("type"));
         }
