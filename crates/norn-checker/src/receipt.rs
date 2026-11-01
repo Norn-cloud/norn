@@ -368,6 +368,19 @@ fn source_refs(
     let mut artifacts = Vec::with_capacity(sources.len());
     let mut refs = Vec::with_capacity(sources.len());
     for source in sources {
+        let mut semantic = source.clone();
+        drop(crate::layout::extract_inline_layout(&mut semantic));
+        let document: serde_json::Value =
+            norn_ir::runtime::decode(&semantic).map_err(invalid_receipt)?;
+        crate::layout::require_nfc_text(&document).map_err(|findings| {
+            invalid_receipt(
+                findings
+                    .iter()
+                    .map(|finding| format!("{}: {}", finding.code, finding.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        })?;
         let (artifact, semantic_source) =
             if let Ok(prepared) = crate::layout::prepare_artifact_source(source.clone()) {
                 (prepared.artifact, prepared.source)

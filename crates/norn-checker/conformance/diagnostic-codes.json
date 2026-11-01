@@ -471,6 +471,13 @@
       "tier": "T2"
     },
     {
+      "code": "definition.text.not_nfc",
+      "message": "definition text at {path} must already be Unicode NFC",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T0"
+    },
+    {
       "code": "derived.validation.incremental_not_supported",
       "message": "maintenance \"incremental\" is reserved for a future IVM phase and is not yet supported; use \"recompute_on_read\"",
       "severity": "error",

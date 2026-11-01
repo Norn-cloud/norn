@@ -639,7 +639,7 @@ fn assert_distinct_challenges(left: &Challenge, right: &Challenge) {
 }
 
 #[test]
-fn non_nfc_expressions_are_admitted_and_exact_protected_identities_stay_distinct() {
+fn non_nfc_expressions_are_refused_in_both_layers() {
     for (composed, decomposed, escaped) in [
         ("é", "e\u{301}", r"e\u0301"),
         ("أ", "ا\u{654}", r"\u0627\u0654"),
@@ -673,12 +673,9 @@ fn non_nfc_expressions_are_admitted_and_exact_protected_identities_stay_distinct
             for in_base in [false, true] {
                 let initial = source_in_layer(&raw, in_base);
                 let authority = approve(&initial);
-                let original = authority
+                let _original = authority
                     .challenge(&initial, &BTreeSet::new())
                     .expect("ordinarily admitted challenge");
-                let mut previous: Option<Challenge> = None;
-                // Literal and JSON-escaped non-NFC text both pass independent
-                // base admission / layered candidate admission, not just parsing.
                 for text in [
                     changed_raw.clone(),
                     changed_raw.replace(decomposed, escaped),
@@ -686,30 +683,8 @@ fn non_nfc_expressions_are_admitted_and_exact_protected_identities_stay_distinct
                     let changed_source = source_in_layer(&text, in_base);
                     assert_eq!(
                         authority.challenge(&changed_source, &BTreeSet::new()),
-                        Err(ChallengeError::LawChanged)
+                        Err(ChallengeError::NotAdmitted)
                     );
-                    let changed = approve(&changed_source)
-                        .challenge(&changed_source, &BTreeSet::new())
-                        .expect("ordinarily admitted non-NFC challenge");
-                    assert_ne!(
-                        original.body()["exactSourceDigest"],
-                        changed.body()["exactSourceDigest"]
-                    );
-                    assert_ne!(
-                        original.body()["closure"][&original_artifact.artifact_id],
-                        changed.body()["closure"][&original_artifact.artifact_id]
-                    );
-                    assert_distinct_challenges(&original, &changed);
-                    if let Some(previous) = &previous {
-                        // Escaping changes document bytes, not the decoded artifact.
-                        assert_eq!(previous.body()["closure"], changed.body()["closure"]);
-                        assert_ne!(
-                            previous.body()["exactSourceDigest"],
-                            changed.body()["exactSourceDigest"]
-                        );
-                        assert_distinct_challenges(previous, &changed);
-                    }
-                    previous = Some(changed);
                 }
             }
         }
@@ -717,7 +692,7 @@ fn non_nfc_expressions_are_admitted_and_exact_protected_identities_stay_distinct
 }
 
 #[test]
-fn nested_unicode_keys_and_values_are_ordinarily_admitted_in_both_layers() {
+fn non_nfc_keys_and_values_are_refused_in_both_layers() {
     let mut documents = pool();
     // Use the existing importer metadata surface; an object default for the
     // fixture's Boolean property would not be an ordinarily admitted example.
@@ -727,11 +702,10 @@ fn nested_unicode_keys_and_values_are_ordinarily_admitted_in_both_layers() {
     for in_base in [false, true] {
         let initial = source_in_layer(&raw, in_base);
         let authority = approve(&initial);
-        let original = authority
+        let _original = authority
             .challenge(&initial, &BTreeSet::new())
             .expect("ordinarily admitted metadata");
         let decomposed = raw.replace('é', "e\u{301}").replace('أ', "ا\u{654}");
-        let mut previous: Option<Challenge> = None;
         for text in [
             decomposed.clone(),
             decomposed
@@ -741,25 +715,8 @@ fn nested_unicode_keys_and_values_are_ordinarily_admitted_in_both_layers() {
             let changed_source = source_in_layer(&text, in_base);
             assert_eq!(
                 authority.challenge(&changed_source, &BTreeSet::new()),
-                Err(ChallengeError::LawChanged)
+                Err(ChallengeError::NotAdmitted)
             );
-            let changed = approve(&changed_source)
-                .challenge(&changed_source, &BTreeSet::new())
-                .expect("ordinarily admitted non-NFC keys and values");
-            assert_ne!(
-                original.body()["closure"]["erpnext.SalesOrder.entity"],
-                changed.body()["closure"]["erpnext.SalesOrder.entity"]
-            );
-            assert_ne!(
-                original.body()["exactSourceDigest"],
-                changed.body()["exactSourceDigest"]
-            );
-            assert_distinct_challenges(&original, &changed);
-            if let Some(previous) = &previous {
-                assert_eq!(previous.body()["closure"], changed.body()["closure"]);
-                assert_distinct_challenges(previous, &changed);
-            }
-            previous = Some(changed);
         }
     }
 }
@@ -1034,9 +991,9 @@ fn public_induction_goals_bind_exact_law_and_transition_commitments() {
         challenge(&documents)
     };
     let left = make("len('é') == 2");
-    // Keep the accepted law-edit case and add NFC-equivalent source whose
-    // literal spelling changes evaluation and the actual transition commitment.
-    for expression in ["len('é') == 3", "len('e\u{301}') == 2"] {
+    // Compare admitted NFC literals; decomposed expressions are refused by
+    // the admission scenarios above.
+    for expression in ["len('é') == 3", "len('ø') == 2"] {
         let right = make(expression);
         let statement = |challenge: &Challenge, table: &str, key: &str, value: &Value| {
             challenge.body()[table]
