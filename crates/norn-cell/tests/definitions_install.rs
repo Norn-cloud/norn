@@ -5738,6 +5738,7 @@ fn instance_source_provenance_rechecks_bundle_and_disclosure_for_exact_version()
     assert!(reader.instance_source_provenance(MAIN_WORLD, &unknown, &mut budget(), |_| panic!("no disclosure of an unproven version")).is_err());
 }
 
+#[test]
 fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
     let dir = tempfile::tempdir().expect("directory");
     let mut store = mapping_bundle_store(&dir.path().join("invalid.sqlite"));
