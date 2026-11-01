@@ -60,6 +60,262 @@ fn modified(before: &str, after: &str, before_version: u64, after_version: u64) 
 }
 
 #[test]
+fn cursor_selects_latest_committed_incarnation_including_tombstones() {
+    use norn_cell::reactive::BudgetedRead;
+    let mut store = CellStore::open_in_memory(model()).expect("store");
+    let first = store
+        .commit(&batch(vec![
+            put("proof.Item", "item", "one"),
+            put("proof.Item", "item", "two"),
+        ]))
+        .expect("first")
+        .receipt()
+        .body
+        .commit_seq;
+    let second = store
+        .commit(&batch(vec![put("proof.Item", "item", "three")]))
+        .expect("second")
+        .receipt()
+        .body
+        .commit_seq;
+    let deleted = store
+        .commit(&batch(vec![FactWriteRow::Delete {
+            object_type: "proof.Item".into(),
+            key: "item".into(),
+        }]))
+        .expect("delete")
+        .receipt()
+        .body
+        .commit_seq;
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let mut budget = DecodeBudget::new(&limits);
+    for (cursor, expected) in [(first, "two"), (second, "three")] {
+        let BudgetedRead::Found(record) = store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", cursor, &mut budget)
+            .expect("proof")
+        else {
+            panic!("historical live value missing")
+        };
+        assert_eq!(record.values["value"], Value::from(expected));
+    }
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", 0, &mut budget)
+            .expect("before creation"),
+        BudgetedRead::Missing
+    ));
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", deleted, &mut budget)
+            .expect("tombstone"),
+        BudgetedRead::Missing
+    ));
+    let mut zero = limits;
+    zero.max_candidate_bytes_per_commit = 0;
+    let mut budget = DecodeBudget::new(&zero);
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", first, &mut budget)
+            .expect("budget"),
+        BudgetedRead::Exhausted
+    ));
+}
+
+#[test]
+fn cursor_checks_authenticated_historical_lineage_without_resurrecting_a_subtype() {
+    use norn_cell::reactive::BudgetedRead;
+    let base = model();
+    let mut definitions: Vec<_> = base.object_types().cloned().collect();
+    let root = definitions
+        .iter()
+        .find(|d| d.name.as_str() == "proof.Item")
+        .expect("root")
+        .clone();
+    for name in ["proof.Left", "proof.Right"] {
+        let mut subtype = root.clone();
+        subtype.name = ObjectTypeName(name.into());
+        subtype.extends = Some(root.name.clone());
+        subtype.properties.clear();
+        definitions.push(subtype);
+    }
+    let mut store =
+        CellStore::open_in_memory(Model::from_definitions(&definitions, &[]).expect("typed model"))
+            .expect("store");
+    let first = store
+        .commit(&batch(vec![put("proof.Left", "item", "left")]))
+        .expect("left")
+        .receipt()
+        .body
+        .commit_seq;
+    let latest = store
+        .commit(&batch(vec![
+            FactWriteRow::Delete {
+                object_type: "proof.Left".into(),
+                key: "item".into(),
+            },
+            put("proof.Right", "item", "right"),
+        ]))
+        .expect("recreate sibling")
+        .receipt()
+        .body
+        .commit_seq;
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let mut budget = DecodeBudget::new(&limits);
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Left", "item", first, &mut budget)
+            .expect("old left"),
+        BudgetedRead::Found(_)
+    ));
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(MAIN_WORLD, "proof.Left", "item", latest, &mut budget)
+            .expect("latest root incarnation"),
+        BudgetedRead::Missing
+    ));
+    let BudgetedRead::Found(record) = store
+        .read()
+        .object_at_commit_with_budget(MAIN_WORLD, "proof.Item", "item", latest, &mut budget)
+        .expect("root")
+    else {
+        panic!("latest sibling missing")
+    };
+    assert_eq!(record.object_type, "proof.Right");
+    assert_eq!(record.values["value"], Value::from("right"));
+}
+
+#[test]
+fn cursor_refuses_a_later_incarnation_hidden_by_postdated_index_metadata() {
+    use norn_cell::reactive::BudgetedRead;
+    for deletion in [false, true] {
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("cell.sqlite");
+        let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+        store
+            .commit(&batch(vec![put("proof.Item", "item", "one")]))
+            .expect("first");
+        let write = if deletion {
+            FactWriteRow::Delete {
+                object_type: "proof.Item".into(),
+                key: "item".into(),
+            }
+        } else {
+            put("proof.Item", "item", "two")
+        };
+        let latest = store
+            .commit(&batch(vec![write]))
+            .expect("latest")
+            .receipt()
+            .body
+            .commit_seq;
+        store
+            .commit(&batch(vec![put("proof.Item", "other", "unrelated")]))
+            .expect("later receipt");
+        let connection = rusqlite::Connection::open(path).expect("corruption fixture");
+        assert_eq!(connection.execute(
+            "UPDATE \"_norn_fact_values\" SET \"commit_seq\" = ?1 WHERE \"world\" = ?2 AND \"root_type\" = 'proof.Item' AND \"id\" = 'item' AND \"version\" = 2",
+            rusqlite::params![i64::try_from(latest + 1).expect("cursor"), MAIN_WORLD],
+        ).expect("postdate only index metadata"), 1);
+        assert_eq!(
+            store
+                .read()
+                .object_at_version(MAIN_WORLD, "proof.Item", "item", 2)
+                .expect("unchanged snapshot proof")
+                .is_none(),
+            deletion
+        );
+        let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        assert!(matches!(
+            store.read().object_at_commit_with_budget(
+                MAIN_WORLD,
+                "proof.Item",
+                "item",
+                latest,
+                &mut DecodeBudget::new(&limits)
+            ),
+            Err(CellError::HistoricalValueUnproven(_))
+        ));
+        let mut exhausted = limits;
+        exhausted.max_candidate_bytes_per_commit = 0;
+        assert!(matches!(
+            store
+                .read()
+                .object_at_commit_with_budget(
+                    MAIN_WORLD,
+                    "proof.Item",
+                    "item",
+                    latest,
+                    &mut DecodeBudget::new(&exhausted)
+                )
+                .expect("budget precedes proof decode"),
+            BudgetedRead::Exhausted
+        ));
+    }
+}
+
+#[test]
+fn cursor_refuses_a_backdated_lookup_even_when_the_snapshot_hash_is_unchanged() {
+    use norn_cell::reactive::BudgetedRead;
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+    let first = store
+        .commit(&batch(vec![put("proof.Item", "item", "one")]))
+        .expect("first")
+        .receipt()
+        .body
+        .commit_seq;
+    store
+        .commit(&batch(vec![put("proof.Item", "item", "two")]))
+        .expect("later version");
+    let connection = rusqlite::Connection::open(path).expect("corruption fixture");
+    let changed = connection.execute(
+        "UPDATE \"_norn_fact_values\" SET \"commit_seq\" = ?1 WHERE \"world\" = ?2 AND \"root_type\" = 'proof.Item' AND \"id\" = 'item' AND \"version\" = 2",
+        rusqlite::params![i64::try_from(first).expect("cursor"), MAIN_WORLD],
+    ).expect("backdate lookup only");
+    assert_eq!(changed, 1);
+    let intact = store
+        .read()
+        .object_at_version(MAIN_WORLD, "proof.Item", "item", 2)
+        .expect("snapshot proof remains valid")
+        .expect("live version");
+    assert_eq!(intact.values["value"], Value::from("two"));
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let mut budget = DecodeBudget::new(&limits);
+    assert!(matches!(
+        store.read().object_at_commit_with_budget(
+            MAIN_WORLD,
+            "proof.Item",
+            "item",
+            first,
+            &mut budget
+        ),
+        Err(CellError::HistoricalValueUnproven(_))
+    ));
+    let mut exhausted = limits;
+    exhausted.max_candidate_bytes_per_commit = 0;
+    assert!(matches!(
+        store
+            .read()
+            .object_at_commit_with_budget(
+                MAIN_WORLD,
+                "proof.Item",
+                "item",
+                first,
+                &mut DecodeBudget::new(&exhausted)
+            )
+            .expect("budget checked before decoding"),
+        BudgetedRead::Exhausted
+    ));
+}
+
+#[test]
 fn commitments_capture_each_materialized_version_and_survive_restart() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
