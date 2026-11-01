@@ -2271,6 +2271,7 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
         (true, "insert"),
         (true, "remove"),
         (true, "update"),
+        (true, "none"),
     ] {
         let mut cell = cell().with_types(definitions.clone());
         cell.commit(CellCommit {
@@ -2292,6 +2293,18 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
             ..CellCommit::empty()
         })
         .unwrap();
+        let mut short = ResourceLimitProfile::norn_limits_v1().slice;
+        short.max_records = 1;
+        assert!(
+            load_partition_slice(
+                &cell,
+                &catalog,
+                [],
+                &[(keys[0].clone(), "members".to_owned())],
+                short
+            )
+            .is_err()
+        );
         let slice = load_partition_slice(
             &cell,
             &catalog,
@@ -2316,6 +2329,14 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
             proposal.link_reads[0].targets.len(),
             usize::from(initial_member)
         );
+        if race == "none" {
+            cell.commit(proposal).unwrap();
+            assert_eq!(
+                cell.load(&keys[3]).unwrap().values.unwrap()["amount"],
+                JsonValue::from_json_text("0").unwrap()
+            );
+            continue;
+        }
         let mut concurrent = CellCommit::empty();
         match race {
             "insert" => concurrent.links.push(edge(&keys[2])),
@@ -2349,23 +2370,4 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
             links_before
         );
     }
-}
-
-#[test]
-fn complete_partition_reads_refuse_oversized_collections_before_evaluation() {
-    use norn_kernel::{ResourceLimitProfile, load_partition_slice};
-    let definitions = types();
-    let catalog = TypeCatalog::new(&definitions);
-    let mut limits = ResourceLimitProfile::norn_limits_v1().slice;
-    limits.max_records = 0;
-    assert!(
-        load_partition_slice(
-            &cell(),
-            &catalog,
-            [],
-            &[(key(ORDER, "empty"), "members".to_owned())],
-            limits
-        )
-        .is_err()
-    );
 }
