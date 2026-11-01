@@ -3,3 +3,4 @@ pub mod analysis;
 pub mod temporal;
 pub mod host;
 pub mod producer;
+pub mod performer;
