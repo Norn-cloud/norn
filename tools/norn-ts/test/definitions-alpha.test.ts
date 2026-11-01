@@ -18,7 +18,7 @@ const compile = () => {
   return result.artifacts
 }
 
-test("alpha SalesOrder compiles deterministically with read-only economic projections and checks its lifecycle", () => {
+test("alpha SalesOrder admits closed fold write sets, protected projections and its lifecycle deterministically", () => {
   const artifacts = compile()
   const bytes = canonicalJson(artifacts)
   if (process.env.UPDATE_GOLDENS === "1") writeFileSync(golden, bytes)

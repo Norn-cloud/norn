@@ -148,7 +148,7 @@ const InvoiceFact = Schema.Struct({ id: Schema.String, order_id: Schema.String, 
 const PaymentFact = Schema.Struct({ id: Schema.String, order_id: Schema.String, amount: Schema.Finite })
 const EventKey = Schema.Struct({ objectType: Schema.String, key: Schema.String })
 const FoldOutput = Schema.Struct({
-  facts: Schema.Array(Schema.Struct({ op: Schema.Literal("set"), objectType: Schema.Literal("alpha.SalesOrder"), key: Schema.String, property: Schema.String, value: Schema.Finite })),
+  facts: Schema.Array(Schema.Struct({ op: Schema.Literal("set"), objectType: Schema.Literal("alpha.SalesOrder"), key: Schema.String, property: Schema.Literals(["invoice_count", "invoiced_total", "allocated_total"]), value: Schema.Finite })),
   commands: Schema.Array(Schema.Struct({ kind: Schema.String })),
   timers: Schema.Array(Schema.Struct({ timerId: Schema.String, afterMillis: Schema.Int, kind: Schema.String })),
 })
