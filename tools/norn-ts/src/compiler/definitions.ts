@@ -741,6 +741,12 @@ class DefinitionCompiler {
           for (const key of this.list(policy.get("order")!)) this.closedRecord(key, ["property", "kind"], ["property", "kind"])
           const stepInput = this.schemas.closed(this.schemas.read(this.member(child.members, "input", child.call)), true)
           if (stepInput.type !== "object" || output.type !== "object" || !stepInput.properties.item) throw new CompileError("NORN-FLOW-TYPE", "orderedFold requires a closed step input and object state", site)
+          try {
+            if (!X.conforms(items, { type: "array", items: stepInput.properties.item }, scope) || !X.conforms(initial, output, scope)) throw new CompileError("NORN-FLOW-TYPE", "orderedFold items and initial must satisfy the helper's closed schemas", site)
+          } catch (error) {
+            if (error instanceof X.ExprError) throw new CompileError("NORN-FLOW-TYPE", error.message, site)
+            throw error
+          }
           inputField = X.render(items, scope)
           orderedFold = {
             semanticsVersion: "1.0", identity: this.json(policy.get("identity")!),
