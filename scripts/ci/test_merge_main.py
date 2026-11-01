@@ -54,6 +54,14 @@ class MergeTests(unittest.TestCase):
         expected = hashlib.sha256((json.dumps('merged source', indent=2) + '\n').encode()).hexdigest()
         self.assertEqual(merged, {**values[0], 'sha256': expected})
 
+    def test_one_sided_metadata_change_is_preserved(self):
+        values = [dict(sha256=s, parents=[]) for s in ('base', 'ours', 'theirs')]
+        values[2]['parents'] = ['new-parent']
+        self.assertEqual(self.scenario(RECORD, *values, True)['parents'], ['new-parent'])
+
+    def test_unknown_conflict_aborts(self):
+        self.scenario('unknown.json', {'x': 0}, {'x': 1}, {'x': 2}, False)
+
     def test_field_conflict_aborts(self):
         values = [dict(sha256=s, origin=s) for s in ('base', 'ours', 'theirs')]
         self.scenario(RECORD, *values, False)
