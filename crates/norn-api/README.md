@@ -48,7 +48,9 @@ HOST-SCOPE/HOST-AUTHORITY: scope and `ReadDefinitions` precede store queries (SQ
 HOST-ADMISSION: one definition epoch covers load and projection; retained versions remain readable.
 HOST-WIRE/HOST-EXACT: raw source/receipt JSON, camelCase, empty collections and exact numeric vectors.
 HOST-REFUSAL: absent version `defs.version_not_found` (404); malformed query `request.invalid` (400).
-HTTP requires an authenticated routing host to supply x-norn-actor; host errors conceal diagnostics.
+HTTP requires an authenticated routing host to strip all client-supplied x-norn-actor
+values and set the header from its authenticated identity; never expose the router
+directly. Host errors conceal diagnostics.
 
 HOST-PROVISION-ATOMIC: initialization, scope binding, initial definitions, model
 snapshot, receipt and ledger publish in one engine transaction. Failure or abrupt
