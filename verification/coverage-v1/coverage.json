@@ -2757,7 +2757,7 @@
             "model": [
               {
                 "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
-                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4",
                 "selectors": [
                   "invariant:quantityConserved"
                 ]
@@ -2796,7 +2796,7 @@
             "model": [
               {
                 "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
-                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4",
                 "selectors": [
                   "invariant:escrowNonNegative"
                 ]
@@ -2826,11 +2826,12 @@
             "model": [
               {
                 "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
-                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4",
                 "selectors": [
                   "invariant:neverDropped",
                   "invariant:terminalAbsorbing",
-                  "invariant:endsByDue"
+                  "invariant:endsByDue",
+                  "invariant:deadlineBreach"
                 ]
               }
             ],
@@ -2898,7 +2899,7 @@
           "quint typecheck verification/core-physics-v1/models/core-value-ledger.qnt",
           "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
           "quint typecheck verification/core-physics-v1/models/core-quantity-commitment.qnt",
-          "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4"
+          "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": [
