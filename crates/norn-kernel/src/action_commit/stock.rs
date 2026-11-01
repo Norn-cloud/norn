@@ -800,7 +800,7 @@ pub(super) fn prepare_stock_commit<H: CellHost + ?Sized>(
     };
     let posting_id = norn_ir::canonical::domain_hash_hex(
         b"stock.posting/1\0",
-        &(&call.action.action_id, &call.idempotency_key),
+        &(&call.action.action_id, call.idempotency_key.as_bytes()),
     )
     .map_err(|_error| invalid("invalid stock posting identity"))?;
     let mut plan = plan_stock_effects(&snapshot, operation, &posting_id, output.facts.clone())?;
