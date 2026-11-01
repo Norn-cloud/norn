@@ -457,6 +457,13 @@
       "tier": "T3"
     },
     {
+      "code": "core.graph.catalog_write",
+      "message": "catalog projections cannot activate definitions",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
       "code": "core.graph.role_conflict",
       "message": "inherited concept roles disagree",
       "severity": "error",
