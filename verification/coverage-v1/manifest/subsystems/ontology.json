@@ -244,6 +244,7 @@
     "registry/packs/demo-commerce/identities.ts",
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.Measurement.interface.json",
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.StockEntryMeasurement.entity.json",
+    "registry/packs/demo-erpnext/artifacts/demo.erpnext.classifications.entity.json",
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.mapping.json",
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.source.json",
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json",

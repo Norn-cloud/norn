@@ -67,9 +67,12 @@ impl<E: SqlEngine> DevHost<E> {
         input: &norn_cell::mapping_bundle::MappingInput,
         checked: impl FnOnce() -> Result<Observed<RuntimeValue>, Refusal>,
     ) -> Result<(String, bool), Refusal> {
-        self.scope().admit(Some(&scope.org_id), Some(&scope.environment_id))?;
+        self.scope()
+            .admit(Some(&scope.org_id), Some(&scope.environment_id))?;
         let _epoch = self.definition_read()?;
         let raw = checked()?;
-        self.cell()?.inject_mapping_bundle(&raw, input).map_err(Refusal::host)
+        self.cell()?
+            .inject_mapping_bundle(&raw, input)
+            .map_err(Refusal::host)
     }
 }
