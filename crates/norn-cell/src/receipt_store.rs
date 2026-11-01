@@ -145,19 +145,45 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Ok(Some(stored))
     }
 
-    pub(crate) fn bind_function_receipt(&self, reference: &norn_kernel::receipt_binding::ReceiptReference, manifest: &Digest) -> Result<Option<norn_kernel::receipt_binding::ReceiptBinding<norn_ir::RuntimeObject>>, CellError> {
-        let Some(stored) = self.stored_function_receipt(reference.digest())? else { return Ok(None); };
-        if stored.receipt.manifest != *manifest { return Err(refused("manifest")); }
+    pub(crate) fn bind_function_receipt(
+        &self,
+        reference: &norn_kernel::receipt_binding::ReceiptReference,
+        manifest: &Digest,
+    ) -> Result<
+        Option<norn_kernel::receipt_binding::ReceiptBinding<norn_ir::RuntimeObject>>,
+        CellError,
+    > {
+        let Some(stored) = self.stored_function_receipt(reference.digest())? else {
+            return Ok(None);
+        };
+        if stored.receipt.manifest != *manifest {
+            return Err(refused("manifest"));
+        }
         let consumed = self.store.conn.query_optional("SELECT consumed_commit_seq FROM _norn_function_receipt WHERE reference=?1 AND scope=?2", params![reference.digest().0, self.scope], |row| row.get::<Option<i64>>(0))?.flatten().is_some();
-        if !crate::receipt_fence::usable(consumed, stored.frontier, self.store.read().next_commit_seq()?) { return Err(refused("replayed_or_stale")); }
+        if !crate::receipt_fence::usable(
+            consumed,
+            stored.frontier,
+            self.store.read().next_commit_seq()?,
+        ) {
+            return Err(refused("replayed_or_stale"));
+        }
         struct Bound<'a>(&'a StoredReceipt);
         impl norn_kernel::receipt_binding::AcceptedReceiptStore for Bound<'_> {
             type Error = CellError;
-            fn resolve(&self, _: &Digest) -> Result<norn_kernel::receipt_binding::ReceiptResolution<'_>, CellError> {
-                Ok(norn_kernel::receipt_binding::ReceiptResolution::Accepted { acceptance: &self.0.acceptance, receipt: &self.0.receipt })
+            fn resolve(
+                &self,
+                _: &Digest,
+            ) -> Result<norn_kernel::receipt_binding::ReceiptResolution<'_>, CellError>
+            {
+                Ok(norn_kernel::receipt_binding::ReceiptResolution::Accepted {
+                    acceptance: &self.0.acceptance,
+                    receipt: &self.0.receipt,
+                })
             }
         }
-        norn_kernel::receipt_binding::bind_receipt(&Bound(&stored), reference).map(Some).map_err(|_| refused("binding"))
+        norn_kernel::receipt_binding::bind_receipt(&Bound(&stored), reference)
+            .map(Some)
+            .map_err(|_| refused("binding"))
     }
 
     /// Export retained receipt evidence with its authenticated recorded clock.
@@ -340,25 +366,62 @@ mod tests {
     }
     #[test]
     fn consumption_is_atomic_single_use_and_refusal_preserves_evidence() {
-        use norn_kernel::{CellCommit, FactMutation, FactWrite};
         use norn_kernel::receipt_binding::ReceiptReference;
+        use norn_kernel::{CellCommit, FactMutation, FactWrite};
         let dir = tempfile::tempdir().expect("dir");
         let (mut cell, dispatched, receipt, checks, _) = setup(&dir.path().join("cell.sqlite"));
         let digest = retain(&mut cell, &dispatched, &receipt, &checks, true).expect("retain");
-        let reference = ReceiptReference::parse(&RuntimeValue::String(digest.0)).expect("reference");
-        assert!(cell.resolve_accepted_receipt(&reference, &receipt.manifest).expect("resolve").is_some());
-        assert!(cell.resolve_accepted_receipt(&reference, &Digest(format!("sha256:{}", "0".repeat(64)))).is_err());
+        let reference =
+            ReceiptReference::parse(&RuntimeValue::String(digest.0)).expect("reference");
+        assert!(
+            cell.resolve_accepted_receipt(&reference, &receipt.manifest)
+                .expect("resolve")
+                .is_some()
+        );
+        assert!(
+            cell.resolve_accepted_receipt(
+                &reference,
+                &Digest(format!("sha256:{}", "0".repeat(64)))
+            )
+            .is_err()
+        );
         let before = cell.store().verified_head().expect("head");
-        let invalid = CellCommit { writes: vec![FactWrite { key: FactKey::new("unknown.Type", "bad"), expected: FactVersion::ABSENT, mutation: FactMutation::Put { values: norn_ir::RuntimeObject::new() } }], ..CellCommit::default() };
+        let invalid = CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new("unknown.Type", "bad"),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: norn_ir::RuntimeObject::new(),
+                },
+            }],
+            ..CellCommit::default()
+        };
         assert!(cell.commit_accepted_receipt(invalid, &reference).is_err());
         assert_eq!(cell.store().verified_head().expect("head"), before);
-        assert!(cell.resolve_accepted_receipt(&reference, &receipt.manifest).expect("still usable").is_some());
-        cell.commit_accepted_receipt(CellCommit::default(), &reference).expect("consume");
-        assert!(cell.resolve_accepted_receipt(&reference, &receipt.manifest).is_err());
+        assert!(
+            cell.resolve_accepted_receipt(&reference, &receipt.manifest)
+                .expect("still usable")
+                .is_some()
+        );
+        cell.commit_accepted_receipt(CellCommit::default(), &reference)
+            .expect("consume");
+        assert!(
+            cell.resolve_accepted_receipt(&reference, &receipt.manifest)
+                .is_err()
+        );
         let after = cell.store().verified_head().expect("head");
-        assert!(cell.commit_accepted_receipt(CellCommit::default(), &reference).is_err());
+        assert!(
+            cell.commit_accepted_receipt(CellCommit::default(), &reference)
+                .is_err()
+        );
         assert_eq!(cell.store().verified_head().expect("head"), after);
-        assert!(cell.store().read().head_command().expect("outbox").is_none());
+        assert!(
+            cell.store()
+                .read()
+                .head_command()
+                .expect("outbox")
+                .is_none()
+        );
     }
     struct ActionAllow;
     impl norn_kernel::ActionAuthorizer for ActionAllow {
@@ -427,12 +490,21 @@ mod tests {
 }
 
 /// Claim only inside the accepting action transaction; rollback covers effects.
-pub(crate) fn claim<S: SqlEngine>(reader: &StoreReader<'_, S>, scope: &str, reference: &Digest, stored: &StoredReceipt) -> Result<(), CellError> {
+pub(crate) fn claim<S: SqlEngine>(
+    reader: &StoreReader<'_, S>,
+    scope: &str,
+    reference: &Digest,
+    stored: &StoredReceipt,
+) -> Result<(), CellError> {
     let current = reader.next_commit_seq()?;
     let consumed = reader.conn.query_optional("SELECT consumed_commit_seq FROM _norn_function_receipt WHERE reference=?1 AND scope=?2", params![reference.0, scope], |row| row.get::<Option<i64>>(0))?.ok_or_else(|| refused("unknown"))?.is_some();
-    if !crate::receipt_fence::usable(consumed, stored.frontier, current) { return Err(refused("replayed_or_stale")); }
+    if !crate::receipt_fence::usable(consumed, stored.frontier, current) {
+        return Err(refused("replayed_or_stale"));
+    }
     let body = serde_json::to_string(stored).map_err(CellError::Json)?;
     let changed = reader.conn.execute("UPDATE _norn_function_receipt SET consumed_commit_seq=?1 WHERE reference=?2 AND scope=?3 AND body=?4 AND consumed_commit_seq IS NULL", params![i64::try_from(current).map_err(|_| refused("frontier"))?, reference.0, scope, body])?;
-    if changed != 1 { return Err(refused("claim")); }
+    if changed != 1 {
+        return Err(refused("claim"));
+    }
     Ok(())
 }
