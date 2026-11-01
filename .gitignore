@@ -71,6 +71,7 @@ test-results/
 # Personal docs
 docs/**
 !docs/index.md
+!docs/guarantees.md
 !docs/index.html
 !docs/privacy.html
 !docs/terms.html
