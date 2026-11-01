@@ -331,7 +331,14 @@ impl Schema {
             (Self::Decimal(scale), RuntimeValue::String(text)) => {
                 let decimal = Decimal::parse(&text)
                     .map_err(|_error| Violation::new(path, "invalid decimal text"))?;
-                if decimal.scale() > *scale {
+                let literal_scale = text
+                    .trim()
+                    .split(['e', 'E'])
+                    .next()
+                    .unwrap_or("")
+                    .split_once('.')
+                    .map_or(0, |(_, fraction)| fraction.len());
+                if literal_scale > *scale as usize || decimal.scale() > *scale {
                     return Err(Violation::new(path, "decimal exceeds declared scale"));
                 }
                 Ok(RuntimeValue::Number(decimal))
@@ -633,6 +640,8 @@ mod tests {
             RuntimeValue::Number(Decimal::from(125_u64)),
             RuntimeValue::Null,
             RuntimeValue::String("1.001".into()),
+            RuntimeValue::String("1.000".into()),
+            RuntimeValue::String("0.000".into()),
             RuntimeValue::String("NaN".into()),
             RuntimeValue::String("99999999999999999999999999999999999".into()),
         ] {
