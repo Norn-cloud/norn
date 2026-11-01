@@ -146,10 +146,9 @@ impl RequirementRefusal {
     }
 }
 
-/// Check the closed safety/immediate-commit grammar in the subject's typed
-/// environment. Conditions are pointwise, never event triggers. Exceptions and
-/// preferences remain declarations for `norm_precedence` grounding; they are
-/// not erased or converted to an unconditional executable law here.
+/// Check pointwise safety/commit slots in the subject's typed environment.
+/// Exceptions/preferences remain declarations for `norm_precedence` grounding;
+/// they are never erased or converted into unconditional executable laws.
 ///
 /// # Errors
 /// Refuses progress, deadlines, inconsistent grades and non-Boolean predicates.
@@ -174,7 +173,7 @@ pub fn check_requirement(
     {
         return Err(R::ModalityMismatch);
     }
-    let mut ids = [&law.id, &law.subject, root]
+    let mut ids = [&law.id, &law.owner, &law.subject, root]
         .into_iter()
         .chain([&rule.authority_id, &rule.authority_version])
         .chain(&law.scope.object_types)
