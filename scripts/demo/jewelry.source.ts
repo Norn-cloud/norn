@@ -6,9 +6,9 @@ export const Melt = Norn.type({
   name: "demo.Melt", title: "Melt measurement", version: "0.1.0",
   properties: Schema.Struct({
     id: Schema.String,
-    input_fine_g: Norn.decimal(3, { unit: "g" }),
-    output_fine_g: Norn.decimal(3, { unit: "g" }),
-    loss_fine_g: Norn.decimal(3, { unit: "g" }),
+    input_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
+    output_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
+    loss_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
     status: Schema.Literals(["draft", "measured", "approved", "posted", "rejected"]),
   }),
   identity: [{ name: "primary", properties: ["id"] }],
