@@ -49,6 +49,26 @@ fn erpnext_laws_admit_through_the_shared_set_checker() {
     assert!(entity_findings.is_empty(), "{entity_findings:?}");
     assert_eq!(run(laws(), &entities()), Vec::<String>::new());
 }
+
+#[test]
+fn law_contained_pack_root_refuses_until_retained_membership_is_resolved() {
+    let mut artifact: ArtifactEnvelope = serde_json::from_value(laws()[0].clone()).expect("law");
+    let mut law: norn_ir::LawIR = serde_json::from_value(
+        serde_json::to_value(artifact.payload.to_json_value()).expect("wire"),
+    )
+    .expect("law");
+    law.scope.root = norn_ir::LawRoot::Pack("toy.unknown".to_owned());
+    artifact.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Law,
+        serde_json::from_value(serde_json::to_value(law).expect("wire")).expect("tree"),
+    )
+    .expect("root");
+    assert!(
+        norn_checker::verification::check_law_local(&artifact)
+            .iter()
+            .any(|f| f.code == codes::UNKNOWN_BINDING)
+    );
+}
 #[test]
 fn law_types_and_absent_bindings_fail_closed() {
     for expr in [

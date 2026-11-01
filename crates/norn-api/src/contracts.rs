@@ -24,6 +24,11 @@ impl Modify for ContractSchemas {
         for (name, schema) in artifact_envelope_schemas()
             .into_iter()
             .chain(project_schemars_components(
+                norn_ir::verification::effective_law_instance_schema(),
+                "NornIrEffectiveLawInstance",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
                 norn_ir::layout_sidecar_schema(),
                 "LayoutSidecar",
                 "NornIrLayout",

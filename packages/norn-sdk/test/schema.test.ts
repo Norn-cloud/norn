@@ -36,3 +36,17 @@ test("every generated local schema reference resolves in the retained contract",
   }
   walk(value)
 })
+
+test("LAW-INSTANCE-CONTRACT-1: effective instances retain origins and bindings", () => {
+  const at: Schemas["NornIrEffectiveLawInstance"]["subject"] = {
+    artifactId: "toy.credit", version: "1.0.0", member: { kind: "type", typeName: "toy.Credit" },
+  }
+  const instance: Schemas["NornIrEffectiveLawInstance"] = {
+    law: { ...at, artifactId: "toy.law", member: { kind: "law", law: "toy.preserve" } },
+    lawDigest: "a".repeat(64), subject: at, subjectDigest: "b".repeat(64),
+    attachment: { kind: "pack", id: "toy.layer" }, origin: at,
+    paths: [[at]], bindings: { self: at },
+  }
+  expect(instance.law.member.kind).toBe("law")
+  expect(instance.bindings.self).toEqual(instance.subject)
+})

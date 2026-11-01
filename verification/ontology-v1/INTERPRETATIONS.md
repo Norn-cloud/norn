@@ -71,6 +71,20 @@ serde/catalog/compiled-expression paths with dynamically allocated trees;
 generated runtime inputs check the production mapper instead. Preservation
 obligations remain unsupported and interpretation admission still refuses.
 
+## B2 effective law instance contract
+
+LAW-INSTANCE-CONTRACT-1 is a separate closed projection, never a rewritten
+LawIR: original law member/digest, concrete subject member/digest, attachment,
+origin, all paths and explicit typed substitutions. SDK/schema round trips
+retain every path of a diamond and binding; no caller-supplied proof flag is
+accepted. A proptest preserves generated paths/substitutions. This contract
+does not resolve instances or establish non-vacuity; B2's resolver follows.
+`LawRoot::App` remains and the explicit pack root is added. Pack-scoped laws
+and structured requirements refuse until retained membership is implemented.
+The LAW-CONTAINED refusal tests enforce that intermediate boundary. Kani is
+inapplicable to this serializer/schema contract over allocated member trees;
+there is no new bounded pure algorithm. LAW-* admission semantics follow.
+
 Remaining B1 conformance scenarios: MAP-MEMBERS (source-derived
 totality), MAP-UNITS (dimension/unit/scale), EVENT-MULTI (event identity and
 distinct object links). Missing required members, unsupported transforms or

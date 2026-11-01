@@ -67,8 +67,20 @@ fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, String> {
 fn local(law: &LawIR, artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     let root = match &law.scope.root {
-        LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
+        LawRoot::Company(id)
+        | LawRoot::App(id)
+        | LawRoot::Pack(id)
+        | LawRoot::Cell(id)
+        | LawRoot::Entity(id) => id,
     };
+    if matches!(law.scope.root, LawRoot::Pack(_)) {
+        out.push(finding(
+            codes::UNKNOWN_BINDING,
+            artifact,
+            "/payload/scope/root",
+            "pack-scoped laws require retained membership resolution",
+        ));
+    }
     if [&law.id, &law.owner, &law.rationale, &law.subject, root]
         .iter()
         .any(|v| v.trim().is_empty())
