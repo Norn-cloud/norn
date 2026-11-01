@@ -98,3 +98,6 @@ The native C ABI (`norn_check(json_bytes)` over a `cdylib`) is the other half
 of #2527 and is not built yet: it needs `unsafe` FFI glue (the workspace
 forbids `unsafe_code`) and has no consumer today. It will wrap the same
 `*_json` functions, so its output is the same bytes.
+
+ABI-REFUSAL: malformed inline layout remains a checker finding with a rejected
+receipt. Only envelope-decode failures return a null receipt.
