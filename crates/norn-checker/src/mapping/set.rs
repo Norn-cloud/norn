@@ -53,6 +53,13 @@ pub fn check_mapping_artifacts(
                     .and_then(serde_json::from_value::<MappingDocument>)
         {
             out.extend(interpretation_endpoints(artifact, &document, base));
+            if !interpretation_members(&document, base) {
+                out.push(in_payload(error(
+                    "core.composition.mapping_gap",
+                    "interpretation must cover the retained source contract exactly with unique compatible target members".to_owned(),
+                    Span::pointer("/members"),
+                ), artifact));
+            }
             out.extend(key_findings(artifact));
             out.push(in_payload(
                 error(
@@ -108,6 +115,150 @@ pub fn check_mapping_artifacts(
         );
     }
     out
+}
+
+/// MAP-TOTAL-1: totality comes from retained definitions, never a supplied list.
+/// This cut checks identity bindings; transformations remain unsupported.
+fn interpretation_members(document: &LawInterpretationIr, base: &[ArtifactEnvelope]) -> bool {
+    let Some(source) = layer_members(&document.source_layer, base) else {
+        return false;
+    };
+    let Some(target) = layer_members(&document.target_layer, base) else {
+        return false;
+    };
+    let mut seen = BTreeSet::new();
+    let mut images = BTreeSet::new();
+    document.members.iter().all(|binding| {
+        binding.transform.is_none()
+            && source.contains(&binding.source)
+            && target.contains(&binding.target)
+            && std::mem::discriminant(&binding.source.member)
+                == std::mem::discriminant(&binding.target.member)
+            && seen.insert(binding.source.clone())
+            && images.insert(binding.target.clone())
+    }) && seen == source
+}
+
+fn layer_members(
+    pin: &norn_ir::mapping::InterpretationEndpoint,
+    base: &[ArtifactEnvelope],
+) -> Option<BTreeSet<norn_ir::definition_catalog::MemberRef>> {
+    use norn_ir::definition_catalog::{Member, MemberRef};
+    use norn_ir::{BusinessPackRoot, EntityRoot, PackArtifactKind};
+    let layers: Vec<_> = base
+        .iter()
+        .filter(|a| a.artifact_id == pin.artifact_id && a.version == pin.version)
+        .collect();
+    let [layer] = layers.as_slice() else {
+        return None;
+    };
+    let root: BusinessPackRoot = serde_json::to_value(layer.payload.to_json_value())
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())?;
+    let BusinessPackRoot::Composition(pack) = root else {
+        return None;
+    };
+    let catalog = crate::entity_instance::EffectiveCatalog::from_artifacts(base);
+    let mut members = BTreeSet::new();
+    for reference in pack.artifacts {
+        // Nested pack/extension contracts need retained closure, not guessed scope.
+        if reference.kind == PackArtifactKind::BusinessPack {
+            return None;
+        }
+        if reference.kind != PackArtifactKind::Entity {
+            continue;
+        }
+        let definitions: Vec<_> = base
+            .iter()
+            .filter(|a| {
+                a.artifact_id == reference.artifact_id
+                    && a.version == reference.version
+                    && a.kind() == ArtifactKind::Entity
+            })
+            .collect();
+        let [definition] = definitions.as_slice() else {
+            return None;
+        };
+        let crate::entity_artifacts::Decoded::Root(root) =
+            crate::entity_artifacts::decode_v2(definition)
+        else {
+            return None;
+        };
+        let mut add = |member| {
+            members.insert(MemberRef {
+                artifact_id: reference.artifact_id.clone(),
+                version: reference.version.clone(),
+                member,
+            });
+        };
+        let (name, properties, links) = match *root {
+            EntityRoot::V2(_) => {
+                let effective = catalog.object_type(&reference.artifact_id)?.ok()?;
+                let name = effective.name.as_str().to_owned();
+                for machine in &effective.lifecycles {
+                    let lifecycle = machine.lifecycle.property.as_str().to_owned();
+                    for state in &machine.states {
+                        add(Member::State {
+                            type_name: name.clone(),
+                            lifecycle: lifecycle.clone(),
+                            state: state.clone(),
+                        });
+                    }
+                    for transition in &machine.lifecycle.transitions {
+                        add(Member::Transition {
+                            type_name: name.clone(),
+                            lifecycle: lifecycle.clone(),
+                            transition: transition.id.as_str().to_owned(),
+                        });
+                    }
+                }
+                (
+                    name,
+                    effective
+                        .properties
+                        .iter()
+                        .map(|p| p.id.as_str().to_owned())
+                        .collect::<Vec<_>>(),
+                    catalog
+                        .links_for_object_type(effective.name.as_str())?
+                        .iter()
+                        .map(|l| l.id.as_str().to_owned())
+                        .collect::<Vec<_>>(),
+                )
+            }
+            EntityRoot::V2Interface(root) if root.interface.extends.is_empty() => (
+                root.interface.name.as_str().to_owned(),
+                root.interface
+                    .properties
+                    .iter()
+                    .map(|p| p.id.as_str().to_owned())
+                    .collect(),
+                root.interface
+                    .links
+                    .iter()
+                    .map(|l| l.id.as_str().to_owned())
+                    .collect(),
+            ),
+            EntityRoot::V2PropertyTypes(_) | EntityRoot::V2Markings(_) => continue,
+            _ => return None,
+        };
+        add(Member::Type {
+            type_name: name.clone(),
+        });
+        for property in properties {
+            add(Member::Property {
+                type_name: name.clone(),
+                property,
+            });
+        }
+        for link in links {
+            add(Member::Link {
+                type_name: name.clone(),
+                link,
+            });
+        }
+    }
+    (!members.is_empty()).then_some(members)
 }
 
 fn interpretation_endpoints(

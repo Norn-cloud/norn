@@ -125,12 +125,147 @@ fn map_pins_and_multi_retain_independent_edges_without_granting_conformance() {
     );
     second.dependencies = first.dependencies.clone();
     let findings = norn_checker::mapping::check_mapping_artifacts(&[first, second], &base);
-    assert_eq!(findings.len(), 2, "{findings:#?}");
-    assert!(
+    assert_eq!(
         findings
             .iter()
-            .all(|f| f.code == "mapping.interpretation.unsupported")
+            .filter(|f| f.code == "mapping.interpretation.unsupported")
+            .count(),
+        2
     );
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|f| f.code == "core.composition.mapping_gap")
+            .count(),
+        2
+    );
+}
+
+fn complete_member_interpretation() -> (norn_ir::mapping::LawInterpretationIr, Vec<ArtifactEnvelope>)
+{
+    use norn_ir::definition_catalog::{Member, MemberRef};
+    let (artifact, mut base) = pinned_interpretation();
+    base.extend(model_artifacts());
+    let mut document: norn_ir::mapping::LawInterpretationIr = serde_json::from_value(
+        serde_json::to_value(artifact.payload.to_json_value()).expect("payload"),
+    )
+    .expect("interpretation");
+    let name = "commerce.SalesOrder".to_owned();
+    let mut members = vec![Member::Type {
+        type_name: name.clone(),
+    }];
+    members.extend(
+        [
+            "order_number",
+            "order_date",
+            "total_amount",
+            "is_large",
+            "status",
+        ]
+        .map(|property| Member::Property {
+            type_name: name.clone(),
+            property: property.to_owned(),
+        }),
+    );
+    members.push(Member::Link {
+        type_name: name.clone(),
+        link: "counterparty".to_owned(),
+    });
+    members.extend(
+        ["draft", "submitted", "cancelled"].map(|state| Member::State {
+            type_name: name.clone(),
+            lifecycle: "status".to_owned(),
+            state: state.to_owned(),
+        }),
+    );
+    members.extend(["submit", "cancel"].map(|transition| Member::Transition {
+        type_name: name.clone(),
+        lifecycle: "status".to_owned(),
+        transition: transition.to_owned(),
+    }));
+    document.members = members
+        .into_iter()
+        .map(|member| {
+            let source = MemberRef {
+                artifact_id: "commerce.SalesOrder.entity".to_owned(),
+                version: "0.1.0".to_owned(),
+                member,
+            };
+            norn_ir::mapping::MemberInterpretation {
+                target: source.clone(),
+                source,
+                transform: None,
+            }
+        })
+        .collect();
+    (document, base)
+}
+
+fn member_findings(
+    document: &norn_ir::mapping::LawInterpretationIr,
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
+    let (mut artifact, _) = pinned_interpretation();
+    artifact.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Mapping,
+        serde_json::from_value(serde_json::to_value(document).expect("wire")).expect("JSON tree"),
+    )
+    .expect("mapping root");
+    norn_checker::mapping::check_mapping_artifacts(&[artifact], base)
+}
+
+#[test]
+fn map_members_total_contract_leaves_semantic_preservation_unsupported() {
+    let (document, base) = complete_member_interpretation();
+    let findings = member_findings(&document, &base);
+    assert_eq!(findings.len(), 1, "{findings:#?}");
+    assert_eq!(
+        findings.first().expect("unsupported").code,
+        "mapping.interpretation.unsupported"
+    );
+}
+
+#[test]
+fn map_members_refuses_duplicates_unknown_members_kinds_and_transforms() {
+    let (document, base) = complete_member_interpretation();
+    for case in 0..5 {
+        let mut invalid = document.clone();
+        let first = invalid.members.first().expect("type binding").clone();
+        match case {
+            0 => invalid.members.push(first),
+            1 => invalid.members.first_mut().expect("binding").source.version = "9.0.0".to_owned(),
+            2 => {
+                invalid
+                    .members
+                    .first_mut()
+                    .expect("binding")
+                    .target
+                    .artifact_id = "toy.unknown".to_owned()
+            }
+            3 => invalid.members.get_mut(1).expect("property").target = first.target,
+            _ => {
+                invalid.members.first_mut().expect("binding").transform =
+                    Some(norn_ir::ZenExpression("input".to_owned()))
+            }
+        }
+        assert!(
+            member_findings(&invalid, &base)
+                .iter()
+                .any(|f| f.code == "core.composition.mapping_gap"),
+            "case {case}"
+        );
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn map_members_generated_omissions_refuse_and_permutations_preserve_coverage(index in 0usize..12) {
+        let (mut document, base) = complete_member_interpretation();
+        document.members.rotate_left(index);
+        proptest::prop_assert!(member_findings(&document, &base).iter().all(|f| f.code != "core.composition.mapping_gap"));
+        document.members.pop();
+        proptest::prop_assert!(member_findings(&document, &base).iter().any(|f| f.code == "core.composition.mapping_gap"));
+    }
 }
 
 #[test]

@@ -44,6 +44,20 @@ This contract cut adds no pure bounded engine function suitable for Kani;
 serde/schema code operates on unbounded allocated inputs. Admission still
 refuses all interpretations pending the conformance and obligation cuts.
 
+MAP-TOTAL-1 derives the complete source member inventory from retained direct
+composition-pack definitions, including effective object properties, links,
+lifecycle states/transitions and direct interface requirements. Unique,
+kind-compatible source/target bindings must cover that inventory exactly;
+missing, duplicate, unresolved or transformed members refuse with
+`core.composition.mapping_gap`. Non-injective target bindings also refuse.
+Nested packs, extensions as members and inherited interface contracts remain
+unsupported; admission still refuses semantic preservation. Named MAP-MEMBERS
+tests check a complete contract and all generated omissions/orderings. Kani is
+infeasible for this allocation-heavy resolver over serde trees, graph-derived
+effective catalogs and dynamically sized sets; the generated omission property
+checks the production admission boundary instead. Unit/relation compatibility
+is the next conformance cut, not established by this inventory check.
+
 Remaining B1 conformance scenarios: MAP-MEMBERS (source-derived
 totality), MAP-UNITS (dimension/unit/scale), EVENT-MULTI (event identity and
 distinct object links). Missing required members, unsupported transforms or

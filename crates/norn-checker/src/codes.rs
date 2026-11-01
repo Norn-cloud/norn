@@ -1338,6 +1338,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     introduced(
+        "core.composition.mapping_gap",
+        Tier::T3,
+        "interpretation must cover the retained source contract exactly with unique compatible target members",
+        "0.2.0",
+    ),
+    introduced(
         "mapping.interpretation.unsupported",
         Tier::T3,
         "law interpretations require member conformance and preservation obligations",
