@@ -3,7 +3,7 @@
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
 use norn_cell::engine::SqlEngine;
-use norn_cell::{CellStore, InstalledDefinitionInput, InstalledDefinitionSet, Model};
+use norn_cell::{CellStore, InstalledDefinitionInput, InstalledDefinitionSet};
 use norn_kernel::LogicalTime;
 
 use crate::{defs::Admitted, refusal::Refusal, scope::CellScope};
@@ -27,18 +27,9 @@ impl<E: SqlEngine> DevHost<E> {
         now: LogicalTime,
     ) -> Result<Self, Refusal> {
         let admitted = Admitted::from_source(source, &scope)?;
-        if !CellStore::engine_is_fresh(&engine).map_err(Refusal::host)? {
-            return Err(Refusal::invalid(
-                "DevHost::new requires a fresh tenant cell",
-            ));
-        }
-        let mut cell = CellStore::from_engine(
-            engine,
-            Model::from_definitions(&[], &[]).map_err(Refusal::host)?,
-        )
-        .map_err(Refusal::host)?;
-        cell.bind("scope", &scope.key()).map_err(Refusal::host)?;
-        install(&mut cell, admitted, Some(0), &scope, now)?;
+        let (model, input) = installation(admitted, now);
+        let cell = CellStore::provision_definitions(engine, model, input, &scope.key())
+            .map_err(Refusal::host)?;
         Ok(Self {
             scope,
             definitions: RwLock::new(()),
@@ -93,7 +84,16 @@ fn install<E: SqlEngine>(
     scope: &CellScope,
     now: LogicalTime,
 ) -> Result<InstalledDefinitionSet, Refusal> {
-    cell.install_definitions(
+    let (model, input) = installation(admitted, now);
+    cell.install_definitions(model, input, expected, &scope.key())
+        .map_err(Refusal::host)
+}
+
+fn installation(
+    admitted: Admitted,
+    now: LogicalTime,
+) -> (norn_cell::Model, InstalledDefinitionInput) {
+    (
         admitted.model,
         InstalledDefinitionInput {
             canonical_set: admitted.canonical_set,
@@ -105,10 +105,7 @@ fn install<E: SqlEngine>(
             installed_at: now.as_millis(),
             layout: Some(admitted.layout),
         },
-        expected,
-        &scope.key(),
     )
-    .map_err(Refusal::host)
 }
 
 #[cfg(all(test, feature = "native"))]
@@ -196,8 +193,7 @@ mod tests {
             let refusal = DevHost::new(engine, "[]", scope(), LogicalTime::EPOCH)
                 .err()
                 .expect("not fresh");
-            assert_eq!(refusal.code, "request.invalid");
-            assert_eq!(refusal.status, 400);
+            assert_eq!(refusal.code, "host.error");
         }
     }
 }

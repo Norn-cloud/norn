@@ -34,3 +34,16 @@ checker identity gap. No additional host canonicalizer is introduced.
 HOST-IDENTITY: artifacts, scope and logical time remain the canonical IR/kernel
 types. The API now owns a ring-1 host over ring-1 cells; pure contracts stay here.
 Correspondence: `host::tests`. HTTP reads and action parity follow in later slices.
+
+
+HOST-PROVISION-ATOMIC: initialization, scope binding, initial definitions, model
+snapshot, receipt and ledger publish in one engine transaction. Failure or abrupt
+process loss before commit leaves no application schema; after commit a lost
+reply leaves the complete initial revision. An identical provisioning request
+(scope, projected model and full install input, including logical time) reopens
+revision 1 without writes; a changed request or advanced definition revision
+refuses. Residual unrelated schema is never adopted. The transaction owns the
+freshness check, so competing requests cannot both initialize the cell.
+Correspondence: `definitions_install::host_provision_atomic_at_every_storage_boundary`
+injects errors and abrupt subprocess exit after every SQL operation, before
+commit and after commit, then reopens, retries and checks conflicting retries.
