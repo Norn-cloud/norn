@@ -94,7 +94,9 @@ impl SettingValue {
     pub fn runtime_value(&self) -> Result<RuntimeValue, RuntimeValueError> {
         match self {
             Self::Number(literal) => Self::decimal(literal.as_str()).map(RuntimeValue::Number),
-            value => RuntimeValue::from_ir(&value.to_json_value()),
+            value @ (Self::Text(_) | Self::Boolean(_) | Self::Json(_)) => {
+                RuntimeValue::from_ir(&value.to_json_value())
+            }
         }
     }
 
