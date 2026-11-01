@@ -471,6 +471,21 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     entry(
+        "controls.validation.invalid_path",
+        Tier::T3,
+        "Invalid sensitive path declaration",
+    ),
+    entry(
+        "controls.validation.refuted",
+        Tier::T3,
+        "Concrete duty separation counterexample",
+    ),
+    entry(
+        "controls.validation.witness_required",
+        Tier::T3,
+        "Concrete availability witness required",
+    ),
+    entry(
         "customization.validation.invalid_payload",
         Tier::T2,
         "CustomizationIR payload is invalid at {path}: {detail}",

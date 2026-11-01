@@ -320,6 +320,9 @@ pub fn check_artifact_set(
         Ok(_resolved) => check_entity_artifacts(&normalized_artifacts, &normalized_context)
             .into_iter()
             .chain(scope_findings(&normalized_artifacts, &normalized_base))
+            .chain(
+                crate::controls_adapter::check_controls(&normalized_artifacts, &normalized_base).1,
+            )
             .chain(check_sub_decision_closures(
                 &normalized_artifacts,
                 &normalized_base,

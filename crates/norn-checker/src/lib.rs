@@ -28,6 +28,8 @@ pub mod artifact_set;
 pub mod codes;
 pub mod connector_path;
 pub mod consistency;
+pub mod controls;
+pub mod controls_adapter;
 pub mod definitions_diff;
 pub mod deontic;
 mod diagnostic;
