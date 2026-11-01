@@ -69,9 +69,9 @@ module field_authority {
   def writable(p: Property): bool = not(p.computed) and not(p.protected) and not(p.lifecycle)
   // Admission of the declared CAS touch, assuming a current, populated parent
   // snapshot. Missing values and version conflicts are separate runtime checks.
-  action checkCas(properties: List[Property]): bool = all {
+  action checkCas(properties: Set[Property]): bool = all {
     checkerCas' = properties.exists(p => writable(p)),
-    runtimeCas' = properties.filter(p => not(p.computed) and not(p.protected) and not(p.lifecycle)).length() > 0,
+    runtimeCas' = properties.filter(p => not(p.computed) and not(p.protected) and not(p.lifecycle)).size() > 0,
     present' = present, stored' = stored, immutable' = immutable, protected' = protected,
     beforeExists' = present, beforeValue' = stored, refused' = false, op' = "cas", origin' = "action",
     seal' = seal, lastSupplies' = false, lastAuthority' = false, lastRule' = 0, lastPin' = 0,
@@ -99,7 +99,7 @@ module field_authority {
       callerWrite(kind, producer, supplies, value),
       evaluateRule(rule, pin, kind, supplies, value),
       commitRule(rule, pin),
-      checkCas([{ computed: c, protected: p, lifecycle: l }]),
+      checkCas(Set({ computed: c, protected: p, lifecycle: l }]),
     }
   }
   run deleteThenRecreateRefusedTest = initial(false, true)
@@ -107,21 +107,21 @@ module field_authority {
     .then(callerWrite("delete", "action", false, 0))
     .then(all { assert(invariant and refused and present and stored == 2), callerWrite("create", "action", false, 0) })
     .then(all { assert(invariant and refused and present and stored == 2), callerWrite("set", "rule", true, 1) })
-    .then(assert(invariant and refused and stored == 2))
+    .then(all { assert(invariant and refused and stored == 2), evaluateRule(0, 0, "none", false, 0) })
   run forgedOriginRefusedTest = initial(false, true)
     .then(callerWrite("create", "rule", true, 2))
     .then(all { assert(invariant and refused and not(present)), commitRule(1, 1) })
-    .then(assert(invariant and refused and not(present)))
+    .then(all { assert(invariant and refused and not(present)), evaluateRule(0, 0, "none", false, 0) })
   run exactRuleBindingTest = initial(false, true)
     .then(evaluateRule(1, 1, "create", true, 1)).then(commitRule(2, 1))
     .then(all { assert(invariant and refused and not(present)), evaluateRule(1, 1, "create", true, 2) })
     .then(commitRule(1, 2))
     .then(all { assert(invariant and refused and not(present)), evaluateRule(1, 1, "create", true, 2) })
-    .then(commitRule(1, 1)).then(assert(invariant and not(refused) and stored == 2))
+    .then(commitRule(1, 1)).then(all { assert(invariant and not(refused) and stored == 2), evaluateRule(0, 0, "none", false, 0) })
   run rowOnlyCasAdmissionTest = initial(false, false)
-    .then(checkCas([{ computed: false, protected: true, lifecycle: false }]))
-    .then(all { assert(invariant and not(checkerCas)), checkCas([{ computed: true, protected: false, lifecycle: false }]) })
-    .then(all { assert(invariant and not(checkerCas)), checkCas([{ computed: false, protected: false, lifecycle: true }]) })
-    .then(all { assert(invariant and not(checkerCas)), checkCas([{ computed: false, protected: true, lifecycle: false }, { computed: false, protected: false, lifecycle: false }]) })
-    .then(assert(invariant and checkerCas))
+    .then(checkCas(Set({ computed: false, protected: true, lifecycle: false })))
+    .then(all { assert(invariant and not(checkerCas)), checkCas(Set({ computed: true, protected: false, lifecycle: false })) })
+    .then(all { assert(invariant and not(checkerCas)), checkCas(Set({ computed: false, protected: false, lifecycle: true })) })
+    .then(all { assert(invariant and not(checkerCas)), checkCas(Set({ computed: false, protected: true, lifecycle: false }, { computed: false, protected: false, lifecycle: false })) })
+    .then(all { assert(invariant and checkerCas), evaluateRule(0, 0, "none", false, 0) })
 }
