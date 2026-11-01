@@ -662,13 +662,13 @@ pub fn plan_stock_effects<X>(
                 "delivery",
             ),
         };
-        let values = norn_ir::runtime_object! {
+        let V::Object(values) = norn_ir::runtime_object! {
             "id" => event.id, "partition_id" => partition.witness.key,
             "ordinal" => partition.history.len().saturating_add(index), "operation" => operation,
             "quantity" => stock_decimal(quantity)?, "value" => stock_decimal(value)?,
             "allocations" => stock_json(&event.allocations)?, "voucher_id" => target.key,
             "line_id" => line.id, "effective_at" => effective,
-        };
+        } else { return Err(stock_invalid("invalid stock event object")); };
         history_bytes = history_bytes.saturating_add(
             u64::try_from(
                 norn_ir::canonical::canonical_json_of(&values)
@@ -698,11 +698,11 @@ pub fn plan_stock_effects<X>(
             Some((q.checked_add(layer.quantity)?, v.checked_add(layer.value)?))
         })
         .ok_or_else(|| stock_invalid("stock partition total overflow"))?;
-    let values = norn_ir::runtime_object! {
+    let V::Object(values) = norn_ir::runtime_object! {
         "id" => partition.witness.key, "event_count" => partition.history.len().saturating_add(plan.events.len()),
         "binding_pin" => partition.binding_pin, "quantity" => stock_decimal(quantity)?, "value" => stock_decimal(value)?,
         "layers" => stock_json(&plan.layers)?, "effective_at" => effective,
-    };
+    } else { return Err(stock_invalid("invalid stock witness object")); };
     history_bytes = history_bytes.saturating_add(
         u64::try_from(
             norn_ir::canonical::canonical_json_of(&values)
@@ -731,7 +731,8 @@ pub fn plan_stock_effects<X>(
         });
     }
     for leg in &plan.gl {
-        facts.push(FactChange::Create { object_type: ObjectTypeName("stock.GLLeg".into()), key: leg.leg_id.clone(), values: norn_ir::runtime_object! { "id" => leg.leg_id, "journal_id" => posting_id, "leg" => stock_json(leg)? } });
+        let V::Object(values) = norn_ir::runtime_object! { "id" => leg.leg_id, "journal_id" => posting_id, "leg" => stock_json(leg)? } else { return Err(stock_invalid("invalid GL object")); };
+        facts.push(FactChange::Create { object_type: ObjectTypeName("stock.GLLeg".into()), key: leg.leg_id.clone(), values });
     }
     Ok(StockEffectPlan {
         output: norn_ir::DecisionOutput {
