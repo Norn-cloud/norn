@@ -868,10 +868,12 @@ impl Defined<'_> {
                 .and_then(|view| view.as_ref().ok());
             let writable = |id: &norn_ir::PropertyId| {
                 !id.as_str().starts_with("_norn")
+                    && id.as_str() != program.target().object_id_field
                     && view.is_some_and(|view| {
                         view.property(id.as_str())
                             .is_some_and(|property| !property.computed)
                             && view.lifecycle(id.as_str()).is_none()
+                            && !view.keys.iter().any(|key| key.components.contains(id))
                     })
             };
             let digest_text = view

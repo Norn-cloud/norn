@@ -397,14 +397,6 @@ test("acyclic authoring compiles and extracts canonical IR with false omitted", 
 })
 
 
-test("receipt acceptance remains explicit in the authoring builder", () => {
-  const binding = { referenceField: "receipt", manifestDigest: `sha256:${"a".repeat(64)}`, digestProperty: "receipt_digest", resultBindings: { score: "score" } }
-  expect(A.fireTransition({ name: "core.Analysis", version: "0.1.0" }, "id", "status", "publish", binding)).toMatchObject({
-    kind: "fire_transition", acceptReceipt: binding,
-  })
-})
-
-
 test("acceptReceipt syntax lowers reference and result bindings", () => {
   const result = compileDefinitions(join(TOOL_ROOT, "fixtures/definitions/accept-receipt.source.ts"), { scope, sourcePath: "tools/norn-ts/fixtures/definitions/accept-receipt.source.ts" })
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))

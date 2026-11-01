@@ -64,7 +64,7 @@ Present: `crates/norn-ir/src/{decision_output,fact_change,action}.rs`, `crates/n
 A declared transition may carry `acceptReceipt`: a required string reference input,
 an immutable Function manifest digest, a writable digest property and typed result
 property bindings. The action JSON never supplies the receipt body or result.
-Admission rejects unknown, computed, reserved and lifecycle binding targets, and
+Admission rejects unknown, computed, reserved, identity and lifecycle binding targets, and
 requires the normal exact writer closure. Catalogs preserve the declaration.
 Only the cell host may resolve authenticated, scoped evidence. An unsupported host
 refuses. Declaration admission does not grant completed acceptance: execution is
