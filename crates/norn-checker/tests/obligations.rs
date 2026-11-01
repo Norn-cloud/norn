@@ -354,6 +354,273 @@ fn goal_byte_preflight_is_independent_of_goal_count_and_ingress_limits() {
     );
 }
 
+fn frame_pool() -> Vec<Value> {
+    let mut pool = pool();
+    pool[3]["payload"]["modality"] = json!({"kind":"always"});
+    pool[3]["payload"]["response"]["expression"] = json!("self.paid == true");
+    pool
+}
+
+fn sales_transition() -> LawWriter {
+    LawWriter::Transition {
+        object_type: "erpnext.SalesOrder".into(),
+        property: "status".into(),
+        transition: "shipped".into(),
+    }
+}
+
+fn goal<'a>(
+    challenge: &'a Challenge,
+    law: &str,
+    kind: &str,
+    writer: Option<&LawWriter>,
+) -> &'a Value {
+    let law_index = challenge.body()["lawStatements"]
+        .as_array()
+        .expect("laws")
+        .iter()
+        .position(|record| record["artifactId"] == law)
+        .expect("law index");
+    let writer_index = writer.map(|writer| {
+        challenge.body()["writerStatements"]
+            .as_array()
+            .expect("writers")
+            .iter()
+            .position(|record| record["identity"] == writer.to_json())
+            .expect("writer index")
+    });
+    challenge.body()["obligations"]
+        .as_array()
+        .expect("goals")
+        .iter()
+        .find(|goal| {
+            goal["law"] == json!(law_index)
+                && goal["goal"]["kind"] == kind
+                && writer_index.is_none_or(|index| goal["goal"]["writer"] == json!(index))
+        })
+        .expect("required goal")
+}
+
+fn challenge(pool: &[Value]) -> Challenge {
+    let source = source(pool);
+    approve(&source)
+        .challenge(&source, &BTreeSet::new())
+        .expect("challenge")
+}
+
+#[test]
+fn property_condition_and_scope_reads_block_transition_frame() {
+    let law = "erpnext.no_unpaid_ship.law";
+    let baseline = challenge(&pool());
+    assert_eq!(
+        goal(&baseline, law, "preservation", Some(&sales_transition()))["assessment"],
+        "unknown"
+    );
+    let mut condition = frame_pool();
+    condition[3]["payload"]["condition"] = json!("self.status == 'open'");
+    let mut scope = frame_pool();
+    scope[3]["payload"]["scope"]["lifecycleStates"] =
+        json!([{"objectType":"erpnext.SalesOrder","property":"status","states":["open"]}]);
+    let mut computed = frame_pool();
+    computed[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties")
+        .push(json!({"id":"derived_paid","type":{"kind":"boolean"},"computed":"self.status == 'open'"}));
+    computed[3]["payload"]["response"]["expression"] = json!("self.derived_paid");
+    let mut actor = frame_pool();
+    actor[3]["payload"]["response"]["expression"] = json!("actor.subjectId == 'operator'");
+    for pool in [condition, scope, actor, computed] {
+        assert_eq!(
+            goal(
+                &challenge(&pool),
+                law,
+                "preservation",
+                Some(&sales_transition())
+            )["assessment"],
+            "unknown"
+        );
+    }
+}
+
+#[test]
+fn never_can_frame_but_temporal_and_invariant_responses_stay_unknown() {
+    let mut never = frame_pool();
+    never[3]["payload"]["modality"] = json!({"kind":"never"});
+    assert_eq!(
+        goal(
+            &challenge(&never),
+            "erpnext.no_unpaid_ship.law",
+            "preservation",
+            Some(&sales_transition())
+        )["assessment"],
+        "transition_frame"
+    );
+    for modality in [
+        json!({"kind":"eventually"}),
+        json!({"kind":"until","predicate":"self.paid == true"}),
+    ] {
+        let mut temporal = frame_pool();
+        temporal[3]["payload"]["modality"] = modality;
+        assert_eq!(
+            goal(
+                &challenge(&temporal),
+                "erpnext.no_unpaid_ship.law",
+                "preservation",
+                Some(&sales_transition())
+            )["assessment"],
+            "unknown"
+        );
+    }
+    let challenge = challenge(&pool());
+    assert!(
+        challenge.body()["obligations"]
+            .as_array()
+            .expect("goals")
+            .iter()
+            .all(|goal| goal["assessment"] == "unknown")
+    );
+}
+
+#[test]
+fn guard_and_transition_relation_digests_bind_effective_semantics() {
+    let initial = source(&frame_pool());
+    let authority = approve(&initial);
+    let baseline = authority
+        .challenge(&initial, &BTreeSet::new())
+        .expect("initial challenge");
+    let mut guarded = frame_pool();
+    guarded[0]["payload"]["objectType"]["lifecycles"][0]["transitions"][0]["guards"] =
+        json!(["self.paid == true"]);
+    let changed = challenge(&guarded);
+    assert_eq!(
+        authority.challenge(&source(&guarded), &BTreeSet::new()),
+        Err(ChallengeError::LawChanged)
+    );
+    let writer = |challenge: &Challenge| {
+        challenge.body()["writerStatements"]
+            .as_array()
+            .expect("writers")
+            .iter()
+            .find(|record| record["identity"] == sales_transition().to_json())
+            .expect("transition")
+            .clone()
+    };
+    assert_ne!(
+        writer(&baseline)["relation"]["transitionDigest"],
+        writer(&changed)["relation"]["transitionDigest"]
+    );
+    assert_eq!(writer(&changed)["relation"]["rule"], "transition_only");
+    assert_eq!(
+        goal(
+            &changed,
+            "erpnext.no_unpaid_ship.law",
+            "preservation",
+            Some(&sales_transition())
+        )["assessment"],
+        "transition_frame"
+    );
+    assert_eq!(
+        changed.bind_submission(baseline.body()),
+        Err(ChallengeError::InvalidSubmission)
+    );
+    for field in [
+        "lawStatements",
+        "writerStatements",
+        "inductionRules",
+        "closure",
+    ] {
+        let mut altered = changed.body().clone();
+        altered[field] = json!({"replacement":"unbound"});
+        assert_eq!(
+            changed.bind_submission(&altered),
+            Err(ChallengeError::InvalidSubmission)
+        );
+    }
+    let frame = goal(
+        &changed,
+        "erpnext.no_unpaid_ship.law",
+        "preservation",
+        Some(&sales_transition()),
+    );
+    let index = changed.body()["obligations"]
+        .as_array()
+        .expect("goals")
+        .iter()
+        .position(|goal| goal == frame)
+        .expect("frame index");
+    for field in ["law", "writer"] {
+        let mut altered = changed.body().clone();
+        altered["obligations"][index]["statement"][field] = json!(9999);
+        assert_eq!(
+            changed.bind_submission(&altered),
+            Err(ChallengeError::InvalidSubmission)
+        );
+    }
+}
+
+#[test]
+fn inherited_guards_are_bound_on_each_concrete_transition_writer() {
+    let mut pool = frame_pool();
+    pool[0]["payload"]["objectType"]["lifecycles"][0]["transitions"][0]["guards"] =
+        json!(["self.paid == true"]);
+    let mut child = pool[0].clone();
+    child["artifactId"] = json!("erpnext.SpecialOrder.entity");
+    child["dependencies"] = json!([{"artifactId":"erpnext.SalesOrder.entity","kind":"entity","version":"0.1.0","required":true}]);
+    child["payload"]["objectType"] =
+        json!({"name":"erpnext.SpecialOrder","extends":"erpnext.SalesOrder"});
+    pool.push(child);
+    let challenge = challenge(&pool);
+    let writers = challenge.body()["writerStatements"]
+        .as_array()
+        .expect("writers");
+    let child = LawWriter::Transition {
+        object_type: "erpnext.SpecialOrder".into(),
+        property: "status".into(),
+        transition: "shipped".into(),
+    };
+    let relation = |writer: &LawWriter| {
+        writers
+            .iter()
+            .find(|record| record["identity"] == writer.to_json())
+            .expect("writer")["relation"]
+            .clone()
+    };
+    assert_eq!(relation(&child), relation(&sales_transition()));
+    assert_eq!(
+        goal(
+            &challenge,
+            "erpnext.no_unpaid_ship.law",
+            "preservation",
+            Some(&child)
+        )["assessment"],
+        "unknown"
+    );
+    assert_eq!(challenge.writers().len(), writers.len());
+}
+
+#[test]
+fn initialization_and_reachable_witness_are_not_discharged_by_constant_true() {
+    let mut pool = frame_pool();
+    pool[3]["payload"]["response"]["expression"] = json!("true");
+    let challenge = challenge(&pool);
+    assert_eq!(
+        goal(
+            &challenge,
+            "erpnext.no_unpaid_ship.law",
+            "initialization",
+            None
+        )["assessment"],
+        "unknown"
+    );
+    assert_eq!(
+        goal(
+            &challenge,
+            "erpnext.no_unpaid_ship.law",
+            "non_vacuity",
+            None
+        )["assessment"],
+        "unknown"
+    );
+}
+
 fn source_in_layer(text: &str, in_base: bool) -> DefinitionSource {
     let (candidate, base) = if in_base { ("[]", text) } else { (text, "[]") };
     DefinitionSource::parse(candidate, base).expect("verbatim source")
@@ -738,12 +1005,62 @@ fn public_challenges_bind_original_source_bytes_and_accepted_law_edits() {
         "norn.application-obligations/4",
         "norn.application-obligations/5",
         "norn.application-obligations/6",
+        "norn.application-obligations/7",
     ] {
         let mut body = challenge.body().clone();
         body["generator"] = json!(stale);
         assert_eq!(
             challenge.bind_submission(&body),
             Err(ChallengeError::InvalidSubmission)
+        );
+    }
+}
+
+#[test]
+fn public_induction_goals_bind_exact_law_and_transition_commitments() {
+    let make = |expression: &str| {
+        let mut documents = frame_pool();
+        documents[3]["payload"]["response"]["expression"] = json!(expression);
+        documents[0]["payload"]["objectType"]["lifecycles"][0]["transitions"][0]["guards"] =
+            json!([expression]);
+        challenge(&documents)
+    };
+    let left = make("len('é') == 2");
+    // Keep the accepted law-edit case and add NFC-equivalent source whose
+    // literal spelling changes evaluation and the actual transition commitment.
+    for expression in ["len('é') == 3", "len('e\u{301}') == 2"] {
+        let right = make(expression);
+        let statement = |challenge: &Challenge, table: &str, key: &str, value: &Value| {
+            challenge.body()[table]
+                .as_array()
+                .expect("table")
+                .iter()
+                .find(|record| &record[key] == value)
+                .expect("statement")
+                .clone()
+        };
+        let law_id = json!("erpnext.no_unpaid_ship.law");
+        let left_law = statement(&left, "lawStatements", "artifactId", &law_id);
+        let right_law = statement(&right, "lawStatements", "artifactId", &law_id);
+        assert_eq!(
+            left_law["sha256"],
+            left.body()["closure"]["erpnext.no_unpaid_ship.law"]
+        );
+        assert_ne!(left_law["sha256"], right_law["sha256"]);
+        let writer_id = sales_transition().to_json();
+        assert_ne!(
+            statement(&left, "writerStatements", "identity", &writer_id)["relation"]["transitionDigest"],
+            statement(&right, "writerStatements", "identity", &writer_id)["relation"]["transitionDigest"]
+        );
+        assert_ne!(left.sha256(), right.sha256());
+        assert_eq!(
+            right.bind_submission(left.body()),
+            Err(ChallengeError::InvalidSubmission)
+        );
+        assert_eq!(left.body()["generator"], "norn.application-obligations/8");
+        assert_eq!(
+            left.body()["inductionRules"]["profile"],
+            "norn.induction-statements/2"
         );
     }
 }
