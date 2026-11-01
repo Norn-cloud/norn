@@ -95,17 +95,20 @@ def compare(norn, erpnext, dispositions):
             aliases[key] = f'{kind}-{1 + sum(k[0] == kind for k in aliases)}'
         return aliases[key]
     def legs(cp):
-        return [dict(request=alias('request', r['requestId']), account=alias('account', r['account']),
+        return [dict(id=alias('gl', r['id']), request=alias('request', r['requestId']), account=alias('account', r['account']),
                      currency=alias('currency', r['currency']), debit=exact(r['debit'], 2),
                      credit=exact(r['credit'], 2), cancelled=bool(r['cancelled'])) for r in cp['gl']]
     for name in sorted(set(sides[0]) | set(sides[1])):
         cases = [s.get(name) for s in sides]
         row = dict(case=alias('case', name), checkpoints=[], status='matched')
         rows.append(row)
-        if any(c is None or c['status'] != 'complete' for c in cases):
+        if any(c is None or 'initial' not in c for c in cases):
             row['status'] = 'unsupported'
             counts['unsupported'] += 1
             continue
+        if any(c['status'] != 'complete' or not c['checkpoints'] for c in cases):
+            row['status'] = 'unsupported'
+            counts['unsupported'] += 1
         if cases[0]['method'] != cases[1]['method']:
             raise ValueError('Case method mismatch')
         checkpoints = [indexed([c['initial'], *c['checkpoints']], 'step') for c in cases]

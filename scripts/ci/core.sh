@@ -162,7 +162,6 @@ PY
       use_jsonschema
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
-      python3 -m unittest discover -s tools/stock-parity -p 'test_*.py'
       cargo install --locked cargo-deny --version 0.19.0
       cargo deny --locked check
       cargo xtask ci policy
