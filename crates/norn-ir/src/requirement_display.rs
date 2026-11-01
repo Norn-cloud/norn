@@ -27,6 +27,22 @@ pub struct RequirementSlot {
     pub text: String,
 }
 
+fn visible(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        if matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}' | '\u{061c}')
+        {
+            out.extend(c.escape_unicode());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+fn isolate(text: &str) -> String {
+    format!("\u{2068}{}\u{2069}", visible(text))
+}
+
 impl RequirementView {
     #[must_use]
     pub const fn direction(&self) -> &'static str {
@@ -43,8 +59,8 @@ impl RequirementView {
         }
     }
 
-    fn template<'a>(&self, text: &'a RequirementText) -> &'a str {
-        self.word(&text.en, &text.ar)
+    fn template(&self, text: &RequirementText) -> String {
+        visible(self.word(&text.en, &text.ar))
     }
 
     fn slot(&self, pointer: &str, en: &str, ar: &str, text: String) -> RequirementSlot {
@@ -74,7 +90,6 @@ impl RequirementView {
             return Err("law.validation.invalid_document");
         }
         let w = &r.wording;
-        let isolate = |text: &str| format!("\u{2068}{text}\u{2069}");
         let root = match &law.scope.root {
             LawRoot::Company(id) => format!("{} {}", self.word("company", "شركة"), isolate(id)),
             LawRoot::App(id) => format!("{} {}", self.word("application", "تطبيق"), isolate(id)),
@@ -137,6 +152,14 @@ impl RequirementView {
             r.norm.source.artifact_id,
             r.norm.source.pointer
         );
+        let source = isolate(&source);
+        let component = format!("{}; {}", self.template(&w.component), isolate(&law.subject));
+        let response = format!("{}; {}", self.template(&w.response), isolate(&response));
+        let preferred = format!(
+            "{}; {}",
+            self.word("requires grounding", "يتطلب التأصيل"),
+            isolate(&r.norm.defeated_by.join(", "))
+        );
         let mut slots = vec![
             self.slot("/norm/law/scope", "Scope", "النطاق", scope.join("")),
             self.slot(
@@ -145,32 +168,12 @@ impl RequirementView {
                 "عندما (شرط الحالة)",
                 activation,
             ),
-            self.slot(
-                "/norm/law/subject",
-                "Component",
-                "المكوّن",
-                format!("{}; {}", self.template(&w.component), isolate(&law.subject)),
-            ),
+            self.slot("/norm/law/subject", "Component", "المكوّن", component),
             self.slot("/norm/modality", "Grade", "الحكم", grade.into()),
             self.slot("/timing", "Timing", "التوقيت", timing.into()),
-            self.slot(
-                "/norm/law/response",
-                "Response",
-                "الاستجابة",
-                format!("{}; {}", self.template(&w.response), isolate(&response)),
-            ),
-            self.slot(
-                "/norm/source",
-                "Declared source (unverified)",
-                "المصدر المعلن (غير متحقق منه)",
-                isolate(&source),
-            ),
-            self.slot(
-                "/norm/defeatedBy",
-                "Preferred norms (requires grounding)",
-                "القواعد المفضلة (تتطلب التأصيل)",
-                isolate(&r.norm.defeated_by.join(", ")),
-            ),
+            self.slot("/norm/law/response", "Response", "الاستجابة", response),
+            self.slot("/norm/source", "Unverified source", "مصدر بلا تحقق", source),
+            self.slot("/norm/defeatedBy", "Preferences", "تفضيلات", preferred),
         ];
         for exception in &r.norm.exceptions {
             slots.push(self.slot(

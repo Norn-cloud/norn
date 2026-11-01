@@ -33,12 +33,12 @@ Bilingual view conformance:
 - **SR6 View identity:** `RequirementView` retains the complete typed requirement;
   text is derived deterministically, never parsed back heuristically. A locale
   switch changes labels/templates and direction only. Law and semantic slot IDs
-  remain stable; expressions and source identities use Unicode bidi isolates.
+  remain stable; expressions/source identities escape bidi controls inside Unicode isolates.
 - **SR7 One target:** English and Arabic views round-trip to the same requirement,
   including scope, exact predicates, timing, grade and sources. Arabic is a view,
   not a separate proof target. Consumers apply `direction()` to the display.
-- The corpus covers all seven physics rows, with immutable-history prohibition
-  and compensating-correction obligation as separate requirements. Inputs are
-  typed bounded collections/totals for one declared partition/dimension/currency;
+- Eight requirements cover the ruling's seven physics categories; immutable
+  history prohibition and compensating correction are separate requirements.
+  Inputs are typed bounded collections/totals for one partition/dimension/currency;
   these are authoring conformance cases, not admitted aggregate proofs. Terminal
   outcomes use persistent state, not a fictitious event trigger or deadline.

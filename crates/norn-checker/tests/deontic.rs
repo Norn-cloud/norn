@@ -310,6 +310,10 @@ fn structured_nested_bindings_must_identify_real_slots() {
 #[allow(clippy::expect_used, reason = "typed physics corpus fixture")]
 fn physics_requirement(row: &str) -> (norn_ir::deontic::StructuredRequirement, [&str; 3]) {
     use norn_ir::deontic::{RequirementText, RequirementTiming};
+    let text = |en: &str, ar: &str| RequirementText {
+        en: en.into(),
+        ar: ar.into(),
+    };
     let columns: [&str; 11] = row
         .split('\t')
         .collect::<Vec<_>>()
@@ -357,22 +361,10 @@ fn physics_requirement(row: &str) -> (norn_ir::deontic::StructuredRequirement, [
     } else {
         RequirementTiming::SameCommit
     };
-    r.wording.scope = RequirementText {
-        en: scope_en.into(),
-        ar: scope_ar.into(),
-    };
-    r.wording.component = RequirementText {
-        en: component_en.into(),
-        ar: component_ar.into(),
-    };
-    r.wording.response = RequirementText {
-        en: en.into(),
-        ar: ar.into(),
-    };
-    r.wording.activation = RequirementText {
-        en: when_en.into(),
-        ar: when_ar.into(),
-    };
+    r.wording.scope = text(scope_en, scope_ar);
+    r.wording.component = text(component_en, component_ar);
+    r.wording.response = text(en, ar);
+    r.wording.activation = text(when_en, when_ar);
     (r, [expression, en, ar])
 }
 
@@ -384,6 +376,7 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
     // Corpus inputs are already partitioned by the scope's dimension/currency.
     // This tests authoring/display, not aggregate-law admission or preservation.
     let corpus = include_str!("../../../docs/platform/structured-physics.tsv");
+    assert_eq!(corpus.lines().count(), 8);
     let mut fields = BTreeMap::new();
     for name in "external loss available held funded".split_whitespace() {
         fields.insert(name.into(), Type::Number);
@@ -433,14 +426,22 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
             assert_eq!(decoded.slots().expect("display roundtrip"), slots);
         }
         assert_eq!(ids.first(), ids.get(1));
-        r.norm.law.modality = LawModality::Eventually {};
-        assert_eq!(
-            RequirementView {
-                requirement: r,
-                locale: L::Ar
-            }
-            .slots(),
-            Err("law.validation.unsupported_temporal")
-        );
+        r.norm.law.condition = Some(norn_ir::ZenExpression(
+            "input.ownerBefore == 'x\u{2069}'".into(),
+        ));
+        norn_checker::deontic::check_requirement(&r, &env).expect("typed bidi literal");
+        let mut view = RequirementView {
+            requirement: r,
+            locale: L::Ar,
+        };
+        let slots = view.slots().expect("escaped controls");
+        let activation = slots
+            .iter()
+            .find(|s| s.id.ends_with("/condition"))
+            .expect("activation");
+        assert!(activation.text.contains("\\u{2069}"));
+        assert_eq!(activation.text.matches('\u{2069}').count(), 1);
+        view.requirement.norm.law.modality = LawModality::Eventually {};
+        assert_eq!(view.slots(), Err("law.validation.unsupported_temporal"));
     }
 }
