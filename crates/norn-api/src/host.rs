@@ -369,7 +369,7 @@ mod defs_read {
             empty.diagnostics
         );
         assert_eq!(json, golden);
-        let source = r#"[{"irVersion":"0.1","artifactId":"test.Item.entity","kind":"entity","namespace":"test","name":"Item","version":"0.1.0","lifecycle":"draft","scope":{},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":{"name":"test.Item","properties":[{"id":"data","type":{"kind":"json-ext"},"default":{"large":9007199254740993,"tiny":0.0000000000000000000000000001,"boundary":79228162514264337593543950335,"cursor":null}}]}}}]"#;
+        let source = r#"[{"irVersion":"0.1","artifactId":"test.numbers.setting","kind":"setting","namespace":"test","name":"Numbers","version":"0.1.0","lifecycle":"draft","scope":{},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"settingVersion":"0.1","settingKey":"test.numbers","valueType":"json","value":{"large":9007199254740993,"tiny":0.0000000000000000000000000001,"boundary":79228162514264337593543950335,"cursor":null},"effectiveFrom":"2026-01-01T00:00:00Z","review":{"state":"approved"},"scopeRequired":["orgId","environmentId"]}}]"#;
         host.install(source, 1, norn_kernel::LogicalTime::from_millis(2))
             .expect("exact install");
         let document = get_defs(&host, &query, Some("reader")).expect("exact read");
