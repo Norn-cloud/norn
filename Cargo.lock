@@ -1698,6 +1698,8 @@ version = "0.1.0"
 dependencies = [
  "norn-checker",
  "norn-ir",
+ "proptest",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "statrs",
