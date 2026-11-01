@@ -3,7 +3,7 @@ import argparse
 import json
 import pathlib
 import subprocess
-import tempfile
+import hashlib
 
 
 def boat(*args):
@@ -34,7 +34,9 @@ def main():
                 raise RuntimeError('Boat fork failed')
         for src, dest in ((args.source, 'source.tar'), (args.traces, 'traces.json')):
             boat('scp', str(src), f'{vm}:/home/user/{dest}')
+        digest = hashlib.sha256(args.source.read_bytes()).hexdigest()
         command = '''set -eu
+echo 'DIGEST  /home/user/source.tar' | sha256sum --check --status
 mkdir /home/user/parity-source
 python3 - <<'PY'
 import tarfile
@@ -48,7 +50,7 @@ PY
 bash /home/user/parity-source/tools/stock-parity/boot.sh
 cd /home/user/parity-source/tools/stock-parity
 python3 run.py /home/user/traces.json /home/user/results.json
-'''
+'''.replace('DIGEST', digest)
         result = json.loads(boat('exec', vm, '--json', '--timeout', '600', '--', 'bash', '-lc', command))
         if not result.get('success'):
             raise RuntimeError('Oracle batch incomplete; inspect disposable VM logs before cleanup')
@@ -56,11 +58,9 @@ python3 run.py /home/user/traces.json /home/user/results.json
     finally:
         if vm:
             boat('delete', vm, '--yes')
-            try:
-                boat('info', vm, '--json')
-            except subprocess.CalledProcessError:
-                pass
-            else:
+            check = subprocess.run(['boat', 'info', vm, '--json'], capture_output=True, text=True)
+            if check.returncode == 0 or not any(t in (check.stdout + check.stderr).lower()
+                                                 for t in ('404', 'not_found', 'not found')):
                 raise RuntimeError('VM deletion was not verified')
 
 
