@@ -223,6 +223,7 @@
     "crates/norn-ir/src/mapping_evidence.rs",
     "crates/norn-metrics/Cargo.toml",
     "crates/norn-metrics/src/analysis.rs",
+    "crates/norn-metrics/src/host.rs",
     "crates/norn-metrics/src/lib.rs",
     "crates/norn-metrics/src/temporal.rs",
     "crates/norn-metrics/tests/analysis.rs",
