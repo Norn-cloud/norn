@@ -5816,7 +5816,7 @@ mod parameter_pin_tests {
         #[test]
         fn receipt_pins_preserve_every_u64_revision(version in proptest::num::u64::ANY) {
             let record: ActionCallRecord = serde_json::from_value(serde_json::json!({
-                "actionId":"test.parameter", "object":{"objectType":"test.Probe","key":"probe"},
+                "actionId":"test.parameter", "effectKind":"upsert_input_object", "object":{"objectType":"test.Probe","key":"probe"},
                 "input":{}, "actor":"reviewer", "turn":"turn", "transition":"", "from":"", "to":"",
                 "parameterReads":[{"key":{"objectType":"test.Setting","key":"rate"},"expected":version}]
             })).expect("typed receipt");
