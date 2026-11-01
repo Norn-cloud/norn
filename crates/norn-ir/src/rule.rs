@@ -478,6 +478,7 @@ fn parameter_scopes_schema(generator: &mut schemars::SchemaGenerator) -> schemar
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub enum SliceKey {
     /// A unique effective parameter selected from an earlier authorized link list.
+    #[serde(rename_all = "camelCase")]
     Parameter {
         /// Earlier list slice containing the candidate setting facts.
         from: String,
