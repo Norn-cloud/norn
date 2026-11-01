@@ -681,6 +681,9 @@
         "type": "string",
         "description": "Receipt format for a newly issued checker receipt.",
         "enum": [
+          "norn-checker/receipt@2",
+          "norn-checker/receipt@3",
+          "norn-checker/receipt@4",
           "norn-checker/receipt@5",
           "norn-checker/receipt@6",
           "norn-checker/receipt@7"
