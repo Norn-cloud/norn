@@ -203,7 +203,8 @@ fn val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins() {
                 let mut hidden = base.clone();
                 hidden.first_mut().expect("catalog").scope.org_id = Some("other".to_owned());
                 let findings = unit_findings(&artifact, &hidden);
-                assert!(findings.iter().any(|d| d.code == "core.values.unit_mismatch"));
+                let refused = findings.iter().any(|d| d.code == "core.values.unit_mismatch");
+                assert!(refused);
                 continue;
             }
         }
@@ -233,7 +234,11 @@ fn val_unit_link_properties_refuse_unknown_units() {
         artifact["payload"][root]["links"] = serde_json::json!([{"id":"unit_link","target":"retail.Sku","cardinality":{"to":"many","from":"many"},"properties":[{"id":"amount","type":unit_type("unknown",norn_ir::UnitSystem::Ucum)}]}]);
         let artifact = serde_json::from_value(artifact).expect("typed envelope");
         let pointer = format!("/payload/{root}/links/0/properties/0/type/unit");
-        assert!(unit_findings(&artifact, &[]).iter().any(|d| d.code == "core.values.unit_mismatch"
-            && d.span.as_ref().is_some_and(|s| s.pointer == pointer)));
+        assert!(
+            unit_findings(&artifact, &[])
+                .iter()
+                .any(|d| d.code == "core.values.unit_mismatch"
+                    && d.span.as_ref().is_some_and(|s| s.pointer == pointer))
+        );
     }
 }
