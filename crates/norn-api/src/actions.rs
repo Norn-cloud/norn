@@ -179,6 +179,26 @@ pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync:
         arguments: Box<serde_json::value::RawValue>,
     }
 
+    #[derive(Serialize)]
+    struct ToolReply {
+        jsonrpc: &'static str,
+        id: serde_json::Value,
+        result: ToolResult,
+    }
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ToolResult {
+        is_error: bool,
+        structured_content: Box<serde_json::value::RawValue>,
+        content: [TextContent; 1],
+    }
+    #[derive(Serialize)]
+    struct TextContent {
+        #[serde(rename = "type")]
+        kind: &'static str,
+        text: String,
+    }
+
     fn scope(headers: &http::HeaderMap) -> DefinitionsQuery {
         DefinitionsQuery {
             org_id: headers
@@ -206,7 +226,7 @@ pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync:
             if mcp && value.get("method").and_then(serde_json::Value::as_str) == Some("tools/list") {
                 let document = crate::routes::get_defs(&host, &scope(&headers), actor)?;
                 let schema = serde_json::json!({"type":"object","required":["actionId","input","idempotencyKey","version"],"properties":{"actionId":{"type":"string"},"input":{"type":"object"},"idempotencyKey":{"type":"string"},"version":{"type":"integer","const":document.version}},"additionalProperties":false});
-                return Ok(serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"tools":[{"name":"call_action","description":"Invoke an admitted action through the governed kernel","inputSchema":schema}]}}));
+                return serde_json::to_string(&serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"tools":[{"name":"call_action","description":"Invoke an admitted action through the governed kernel","inputSchema":schema}]}})).map_err(Refusal::host);
             }
             let request = if mcp {
                 if value.get("method").and_then(serde_json::Value::as_str) != Some("tools/call") || value.pointer("/params/name").and_then(serde_json::Value::as_str) != Some("call_action") { return Err(Refusal::invalid("unknown MCP method or tool")); }
@@ -219,12 +239,21 @@ pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync:
             } else { serde_json::from_slice(&body) }.map_err(|e| Refusal::invalid(e.to_string()))?;
             let result = call_action_in_epoch(&host, &scope(&headers), actor, request);
             if mcp {
-                let (failed, document) = match result { Ok(v) => (false, serde_json::to_value(v).map_err(Refusal::host)?), Err(e) => (true, serde_json::to_value(e).map_err(Refusal::host)?) };
-                Ok(serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"isError":failed,"structuredContent":document,"content":[{"type":"text","text":document.to_string()}]}}))
-            } else { result.and_then(|v| serde_json::to_value(v).map_err(Refusal::host)) }
+                let (failed, document) = match result { Ok(v) => (false, serde_json::to_string(&v).map_err(Refusal::host)?), Err(e) => (true, serde_json::to_string(&e).map_err(Refusal::host)?) };
+                serde_json::to_string(&ToolReply {
+                    jsonrpc: "2.0", id,
+                    result: ToolResult {
+                        is_error: failed,
+                        structured_content: serde_json::value::RawValue::from_string(document.clone()).map_err(Refusal::host)?,
+                        content: [TextContent { kind: "text", text: document }],
+                    },
+                }).map_err(Refusal::host)
+            } else { result.and_then(|v| serde_json::to_string(&v).map_err(Refusal::host)) }
         }).await.map_err(Refusal::host).and_then(std::convert::identity);
         let mut response = match result {
-            Ok(value) => axum::Json(value).into_response(),
+            Ok(value) => {
+                ([(http::header::CONTENT_TYPE, "application/json")], value).into_response()
+            }
             Err(error) => (
                 http::StatusCode::from_u16(error.status)
                     .unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR),
