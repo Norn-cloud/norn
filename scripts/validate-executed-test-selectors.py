@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import coverage_manifest
+
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_COVERAGE = ROOT / "verification/coverage-v1/coverage.json"
 DEFAULT_GATES = ROOT / "verification/coverage-v1/promoted-gates.json"
 DEFAULT_LOG_ROOT = ROOT / "target/verification-results/logs"
 
@@ -198,14 +199,14 @@ def test_evidence(coverage: dict) -> Iterable[tuple[str, str, str, str, str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE)
+    parser.add_argument("--coverage", type=Path, default=coverage_manifest.COVERAGE)
     parser.add_argument("--gates", type=Path, default=DEFAULT_GATES)
     parser.add_argument("--log-root", type=Path, default=DEFAULT_LOG_ROOT)
     parser.add_argument("--profile", choices=("fast", "full"), default="full")
     args = parser.parse_args()
 
     run_canaries()
-    coverage = load_json(args.coverage)
+    coverage = coverage_manifest.load(args.coverage)
     gate_manifest = load_json(args.gates)
     all_gates_by_command: dict[str, list[dict]] = defaultdict(list)
     gates_by_command: dict[str, list[dict]] = defaultdict(list)
