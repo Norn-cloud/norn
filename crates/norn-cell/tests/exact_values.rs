@@ -74,6 +74,48 @@ fn decimals_and_payloads_round_trip_exactly() {
 }
 
 #[test]
+fn val_roundtrip_transport_codec_commit_and_reopen() {
+    use norn_checker::property_codec::{decode, encode};
+    use norn_ir::PropertyKind;
+
+    for token in ["9007199254740993", "0.10"] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("values.sqlite");
+        let value = exact(token);
+        let encoded = encode(PropertyKind::Decimal, &value).expect("encodes");
+        assert_eq!(
+            decode(PropertyKind::Decimal, &encoded).expect("decodes"),
+            value
+        );
+        let transport = serde_json::to_string(&value).expect("exact transport");
+        let mut store =
+            CellStore::open(&path, common::corpus_model(), StoreOptions::default()).expect("opens");
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.to_owned(),
+                scope: "org_demo/dev".to_owned(),
+                facts: vec![line(&transport)],
+                events: vec![value.clone()],
+                ..CommitBatch::default()
+            })
+            .expect("commits");
+        drop(store);
+        let store = CellStore::open(&path, common::corpus_model(), StoreOptions::default())
+            .expect("reopens");
+        let record = store
+            .read()
+            .object(MAIN_WORLD, "commerce.SalesOrderLine", "SO-1/1")
+            .expect("reads")
+            .expect("exists");
+        assert_eq!(record.values["unit_price"], value);
+        let events = store.read().ledger(1).expect("replayed ledger");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, value);
+        store.read().verify_ledger().expect("exact hash chain");
+    }
+}
+
+#[test]
 fn a_decimal_beyond_the_engine_range_is_refused_never_rounded() {
     let mut store = CellStore::open_in_memory(common::corpus_model()).expect("opens");
     let mut values = BTreeMap::new();

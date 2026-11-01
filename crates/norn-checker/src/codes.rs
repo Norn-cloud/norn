@@ -137,6 +137,11 @@ const fn warning_introduced(
 /// Every diagnostic code the checker can emit, sorted by code.
 pub static REGISTRY: &[CodeEntry] = &[
     entry(
+        crate::property_codec::INEXACT,
+        Tier::T6,
+        "the number is outside the exact 96-bit decimal profile (scale at most 28)",
+    ),
+    entry(
         "action.validation.command_environment_underivable",
         Tier::T2,
         "outbound command expressions require an object input schema with a derivable expression environment",

@@ -457,6 +457,13 @@
       "tier": "T3"
     },
     {
+      "code": "core.values.inexact",
+      "message": "the number is outside the exact 96-bit decimal profile (scale at most 28)",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",

@@ -724,6 +724,43 @@ fn numbers_are_exact_or_a_typed_error() {
 }
 
 #[test]
+fn val_roundtrip_runtime_tokens_reach_the_real_evaluator_exactly() {
+    for token in [
+        "9007199254740993",
+        "0.10",
+        "79228162514264337593543950335",
+        "0.0000000000000000000000000001",
+    ] {
+        let runtime = norn_ir::RuntimeValue::from_json_text(token).unwrap();
+        let value = Value::try_from(&runtime).unwrap();
+        assert_eq!(eval("input + 0", value).unwrap(), num(token));
+    }
+    for token in [
+        "79228162514264337593543950336",
+        "0.00000000000000000000000000001",
+    ] {
+        assert!(norn_ir::RuntimeValue::from_json_text(token).is_err());
+        assert!(token.parse::<Number>().is_err());
+    }
+}
+
+#[test]
+fn val_round_explicit_midpoint_away_and_zero_divisor() {
+    admitted("round(input.a, 2)", &Type::Number);
+    for (input, expected) in [("1.005", "1.01"), ("-1.005", "-1.01")] {
+        assert_eq!(eval("round(input, 2)", num(input)).unwrap(), num(expected));
+    }
+    admitted("input.a / input.b", &Type::Number);
+    assert!(matches!(
+        eval(
+            "input.a / input.b",
+            Value::object([("a", num("1.005")), ("b", num("0"))])
+        ),
+        Err(ExprError::Evaluation { .. })
+    ));
+}
+
+#[test]
 fn scientific_literals_are_refused_before_evaluation() {
     for source in [
         "0.00000000000000000000000000001e0",
