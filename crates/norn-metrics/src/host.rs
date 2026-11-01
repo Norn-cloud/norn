@@ -133,9 +133,7 @@ fn schema<T: JsonSchema>(id: &str, version: u32) -> Result<SchemaRef, CanonicalJ
     })
 }
 
-/// Declare the native OLS/forecast boundary. Admission remains the checker’s job.
-/// Execution requires a host meter and authenticated export; this declaration
-/// alone neither executes a model nor opens publication.
+/// Declare the host forecast boundary; execution needs authenticated inputs and a meter.
 ///
 /// # Errors
 /// A source, schema or dependency digest cannot be computed.
