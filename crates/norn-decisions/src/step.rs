@@ -86,6 +86,45 @@ impl DecisionContracts for StepContracts {
     }
 }
 
+pub(crate) fn validate_fold(f: &OrderedFold) -> Result<(), Box<dyn std::error::Error>> {
+    fold_step_schemas(f).map_err(|e| e.reason)?;
+    if f.semantics_version != "1.0"
+        || f.arithmetic.scale > 18
+        || !(1..=4096).contains(&f.max_items)
+        || !(1..=1_048_576).contains(&f.max_accumulator_bytes)
+    {
+        return Err("invalid fold profile or bounds".into());
+    }
+    let item =
+        Schema::parse(&JsonValue::Object(f.item_schema.clone()), "item").map_err(|e| e.reason)?;
+    let mut keys = BTreeSet::new();
+    for key in &f.order {
+        let typed = matches!(
+            (
+                key.kind,
+                item.properties().and_then(|p| p.get(&key.property))
+            ),
+            (FoldOrderKind::String, Some(Schema::String(_)))
+                | (FoldOrderKind::Integer, Some(Schema::Integer))
+        );
+        if !typed
+            || !item.required().is_some_and(|r| r.contains(&key.property))
+            || !keys.insert(&key.property)
+        {
+            return Err("invalid fold order key".into());
+        }
+    }
+    if f.identity.trim().is_empty()
+        || !f
+            .order
+            .last()
+            .is_some_and(|k| k.property == f.identity && k.kind == FoldOrderKind::String)
+    {
+        return Err("fold order requires a final string identity".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,43 +165,4 @@ mod tests {
                 .is_err()
         );
     }
-}
-
-pub(crate) fn validate_fold(f: &OrderedFold) -> Result<(), Box<dyn std::error::Error>> {
-    fold_step_schemas(f).map_err(|e| e.reason)?;
-    if f.semantics_version != "1.0"
-        || f.arithmetic.scale > 18
-        || !(1..=4096).contains(&f.max_items)
-        || !(1..=1_048_576).contains(&f.max_accumulator_bytes)
-    {
-        return Err("invalid fold profile or bounds".into());
-    }
-    let item =
-        Schema::parse(&JsonValue::Object(f.item_schema.clone()), "item").map_err(|e| e.reason)?;
-    let mut keys = BTreeSet::new();
-    for key in &f.order {
-        let typed = matches!(
-            (
-                key.kind,
-                item.properties().and_then(|p| p.get(&key.property))
-            ),
-            (FoldOrderKind::String, Some(Schema::String(_)))
-                | (FoldOrderKind::Integer, Some(Schema::Integer))
-        );
-        if !typed
-            || !item.required().is_some_and(|r| r.contains(&key.property))
-            || !keys.insert(&key.property)
-        {
-            return Err("invalid fold order key".into());
-        }
-    }
-    if f.identity.trim().is_empty()
-        || !f
-            .order
-            .last()
-            .is_some_and(|k| k.property == f.identity && k.kind == FoldOrderKind::String)
-    {
-        return Err("fold order requires a final string identity".into());
-    }
-    Ok(())
 }
