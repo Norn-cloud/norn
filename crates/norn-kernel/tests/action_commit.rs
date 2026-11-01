@@ -4036,7 +4036,9 @@ norn_testkit::proptest::proptest! {
         let mut request = call(&action, "SO-1", "receipt-effect");
         request.input.insert("receipt".to_owned(), JsonValue::String(reference));
         let reference = norn_kernel::receipt_binding::ReceiptReference::parse(&JsonValue::String(format!("sha256:{}", "a".repeat(64)))).unwrap();
-        norn_testkit::proptest::prop_assert!(cell.resolve_accepted_receipt(&reference, &norn_ir::function::Digest(format!("sha256:{}", "b".repeat(64)))).unwrap().is_none());
+        let manifest = norn_ir::function::Digest(format!("sha256:{}", "b".repeat(64)));
+        let unresolved = cell.resolve_accepted_receipt(&reference, &manifest).unwrap().is_none();
+        norn_testkit::proptest::prop_assert!(unresolved);
         let refused = matches!(commit_action(&mut cell, &catalog, &request, &Allow), Err(ActionRefusal::UnsupportedEffect { .. }));
         norn_testkit::proptest::prop_assert!(refused);
         norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
