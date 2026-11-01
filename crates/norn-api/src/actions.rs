@@ -11,7 +11,7 @@ use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionDenial, ActionOutcome, ActionReadAuthzRequest,
     ActionReadTypeAuthzRequest, DecisionTurn, LogicalTime, Refusable, TypeCatalog, World,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::IntoDeserializer};
 use std::collections::BTreeMap;
 
 /// Exact action invocation; the actor comes exclusively from the transport.
@@ -101,9 +101,9 @@ pub fn call_action_in_epoch<E: SqlEngine>(
     let mut actions = Vec::new();
     for artifact in &artifacts {
         if let norn_ir::ArtifactPayload::Action(payload) = &artifact.payload {
-            let action: norn_ir::ActionRoot = serde_json::to_value(payload.to_json_value())
-                .and_then(serde_json::from_value)
-                .map_err(Refusal::host)?;
+            let decoder: norn_ir::JsonValueDeserializer<serde::de::value::Error> =
+                payload.to_json_value().into_deserializer();
+            let action = norn_ir::ActionRoot::deserialize(decoder).map_err(Refusal::host)?;
             actions.push((artifact, action));
         }
     }
@@ -201,12 +201,17 @@ pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync:
             }
             let request = if mcp {
                 if value.get("method").and_then(serde_json::Value::as_str) != Some("tools/call") || value.pointer("/params/name").and_then(serde_json::Value::as_str) != Some("call_action") { return Err(Refusal::invalid("unknown MCP method or tool")); }
-                let mut args = value.pointer("/params/arguments").and_then(serde_json::Value::as_object).cloned().ok_or_else(|| Refusal::invalid("expected tool argument object"))?;
+                #[derive(Deserialize)]
+                struct Envelope { params: Parameters }
+                #[derive(Deserialize)]
+                struct Parameters { arguments: Box<serde_json::value::RawValue> }
+                let envelope: Envelope = serde_json::from_slice(&body).map_err(|e| Refusal::invalid(e.to_string()))?;
+                let mut args: BTreeMap<String, Box<serde_json::value::RawValue>> = serde_json::from_str(envelope.params.arguments.get()).map_err(|e| Refusal::invalid(e.to_string()))?;
                 let key = value.pointer("/params/_meta/norn~1idempotencyKey").ok_or_else(|| Refusal::invalid("missing retry identity"))?;
-                if args.get("idempotencyKey").is_some_and(|v| v != key) { return Err(Refusal::invalid("conflicting retry identities")); }
-                args.insert("idempotencyKey".into(), key.clone());
-                serde_json::from_value(serde_json::Value::Object(args))
-            } else { serde_json::from_value(value) }.map_err(|e| Refusal::invalid(e.to_string()))?;
+                if args.get("idempotencyKey").is_some_and(|v| serde_json::from_str::<serde_json::Value>(v.get()).as_ref() != Ok(key)) { return Err(Refusal::invalid("conflicting retry identities")); }
+                args.insert("idempotencyKey".into(), serde_json::value::RawValue::from_string(key.to_string()).map_err(Refusal::host)?);
+                serde_json::from_str(&serde_json::to_string(&args).map_err(Refusal::host)?)
+            } else { serde_json::from_slice(&body) }.map_err(|e| Refusal::invalid(e.to_string()))?;
             let result = call_action_in_epoch(&host, &scope(&headers), actor, request);
             if mcp {
                 let (failed, document) = match result { Ok(v) => (false, serde_json::to_value(v).map_err(Refusal::host)?), Err(e) => (true, serde_json::to_value(e).map_err(Refusal::host)?) };
