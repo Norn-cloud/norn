@@ -470,6 +470,18 @@ pub static REGISTRY: &[CodeEntry] = &[
         "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
         "0.2.0",
     ),
+    introduced(
+        "core.compute.ambiguous_grain",
+        Tier::T3,
+        "Query requires an explicit unambiguous identity grain.",
+        "0.2.0",
+    ),
+    introduced(
+        "core.compute.unsupported_engine",
+        Tier::T3,
+        "Query semantics are unsupported by the selected compute profile.",
+        "0.2.0",
+    ),
     entry(
         "customization.validation.invalid_payload",
         Tier::T2,
