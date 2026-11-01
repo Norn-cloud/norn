@@ -9,5 +9,4 @@ pub use raw_observation::{
 };
 
 pub mod converge;
-pub mod iceberg;
-pub use converge::{Applied, Convergence, CurrentRecord};
+pub use converge::{Applied, Convergence, ConvergenceError, CurrentRecord};
