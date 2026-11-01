@@ -1869,7 +1869,7 @@ trait QuantityStoreFixture {
 impl QuantityStoreFixture for CellStore {
     fn commit_fenced(&mut self, batch: &CommitBatch) -> Result<CommitOutcome, CellError> {
         let mut batch = batch.clone();
-        for request in batch.quantity.iter_mut() {
+        for request in &mut batch.quantity {
             if let Ok(fences) = self.read().quantity_balance_versions(&batch.world, request) {
                 request.balance_versions = fences;
             }
