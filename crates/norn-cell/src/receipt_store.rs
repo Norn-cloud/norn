@@ -1,6 +1,5 @@
 //! RECEIPT-STORE-1: only authenticated reconciliation populates the receipt store.
-//! The private store survives reopen. Exported events alone never recreate its
-//! authority. Predicate/collection adapters that are unavailable refuse closed.
+//! The store survives reopen; event restore and unavailable adapters refuse closed.
 
 use crate::{
     CellError, CommitBatch, SqliteCell, StoreReader,
@@ -39,8 +38,7 @@ impl norn_kernel::receipt_binding::AcceptedReceiptStore for Bound<'_> {
     fn resolve(
         &self,
         _: &Digest,
-    ) -> Result<norn_kernel::receipt_binding::ReceiptResolution<'_>, CellError>
-    {
+    ) -> Result<norn_kernel::receipt_binding::ReceiptResolution<'_>, CellError> {
         Ok(norn_kernel::receipt_binding::ReceiptResolution::Accepted {
             acceptance: &self.0.acceptance,
             receipt: &self.0.receipt,
@@ -101,7 +99,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         self.store.commit_guarded(&batch, |reader| -> Result<(), CellError> {
             if dispatched.invocation.tenant != scope || dispatched.invocation.world != MAIN_WORLD { return Err(refused("scope")); }
             let pending = reader.head_command()?.ok_or_else(|| refused("unknown"))?;
-            let invocation = norn_ir::runtime::encode(&dispatched.invocation).map_err(|_invalid| refused("dispatch"))?;
+            let invocation = norn_ir::runtime_object! { "type" => "norn.function/v1", "invocation" => norn_ir::runtime::encode(&dispatched.invocation).map_err(|_invalid| refused("dispatch"))? };
             let receipt = norn_ir::runtime::encode(completion.receipt).map_err(|_invalid| refused("body"))?;
             if pending.command.command_id != dispatched.invocation.command_id
                 || pending.command.generation != dispatched.generation().0
@@ -117,9 +115,9 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             let stored = StoredReceipt { receipt: completion.receipt.clone(), acceptance, source, frontier };
             let body = serde_json::to_string(&stored).map_err(CellError::Json)?;
             if body.len() > LIMIT { return Err(refused("limit")); }
-            let consumed = reader.conn.query_optional("SELECT consumed_commit_seq FROM _norn_function_receipt WHERE reference = ?1", params![reference.0], |row| row.get::<Option<i64>>(0))?;
-            if consumed.flatten().is_some() { return Err(refused("replayed")); }
-            reader.conn.execute("INSERT INTO _norn_function_receipt(reference,scope,body) VALUES (?1,?2,?3) ON CONFLICT(reference) DO UPDATE SET body=excluded.body WHERE consumed_commit_seq IS NULL", params![reference.0, scope, body])?;
+            let retained = reader.conn.query_optional("SELECT 1 FROM _norn_function_receipt WHERE reference = ?1", params![reference.0], |row| row.get::<i64>(0))?;
+            if retained.is_some() { return Err(refused("already_retained")); }
+            reader.conn.execute("INSERT INTO _norn_function_receipt(reference,scope,body) VALUES (?1,?2,?3)", params![reference.0, scope, body])?;
             Ok(())
         }, &mut |_| Ok(())).map_err(|error| match error { GuardedError::Guard(error) | GuardedError::Store(error) => error })?;
         Ok(reference)
@@ -160,6 +158,17 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Ok(Some(stored))
     }
 
+    pub(crate) fn receipt_for_acceptance(&self, reference: &Digest) -> Result<Option<StoredReceipt>, CellError> {
+        let Some(stored) = self.stored_function_receipt(reference)? else { return Ok(None); };
+        let pending = self.store.read().head_command()?.ok_or_else(|| refused("replayed"))?;
+        let payload = pending.command.command.get("payload").ok_or_else(|| refused("dispatch"))?;
+        if payload.get("type").and_then(RuntimeValue::as_str) != Some("norn.function/v1") { return Err(refused("dispatch")); }
+        let invocation: norn_ir::function::FunctionInvocation = norn_ir::runtime::decode(payload.get("invocation").ok_or_else(|| refused("dispatch"))?).map_err(|_invalid| refused("dispatch"))?;
+        if invocation.tenant != self.scope || invocation.world != MAIN_WORLD || invocation.content_digest().map_err(|_invalid| refused("dispatch"))? != stored.receipt.dispatch
+            || pending.command.command_id != stored.receipt.command_id || pending.command.generation != stored.receipt.run.generation { return Err(refused("dispatch")); }
+        Ok(Some(stored))
+    }
+
     pub(crate) fn bind_function_receipt(
         &self,
         reference: &norn_kernel::receipt_binding::ReceiptReference,
@@ -168,7 +177,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Option<norn_kernel::receipt_binding::ReceiptBinding<norn_ir::RuntimeObject>>,
         CellError,
     > {
-        let Some(stored) = self.stored_function_receipt(reference.digest())? else {
+        let Some(stored) = self.receipt_for_acceptance(reference.digest())? else {
             return Ok(None);
         };
         if stored.receipt.manifest != *manifest {
@@ -271,6 +280,7 @@ mod tests {
         let mut invocation: FunctionInvocation = fixture("invocation");
         invocation.freshness = norn_ir::function::FreshnessMode::DestinationCas;
         invocation.destination = Some(norn_ir::function::Destination { object_type:"test.ReceiptTarget".into(), key:"target-1".into(), expected_owner_version:1 });
+        invocation.dependency.facts.clear(); invocation.dependency.predicates.clear();
         let dispatched = DispatchedCommand::pin(invocation, checks.0.execution_profile.clone())
             .expect("dispatch");
         let mut receipt: FunctionReceipt = fixture("receipt");
@@ -325,11 +335,7 @@ mod tests {
             idempotency_key: IdempotencyKey("receipt-test".into()),
             freshness: FreshnessPolicy::AppendOnly,
             deadline: None,
-            payload: norn_ir::runtime::encode(&dispatched.invocation)
-                .expect("invocation")
-                .as_object()
-                .expect("object")
-                .clone(),
+            payload: norn_ir::runtime_object! { "type" => "norn.function/v1", "invocation" => norn_ir::runtime::encode(&dispatched.invocation).expect("invocation") }.as_object().expect("envelope").clone(),
         };
         store
             .commit(&CommitBatch {
@@ -413,6 +419,7 @@ mod tests {
             .function_receipt_evidence(&reference)
             .expect("read")
             .expect("evidence");
+        assert!(retain(&mut cell, &dispatched, &receipt, &checks, true).is_err());
         assert_eq!(evidence.0, receipt);
         assert_eq!(evidence.1.body.logical_time, 1_790_000_000_100);
         drop(cell);
