@@ -5,6 +5,9 @@ quantity request and its unchanged `action.quantity/1` identity. Preparation
 is shared with ordinary actions. The native host feeds both the proof and
 quantity intent into its existing `commit_with_authorization` transaction.
 No new quantity operation, valuation algorithm or posting authority is added.
+Definition admission still rejects owned-row quantity combinations until part
+(d) adds the checked posting bindings. The native fixture exercises the kernel
+join directly; it does not claim an admitted stock action or alpha surface.
 
 - POST-ATOMIC / OWNED-QUANTITY-JOIN: parent, children, manifests, links, events,
   action receipt and quantity intent publish in the same guarded transaction.
