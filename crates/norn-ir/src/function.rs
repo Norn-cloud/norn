@@ -173,6 +173,9 @@ pub enum ImplementationFormat {
     WasmModule,
     /// An OCI image.
     OciImage,
+    /// FUNCTION-HOST-1: host-provided code, pinned by crate/version/source tree.
+    /// This is neither a WASM sandbox nor a container isolation claim.
+    Host,
 }
 
 /// The implementation: what runs, by content.
@@ -181,7 +184,7 @@ pub enum ImplementationFormat {
 pub struct Implementation {
     /// The packaging.
     pub format: ImplementationFormat,
-    /// The content digest of the module bytes or the OCI image manifest.
+    /// The digest of module bytes, OCI manifest, or host implementation source tree.
     pub digest: Digest,
     /// The entry point (a WASM export or the image's command).
     pub entry_point: String,
