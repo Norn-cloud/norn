@@ -450,6 +450,9 @@
     "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
     "verification/stripmine-2026-08-22/scripts/validate.sh",
-    "crates/norn-checker/src/obligations/induction.rs"
+    "crates/norn-checker/src/obligations/induction.rs",
+    "scripts/demo/run.sh",
+    "scripts/demo/jewelry.source.ts",
+    "crates/norn-checker/examples/jewelry_demo.rs"
   ]
 }
