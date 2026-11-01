@@ -1489,6 +1489,9 @@ dependencies = [
 name = "norn-api"
 version = "0.1.0"
 dependencies = [
+ "norn-cell",
+ "norn-checker",
+ "norn-kernel",
  "http",
  "norn-ir",
  "serde",
