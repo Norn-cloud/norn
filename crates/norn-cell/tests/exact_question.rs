@@ -140,6 +140,6 @@ proptest::proptest! {
         context.now_ms = CLOCK.checked_add(lag).expect("bounded clock");
         let result = store.evaluate_question(&plan, context, |_| Ok(true)).expect("query");
         proptest::prop_assert_eq!(result.freshness,
-            if lag <= 5_000 { Freshness::Exact } else { Freshness::Stale });
+            if lag == 0 { Freshness::Exact } else if lag <= 5_000 { Freshness::Fresh } else { Freshness::Stale });
     }
 }

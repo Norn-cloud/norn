@@ -61,6 +61,8 @@ pub enum Engine {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Freshness {
+    /// Complete analytical coverage with admitted source heartbeat lag.
+    Fresh,
     /// Complete and within declared source freshness.
     Exact,
     /// Known coverage at an aged frontier.
@@ -279,6 +281,7 @@ pub(crate) fn materialize(
         .collect::<Result<_, CellError>>()?;
     let mut complete = context.exclusions.is_empty();
     let mut stale = false;
+    let mut aged = false;
     let age = match plan.question().freshness {
         FreshnessPolicy::Live { max_age_ms } | FreshnessPolicy::Delayed { max_age_ms } => {
             max_age_ms.0
@@ -295,10 +298,9 @@ pub(crate) fn materialize(
             {
                 Some(w) => {
                     complete &= w.complete && &w.observed == consumed && w.heartbeat_ms.is_some();
-                    stale |= w
-                        .heartbeat_ms
-                        .and_then(|at| context.now_ms.checked_sub(at))
-                        .is_none_or(|lag| lag > age);
+                    let lag = w.heartbeat_ms.and_then(|at| context.now_ms.checked_sub(at));
+                    stale |= lag.is_none_or(|lag| lag > age);
+                    aged |= lag.is_some_and(|lag| lag > 0);
                 }
                 None => complete = false,
             }
@@ -319,6 +321,8 @@ pub(crate) fn materialize(
             Freshness::Incomplete
         } else if stale {
             Freshness::Stale
+        } else if aged {
+            Freshness::Fresh
         } else {
             Freshness::Exact
         },

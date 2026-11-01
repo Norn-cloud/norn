@@ -67,3 +67,5 @@ The unchanged #353 CSV is a generated numerical fixture, not authenticated
 training knowledge. Native cell scenarios cover 98%/97.5%, immutable prior
 results, exact contribution membership, unavailable zero-input ratios and
 visibility/quarantine separation. Governing commit-read qualification follows G4.
+
+QUERY-FRESH-1 analytical labels: complete coverage at the observed frontier with zero heartbeat lag is exact; positive lag within the admitted maximum is fresh; excessive/future heartbeat age is stale; missing coverage or quarantine is incomplete. Governed freshness refusal remains G4.
