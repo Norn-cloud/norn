@@ -2772,15 +2772,15 @@ export interface components {
         } | {
             id: string;
             /** @enum {string} */
-            kind: "pack";
-        } | {
-            id: string;
-            /** @enum {string} */
             kind: "cell";
         } | {
             id: string;
             /** @enum {string} */
             kind: "entity";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
         };
         /** @description Organization/company boundary. */
         NornIrLawRootOneOf0: {
@@ -2794,23 +2794,23 @@ export interface components {
             /** @enum {string} */
             kind: "app";
         };
-        /** @description Exact retained composition-pack boundary. */
-        NornIrLawRootOneOf2: {
-            id: string;
-            /** @enum {string} */
-            kind: "pack";
-        };
         /** @description Cell ownership root. */
-        NornIrLawRootOneOf3: {
+        NornIrLawRootOneOf2: {
             id: string;
             /** @enum {string} */
             kind: "cell";
         };
         /** @description Exact entity type boundary. */
-        NornIrLawRootOneOf4: {
+        NornIrLawRootOneOf3: {
             id: string;
             /** @enum {string} */
             kind: "entity";
+        };
+        /** @description Exact retained composition-pack boundary. */
+        NornIrLawRootOneOf4: {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
         };
         /** @description Applicability of a law. All filters are conjunctive; type lists denote a union. */
         NornIrLawScope: {

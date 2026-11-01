@@ -5741,24 +5741,6 @@
           ]
         },
         {
-          "description": "Exact retained composition-pack boundary.",
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "pack"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "id"
-          ]
-        },
-        {
           "description": "Cell ownership root.",
           "type": "object",
           "properties": {
@@ -5786,6 +5768,24 @@
             "kind": {
               "type": "string",
               "const": "entity"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "description": "Exact retained composition-pack boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "pack"
             }
           },
           "additionalProperties": false,
