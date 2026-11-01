@@ -1182,14 +1182,14 @@ fn owned_rows_effect_findings(
         ));
         return findings;
     };
-    if !effective
-        .properties
-        .iter()
-        .any(|property| !property.computed && effective.lifecycle(property.id.as_str()).is_none())
-    {
+    if !effective.properties.iter().any(|property| {
+        !property.computed
+            && !property.protected()
+            && effective.lifecycle(property.id.as_str()).is_none()
+    }) {
         findings.push(finding(
             codes::TARGET_NOT_WRITABLE,
-            "parent-and-rows effects require a stored non-lifecycle parent property for row-only CAS touches".to_owned(),
+            "parent-and-rows effects require a stored non-protected non-lifecycle parent property for row-only CAS touches".to_owned(),
             artifact,
             "/payload/effectProgram",
         ));

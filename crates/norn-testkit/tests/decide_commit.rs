@@ -21,7 +21,7 @@
 
 //! The decide → commit seam (T3-DEC-2 #2670 with T2-KER-2b #2535): a `RuleIR`
 //! v2 JDM decision evaluates through `norn-decisions`, and its canonical
-//! `norn_ir::DecisionOutput` commits through `norn_kernel::commit_decision`
+//! sealed rule result prepares through `norn_kernel::prepare_rule_decision`
 //! against the reference [`MemoryCell`]. The facts land, with their ledger
 //! events, commands, and timers, or a typed refusal comes back and nothing is
 //! committed.
@@ -29,13 +29,13 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 
-use norn_decisions::{AdmittedDecision, DecisionBinding, evaluate};
+use norn_decisions::DecisionBinding;
 use norn_expr::{EvaluationBudget, Number, Value};
 use norn_ir::{ObjectTypeDef, RuleRoot};
 use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::{
-    CellHost, Command, DecisionRefusal, DecisionTurn, FactKey, LogicalTime, TypeCatalog, World,
-    commit_decision, load_slice,
+    AdmittedRule, CellHost, Command, DecisionRefusal, DecisionTurn, FactKey, LogicalTime,
+    TypeCatalog, World, commit_rule_decision, evaluate_rule, load_slice,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::json;
@@ -127,7 +127,7 @@ fn rule() -> RuleRoot {
 }
 
 struct Harness {
-    decision: AdmittedDecision,
+    decision: AdmittedRule,
     types: Vec<ObjectTypeDef>,
     cell: Cell,
     turns: u64,
@@ -140,7 +140,7 @@ impl Harness {
             environment_hash: "sha256:test".to_owned(),
         };
         Self {
-            decision: AdmittedDecision::admit(&rule(), &BTreeMap::new(), binding).unwrap(),
+            decision: AdmittedRule::admit(&rule(), &BTreeMap::new(), binding).unwrap(),
             types: types(),
             cell: MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone()),
             turns: 0,
@@ -173,10 +173,14 @@ impl Harness {
             ("key", Value::from(key)),
             ("amount", Value::Number(Number::from(amount))),
         ]);
-        let evaluated = evaluate(
+        let evaluated = evaluate_rule(
             &self.decision,
-            &self.decision.validate_slice(slice_value).unwrap(),
-            &self.decision.type_event(event).unwrap(),
+            &self
+                .decision
+                .decision()
+                .validate_slice(slice_value)
+                .unwrap(),
+            &self.decision.decision().type_event(event).unwrap(),
             EvaluationBudget::default(),
         )
         .unwrap();
@@ -187,8 +191,8 @@ impl Harness {
             world: World::Main,
             consumes: None,
         };
-        let catalog = TypeCatalog::new(&self.types);
-        commit_decision(&mut self.cell, &catalog, &slice, &turn, &evaluated.output).map(|_| ())
+        let catalog = TypeCatalog::new(&self.types).with_rules([&self.decision]);
+        commit_rule_decision(&mut self.cell, &catalog, &slice, &turn, &evaluated).map(|_| ())
     }
 
     fn status(&self, key: &str) -> Option<JsonValue> {
