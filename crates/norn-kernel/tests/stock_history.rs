@@ -107,3 +107,20 @@ fn dependent_issues_and_returns_reverse_before_source_restoration() -> Checked<(
     assert_eq!(restored.positions()?, before.positions()?);
     Ok(())
 }
+
+#[test]
+fn a_transfer_cannot_be_used_as_a_customer_return_source() -> Checked<()> {
+    let initial = receipt(&Book::default(), "r", "a", 5, 3)?;
+    let transferred = initial.post(
+        "t".into(),
+        StockOperation::Transfer("a".into(), "b".into(), 5),
+    )?;
+    let before = transferred.positions()?;
+    let refused = transferred.post(
+        "ret".into(),
+        StockOperation::Movement("a".into(), AverageMovement::Return("t".into(), 5)),
+    );
+    assert!(matches!(refused, Err(StockHistoryError::Invalid)));
+    assert_eq!(transferred.positions()?, before);
+    Ok(())
+}
