@@ -732,6 +732,7 @@ def validate(
     gate_manifest_source: Path | None = None,
     central_obligations_path: Path = CENTRAL_OBLIGATIONS,
     core_physics_obligations_path: Path = CORE_PHYSICS_OBLIGATIONS,
+    jewelry_obligations_path: Path = JEWELRY_OBLIGATIONS,
     formal_workflow_path: Path = FORMAL_WORKFLOW,
 ) -> int:
     """Validate canonical inputs, with explicit paths only for in-process canaries.
@@ -815,7 +816,7 @@ def validate(
         f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_ids)}, "
         f"unexpected={sorted(core_physics_ids - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
     )
-    jewelry_registry = load(JEWELRY_OBLIGATIONS)
+    jewelry_registry = load(jewelry_obligations_path)
     jewelry_ids = obligation_ids(jewelry_registry)
     require(
         len(jewelry_registry.get("obligations", [])) == len(REQUIRED_JEWELRY_OBLIGATION_IDS)
@@ -832,7 +833,7 @@ def validate(
         p0_obligation_ids(central_registry)
         | p0_obligation_ids(kernel_registry, default_priority="P0")
         | p0_obligation_ids(core_physics_registry)
-        | p0_obligation_ids(jewelry_registry)
+        | jewelry_ids
     )
 
     subsystems = coverage.get("subsystems")

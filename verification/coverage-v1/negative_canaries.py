@@ -509,6 +509,25 @@ def core_physics_closure_canaries() -> None:
         raise AssertionError(f"core-physics law demotion was rejected for the wrong reason: {message}")
 
 
+def jewelry_closure_canaries() -> None:
+    registry = json.loads((ROOT / "verification/jewelry-v1/obligations.json").read_text())
+    coverage = json.loads(COVERAGE.read_text())
+    coverage["subsystems"] = [s for s in coverage["subsystems"] if s["id"] != "jewelry"]
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "coverage.json"
+        candidate.write_text(json.dumps(coverage))
+        expect_coverage_validator_rejection("missing jewelry coverage", coverage_path=candidate)
+        registry["obligations"].pop()
+        obligations = Path(directory) / "obligations.json"
+        obligations.write_text(json.dumps(registry))
+        message = expect_coverage_validator_rejection(
+            "coordinated jewelry law deletion", coverage_path=candidate,
+            jewelry_obligations_path=obligations,
+        )
+        if "jewelry obligation registry" not in message:
+            raise AssertionError(f"jewelry law deletion rejected for wrong reason: {message}")
+
+
 def workflow_verdict_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
     verdict = next(step["run"] for step in workflow["jobs"]["full"]["steps"] if "run" in step)
@@ -1272,6 +1291,7 @@ def main() -> int:
     manifest_canaries()
     central_obligation_closure_canaries()
     core_physics_closure_canaries()
+    jewelry_closure_canaries()
     workflow_canaries()
     quint_apalache_retry_canaries()
     ontology_quint_semantic_mutation_canaries()
