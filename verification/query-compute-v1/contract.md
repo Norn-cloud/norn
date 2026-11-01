@@ -59,7 +59,8 @@ publication; budget exhaustion refuses rather than returning a partial total.
 Effective model contracts and tenant scope must match. The trusted host supplies
 visibility, source progress and Core 07 exclusions; this adds no quality law or
 permission authority. Required source partitions retain opaque cursor vectors;
-missing coverage/quarantine is incomplete, aged heartbeats are stale.
+missing coverage/quarantine is incomplete; heartbeat lag above the declared
+maximum, or a future heartbeat, is stale. Bound tenant scope is checked before scanning even an empty population.
 The envelope binds actual ledger/knowledge revision, model/declarations, window,
 mapping/population/epoch, contributions and frontier. Historical knowledge
 selection refuses; retained old results are not a historical-query API.
@@ -70,7 +71,7 @@ visibility/quarantine separation. Governing commit-read qualification follows G4
 
 QUERY-FRESH-1 analytical labels: complete coverage at the observed frontier with zero heartbeat lag is exact; positive lag within the admitted maximum is fresh; excessive/future heartbeat age is stale; missing coverage or quarantine is incomplete. Governed freshness refusal remains G4.
 
-G3 aggregate mechanism (COMPUTE-DETERMINISTIC-1 / QUERY-ENGINE-1): cell recompute and delta maintenance share exact signed contribution adjustment. Retraction reverses an admitted addition without rounding; only the final ratio rounds. A generated sequence/reverse-sequence property and production arithmetic Kani retraction harness qualify this primitive. Receipt-driven maintenance and restart correspondence are the next cut; no IVM qualification is claimed here.
+G3 aggregate mechanism (COMPUTE-DETERMINISTIC-1 / QUERY-ENGINE-1): cell recomputation uses exact signed contribution adjustment designed for delta-maintenance reuse. Retraction reverses an admitted addition without rounding; only the final ratio rounds. A generated sequence/reverse-sequence property and production arithmetic Kani retraction harness qualify this primitive. Receipt-driven maintenance and restart correspondence are the next cut; no IVM qualification is claimed here.
 
 ## G3 receipt-maintained generations
 QUERY-ENGINE-1 / COMPUTE-DETERMINISTIC-1: maintenance follows gapless verified cell receipts, retracts each changed identity's prior contribution and adds its new projection. Duplicate written IDs and same-frontier delivery cannot double count. Complete source membership enforces the original population bound even for hidden/noncontributing rows. Definition, world/scope, mapping, population or authorization changes require explicit rebuild; a skipped receipt refuses with `core.compute.stale_input`.

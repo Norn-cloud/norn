@@ -71,7 +71,7 @@ pub enum Engine {
 pub enum Freshness {
     /// Complete analytical coverage with admitted source heartbeat lag.
     Fresh,
-    /// Complete and within declared source freshness.
+    /// Complete coverage with zero heartbeat lag.
     Exact,
     /// Known coverage at an aged frontier.
     Stale,
@@ -140,6 +140,19 @@ fn decimal(n: i128) -> Result<Decimal, CellError> {
 }
 
 impl<E: SqlEngine> CellStore<E> {
+    /// QUERY-FRESH-1: the bound scope must agree even for an empty population.
+    fn check_question_scope(&self, scope: &str) -> Result<(), CellError> {
+        let bound = self.conn.query_optional(
+            r#"SELECT "value" FROM "_norn_meta" WHERE "key"='binding:scope'"#,
+            &[],
+            |row| row.get::<String>(0),
+        )?;
+        if bound.is_some_and(|bound| bound != scope) {
+            return Err(refused("core.compute.stale_input"));
+        }
+        Ok(())
+    }
+
     /// COMPUTE-DETERMINISTIC-1 / QUERY-GRAIN-1: evaluate a full bounded current-world snapshot.
     /// Historical knowledge selection remains unsupported; the envelope reports the actual head.
     /// The host supplies server authorization, dependency pins and Core 07 dispositions.
@@ -162,6 +175,7 @@ impl<E: SqlEngine> CellStore<E> {
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
         self.conn.transaction(|| {
+            self.check_question_scope(&context.scope)?;
             if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
                 return Err(refused(UNSUPPORTED_ENGINE));
             }
