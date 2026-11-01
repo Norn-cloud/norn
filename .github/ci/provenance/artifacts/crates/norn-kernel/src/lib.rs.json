@@ -1,5 +1,11 @@
 {
+<<<<<<< HEAD
   "sha256": "89378d18ef99da1fa9a77856f19785d070e30acfd0637417479f5cf2584f62f3",
+||||||| 438d260af
+  "sha256": "fbf499e7d9359672ef3e8a37aec2f9547235d150cf03139c8047c54f39cbda1e",
+=======
+  "sha256": "1bf974099c8f63ec13ec32632201892a006d7081497e9d1ca16195027871e213",
+>>>>>>> demo/stock-transfer-valuation
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",

@@ -1,40 +1,6 @@
 //! Append-only stock transfer/reversal journal over a deterministic valuation fold.
-use crate::stock_average::{AverageMovement, AverageState, StockAmount, allocate_average};
+pub use crate::stock_valuation::{StockChange, StockEffect, StockHistoryError, Valuation};
 use std::collections::{BTreeMap, BTreeSet};
-
-/// Fold contract: all valuation comes from the selected method.
-pub trait Valuation: Default + Clone {
-    /// Admitted receipt, delivery or original-cost return.
-    type Movement: Clone;
-    /// Apply without modifying the input.
-    /// # Errors
-    /// Refuses invalid valuation.
-    fn apply(&self, movement: &Self::Movement) -> Result<(Self, StockEffect), StockHistoryError>;
-    /// Source issue for a transfer.
-    fn delivery(id: &str, quantity: u128) -> Self::Movement;
-    /// Destination receipt carries exactly the source allocation cost.
-    fn receipt(id: &str, amount: StockAmount) -> Self::Movement;
-}
-
-/// Exact stock event magnitude and direction; inverse flips direction only.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StockEffect {
-    /// True for receipt/return, false for delivery.
-    pub incoming: bool,
-    /// Quantity and value in millionths.
-    pub amount: StockAmount,
-    /// Consumed source identities/costs; empty for moving average.
-    pub allocations: Vec<(String, StockAmount)>,
-}
-
-/// Partition-tagged stock effect for atomic posting lowering.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StockChange {
-    /// Company/item/warehouse/ownership partition identity, admitted by the caller.
-    pub partition: String,
-    /// Exact amount and direction.
-    pub effect: StockEffect,
-}
 
 /// One admitted operation; transfers are indivisible.
 #[derive(Debug, Clone)]
@@ -64,20 +30,6 @@ pub struct StockEvent<M> {
     pub changes: Vec<StockChange>,
 }
 
-/// Stable refusal; no input history is modified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum StockHistoryError {
-    /// Missing/duplicate identity, same-partition transfer or invalid cancellation.
-    #[error("invalid stock history")]
-    Invalid,
-    /// The selected valuation method refused the movement.
-    #[error("valuation refused")]
-    Valuation,
-    /// A live subsequent posting still requires the original allocation.
-    #[error("dependent-stock-event")]
-    Dependents,
-}
-
 /// Immutable history. Partition keys and method selection are admitted upstream.
 #[derive(Debug, Clone)]
 pub struct StockHistory<S: Valuation> {
@@ -94,7 +46,7 @@ fn apply<S: Valuation>(
     id: &str,
     operation: &StockOperation<S::Movement>,
 ) -> Result<Vec<StockChange>, StockHistoryError> {
-    let mut movement = |partition: &String, event: &S::Movement| {
+    let movement = |states: &mut BTreeMap<String, S>, partition: &String, event: &S::Movement| {
         let (after, effect) = states
             .get(partition)
             .cloned()
@@ -107,13 +59,22 @@ fn apply<S: Valuation>(
         })
     };
     match operation {
-        StockOperation::Movement(partition, event) => Ok(vec![movement(partition, event)?]),
+        StockOperation::Movement(partition, event) => Ok(vec![movement(states, partition, event)?]),
         StockOperation::Transfer(source, destination, quantity) => {
             if source == destination {
                 return Err(StockHistoryError::Invalid);
             }
-            let out = movement(source, &S::delivery(id, *quantity))?;
-            let incoming = movement(destination, &S::receipt(id, out.effect.amount))?;
+            let (after, effect) = states
+                .get(source)
+                .cloned()
+                .unwrap_or_default()
+                .transfer(id, *quantity)?;
+            states.insert(source.clone(), after);
+            let out = StockChange {
+                partition: source.clone(),
+                effect,
+            };
+            let incoming = movement(states, destination, &S::receipt(id, out.effect.amount))?;
             if out.effect.incoming
                 || !incoming.effect.incoming
                 || out.effect.amount != incoming.effect.amount
@@ -223,27 +184,5 @@ impl<S: Valuation> StockHistory<S> {
             changes,
         });
         Ok(after)
-    }
-}
-
-impl Valuation for AverageState {
-    type Movement = AverageMovement;
-    fn apply(&self, movement: &Self::Movement) -> Result<(Self, StockEffect), StockHistoryError> {
-        let result =
-            allocate_average(self, movement).map_err(|_refusal| StockHistoryError::Valuation)?;
-        Ok((
-            result.state,
-            StockEffect {
-                incoming: !matches!(movement, AverageMovement::Delivery(..)),
-                amount: result.allocation,
-                allocations: Vec::new(),
-            },
-        ))
-    }
-    fn delivery(id: &str, quantity: u128) -> Self::Movement {
-        AverageMovement::Delivery(id.into(), quantity)
-    }
-    fn receipt(_: &str, amount: StockAmount) -> Self::Movement {
-        AverageMovement::Receipt(amount)
     }
 }

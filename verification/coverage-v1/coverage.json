@@ -417,6 +417,8 @@
         "crates/norn-kernel/src/snapshot_observe.rs",
         "crates/norn-kernel/src/stock_average.rs",
         "crates/norn-kernel/src/stock_history.rs",
+||||||| 438d260af
+        "crates/norn-kernel/src/stock_valuation.rs",
         "crates/norn-kernel/src/version_check.rs",
         "crates/norn-skeleton-guard/Cargo.toml",
         "crates/norn-testkit/Cargo.toml",
@@ -2296,6 +2298,8 @@
         "crates/norn-kernel/tests/snapshot_observe.rs",
         "crates/norn-kernel/tests/stock_average.rs",
         "crates/norn-kernel/tests/stock_history.rs",
+||||||| 438d260af
+        "crates/norn-kernel/tests/stock_transfer_valuation.rs",
         "crates/norn-projections/tests/cedar.rs",
         "crates/norn-projections/tests/interop_exports.rs",
         "crates/norn-projections/tests/lifecycle_diagram.rs",
