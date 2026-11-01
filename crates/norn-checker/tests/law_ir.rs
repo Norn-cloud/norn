@@ -1100,7 +1100,7 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
     ))
     .expect("generated interface");
     let property_types: ArtifactEnvelope = serde_json::from_str(include_str!(
-        "../../../registry/core/artifacts/core.value_types.entity.json"
+        "../../../registry/core/artifacts/std.value_types.entity.json"
     ))
     .expect("shared unit vocabulary");
     let mut melt = interface.clone();

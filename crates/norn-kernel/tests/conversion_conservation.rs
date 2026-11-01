@@ -30,7 +30,7 @@ fn core_interface() -> InterfaceDef {
 
 fn cell() -> Cell {
     let artifact: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../registry/core/artifacts/core.value_types.entity.json"
+        "../../../registry/core/artifacts/std.value_types.entity.json"
     ))
     .expect("shared core types");
     let property_types: PropertyTypeCatalogRootV2 =
