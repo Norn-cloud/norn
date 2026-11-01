@@ -2246,7 +2246,8 @@ fn lean_l1_lifecycle_corpus_matches_real_commit() {
 #[test]
 fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
     use norn_kernel::{
-        LinkKey, LinkMutation, LinkWrite, ResourceLimitProfile, load_partition_slice,
+        EnvelopeLimits, LinkKey, LinkMutation, LinkWrite, ResourceLimitProfile,
+        load_partition_slice,
     };
     let definitions: Vec<ObjectTypeDef> =
         vec![serde_json::from_value(json!({
