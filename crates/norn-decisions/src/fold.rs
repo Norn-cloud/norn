@@ -5,7 +5,10 @@ use crate::{
     step::StepContracts,
 };
 use norn_expr::schema::Schema;
-use norn_ir::{Rounding as IrRounding, jdm::{FoldOrderKind, OrderedFold}};
+use norn_ir::{
+    Rounding as IrRounding,
+    jdm::{FoldOrderKind, OrderedFold},
+};
 use std::collections::BTreeSet;
 use zen_engine::{
     Decision, EvaluationOptions, Isolate, Variable,

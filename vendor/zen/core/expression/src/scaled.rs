@@ -38,7 +38,8 @@ impl ScaledArithmetic {
         }
         let value = value.normalize();
         let coefficient = if self.scale >= value.scale() {
-            value.mantissa()
+            value
+                .mantissa()
                 .checked_mul(10_i128.pow(self.scale - value.scale()))
                 .ok_or("scaled coefficient overflow")?
         } else {
@@ -117,31 +118,67 @@ mod tests {
             (Rounding::HalfEven, "1.00"),
             (Rounding::HalfAwayFromZero, "1.01"),
         ] {
-            let p = ScaledArithmetic { scale: 2, rounding: mode };
+            let p = ScaledArithmetic {
+                scale: 2,
+                rounding: mode,
+            };
             for sign in ["", "-"] {
                 let n = p.rescale(format!("{sign}1.005").parse().unwrap()).unwrap();
                 assert_eq!(n.to_string(), format!("{sign}{expected}"));
             }
         }
-        let p = ScaledArithmetic { scale: 2, rounding: Rounding::Refuse };
-        assert_eq!(p.rescale("1.0100".parse().unwrap()).unwrap().to_string(), "1.01");
+        let p = ScaledArithmetic {
+            scale: 2,
+            rounding: Rounding::Refuse,
+        };
+        assert_eq!(
+            p.rescale("1.0100".parse().unwrap()).unwrap().to_string(),
+            "1.01"
+        );
         assert!(p.rescale("1.005".parse().unwrap()).is_err());
         assert!(p.rescale(Decimal::MAX).is_err());
-        assert!(ScaledArithmetic { scale: 18, ..p }.rescale(Decimal::MAX).is_err());
-        assert!(ScaledArithmetic { scale: 19, ..p }.rescale(Decimal::ZERO).is_err());
-        assert_eq!(ScaledArithmetic { scale: 18, ..p }.rescale(Decimal::ZERO).unwrap().scale(), 18);
-        assert_eq!(p.rescale("0.0000000000000000000000000001".parse().unwrap()), Err("inexact result refused"));
+        assert!(ScaledArithmetic { scale: 18, ..p }
+            .rescale(Decimal::MAX)
+            .is_err());
+        assert!(ScaledArithmetic { scale: 19, ..p }
+            .rescale(Decimal::ZERO)
+            .is_err());
+        assert_eq!(
+            ScaledArithmetic { scale: 18, ..p }
+                .rescale(Decimal::ZERO)
+                .unwrap()
+                .scale(),
+            18
+        );
+        assert_eq!(
+            p.rescale("0.0000000000000000000000000001".parse().unwrap()),
+            Err("inexact result refused")
+        );
     }
 
     #[test]
     fn store_rounding_does_not_quantize_exact_intermediate_products() {
-        let p = ScaledArithmetic { scale: 3, rounding: Rounding::Refuse };
-        let intermediate = p.binary("Multiply", "1.25".parse().unwrap(), "0.1".parse().unwrap()).unwrap();
-        let exact = p.binary("Multiply", intermediate, Decimal::from(100)).unwrap();
-        let site = ScaledArithmetic { scale: 2, rounding: Rounding::HalfEven };
+        let p = ScaledArithmetic {
+            scale: 3,
+            rounding: Rounding::Refuse,
+        };
+        let intermediate = p
+            .binary("Multiply", "1.25".parse().unwrap(), "0.1".parse().unwrap())
+            .unwrap();
+        let exact = p
+            .binary("Multiply", intermediate, Decimal::from(100))
+            .unwrap();
+        let site = ScaledArithmetic {
+            scale: 2,
+            rounding: Rounding::HalfEven,
+        };
         assert_eq!(site.rescale(exact).unwrap().to_string(), "12.50");
-        assert!(ScaledArithmetic { rounding: Rounding::Refuse, ..site }
-            .binary("Multiply", "1.25".parse().unwrap(), "0.1".parse().unwrap()).is_err());
+        assert!(ScaledArithmetic {
+            rounding: Rounding::Refuse,
+            ..site
+        }
+        .binary("Multiply", "1.25".parse().unwrap(), "0.1".parse().unwrap())
+        .is_err());
     }
 
     #[test]

@@ -135,7 +135,10 @@ fn explicit_rescale_obeys_exact_and_nearest_laws() {
     let source = u32::from(kani::any::<u8>() % 5);
     let target = u32::from(kani::any::<u8>() % 5);
     let rounding = mode();
-    let profile = ScaledArithmetic { scale: target, rounding };
+    let profile = ScaledArithmetic {
+        scale: target,
+        rounding,
+    };
     let result = profile.rescale(Decimal::from_i128_with_scale(n, source));
     let numerator = n * 10_i128.pow(target);
     let denominator = 10_i128.pow(source);
@@ -152,8 +155,11 @@ fn explicit_rescale_obeys_exact_and_nearest_laws() {
             let error = (numerator - actual * denominator).abs();
             assert!(2 * error <= denominator);
             if 2 * error == denominator {
-                if rounding == Rounding::HalfEven { assert_eq!(actual % 2, 0); }
-                else { assert_eq!(actual.abs(), q.abs() + 1); }
+                if rounding == Rounding::HalfEven {
+                    assert_eq!(actual % 2, 0);
+                } else {
+                    assert_eq!(actual.abs(), q.abs() + 1);
+                }
             }
         }
     }
@@ -164,8 +170,16 @@ fn explicit_rescale_obeys_exact_and_nearest_laws() {
 fn rescale_invalid_scales_and_full_width_boundaries_refuse() {
     let target: u32 = kani::any();
     kani::assume(target > 18);
-    assert!(ScaledArithmetic { scale: target, rounding: mode() }.rescale(Decimal::ZERO).is_err());
-    let profile = ScaledArithmetic { scale: 18, rounding: mode() };
+    assert!(ScaledArithmetic {
+        scale: target,
+        rounding: mode()
+    }
+    .rescale(Decimal::ZERO)
+    .is_err());
+    let profile = ScaledArithmetic {
+        scale: 18,
+        rounding: mode(),
+    };
     assert!(profile.rescale(Decimal::MAX).is_err());
     assert!(profile.rescale(Decimal::MIN).is_err());
 }
