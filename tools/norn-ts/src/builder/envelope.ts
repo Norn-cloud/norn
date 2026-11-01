@@ -16,7 +16,7 @@ export interface EnvelopeOptions {
 }
 
 export interface EnvelopeMeta {
-  readonly kind: "entity" | "rule" | "action" | "policy" | "mapping" | "law" | "connector" | "source_schema"
+  readonly kind: "entity" | "rule" | "action" | "policy" | "mapping" | "law" | "connector" | "source_schema" | "business_pack"
   readonly artifactId: string
   readonly namespace: string
   /** Human-readable title (the envelope `name`). */

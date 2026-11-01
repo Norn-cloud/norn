@@ -1,0 +1,4 @@
+# Provenance records are generated data; the provenance guard checks each one.
+reviews:
+  path_filters:
+    - "!.github/ci/provenance/artifacts/**"

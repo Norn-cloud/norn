@@ -355,6 +355,7 @@ pub fn check_artifact_set(
             .chain(crate::verification::check_law_set(
                 &normalized_artifacts,
                 &normalized_base,
+                normalized_context.registry,
             ))
             .collect::<Vec<_>>(),
         Err(resolution) => normalized_artifacts

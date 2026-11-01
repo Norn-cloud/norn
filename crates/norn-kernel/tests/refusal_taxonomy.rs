@@ -1,5 +1,6 @@
 #![allow(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::indexing_slicing,
     clippy::pedantic,
     reason = "integration-test crate: fixture helpers unwrap and index"
@@ -16,10 +17,11 @@
 
 //! The runtime refusal taxonomy (T1-L4, #2420): every kernel refusal has a
 //! stable code, a `category()`, and a safe `{code, category, message}` form.
-//! Visibility and internal messages are fixed, and the existence-never-leaks
+//! Visibility and internal messages are fixed, wrapper refusals preserve the
+//! domain code, classification, and redaction, and the existence-never-leaks
 //! matrix holds through the action path.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::path::Path;
 
@@ -28,16 +30,17 @@ use norn_ir::{
     posting::AccountingError,
 };
 use norn_kernel::action::{
-    ACTION_IDEMPOTENCY_KEY_MAX_BYTES, ActionCommandRejection, ActionCommandShape, ActionRejection,
-    check_action_command,
+    ACTION_IDEMPOTENCY_KEY_MAX_BYTES, ActionAuthorityState, ActionCommandRejection,
+    ActionCommandShape, ActionRejection, AuthorizedRejection, OwnerExpectation, TransitionBinding,
+    VersionedAction, VersionedActionRequest, check_action_command,
 };
 use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionRefusal, CellCommit,
-    CellHost, Command, CommitError, DecisionRefusal, DecisionTurn, EnvelopeKind, FactEvent,
-    FactKey, FactMutation, FactVersion, FactWrite, INTERNAL_MESSAGE, LogicalTime,
-    NOT_FOUND_MESSAGE, Refusable, Refusal, RefusalCategory, StepError, TypeCatalog, World,
-    commit_action,
+    CellHost, Command, CommitError, DecisionRefusal, DecisionTurn, Entropy, EnvelopeKind,
+    EnvelopeLimits, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, INTERNAL_MESSAGE,
+    LogicalTime, NOT_FOUND_MESSAGE, Observations, Refusable, Refusal, RefusalCategory, StepError,
+    TypeCatalog, World, commit_action, step,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
@@ -316,6 +319,88 @@ fn internal_refusals_never_carry_details() {
         assert_eq!(refusal.message, INTERNAL_MESSAGE);
         assert!(!refusal.message.contains("tenant-42"));
     }
+}
+
+#[test]
+fn actual_step_preserves_versioned_action_refusals() {
+    let observations = Observations::main(LogicalTime::EPOCH, Entropy::from_bytes([0; 32]));
+    for (current, expected, transition, code, category) in [
+        (
+            2,
+            1,
+            "transition",
+            "action.owner_version_conflict",
+            RefusalCategory::Conflict,
+        ),
+        (
+            u64::MAX,
+            u64::MAX,
+            "transition",
+            "action.owner_version_overflow",
+            RefusalCategory::Limit,
+        ),
+        (
+            0,
+            0,
+            "",
+            "action.invalid_transition_identity",
+            RefusalCategory::Invalid,
+        ),
+    ] {
+        let state = ActionAuthorityState {
+            owner_versions: BTreeMap::from([(1u8, current)]),
+            ..Default::default()
+        };
+        let request = VersionedActionRequest {
+            transition_id: transition.to_owned(),
+            binding: TransitionBinding {
+                input_sha256: "input".to_owned(),
+                effect_sha256: "effect".to_owned(),
+            },
+            preconditions: vec![OwnerExpectation {
+                owner: 1,
+                expected_version: expected,
+            }],
+            mutation_owners: BTreeSet::from([1]),
+            idempotency_key: "idempotency".to_owned(),
+        };
+        let error = step(
+            &VersionedAction::new(),
+            &state,
+            &request,
+            &observations,
+            &EnvelopeLimits::V1,
+        )
+        .expect_err("the domain rejects this request");
+        let refusal = error.refusal();
+        assert_eq!(refusal.code, code);
+        assert_eq!(refusal.category, category);
+        assert_eq!(error.code(), refusal.code);
+        assert_eq!(error.category(), refusal.category);
+    }
+}
+
+#[test]
+fn nested_wrappers_preserve_internal_redaction() {
+    let host = CommitError::Host("private tenant database path");
+    let expected = host.refusal();
+    let step = StepError::Rejected(host);
+    assert_eq!(step.refusal(), expected);
+    assert_eq!(step.refusal().message, INTERNAL_MESSAGE);
+    let shell = AuthorizedRejection::Shell(step);
+    assert_eq!(shell.refusal(), expected);
+    assert_eq!(shell.category(), RefusalCategory::Internal);
+    assert_eq!(shell.code(), expected.code);
+}
+
+#[test]
+fn outer_failures_keep_their_own_codes() {
+    let step = StepError::<ActionRejection>::ReadOnlyWorld;
+    assert_eq!(step.code(), "decision.read_only_world");
+    assert_eq!(step.category(), RefusalCategory::Invalid);
+    let shell = AuthorizedRejection::<CommitError<Infallible>>::LogicalTimeRollback;
+    assert_eq!(shell.code(), "action.logical_time_rollback");
+    assert_eq!(shell.category(), RefusalCategory::Invalid);
 }
 
 struct Policy(Option<ActionDenial>);

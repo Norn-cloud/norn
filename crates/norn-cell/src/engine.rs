@@ -328,11 +328,17 @@ impl NativeEngine {
         Self::configured(conn)
     }
 
-    fn configured(conn: rusqlite::Connection) -> Result<Self, CellError> {
+    fn configured(mut conn: rusqlite::Connection) -> Result<Self, CellError> {
+        use rusqlite::config::DbConfig;
         use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
 
+        // A double-quoted name that matches no column must be an error, never a
+        // string literal: a stale property column name would otherwise read back
+        // as its own text.
+        conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, false)?;
+        conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DDL, false)?;
         let user_sql = Arc::new(AtomicBool::new(false));
         let authorizer_flag = Arc::clone(&user_sql);
         // Let SQLite parse transaction controls, including quoted SQL and

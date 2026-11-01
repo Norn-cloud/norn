@@ -438,6 +438,27 @@ impl<'a> TypeCatalog<'a> {
         chain
     }
 
+    /// All interface contracts held by this type and its object ancestors.
+    pub(crate) fn implements(&self, object_type: &ObjectTypeName, interface: &str) -> bool {
+        self.ancestry(object_type)
+            .iter()
+            .flat_map(|definition| &definition.implements)
+            .any(|name| {
+                name.as_str() == interface
+                    || self
+                        .interfaces
+                        .get(name.as_str())
+                        .is_some_and(|definition| {
+                            definition
+                                .contract_owners(|parent| {
+                                    self.interfaces.get(parent.as_str()).copied()
+                                })
+                                .iter()
+                                .any(|parent| parent.name.as_str() == interface)
+                        })
+            })
+    }
+
     /// Every invariant that applies to `object_type`, including its own,
     /// inherited declarations, and implemented interfaces. Owner and id
     /// form the stable identity; ordering is independent of declaration
@@ -461,14 +482,20 @@ impl<'a> TypeCatalog<'a> {
                 let Some(interface) = self.interfaces.get(interface_name.as_str()).copied() else {
                     return Err(ObjectTypeName(interface_name.as_str().to_owned()));
                 };
-                for invariant in &interface.invariants {
-                    invariants.insert(
-                        (
-                            InvariantOwner::Interface(interface.name.clone()),
-                            invariant.id.clone(),
-                        ),
-                        invariant,
-                    );
+                let lineage = norn_expr::env::interface_lineage(interface, |name| {
+                    self.interfaces.get(name.as_str()).copied()
+                })
+                .map_err(|name| ObjectTypeName(name.0))?;
+                for owner in lineage {
+                    for invariant in &owner.invariants {
+                        invariants.insert(
+                            (
+                                InvariantOwner::Interface(owner.name.clone()),
+                                invariant.id.clone(),
+                            ),
+                            invariant,
+                        );
+                    }
                 }
             }
         }
