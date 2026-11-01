@@ -19,6 +19,8 @@ B0 #316 admits a closed pointwise safety/commit fragment. #322 renders EN/AR wit
 
 ## Semantics and obligations
 
+An app is its retained root composition-pack instance: `LawRoot::App(id)` resolves that stable instance ID through its exact retained pin and explicit imports/instances closure, refusing an unresolved ID without a separate app→pack binding.
+
 Admission validates structured slots and grounded normative precedence, then resolves law subjects through `EffectiveCatalog::target_types` and explicit retained pack/app membership. Add a pack root while retaining `LawRoot::App`; unknown roots never mean global. Check interfaces even with zero implementors. Deduplicate a diamond's identical binding by law identity + concrete subject + substitutions, preserving all paths. Different substitutions remain distinct instances.
 
 Specialisation/containment adds conjunctions. Refuse inherited-law replacement, precondition strengthening, input-domain narrowing or removal through changed containment. A solver result cannot authorize weakening. Permissions do not require an event, defeat physical laws or grant runtime access. Default deny and mandatory scope are enforced by the existing server/kernel authority; no UI-specific permission engine.
