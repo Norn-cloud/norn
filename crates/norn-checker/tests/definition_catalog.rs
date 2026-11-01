@@ -36,4 +36,3 @@ fn entity_projection_preserves_identity_declarations_and_order() {
         project(&[artifact], &[], &BTreeSet::new()).expect("repeat")
     );
 }
-
