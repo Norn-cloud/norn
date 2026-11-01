@@ -151,3 +151,21 @@ fn post_atomic_pure_refusal_and_authority_bindings() {
         );
     }
 }
+
+#[test]
+fn post_refusal_reason_is_a_readable_precondition() {
+    use norn_kernel::{ActionRefusal, Refusable, RefusalCategory};
+    let error = ActionRefusal::<std::convert::Infallible>::InsufficientStock {
+        item: "item-a".into(),
+        warehouse: "warehouse-a".into(),
+        requested: "6.25".into(),
+        available: "5".into(),
+    }
+    .refusal();
+    assert_eq!(error.code, "stock.insufficient_stock");
+    assert_eq!(error.category, RefusalCategory::Precondition);
+    assert_eq!(
+        error.message,
+        "insufficient stock for item item-a in warehouse warehouse-a: requested 6.25, available 5"
+    );
+}

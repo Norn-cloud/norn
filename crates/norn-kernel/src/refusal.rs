@@ -343,9 +343,10 @@ impl<X> ActionRefusal<X> {
             Self::Decision(refusal) => refusal.category(),
             Self::TargetNotFound | Self::SliceObjectMissing { .. } => RefusalCategory::Visibility,
             Self::PermissionDenied { .. } => RefusalCategory::Permission,
-            Self::PreconditionFailed { .. } | Self::WriteModeFailed { .. } => {
-                RefusalCategory::Precondition
-            }
+            Self::InsufficientStock { .. }
+            | Self::StockPosting(_)
+            | Self::PreconditionFailed { .. }
+            | Self::WriteModeFailed { .. } => RefusalCategory::Precondition,
             Self::IdempotencyConflict { .. } | Self::StalePreconditionRead { .. } => {
                 RefusalCategory::Conflict
             }
