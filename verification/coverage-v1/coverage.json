@@ -2218,6 +2218,7 @@
         "crates/norn-checker/tests/owned_collections.rs",
         "crates/norn-checker/tests/property_types.rs",
         "crates/norn-checker/tests/quantity_ledger.rs",
+        "crates/norn-checker/tests/stock_templates.rs",
         "crates/norn-checker/tests/quantity_ledger_boundary.rs",
         "crates/norn-checker/tests/quantity_ledger_expression.rs",
         "crates/norn-checker/tests/quantity_ledger_properties.rs",
