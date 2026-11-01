@@ -2748,7 +2748,7 @@
               }
             ]
           },
-          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is enrolled separately."
+          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is missing for these obligations."
         },
         {
           "id": "INV-CORE-ESCROW-NON-NEGATIVE",
@@ -2770,7 +2770,7 @@
               }
             ]
           },
-          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is enrolled separately."
+          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is missing for these obligations."
         },
         {
           "id": "INV-CORE-COMMITMENT-COMPLETION",
@@ -2793,7 +2793,7 @@
               }
             ]
           },
-          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is enrolled separately."
+          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is missing for these obligations."
         }
       ],
       "runtime": {
