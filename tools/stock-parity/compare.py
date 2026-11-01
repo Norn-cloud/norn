@@ -100,7 +100,8 @@ def compare(norn, erpnext, dispositions):
                      credit=exact(r['credit'], 2), cancelled=bool(r['cancelled'])) for r in cp['gl']]
     for name in sorted(set(sides[0]) | set(sides[1])):
         cases = [s.get(name) for s in sides]
-        row = dict(case=alias('case', name), checkpoints=[], status='matched')
+        row = dict(case=alias('case', name), checkpoints=[], status='matched',
+                   method=next((c['method'] for c in cases if c and c['method'] in ('fifo', 'moving-average')), 'unknown'))
         rows.append(row)
         if any(c is None or 'initial' not in c for c in cases):
             row['status'] = 'unsupported'
@@ -109,7 +110,7 @@ def compare(norn, erpnext, dispositions):
         if any(c['status'] != 'complete' or not c['checkpoints'] for c in cases):
             row['status'] = 'unsupported'
             counts['unsupported'] += 1
-        if cases[0]['method'] != cases[1]['method']:
+        if cases[0]['method'] not in ('fifo', 'moving-average') or cases[0]['method'] != cases[1]['method']:
             raise ValueError('Case method mismatch')
         checkpoints = [indexed([c['initial'], *c['checkpoints']], 'step') for c in cases]
         if any(sorted(c) != list(range(-1, len(c)-1)) for c in checkpoints):
@@ -175,12 +176,12 @@ def compare(norn, erpnext, dispositions):
 
 
 def markdown(report):
-    lines = ['# Checkpoint parity (bounded corpus)', '', '| Case | Checkpoint | Result |', '|---|---|---|']
+    lines = ['# Checkpoint parity (bounded corpus)', '', '| Case | Method | Checkpoint | Result |', '|---|---|---|---|']
     for case in report['cases']:
         for cp in case['checkpoints']:
-            lines.append(f"| {case['case']} | {cp['step']} | {cp['status']} |")
+            lines.append(f"| {case['case']} | {case['method']} | {cp['step']} | {cp['status']} |")
         if not case['checkpoints']:
-            lines.append(f"| {case['case']} | — | {case['status']} |")
+            lines.append(f"| {case['case']} | {case['method']} | — | {case['status']} |")
     lines.extend(['', f"Gate: {'pass' if report['passed'] else 'fail'}.", '',
                   *[f'{k}: {v}' for k, v in report['counts'].items()]])
     return '\n'.join(lines) + '\n'

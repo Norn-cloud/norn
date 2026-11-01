@@ -27,7 +27,7 @@ class Contract(unittest.TestCase):
     def test_stub_match_and_representation(self):
         self.n['cases'][0]['checkpoints'][0]['stock'][0]['value'] = '20.000000'
         self.assertTrue(self.report()['passed'])
-        self.assertIn('| case-1 | 0 | matched |', markdown(self.report()))
+        self.assertIn('| case-1 | fifo | 0 | matched |', markdown(self.report()))
 
     def test_earlier_divergence_survives_final_match(self):
         for d in (self.n, self.e):
