@@ -11,9 +11,10 @@
 //!   webhooks, and completeness sweeps all converge to the same state.
 //! - A delete is an ordinary observation that leaves a tombstone.
 
+//!
 //! DP-CONV-1: reordering distinct immutable observations and replaying identical
 //! deliveries yields the same view. DP-CONV-2: delete wins an equal-version tie;
-//! source and record identities remain separate. Sampled evidence: convergence_conforms.
+//! source and record identities remain separate. Sampled evidence: `convergence_conforms`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
