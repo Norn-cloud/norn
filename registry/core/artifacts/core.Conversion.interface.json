@@ -13,7 +13,7 @@
       "invariants": [
         {
           "expression": "(((self.input_quantity >= 0) and (self.output_quantity >= 0)) and (self.loss_quantity >= 0)) and (self.input_quantity == (self.output_quantity + self.loss_quantity))",
-          "id": "core.law.conversion_conservation",
+          "id": "conversion_conservation",
           "message": "Input quantity must equal output plus explicitly recorded loss in the same unit."
         }
       ],

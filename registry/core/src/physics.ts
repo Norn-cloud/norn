@@ -33,7 +33,7 @@ export const Conversion = Norn.interfaceType({
     quantity_unit: Norn.ref("ucum.unit_code"),
   }),
   invariants: [{
-    id: "core.law.conversion_conservation",
+    id: "conversion_conservation",
     expression: Norn.expression(ConversionMeasurements, input => input.input_quantity >= 0 && input.output_quantity >= 0 && input.loss_quantity >= 0 && input.input_quantity === input.output_quantity + input.loss_quantity),
     message: "Input quantity must equal output plus explicitly recorded loss in the same unit.",
   }],
@@ -49,7 +49,7 @@ export const quantityConservation = Norn.law({
     provenance: { source: "authoring_sdk", sourcePath: "registry/core/src/physics.ts" },
     scope: { root: { kind: "entity", id: "core.Conversion" }, objectTypes: ["core.Conversion"] },
     subject: "core.Conversion", modality: { kind: "always" },
-    response: { kind: "invariant", objectType: "core.Conversion", invariantId: "core.law.conversion_conservation" },
+    response: { kind: "invariant", objectType: "core.Conversion", invariantId: "conversion_conservation" },
   },
   dependencies: [{ artifactId: "core.Conversion.interface", kind: "entity", version: "0.1.0", required: true }],
 })

@@ -8,44 +8,21 @@ use std::{
 use norn_checker::obligations::{ApprovedContract, ChallengeError, DefinitionSource};
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};
 use norn_ir::deontic::{RequirementText, RequirementWording};
-use norn_ir::{
-    ArtifactDependency, ArtifactEnvelope, ArtifactKind, ArtifactPayload, IrVersion01, LawIR,
-    LawModality, LawProvenance, LawResponse, LawRoot, LawScope, LawSeverity, ProvenanceSource,
-    ZenExpression,
-};
+use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawResponse, ZenExpression};
 use serde_json::json;
 
 type DemoResult<T> = Result<T, Box<dyn Error>>;
 
-fn conservation() -> LawIR {
-    LawIR {
-        law_version: IrVersion01::V0_1,
-        id: "demo.fine_mass_conservation".into(),
-        owner: "demo.jewelry".into(),
-        severity: LawSeverity::Error,
-        rationale: "Input fine mass equals output plus explicitly recorded loss.".into(),
-        provenance: LawProvenance {
-            source: ProvenanceSource::AuthoringSdk,
-            source_path: Some("crates/norn-checker/examples/jewelry_demo.rs".into()),
-            actor_id: None,
-            created_at: None,
-        },
-        scope: LawScope {
-            root: LawRoot::App("demo.jewelry".into()),
-            object_types: vec!["demo.Melt".into()],
-            lifecycle_states: vec![],
-            commitments: vec![],
-        },
-        subject: "demo.Melt".into(),
-        condition: Some(ZenExpression("self.status == 'posted'".into())),
-        modality: LawModality::Always {},
-        timing: None,
-        response: LawResponse::Predicate {
-            expression: ZenExpression(
-                "self.input_fine_g == self.output_fine_g + self.loss_fine_g".into(),
-            ),
-        },
-    }
+fn conservation() -> DemoResult<LawIR> {
+    let artifact: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.law.conversion_conservation.law.json"
+    ))?;
+    Ok(serde_json::from_value(
+        artifact
+            .get("payload")
+            .ok_or("missing law payload")?
+            .clone(),
+    )?)
 }
 
 fn wording() -> RequirementWording {
@@ -54,7 +31,7 @@ fn wording() -> RequirementWording {
         ar: ar.into(),
     };
     RequirementWording {
-        scope: text("Each melt in this app", "كل عملية صهر في هذا التطبيق"),
+        scope: text("Each core conversion", "كل عملية تحويل"),
         activation: text("When its state is posted", "عندما تكون حالتها مرحلة"),
         component: text(
             "Its fine-metal measurements",
@@ -68,19 +45,9 @@ fn wording() -> RequirementWording {
 }
 
 fn with_law(types: &[ArtifactEnvelope], law: &LawIR) -> DemoResult<Vec<ArtifactEnvelope>> {
-    let subject = types
-        .iter()
-        .find(|a| a.artifact_id == "demo.Melt.entity")
-        .ok_or("missing authored demo.Melt.entity")?;
-    let mut envelope = subject.clone();
-    envelope.artifact_id = format!("{}.law", law.id);
-    envelope.name.clone_from(&law.id);
-    envelope.dependencies = vec![ArtifactDependency {
-        artifact_id: subject.artifact_id.clone(),
-        kind: ArtifactKind::Entity,
-        version: Some(subject.version.clone()),
-        required: true,
-    }];
+    let mut envelope: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.law.conversion_conservation.law.json"
+    ))?;
     envelope.payload = ArtifactPayload::from_kind_json(
         &ArtifactKind::Law,
         serde_json::from_str(&serde_json::to_string(law)?)?,
@@ -106,8 +73,14 @@ fn main() -> DemoResult<()> {
     if input.len() > 1_048_576 {
         return Err("demo input exceeds 1 MiB".into());
     }
-    let types: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
-    let law = conservation();
+    let mut types: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
+    for document in [
+        include_str!("../../../registry/core/artifacts/core.Conversion.interface.json"),
+        include_str!("../../../registry/core/artifacts/std.value_types.entity.json"),
+    ] {
+        types.push(serde_json::from_str(document)?);
+    }
+    let law = conservation()?;
     let artifacts = with_law(&types, &law)?;
     let registry = BTreeSet::new();
     let context = EntityArtifactSetContext {
@@ -121,7 +94,7 @@ fn main() -> DemoResult<()> {
     }
     writeln!(
         stdout,
-        "CURRENT: admitted measurement schema, lifecycle and pointwise law (no runtime claim)"
+        "CURRENT: admitted Melt inherits the unchanged core conversion law (measurement scope)"
     )?;
     writeln!(stdout, "{}", serde_json::to_string_pretty(&artifacts)?)?;
     writeln!(
