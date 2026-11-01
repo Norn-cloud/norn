@@ -5208,7 +5208,7 @@ fn capture_purity(
         provenance: Provenance {
             source: "synthetic-erpnext".into(),
             source_id: "Stock Entry Measurement/MEAS-1".into(),
-            observed_at: cell.clock().expect("clock"),
+            observed_at: cell.now(),
             mapping_version: "synthetic.measurements@1".into(),
         },
         input: BTreeMap::from([
@@ -5228,7 +5228,7 @@ fn capture_purity(
     let slice = load_slice(cell, [key.clone()]).expect("slice");
     let turn = DecisionTurn {
         id: delivery.into(),
-        now: cell.clock().expect("clock"),
+        now: cell.now(),
         world: World::Main,
         consumes: Some(pending.consumed()),
     };
