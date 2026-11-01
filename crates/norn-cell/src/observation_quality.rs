@@ -112,9 +112,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
         let current = self.object(world, object_type, key)?;
         if let Some(record) = &current
-            && self.object_at_version(world, object_type, key, record.version)?.as_ref() != Some(record)
+            && self
+                .object_at_version(world, object_type, key, record.version)?
+                .as_ref()
+                != Some(record)
         {
-            return Err(CellError::QualityEvaluation("unproven correction values".into()));
+            return Err(CellError::QualityEvaluation(
+                "unproven correction values".into(),
+            ));
         }
         let mut seen = BTreeSet::new();
         let mut findings = Vec::new();
@@ -158,14 +163,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                                 &finding,
                             )
                             .map_err(|error| CellError::QualityEvaluation(error.to_string()))?
+                        {
+                            finding.status = if class
+                                == norn_kernel::DataQualityRuleClassification::Unverified
                             {
-                                finding.status = if class
-                                    == norn_kernel::DataQualityRuleClassification::Unverified
-                                {
-                                    DataQualityFindingStatus::Superseded
-                                } else {
-                                    DataQualityFindingStatus::Resolved
-                                };
+                                DataQualityFindingStatus::Superseded
+                            } else {
+                                DataQualityFindingStatus::Resolved
+                            };
                         }
                         findings.push((finding, quarantines));
                     }

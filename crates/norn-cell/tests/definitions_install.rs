@@ -5303,7 +5303,7 @@ fn obs_recovery_upgrade_uses_each_findings_retained_model(fraction in 501u16..10
     artifacts[1] = serde_json::from_value(law).expect("tightened law");
     snapshot.law_artifacts = vec![artifacts[1].clone()];
     let model = Model::from_snapshot(&snapshot).expect("retained candidate");
-    let mut input = install_input("tightened", previous.installed_at + 1, &model);
+    let mut input = install_input("tightened", previous.installed_at.checked_add(1).expect("next epoch"), &model);
     input.canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set")).expect("UTF8");
     let old_model = cell.store().model().clone();
     drop(cell);
