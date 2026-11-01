@@ -17,6 +17,10 @@ use thiserror::Error;
 
 use crate::variable::Variable;
 
+#[cfg(kani)]
+#[path = "../../../../../verification/ordered-fold-v1/meter_kani.rs"]
+mod proof;
+
 /// Returned when a charge would take a [`Meter`] past its limit.
 ///
 /// `used` is the total that the failing charge would have reached (so `used > limit`).

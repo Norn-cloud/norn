@@ -266,6 +266,8 @@
     "vendor/zen/core/types/src/variable/ser.rs",
     "vendor/zen/core/types/src/variable_type/conv.rs",
     "vendor/zen/core/types/src/variable_type/mod.rs",
-    "vendor/zen/core/types/src/variable_type/util.rs"
+    "vendor/zen/core/types/src/variable_type/util.rs",
+    "verification/ordered-fold-v1/scaled_kani.rs",
+    "verification/ordered-fold-v1/meter_kani.rs"
   ]
 }

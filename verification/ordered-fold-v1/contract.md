@@ -174,3 +174,21 @@ proof is claimed. This conformance cut changes no production pure function.
 The serialized graph evaluator uses heap-backed dynamic values and host graph
 loading, so a bounded Kani model of that path is not supplied here; arithmetic
 and atomic-meter Kani qualification remains a separate engine-verification cut.
+
+## Engine proof correspondence
+
+FOLD-METER-EXACT: a charge is accepted exactly when the mathematical total
+fits both u64 and the declared limit. A refusal preserves the accepted total
+and is sticky across clones, including local arithmetic-policy clones.
+
+Kani harnesses under this directory call the production scaled arithmetic and
+Meter methods. They cover i8 numerator/divisor combinations with all four
+rounding modes, full-width i128 division boundaries, all u32 profile scales
+with i8 integer inputs, bounded binary operations, selected intermediate/range
+overflows, and two sequential charges over full-width u64 values.
+Decimal conversion harnesses use an unwind bound of 40 with unwinding checks.
+These scopes do not establish all decimal operations at every input magnitude.
+Kani assumes sequential atomic execution; concurrent interleavings are unqualified
+([tool limitation](https://model-checking.github.io/kani/rust-feature-support/intrinsics.html)).
+No application law or generated-obligation qualification is inferred from these
+engine harnesses. Results must be recorded against the exact engine source head.
