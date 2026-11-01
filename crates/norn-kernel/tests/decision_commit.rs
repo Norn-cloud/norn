@@ -2242,3 +2242,130 @@ fn lean_l1_lifecycle_corpus_matches_real_commit() {
     }
     assert_eq!(count, 20);
 }
+
+#[test]
+fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
+    use norn_kernel::{
+        LinkKey, LinkMutation, LinkWrite, ResourceLimitProfile, load_partition_slice,
+    };
+    let definitions: Vec<ObjectTypeDef> =
+        vec![serde_json::from_value(json!({
+        "name": "capacity.Node", "properties": [{"id": "amount", "type": {"kind": "integer"}}],
+        "links": [{"id": "members", "target": "capacity.Node",
+            "cardinality": {"to": "many", "from": "many"}}]
+    })).unwrap()];
+    let catalog = TypeCatalog::new(&definitions);
+    let keys: Vec<_> = ["pool", "a", "b", "result"]
+        .map(|id| key("capacity.Node", id))
+        .to_vec();
+    let link = |target: &FactKey| LinkKey::new(keys[0].clone(), "members", target.clone());
+    let edge = |target: &FactKey| LinkWrite {
+        key: link(target),
+        expected: FactVersion::ABSENT,
+        mutation: LinkMutation::Add {
+            values: JsonObject::new(),
+        },
+    };
+    for (initial_member, race) in [
+        (false, "insert"),
+        (true, "insert"),
+        (true, "remove"),
+        (true, "update"),
+    ] {
+        let mut cell = cell().with_types(definitions.clone());
+        cell.commit(CellCommit {
+            writes: keys
+                .iter()
+                .map(|key| FactWrite {
+                    key: key.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: record(json!({"amount": 5})),
+                    },
+                })
+                .collect(),
+            links: if initial_member {
+                vec![edge(&keys[1])]
+            } else {
+                vec![]
+            },
+            ..CellCommit::empty()
+        })
+        .unwrap();
+        let slice = load_partition_slice(
+            &cell,
+            &catalog,
+            [keys[3].clone()],
+            &[(keys[0].clone(), "members".to_owned())],
+            ResourceLimitProfile::norn_limits_v1().slice,
+        )
+        .unwrap();
+        let proposal = slice
+            .prepare::<Infallible>(
+                &catalog,
+                &turn("allocate"),
+                &output(json!({
+                    "facts": [set("capacity.Node", "result", "amount", &json!(0))],
+                    "commands": [{"kind": "notify"}], "timers": [{"afterMillis": 10}]
+                })),
+                &EnvelopeLimits::V1,
+            )
+            .unwrap();
+        assert_eq!(proposal.link_reads.len(), 1);
+        assert_eq!(
+            proposal.link_reads[0].targets.len(),
+            usize::from(initial_member)
+        );
+        let mut concurrent = CellCommit::empty();
+        match race {
+            "insert" => concurrent.links.push(edge(&keys[2])),
+            "remove" => concurrent.links.push(LinkWrite {
+                key: link(&keys[1]),
+                expected: FactVersion(1),
+                mutation: LinkMutation::Remove,
+            }),
+            "update" => concurrent.writes.push(FactWrite {
+                key: keys[1].clone(),
+                expected: FactVersion(1),
+                mutation: FactMutation::Put {
+                    values: record(json!({"amount": 4})),
+                },
+            }),
+            _ => unreachable!(),
+        }
+        cell.commit(concurrent).unwrap();
+        let before = visible(&cell, &keys);
+        let links_before = [
+            cell.load_link(&link(&keys[1])).unwrap(),
+            cell.load_link(&link(&keys[2])).unwrap(),
+        ];
+        assert!(cell.commit(proposal).is_err(), "{initial_member}/{race}");
+        assert_eq!(visible(&cell, &keys), before, "{initial_member}/{race}");
+        assert_eq!(
+            [
+                cell.load_link(&link(&keys[1])).unwrap(),
+                cell.load_link(&link(&keys[2])).unwrap()
+            ],
+            links_before
+        );
+    }
+}
+
+#[test]
+fn complete_partition_reads_refuse_oversized_collections_before_evaluation() {
+    use norn_kernel::{ResourceLimitProfile, load_partition_slice};
+    let definitions = types();
+    let catalog = TypeCatalog::new(&definitions);
+    let mut limits = ResourceLimitProfile::norn_limits_v1().slice;
+    limits.max_records = 0;
+    assert!(
+        load_partition_slice(
+            &cell(),
+            &catalog,
+            [],
+            &[(key(ORDER, "empty"), "members".to_owned())],
+            limits
+        )
+        .is_err()
+    );
+}
