@@ -170,6 +170,8 @@ def compare(norn, erpnext, dispositions):
                                  else 'intentionally different')
     if used != set(decisions):
         raise ValueError('Stale disposition does not match an observed divergence')
+    for bucket, key in (('norn-bug', 'openNornBugs'), ('erpnext-bug', 'openErpnextBugs')):
+        counts[key] = len({d['issue'] for d in dispositions if d['bucket'] == bucket})
     passed = bool(rows) and not any(counts[k] for k in ('unsupported', 'untriaged', 'openNornBugs', 'openErpnextBugs'))
     return dict(format='norn.stock-parity/1', passed=passed, counts=counts,
                 decisions=list(DECISIONS), scales=dict(stock=6, gl=2), cases=rows)
