@@ -51,13 +51,7 @@ identities are read from owned manifests and linked masters, never action input.
 P1 is admission evidence only; the genuine alpha acceptance remains P4.
 
 ## Authoritative preparation reads (P2a)
-POST-READ-ORIGIN: `prepare_stock_snapshot` reads manifest-ordered owned lines
-and declared master/account link paths. Complete parent links must agree with
-the manifest. All facts and complete link sets survive as commit fences.
-Object/type read authorization precedes disclosure; the action-authorized parent
-snapshot is retained. `post_read_origin_denied_reads_preserve_business_state`
-checks denied-read no-write behavior. The API grants no write authority.
-POST-MASTER-PARTITION: warehouses belong to the voucher company; CP1 requires
-FIFO. POST-EXACT-INPUT: quantities/rates become integer millionths without
-rounding or negative values (the named `post_value_exact_millionths` test).
-History/fold planning follows in P2b; atomic commit and alpha acceptance in P3/P4.
+
+POST-READ-ORIGIN: `prepare_stock_snapshot` reads manifest-ordered owned lines and declared master/account paths. Complete parent links must agree with the manifest. Facts and complete link sets survive as fences. Type authorization precedes manifest/adjacency reads; object authorization precedes disclosure, retaining the action-authorized parent snapshot. `post_read_origin_denied_reads_preserve_business_state` checks denied-read no-write behavior. The API grants no write authority.
+
+POST-MASTER-PARTITION: warehouses belong to the voucher company; CP1 requires FIFO. POST-EXACT-INPUT: quantities/rates become integer millionths without rounding or negative values (`post_value_exact_millionths`). History/fold planning follows in P2b; atomic commit and alpha acceptance in P3/P4.

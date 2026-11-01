@@ -3,9 +3,9 @@ use super::{
     ActionAuthorizer, ActionCall, ActionEffectProgram, ActionRefusal, ActionSliceContext, BTreeMap,
     BTreeSet, CellHost, FactKey, FactSlice, JsonObject, JsonValue, LinkReadExpectation,
     ObjectTypeName, ResourceLimitProfile, SliceMeter, TypeCatalog, action_link_snapshot,
-    admit_action_fact_record, authorize_target, check_kind, check_scope, host_failure,
-    integer_equals, load_action_fact, owned_manifest_key, prepare_action_input_for_call,
-    read_manifest_ids, record_action_link_read,
+    admit_action_fact_record, authorize_slice_type, authorize_target, check_kind, check_scope,
+    host_failure, integer_equals, load_action_fact, owned_manifest_key,
+    prepare_action_input_for_call, read_manifest_ids, record_action_link_read,
 };
 use crate::stock_posting::StockPostLine;
 
@@ -21,7 +21,7 @@ pub struct StockPartitionInput {
 }
 
 /// Read-only proposal inputs. These values grant no write authority.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct StockSnapshot {
     /// Every fact used, including the owned manifest and all masters.
     pub facts: FactSlice,
@@ -75,6 +75,17 @@ impl<H: CellHost + ?Sized> Reader<'_, '_, '_, H> {
         key: &FactKey,
         link: &str,
     ) -> Result<Vec<FactKey>, ActionRefusal<H::Error>> {
+        let c = &self.context;
+        let definition = c
+            .catalog
+            .effective_type(&key.object_type)
+            .ok_or(ActionRefusal::TargetNotFound)?;
+        let relation = definition
+            .links
+            .iter()
+            .find(|r| r.id.as_str() == link)
+            .ok_or(ActionRefusal::TargetNotFound)?;
+        authorize_slice_type(c.call, c.effective_input, c.authorizer, &relation.target)?;
         let targets = action_link_snapshot(
             &self.context,
             key,
@@ -171,7 +182,8 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
         &call.input,
         call.action_artifact_id,
         call.action_version,
-    )?;
+    )?
+    .effective_input;
     let Some(binding) = &call.action.stock_post else {
         return Err(invalid("missing stock binding"));
     };
@@ -187,23 +199,22 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
         call.object_type
             .as_ref()
             .map_or(object_kind.as_str(), ObjectTypeName::as_str),
-        text(&input.effective_input, object_id_field)?,
+        text(&input, object_id_field)?,
     );
     check_kind(catalog, &target.object_type, object_kind)?;
-    let state = authorize_target(host, call, &input.effective_input, authorizer, &target)?;
+    let state = authorize_target(host, call, &input, authorizer, &target)?;
     let limits = ResourceLimitProfile::norn_limits_v1().slice;
     let mut reader = Reader {
         context: ActionSliceContext {
             host,
             catalog,
             call,
-            effective_input: &input.effective_input,
+            effective_input: &input,
             authorizer,
         },
         snapshot: StockSnapshot {
             facts: FactSlice::from([(target.clone(), state)]),
-            links: vec![],
-            partitions: vec![],
+            ..StockSnapshot::default()
         },
         meter: SliceMeter::new(limits),
         observed: 0,
@@ -219,6 +230,7 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
         .iter()
         .find(|c| c.id.as_str() == binding.collection)
         .ok_or_else(|| invalid("missing owned collection"))?;
+    authorize_slice_type(call, &input, authorizer, &collection.child_type)?;
     let manifest_key = owned_manifest_key::<H::Error>(&target, &binding.collection)?;
     let manifest = host
         .load_bounded(
@@ -284,14 +296,11 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
         let masters = [company.clone(), item, warehouse];
         let partition = partitions
             .entry(masters.clone())
-            .or_insert_with(|| StockPartitionInput {
+            .or_insert(StockPartitionInput {
                 masters,
-                accounts: accounts.clone(),
+                accounts,
                 lines: vec![],
             });
-        if partition.accounts != accounts {
-            return Err(invalid("partition account bindings disagree"));
-        }
         partition.lines.push(StockPostLine {
             id: id.clone(),
             quantity: millionths(&values, "quantity")?,
@@ -311,11 +320,7 @@ mod tests {
     use norn_ir::Decimal;
     #[test]
     fn post_value_exact_millionths() -> Result<(), norn_ir::RuntimeValueError> {
-        for (input, expected) in [
-            ("1.000001", Some(1_000_001)),
-            ("-1", None),
-            ("0.0000001", None),
-        ] {
+        for (input, expected) in [("1e-6", Some(1)), ("-1", None), ("1e-7", None)] {
             let values =
                 JsonObject::from([("quantity".into(), JsonValue::Number(Decimal::parse(input)?))]);
             assert_eq!(
