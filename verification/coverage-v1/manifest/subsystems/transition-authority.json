@@ -280,6 +280,7 @@
     "crates/norn-cell/src/store.rs",
     "crates/norn-cell/src/system.rs",
     "crates/norn-cell/src/write.rs",
+    "crates/norn-cell/tests/parameter_tax.rs",
     "crates/norn-checker-wasm/Cargo.toml",
     "crates/norn-checker/Cargo.toml",
     "crates/norn-cli/Cargo.toml",
