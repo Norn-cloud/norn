@@ -69,7 +69,14 @@ impl TypeCatalog<'_> {
         object_type: &ObjectTypeName,
     ) -> Result<Vec<&ArtifactEnvelope>, LawEvaluationError> {
         if !self.contains(object_type) && !self.law_artifacts.is_empty() {
-            if matches!(object_type.as_str(), crate::action_commit::ACTION_CALL_TYPE | crate::action_commit::OWNED_ROWS_TYPE | crate::snapshot_observe::OBSERVED_TOMBSTONE_TYPE | crate::snapshot_observe::SOURCE_OWNERSHIP_TYPE | "norn.PendingLinks") {
+            if matches!(
+                object_type.as_str(),
+                crate::action_commit::ACTION_CALL_TYPE
+                    | crate::action_commit::OWNED_ROWS_TYPE
+                    | crate::snapshot_observe::OBSERVED_TOMBSTONE_TYPE
+                    | crate::snapshot_observe::SOURCE_OWNERSHIP_TYPE
+                    | "norn.PendingLinks"
+            ) {
                 return Ok(Vec::new());
             }
             return Err(LawEvaluationError::Invalid(object_type.as_str().to_owned()));

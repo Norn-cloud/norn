@@ -3119,7 +3119,10 @@ fn obs_evidence_direct_law_violation_persists_its_governing_pin() {
         .flat_map(|entry| &entry.events)
         .filter_map(|event| match event {
             ObservationEvent::DataQualityFinding { fact } => Some(fact),
-            ObservationEvent::ObservedFact { .. } | ObservationEvent::ObservedTransition { .. } | ObservationEvent::ObservedDeleted { .. } | ObservationEvent::ObservedRecreated { .. } => None,
+            ObservationEvent::ObservedFact { .. }
+            | ObservationEvent::ObservedTransition { .. }
+            | ObservationEvent::ObservedDeleted { .. }
+            | ObservationEvent::ObservedRecreated { .. } => None,
         })
         .collect();
     assert_eq!(findings.len(), 1);
@@ -3128,7 +3131,6 @@ fn obs_evidence_direct_law_violation_persists_its_governing_pin() {
     );
     assert_eq!(findings[0].outcome, DataQualityOutcome::NotSatisfied);
 }
-
 
 norn_testkit::proptest::proptest! {
     #[test]
@@ -3156,7 +3158,6 @@ norn_testkit::proptest::proptest! {
     }
 }
 
-
 #[test]
 fn law_supported_temporal_semantics_refuse_even_when_activation_is_false() {
     let mut law = serde_json::to_value(direct_amount_law()).expect("law");
@@ -3167,6 +3168,19 @@ fn law_supported_temporal_semantics_refuse_even_when_activation_is_false() {
     let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
     let key = FactKey::new(ITEM, "unsupported-law");
     let slice = load_slice(&observation_cell(), [key.clone()]).expect("slice");
-    let refusal = prepare_observed_snapshot(&catalog, &slice, &turn("unsupported"), ObservedSnapshot {key:&key, values:&object(json!({"item_id":"unsupported-law", "amount":5})), lifecycles:&[], provenance:&source_provenance()}).expect_err("unsupported semantics");
-    assert!(matches!(refusal, ObservationRefusal::Law(ref error) if error.code() == "core.laws.unsupported_semantics"));
+    let refusal = prepare_observed_snapshot(
+        &catalog,
+        &slice,
+        &turn("unsupported"),
+        ObservedSnapshot {
+            key: &key,
+            values: &object(json!({"item_id":"unsupported-law", "amount":5})),
+            lifecycles: &[],
+            provenance: &source_provenance(),
+        },
+    )
+    .expect_err("unsupported semantics");
+    assert!(
+        matches!(refusal, ObservationRefusal::Law(ref error) if error.code() == "core.laws.unsupported_semantics")
+    );
 }
