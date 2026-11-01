@@ -147,3 +147,24 @@ test("explicitly generic authored packs do not assert vendor parity", () => {
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts).toContainEqual(expect.objectContaining({kind:"mapping",payload:expect.objectContaining({extensions:{"norn.mapping.generic/1.0.0":{parity:"unqualified"}}})}))
 })
+
+
+test("POST-AUTHORITY: typed authoring emits a closed direct Post binding", () => {
+  const source = `import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const Order = Norn.type({name: "demo.Order", title: "Order", version: "1.0.0", properties: Schema.Struct({id: Schema.String}), identity: [{name: "primary", properties: ["id"]}]})
+export const Post = Norn.action({
+  id: "demo.order.post", title: "Post", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  input: Schema.Struct({id: Schema.String, posting: Schema.String, amount: Schema.String, versions: Schema.Array(Schema.String)}), output: Schema.Struct({}),
+  effect: {kind: "upsert_input_object", type: Order, objectIdField: "id"},
+  quantityEffect: {ledgerId: "stock", balanceVersionsField: "versions", operation: {kind: "post", postingIdField: "posting", templateId: "ship", parameters: {q: {field: "amount", scale: 6}}}}
+})`
+  const result = compile(source)
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.artifacts).toContainEqual(expect.objectContaining({kind: "action", payload: expect.objectContaining({quantityEffect: {
+    ledgerId: "stock", balanceVersionsField: "versions", operation: {kind: "post", postingIdField: "posting", templateId: "ship", parameters: {q: {field: "amount", scale: 6}}},
+  }})}))
+  for (const invalid of [source.replace('scale: 6', 'scale: 29'), source.replace('kind: "post"', 'kind: "define"'), source.replace('templateId: "ship"', 'templateId: "ship", unrecognized: true')]) {
+    expect(compile(invalid).ok).toBe(false)
+  }
+})

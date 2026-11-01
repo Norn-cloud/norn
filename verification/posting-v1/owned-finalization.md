@@ -45,3 +45,8 @@ An identical retry adds nothing; a conflicting input refuses without a commit.
 This is runtime-enforced native quantity conformance, not CP1 stock acceptance.
 Closed Receipt/Delivery selection, master loading, StockEvents, GL legs and
 alpha invoke/replay remain obligations of the stock-specific wiring.
+
+Typed TypeScript authoring exposes this direct Post declaration through
+`Norn.action.quantityEffect`. The syntax compiler preserves its closed bindings
+and rejects unsupported operation kinds, extra members and invalid scales.
+Reserve/PostReservation remain available through the existing Rust IR.
