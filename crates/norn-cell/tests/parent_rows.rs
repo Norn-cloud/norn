@@ -3079,10 +3079,14 @@ mod cp1_stock {
                         .expect("typed custody fixture");
                         if let Some(post) = &mut action.stock_post {
                             post.operation = match post.operation {
-                                norn_ir::ActionStockOperation::Receipt => {
+                                norn_ir::ActionStockOperation::Receipt
+                                | norn_ir::ActionStockOperation::CustodyReceipt => {
                                     norn_ir::ActionStockOperation::CustodyReceipt
                                 }
-                                _ => norn_ir::ActionStockOperation::CustodyReturn,
+                                norn_ir::ActionStockOperation::Delivery
+                                | norn_ir::ActionStockOperation::CustodyReturn => {
+                                    norn_ir::ActionStockOperation::CustodyReturn
+                                }
                             };
                         }
                         artifact.payload = ArtifactPayload::Action(
@@ -3092,7 +3096,18 @@ mod cp1_stock {
                             .expect("typed custody fixture"),
                         );
                     }
-                    _ => {}
+                    ArtifactPayload::Relation(_)
+                    | ArtifactPayload::Rule(_)
+                    | ArtifactPayload::Connector(_)
+                    | ArtifactPayload::Widget(_)
+                    | ArtifactPayload::Customization(_)
+                    | ArtifactPayload::Setting(_)
+                    | ArtifactPayload::BusinessPack(_)
+                    | ArtifactPayload::Policy(_)
+                    | ArtifactPayload::Derived(_)
+                    | ArtifactPayload::SourceSchema(_)
+                    | ArtifactPayload::Mapping(_)
+                    | ArtifactPayload::Law(_) => {}
                 }
             }
         }
@@ -3225,16 +3240,17 @@ mod cp1_stock {
                     values,
                     ..
                 } = write
+                    && object_type == "stock.Item"
                 {
-                    if object_type == "stock.Item" {
-                        *object_type = "jewelry.MetalLot".into();
-                        let gross = 79_228_162_514_264_337_593_543_950_335_i128 / 24_000_000;
-                        let gross = gross + i128::from(overflow);
-                        values.extend(serde_json::from_str::<JsonObject>(&format!(
+                    *object_type = "jewelry.MetalLot".into();
+                    let gross = 79_228_162_514_264_337_593_543_950_335_i128 / 24_000_000;
+                    let gross = gross
+                        .checked_add(i128::from(overflow))
+                        .expect("gross boundary");
+                    values.extend(serde_json::from_str::<JsonObject>(&format!(
                             r#"{{"ownership":"custody","metal":"Au","gross_micrograms":{gross},"purity_numerator":24000000,"fine_ticks":{}}}"#,
-                            if overflow { 1 } else { gross * 24_000_000 }
+                            if overflow { 1 } else { gross.checked_mul(24_000_000).expect("fine boundary") }
                         )).expect("Decimal boundary fixture"));
-                    }
                 }
             }
             for change in &mut links {
@@ -3242,10 +3258,9 @@ mod cp1_stock {
                     target_type: Some(ty),
                     ..
                 } = change
+                    && ty == "stock.Item"
                 {
-                    if ty == "stock.Item" {
-                        *ty = "jewelry.MetalLot".into();
-                    }
+                    *ty = "jewelry.MetalLot".into();
                 }
             }
             links.push(link(
