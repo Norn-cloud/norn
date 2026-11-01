@@ -51,6 +51,8 @@
 //! DP-SWEEP-HYDRATE-2: malformed or incomplete pages return no observations/cursor.
 //! Evidence: `sweep_hydration_conforms`, `generated_hydration_conforms`.
 
+use std::collections::BTreeSet;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -428,11 +430,18 @@ impl FrappeSweep {
             });
         }
         let mut previous = command.after.clone();
+        let mut seen = BTreeSet::new();
+        if let Some(after) = &command.after {
+            seen.insert((after.modified.clone(), after.name.clone()));
+        }
         for row in rows {
             let cursor = self.row_cursor(command.feed, row)?;
-            if previous.as_ref().is_some_and(|last| {
-                (&last.modified, &last.name) >= (&cursor.modified, &cursor.name)
-            }) {
+            // Name ordering belongs to the source database collation.
+            if previous
+                .as_ref()
+                .is_some_and(|last| last.modified > cursor.modified)
+                || !seen.insert((cursor.modified.clone(), cursor.name.clone()))
+            {
                 return Err(IngestError::InvalidSweep {
                     reason: "listing rows must advance in keyset order",
                 });
@@ -601,6 +610,40 @@ mod tests {
             .replace("00:00:00", "00:00:01")
             .into_bytes();
         assert!(sweep.ingest(&command, &listing, &[changed], 42).is_err());
+    }
+
+    #[test]
+    fn source_collated_pages_conform() {
+        let sweep = sweep();
+        let command = sweep.plan(SweepFeed::Documents, None).expect("plan");
+        let row = |name: &str, second| json!({"name":name,"modified":format!("2026-11-01 00:00:0{second}")});
+        let listing = |rows: Value| json!({"data":rows}).to_string().into_bytes();
+        let mixed = listing(json!([row("a", 0), row("B", 0)]));
+        assert_eq!(
+            sweep
+                .plan_documents(&command, &mixed)
+                .expect("source order")
+                .len(),
+            2
+        );
+        let repeated = listing(json!([row("a", 0), row("B", 0), row("a", 0)]));
+        assert!(sweep.plan_documents(&command, &repeated).is_err());
+        let regressed = listing(json!([row("a", 1), row("B", 0)]));
+        assert!(sweep.plan_documents(&command, &regressed).is_err());
+        let cursor = SweepCursor {
+            feed: SweepFeed::Documents,
+            doctype: sweep.doctype.clone(),
+            modified: "2026-11-01 00:00:00.000000".into(),
+            name: "a".into(),
+        };
+        let resumed = sweep
+            .plan(SweepFeed::Documents, Some(&cursor))
+            .expect("resume");
+        assert!(
+            sweep
+                .plan_documents(&resumed, &listing(json!([row("a", 0)])))
+                .is_err()
+        );
     }
 
     proptest! {
