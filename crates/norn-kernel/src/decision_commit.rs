@@ -146,14 +146,22 @@ impl<'a> TypeCatalog<'a> {
                     || !ty.owned_collections.is_empty()
             })
             .collect();
+        let mut extensions = self
+            .extensions
+            .iter()
+            .map(|extension| norn_ir::canonical::canonical_json_of(*extension))
+            .collect::<Result<Vec<_>, _>>()?;
+        extensions.sort();
+        let mut properties = self
+            .property_types
+            .unwrap_or(&[])
+            .iter()
+            .map(norn_ir::canonical::canonical_json_of)
+            .collect::<Result<Vec<_>, _>>()?;
+        properties.sort();
         norn_ir::canonical::domain_hash_hex(
             b"norn.stock-schema/1\0",
-            &(
-                types,
-                &self.interfaces,
-                &self.extensions,
-                self.property_types.unwrap_or(&[]),
-            ),
+            &(types, &self.interfaces, extensions, properties),
         )
     }
 
