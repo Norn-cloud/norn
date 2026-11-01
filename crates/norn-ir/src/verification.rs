@@ -105,12 +105,12 @@ pub enum LawRoot {
     Company(String),
     /// Application boundary.
     App(String),
-    /// Exact retained composition-pack boundary.
-    Pack(String),
     /// Cell ownership root.
     Cell(String),
     /// Exact entity type boundary.
     Entity(String),
+    /// Exact retained composition-pack boundary.
+    Pack(String),
 }
 
 /// One lifecycle-state selector.
