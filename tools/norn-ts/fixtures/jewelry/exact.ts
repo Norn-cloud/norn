@@ -1,5 +1,5 @@
 export const PURITY_DENOMINATOR = 24_000_000n
-export const MAX_FINE_TICKS = (1n << 127n) - 1n
+export const MAX_FINE_TICKS = (1n << 96n) - 1n
 type Refusal = "purity_unrepresentable" | "purity_conflict" | "fine_mass_overflow" | "invalid_gross_mass"
 type Result<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly code: Refusal }
 
@@ -26,7 +26,7 @@ export function fineMass(input: { readonly grossMicrograms: string; readonly kar
   const normalized = purity(input)
   if (!normalized.ok) return normalized
   if (!/^[1-9][0-9]*$/.test(input.grossMicrograms)) return { ok: false, code: "invalid_gross_mass" }
-  if (input.grossMicrograms.length > 39) return { ok: false, code: "fine_mass_overflow" }
+  if (input.grossMicrograms.length > 29) return { ok: false, code: "fine_mass_overflow" }
   const gross = BigInt(input.grossMicrograms)
   if (gross > MAX_FINE_TICKS / normalized.value) return { ok: false, code: "fine_mass_overflow" }
   return { ok: true, value: gross * normalized.value }

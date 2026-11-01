@@ -9,7 +9,7 @@ this unit is structural admission and exact input normalization, not posting.
   precision inputs refuse with `purity_unrepresentable`; disagreeing valid
   representations refuse with `purity_conflict`.
 - `checkedFineMass`: positive integer micrograms times the numerator is at most
-  2^127-1. Refuse with `fine_mass_overflow` before multiplication; malformed or
+  2^96-1 (runtime Decimal’s largest integer). Refuse with `fine_mass_overflow` before multiplication; malformed or
   nonpositive gross input refuses with `invalid_gross_mass`.
 - `refining_conserves` / `fineConserved`: the mixed-purity fixture maps to the
   Lean/statechart normalized fine ticks exactly; adding one tick violates it.
