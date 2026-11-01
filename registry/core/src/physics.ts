@@ -15,9 +15,9 @@ import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 
 const ConversionMeasurements = Schema.Struct({
-  input_quantity: Norn.decimal(3),
-  output_quantity: Norn.decimal(3),
-  loss_quantity: Norn.decimal(3),
+  input_quantity: Schema.Finite,
+  output_quantity: Schema.Finite,
+  loss_quantity: Schema.Finite,
 })
 
 /** LAW-CONVERSION-1: measured quantities in one declared unit conserve exactly. */
