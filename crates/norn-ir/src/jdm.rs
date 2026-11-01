@@ -447,7 +447,7 @@ pub struct JdmSwitchStatement {
 }
 
 /// Sub-decision content (`DecisionNodeContent`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct JdmSubDecisionContent {
     /// Bounded ordered application of this existing sub-decision. Execution
@@ -495,7 +495,7 @@ pub struct JdmCustomNodeContent {
 /// The helper's input is exactly `{accumulator, item, index}` and its output
 /// is the next accumulator. Residuals and provenance are ordinary declared
 /// accumulator fields; the evaluator does not interpret their names.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OrderedFold {
     pub semantics_version: String,
