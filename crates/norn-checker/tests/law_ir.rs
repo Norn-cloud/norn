@@ -1120,6 +1120,18 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
     let base = vec![interface, property_types, melt];
     assert_eq!(
         check_artifact_set(
+            &base,
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            }
+        ),
+        vec![],
+        "concrete schema and unit catalog must admit before projecting laws"
+    );
+    assert_eq!(
+        check_artifact_set(
             std::slice::from_ref(&law),
             &EntityArtifactSetContext {
                 registry: &BTreeSet::new(),
