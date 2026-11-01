@@ -3118,7 +3118,12 @@ mod cp1_stock {
             })
             .expect("seed drafts");
     }
-    fn invoke<'a>(catalog: &TypeCatalog<'a>, action: &str, id: &str, key: &str) -> ActionCall<'a> {
+    fn invoke<'a>(
+        catalog: &'a TypeCatalog<'a>,
+        action: &str,
+        id: &str,
+        key: &str,
+    ) -> ActionCall<'a> {
         catalog
             .stock_action(action)
             .expect("stable stock action")
