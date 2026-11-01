@@ -6311,11 +6311,10 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                 Type::Record(name)
             }
             Schema::Array(items) => self.schema_type(items, records).list(),
-            Schema::String(None) => Type::text(),
+            Schema::String(None) | Schema::Decimal(_) => Type::text(),
             Schema::String(Some(values)) => Type::enumeration(values.iter().cloned()),
             Schema::Integer => Type::Integer,
             Schema::Number => Type::Number,
-            Schema::Decimal(_) => Type::text(),
             Schema::Boolean => Type::Bool,
             Schema::Null | Schema::Json => Type::Json,
             Schema::Nullable(inner) => self.schema_type(inner, records).optional(),

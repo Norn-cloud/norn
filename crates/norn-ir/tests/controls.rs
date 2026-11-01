@@ -39,7 +39,10 @@ fn verdict_wire_preserves_both_evidence_axes() -> Result<(), serde_json::Error> 
                 actions: vec!["demo.approve".into()],
                 verdict: verdict.clone(),
                 trace: if reachability == Reachability::Witnessed {
-                    vec!["reviewer:demo.approve".into()]
+                    vec![norn_ir::entity_v2::controls::ControlStep {
+                        role: "reviewer".into(),
+                        action: "demo.approve".into(),
+                    }]
                 } else {
                     vec![]
                 },

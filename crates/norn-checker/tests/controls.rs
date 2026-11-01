@@ -72,19 +72,11 @@ fn check(
     .expect("receipt")
 }
 #[test]
-fn concrete_refutation_refuses_install() {
+fn model_refutation_refuses_install_without_claiming_a_witness() {
     let checked = check(&fixture(true, false, false), &[]);
     assert_eq!(checked.controls[0].verdict, ControlStatus::Refuted);
-    assert_eq!(checked.controls[0].reachability, Reachability::Witnessed);
+    assert_eq!(checked.controls[0].reachability, Reachability::Unknown);
     assert!(!checked.controls[0].trace.is_empty());
-    assert!(
-        checked
-            .diagnostics
-            .iter()
-            .all(|d| d.code.as_str() == "controls.validation.refuted"),
-        "{:?}",
-        checked.diagnostics
-    );
     assert!(
         checked
             .diagnostics
@@ -94,15 +86,15 @@ fn concrete_refutation_refuses_install() {
     assert!(!checked.receipt.admitted);
 }
 #[test]
-fn abstract_counterexample_is_unknown_and_cannot_supply_required_witness() {
+fn model_candidate_cannot_supply_required_witness() {
     let checked = check(&fixture(true, true, true), &[]);
-    assert_eq!(checked.controls[0].verdict, ControlStatus::Unknown);
+    assert_eq!(checked.controls[0].verdict, ControlStatus::Refuted);
     assert_eq!(checked.controls[0].reachability, Reachability::Unknown);
     assert!(
         checked
             .diagnostics
             .iter()
-            .any(|d| d.code.as_str() == "controls.validation.witness_required")
+            .any(|d| d.code.as_str() == "controls.validation.refuted")
     );
     assert!(!checked.receipt.admitted);
 }
@@ -143,4 +135,18 @@ fn subtype_cannot_drop_inherited_controls() {
     assert_eq!(checked.controls[0].object_type.as_str(), "demo.Child");
     assert_eq!(checked.controls[0].actions, checked.controls[1].actions);
     assert_eq!(checked.controls[0].verdict, ControlStatus::Proven);
+}
+
+#[test]
+fn separated_model_cannot_supply_required_witness() {
+    let checked = check(&fixture(false, false, true), &[]);
+    assert_eq!(checked.controls[0].verdict, ControlStatus::Proven);
+    assert_eq!(checked.controls[0].reachability, Reachability::Unknown);
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "controls.validation.witness_required")
+    );
+    assert!(!checked.receipt.admitted);
 }
