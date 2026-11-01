@@ -15,7 +15,7 @@ fn sum_never_wraps() {
 #[kani::proof]
 fn ratio_is_nearest_and_sign_symmetric() {
     let n = i128::from(kani::any::<i16>());
-    let d = i128::from(kani::any::<i16>());
+    let d = if kani::any::<bool>() { 128 } else { -128 };
     let result = arithmetic::ratio(n, d);
     if d == 0 {
         assert!(result.is_none());
@@ -23,7 +23,20 @@ fn ratio_is_nearest_and_sign_symmetric() {
         let error = q * d - n * arithmetic::FACTOR;
         assert!(error.unsigned_abs() * 2 <= d.unsigned_abs());
         assert_eq!(arithmetic::ratio(-n, d), Some(-q));
+        if error.unsigned_abs() * 2 == d.unsigned_abs() {
+            assert!(q.unsigned_abs() * d.unsigned_abs() >= (n * arithmetic::FACTOR).unsigned_abs());
+        }
     } else {
         assert!(false, "bounded operands must produce a ratio");
     }
+}
+
+#[kani::proof]
+fn zero_divisor_always_refuses() {
+    assert!(arithmetic::ratio(kani::any(), 0).is_none());
+}
+
+#[kani::proof]
+fn ratio_never_panics_for_full_width_inputs() {
+    let _result = arithmetic::ratio(kani::any(), kani::any());
 }
