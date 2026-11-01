@@ -98,3 +98,12 @@ and its complete output before it becomes state. Nested ordinary calls retain
 the fold helper's boundary check. Non-fold helper admission is unchanged.
 The checks charge materialization to shared fuel. No schema failure produces
 an accumulator or effects; the execution-unavailable gate still applies here.
+
+FOLD-PREFLIGHT: parse and retain helper/item/state schemas once at admission.
+Evaluation checks values against those exact retained contracts; it does not
+reparse declaration schemas outside the caller's meter on every invocation.
+FOLD-NAMESPACE: effective fold owner/node identities must be unambiguous across
+the reachable closure; an internal-plan collision refuses before evaluation.
+FOLD-ORDER-FUEL: sorting charges both key vectors before each comparison (one
+per integer, one plus UTF-8 bytes per string). Inserting canonical identity n
+charges n times one plus its bytes, conservatively bounding identity searches.

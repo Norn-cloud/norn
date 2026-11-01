@@ -918,7 +918,19 @@ fn fold_policies(
                     .ok_or_else(|| invalid_schema(&owner.rule_id, "key", "missing helper"))?;
                 let helper_graph = decision_graph(helper, RuleContractV2::SubDecision)?;
                 refuse_nested_folds(helper, sub_decisions, 0)?;
+                let (step_input, state_schema) =
+                    contracts.schemas.get(&content.key).ok_or_else(|| {
+                        invalid_schema(&owner.rule_id, "orderedFold", "missing step contract")
+                    })?;
+                let item_schema = step_input
+                    .properties()
+                    .and_then(|fields| fields.get("item"))
+                    .ok_or_else(|| {
+                        invalid_schema(&owner.rule_id, "orderedFold", "missing item contract")
+                    })?;
                 let plan = crate::fold::FoldPlan {
+                    item_schema: item_schema.clone(),
+                    state_schema: state_schema.clone(),
                     declaration: fold.clone(),
                     key: content.key.clone(),
                     selector: content
@@ -939,7 +951,16 @@ fn fold_policies(
                 crate::step::validate_fold(&plan.declaration).map_err(|error| {
                     invalid_schema(&owner.rule_id, "orderedFold", error.to_string())
                 })?;
-                folds.insert(crate::fold::fold_key(&owner.rule_id, node.id()), plan);
+                if folds
+                    .insert(crate::fold::fold_key(&owner.rule_id, node.id()), plan)
+                    .is_some()
+                {
+                    return Err(invalid_schema(
+                        &owner.rule_id,
+                        "orderedFold",
+                        "ambiguous fold owner/node identity",
+                    ));
+                }
             }
         }
     }
