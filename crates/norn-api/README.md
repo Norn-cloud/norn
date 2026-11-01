@@ -42,8 +42,8 @@ snapshot, receipt and ledger publish in one engine transaction. Failure or abrup
 process loss before commit leaves no application schema; after commit a lost
 reply leaves the complete initial revision. An identical provisioning request
 (scope, projected model and full install input, including logical time) reopens
-revision 1 without writes; a changed request or advanced definition revision
-refuses. Residual unrelated schema is never adopted. The transaction owns the
+the current revision without writes, including after later trusted installs; a
+changed provisioning request refuses. Residual unrelated schema is never adopted. The transaction owns the
 freshness check, so competing requests cannot both initialize the cell.
 Correspondence: `definitions_install::host_provision_atomic_at_every_storage_boundary`
 injects errors and abrupt subprocess exit after every SQL operation, before
