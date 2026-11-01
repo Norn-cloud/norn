@@ -49,7 +49,9 @@ pub(crate) fn deduplicate<E: SqlEngine>(
                     &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.id') = ?2 AND commit_seq < ?3 AND seq > ?4 ORDER BY seq LIMIT 64"),
                     params![&batch.world, &finding.id, to_i64(before_commit, "finding cutoff")?, after],
                 )?;
-                if rows.is_empty() { break; }
+                if rows.is_empty() {
+                    break;
+                }
                 for values in rows {
                     after = crate::engine::SqlRow(values).get(0)?;
                     if reader
@@ -60,7 +62,9 @@ pub(crate) fn deduplicate<E: SqlEngine>(
                         break;
                     }
                 }
-                if known { break; }
+                if known {
+                    break;
+                }
             }
         }
         if !known {
