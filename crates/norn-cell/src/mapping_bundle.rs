@@ -54,9 +54,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let installed = self.installed_definitions(Some(version))?.ok_or_else(mismatch)?;
         let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
         let mapping = artifacts.iter().find(|a| a.artifact_id == input.mapping).ok_or_else(mismatch)?;
-        let document: norn_ir::mapping::MappingIr = serde_json::from_value(serde_json::to_value(&mapping.payload)?)?;
+        let document: norn_ir::mapping::MappingIr = serde_json::from_value(serde_json::to_value(mapping.payload.to_json_value())?)?;
         let source = artifacts.iter().find(|a| a.artifact_id == document.source.schema_id).ok_or_else(mismatch)?;
-        let schema: norn_ir::source_schema::SourceSchemaIr = serde_json::from_value(serde_json::to_value(&source.payload)?)?;
+        let schema: norn_ir::source_schema::SourceSchemaIr = serde_json::from_value(serde_json::to_value(source.payload.to_json_value())?)?;
         let field = |name: &str| raw.get(name).and_then(RuntimeValue::as_str).ok_or_else(mismatch);
         if field("contract")? != "norn.raw_observation/v1" || field("source")? != schema.source.system
             || input.connector_instance != schema.source.instance || input.partition.trim().is_empty()
