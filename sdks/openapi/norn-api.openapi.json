@@ -3613,6 +3613,44 @@
         },
         "additionalProperties": false
       },
+      "NornIrControls": {
+        "type": "object",
+        "description": "Controls belonging to the enclosing object type.",
+        "required": [
+          "format",
+          "sensitivePaths"
+        ],
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "Closed wire profile.",
+            "enum": [
+              "norn.controls/1"
+            ],
+            "x-enumDescriptions": [
+              "Alpha finite singleton-role checks."
+            ]
+          },
+          "sensitivePaths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrSensitivePath"
+            },
+            "description": "Ordered sensitive action sequences."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrControlsFormat": {
+        "type": "string",
+        "description": "Versioned controls vocabulary.",
+        "enum": [
+          "norn.controls/1"
+        ],
+        "x-enumDescriptions": [
+          "Alpha finite singleton-role checks."
+        ]
+      },
       "NornIrCorrespondenceRelation": {
         "type": "string",
         "description": "How a source term relates to its target terms.",
@@ -8472,6 +8510,10 @@
             ],
             "description": "Marks this type's facts as GL legs for runtime balanced-posting checks.\nInherited by subtypes. Omitted for object types that are not GL legs."
           },
+          "controls": {
+            "$ref": "#/components/schemas/NornIrControls",
+            "description": "Definition-owned finite duty controls, inherited by subtypes."
+          },
           "description": {
             "type": "string"
           },
@@ -11079,6 +11121,33 @@
         "enum": [
           "semantic_only"
         ]
+      },
+      "NornIrSensitivePath": {
+        "type": "object",
+        "description": "A sensitive action sequence on the enclosing object type.",
+        "required": [
+          "objectType",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact action identities in required order."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "Must equal the enclosing type, not an arbitrary external target.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          },
+          "requireWitness": {
+            "type": "boolean",
+            "description": "Require concrete availability evidence in addition to separation."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrSettingPayload": {
         "allOf": [
