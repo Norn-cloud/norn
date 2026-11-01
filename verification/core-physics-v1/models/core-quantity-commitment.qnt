@@ -115,4 +115,5 @@ module core_quantity_commitment {
   def neverDropped = commitments.length() == 2 and IDS.forall(i => commitments[i].due == before[i].due)
   def terminalAbsorbing = IDS.forall(i => TERMINAL.contains(before[i].state) implies commitments[i] == before[i])
   def endsByDue = IDS.forall(i => commitments[i].due <= now implies TERMINAL.contains(commitments[i].state))
+  def deadlineBreach = IDS.forall(i => (before[i].state == "promised" and commitments[i].due <= now) implies commitments[i].state == "breached")
 }
