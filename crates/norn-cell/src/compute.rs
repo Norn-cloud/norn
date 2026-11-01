@@ -1,6 +1,9 @@
 //! Result/frontier contracts; producing evaluators must qualify their snapshot pins.
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Governed-use refusal and the existing action read-guard adapter.
+pub mod governed;
+mod governed_policy;
 /// Receipt-driven query maintenance.
 pub mod ivm;
 
