@@ -94,3 +94,8 @@ protection, quantity configuration, accounting admission and atomic publication.
 POST-HISTORY-FENCE / POST-CANONICAL-PARTITION: canonical master tuple selects the partition; authorized fact (including ABSENT), complete adjacency and event facts are fenced. Identity, count and dense ordinals agree. POST-RUNTIME-BINDINGS: master book/graph/version/currency/accounts/UOM are pinned; configuration changes refuse.
 CP1 templates are receipt/delivery, layer posted; plans grant no commit authority.
 `post_history_identity_and_exact_shape` and `post_partition_refusal_names_authoritative_stock` check decoding and typed refusal. Full host fence conformance follows in the testkit cut; no writer is activated.
+
+POST-HISTORY-CAPACITY: CP1 activation caps each partition at 256 events. Reads
+reserve the full ceiling beside non-event work; planning refuses a candidate
+that would cross it before any publication. Boundary conformance covers 255+1,
+256+1 and exact non-event reserve. No checkpoint or unbounded-history claim.
