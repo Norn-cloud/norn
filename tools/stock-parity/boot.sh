@@ -36,7 +36,6 @@ bench set-config -g db_host db
 bench set-config -gp db_port 3306
 bench set-config -g redis_cache redis://cache:6379
 bench set-config -g redis_queue redis://queue:6379
-bench set-config -gp scheduler_interval 10
 bench set-config -gp scheduler_tick_interval 10
 bench new-site parity.localhost --no-mariadb-socket --mariadb-root-password "$PARITY_PASSWORD" --admin-password "$PARITY_PASSWORD" --db-password "$PARITY_PASSWORD" --install-app erpnext
 bench use parity.localhost

@@ -13,6 +13,11 @@ def ensure(api, doctype, identity, **fields):
 
 
 def provision(api, trace):
+    jobs = list(api.rows('Scheduled Job Type', {'method': ['like', '%repost_item_valuation.%']}, ['name']))
+    if not jobs:
+        raise ValueError('Native valuation jobs unavailable')
+    for job in jobs:
+        api.update('Scheduled Job Type', job['name'], frequency='Cron', cron_format='* * * * *', stopped=0)
     suffix = uuid.uuid4().hex[:10]
     company = 'Parity ' + suffix
     ensure(api, 'Currency', 'USD', currency_name='USD', enabled=1, fraction='Cent', fraction_units=100)

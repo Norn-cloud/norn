@@ -11,7 +11,7 @@ def decimal(value):
     return '0' if number == 0 else format(number.normalize(), 'f')
 
 
-def checkpoint(driver, step, attempts, timeout=60):
+def checkpoint(driver, step, attempts, timeout=120):
     api, f = driver.api, driver.f
     deadline = time.monotonic() + timeout
     while list(api.rows('Repost Item Valuation', {'company': f['company'], 'status': ['in', ['Queued', 'In Progress']]}, ['name'])):
