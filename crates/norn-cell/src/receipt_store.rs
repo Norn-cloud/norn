@@ -624,14 +624,25 @@ mod tests {
                 .and_then(RuntimeValue::as_str),
             Some("published")
         );
+        assert_receipt_retries(&mut cell, &catalog, &mut request);
+    }
+    fn assert_receipt_retries(cell: &mut Cell, catalog: &norn_kernel::TypeCatalog<'_>, request: &mut norn_kernel::ActionCall<'_>) {
+        use norn_kernel::{commit_action, ActionOutcome};
         let published = cell.store().verified_head().expect("head");
+        for world in [norn_kernel::World::Fork { id: norn_kernel::WorldId("scenario".into()) },
+            norn_kernel::World::Historical { commit: norn_kernel::CommitId("history".into()) }] {
+            request.turn.world = world;
+            assert!(norn_kernel::commit_action(cell, catalog, request, &ActionAllow).is_err());
+            assert_eq!(cell.store().verified_head().expect("head"), published);
+        }
+        request.turn.world = norn_kernel::World::Main;
         assert!(matches!(
-            commit_action(&mut cell, &catalog, &request, &ActionAllow).expect("retry"),
+            commit_action(cell, catalog, request, &ActionAllow).expect("retry"),
             ActionOutcome::Replayed { .. }
         ));
         assert_eq!(cell.store().verified_head().expect("head"), published);
         request.idempotency_key = "accept-2".into();
-        assert!(commit_action(&mut cell, &catalog, &request, &ActionAllow).is_err());
+        assert!(commit_action(cell, catalog, request, &ActionAllow).is_err());
         assert_eq!(cell.store().verified_head().expect("head"), published);
     }
     #[test]

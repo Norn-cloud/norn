@@ -1001,6 +1001,10 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    if matches!(call.action.effect_program.as_ref(), Some(ActionEffectProgram::FireTransition { accept_receipt: Some(_), .. }))
+        && !matches!(call.turn.world, crate::World::Main) {
+        return Err(ActionRefusal::UnsupportedEffect { action_id: call.action.action_id.clone() });
+    }
     let action = call.action;
     let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
     else {
@@ -1125,9 +1129,6 @@ fn receipt_changes<H: CellHost + ?Sized>(
     let invalid = || ActionRefusal::InvalidInput {
         field: declaration.reference_field.clone(),
     };
-    if !matches!(call.turn.world, crate::World::Main) {
-        return Err(invalid());
-    }
     let value = input
         .get(&declaration.reference_field)
         .ok_or_else(invalid)?;
