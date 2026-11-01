@@ -4,11 +4,8 @@ use crate::{
     evaluate::poll_once,
     step::StepContracts,
 };
-use norn_expr::schema::{Schema, fold_step_schemas};
-use norn_ir::{
-    JsonValue,
-    jdm::{FoldOrderKind, FoldRounding, OrderedFold},
-};
+use norn_expr::schema::Schema;
+use norn_ir::jdm::{FoldOrderKind, FoldRounding, OrderedFold};
 use std::collections::BTreeSet;
 use zen_engine::{
     Decision, EvaluationOptions, Isolate, Variable,
@@ -25,6 +22,8 @@ pub(crate) struct FoldPlan {
     pub(crate) selector: String,
     pub(crate) key: String,
     pub(crate) helper: Decision,
+    pub(crate) item_schema: Schema,
+    pub(crate) state_schema: Schema,
 }
 
 impl FoldPlan {
@@ -34,7 +33,6 @@ impl FoldPlan {
         meter: &Meter,
         contracts: &StepContracts,
     ) -> Result<Variable, Failure> {
-        crate::step::validate_fold(&self.declaration)?;
         let f = &self.declaration;
         let profile = ScaledArithmetic {
             scale: f.arithmetic.scale,
@@ -57,14 +55,11 @@ impl FoldPlan {
         if items.len() > usize::try_from(f.max_items)? {
             return Err("fold item bound exceeded".into());
         }
-        let item_schema = Schema::parse(&JsonValue::Object(f.item_schema.clone()), "item")
-            .map_err(|e| e.reason)?;
-        let (_, state_schema) = fold_step_schemas(f).map_err(|e| e.reason)?;
-        let ordered = ordered_items(&items, f, &item_schema, &meter, profile)?;
+        let ordered = ordered_items(&items, f, &self.item_schema, &meter, profile)?;
         let mut state = isolate.run_standard(f.initial.as_str())?;
         check_state(
             &state,
-            &state_schema,
+            &self.state_schema,
             f.max_accumulator_bytes,
             &meter,
             profile,
@@ -91,7 +86,7 @@ impl FoldPlan {
             contracts.check(&self.key, &state, false, Some(&meter))?;
             check_state(
                 &state,
-                &state_schema,
+                &self.state_schema,
                 f.max_accumulator_bytes,
                 &meter,
                 profile,
