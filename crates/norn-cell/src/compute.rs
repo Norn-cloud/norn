@@ -11,7 +11,7 @@ use norn_checker::metric::compute::{
     contribution::{Contribution, project},
 };
 use norn_ir::{Decimal, ObjectTypeName, RuntimeValue, UtcTimestamp};
-use norn_ir::{FreshnessPolicy, ResourceLimitProfile};
+use norn_ir::{ResourceLimitProfile, metric::FreshnessPolicy};
 use serde::{Deserialize, Serialize};
 
 /// Connector instance → partition → opaque consumed cursor.
