@@ -470,6 +470,24 @@ pub static REGISTRY: &[CodeEntry] = &[
         "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
         "0.2.0",
     ),
+    introduced(
+        "controls.validation.invalid_path",
+        Tier::T3,
+        "Invalid sensitive path declaration",
+        "0.2.0",
+    ),
+    introduced(
+        "controls.validation.refuted",
+        Tier::T3,
+        "Finite-model duty separation counterexample",
+        "0.2.0",
+    ),
+    introduced(
+        "controls.validation.witness_required",
+        Tier::T3,
+        "Kernel availability witness required",
+        "0.2.0",
+    ),
     entry(
         "customization.validation.invalid_payload",
         Tier::T2,

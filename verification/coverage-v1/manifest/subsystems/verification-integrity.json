@@ -451,6 +451,8 @@
     "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
     "verification/stripmine-2026-08-22/scripts/validate.sh",
     "crates/norn-checker/src/controls.rs",
+    "crates/norn-checker/src/controls_adapter.rs",
+    "crates/norn-checker/tests/controls.rs",
     "crates/norn-ir/src/entity_v2/controls.rs",
     "crates/norn-ir/tests/controls.rs",
     "crates/norn-checker/src/obligations/induction.rs"

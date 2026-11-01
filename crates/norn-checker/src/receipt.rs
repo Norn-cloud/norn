@@ -218,6 +218,8 @@ pub struct CheckReceipt {
 /// The findings of one artifact-set check and its receipt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckedArtifactSet {
+    /// Finite controls evidence, preserved verbatim by registry projections.
+    pub controls: Vec<norn_ir::ControlVerdict>,
     /// Every finding, as [`crate::check_artifact_set`] reports them, plus
     /// [`codes::ENVIRONMENT_UNDERIVABLE`].
     pub diagnostics: Vec<Diagnostic>,
@@ -490,6 +492,7 @@ fn check_artifact_set_with_profile(
         },
     };
     Ok(CheckedArtifactSet {
+        controls: crate::controls_adapter::check_controls(artifacts, context.base).0,
         diagnostics,
         receipt,
     })
