@@ -595,7 +595,10 @@ fn request_member(member: Member) -> MemberRef {
 #[test]
 fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
     let [parent, child] = request_types();
-    let contract = entity("shop.RequestScope.interface", &json!({ "entityVersion": "2.0", "interface": { "name": "shop.RequestScope", "properties": [] } }));
+    let contract = entity(
+        "shop.RequestScope.interface",
+        &json!({ "entityVersion": "2.0", "interface": { "name": "shop.RequestScope", "properties": [] } }),
+    );
     let mut child = serde_json::to_value(child).expect("child");
     child["payload"]["objectType"]["implements"] = json!(["shop.RequestScope"]);
     let child = envelope(child);
