@@ -5893,6 +5893,8 @@ export interface operations {
                 "x-norn-org-id": string;
                 /** @description Explicit environment */
                 "x-norn-environment-id": string;
+                /** @description Actor supplied by the trusted authentication adapter */
+                "x-norn-actor": string;
             };
             path?: never;
             cookie?: never;
