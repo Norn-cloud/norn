@@ -1530,3 +1530,35 @@ proptest::proptest! {
         proptest::prop_assert!(meter.arithmetic().is_none());
     }
 }
+
+#[test]
+fn full_width_meter_limit_accepts_exact_total_then_refuses_overflow() {
+    let meter = zen_engine::meter::Meter::new(u64::MAX);
+    assert!(meter.charge(u64::MAX).is_ok());
+    let refusal = meter.charge(1).unwrap_err();
+    assert_eq!(meter.charge(0), Err(refusal));
+    assert_eq!(meter.used(), u64::MAX);
+}
+
+proptest::proptest! {
+    /// FOLD-METER-EXACT: full-width inputs agree with a wider mathematical sum.
+    #[test]
+    fn full_width_shared_meter_matches_budget(limit: u64, first: u64, second: u64) {
+        let meter = zen_engine::meter::Meter::new(limit);
+        let other = meter.clone();
+        let a = meter.charge(first);
+        proptest::prop_assert_eq!(a.is_ok(), first <= limit);
+        if let Err(error) = a {
+            proptest::prop_assert_eq!(other.charge(second), Err(error));
+        } else {
+            let b = other.charge(second);
+            proptest::prop_assert_eq!(b.is_ok(), u128::from(first) + u128::from(second) <= u128::from(limit));
+            if let Err(error) = b {
+                proptest::prop_assert_eq!(meter.charge(0), Err(error));
+                proptest::prop_assert_eq!(meter.used(), first);
+            } else {
+                proptest::prop_assert_eq!(u128::from(meter.used()), u128::from(first) + u128::from(second));
+            }
+        }
+    }
+}
