@@ -578,13 +578,13 @@ fn stock_json<X, T: serde::Serialize>(
     norn_ir::runtime::encode(value).map_err(stock_invalid)
 }
 fn stock_decimal<X>(value: u128) -> Result<norn_ir::RuntimeValue, crate::ActionRefusal<X>> {
-    norn_ir::Decimal::parse(&format!("{}.{:06}", value / 1_000_000, value % 1_000_000))
+    norn_ir::Decimal::parse(&display_quantity(value))
         .map(norn_ir::RuntimeValue::Number)
-        .map_err(|_| stock_invalid("stock amount exceeds exact decimal range"))
+        .map_err(|_source| stock_invalid("stock amount exceeds exact decimal range"))
 }
 
 /// Build the complete stock effect proposal using the shared FIFO lowering.
-/// This value is unsealed; only commit_action may recompute and seal it.
+/// This value is unsealed; only `commit_action` may recompute and seal it.
 ///
 /// # Errors
 /// Refuses multiple partitions, backdating, invalid outputs or exhausted capacity.
@@ -618,7 +618,7 @@ pub fn plan_stock_effects<X>(
         .and_then(V::as_str)
         .ok_or_else(|| stock_invalid("missing voucher effective timestamp"))?;
     let effective_key = norn_expr::temporal::timestamp_ordering_key(effective)
-        .map_err(|_| stock_invalid("invalid stock effective timestamp"))?;
+        .map_err(|_source| stock_invalid("invalid stock effective timestamp"))?;
     let old = snapshot
         .facts
         .get(&partition.witness)
@@ -629,7 +629,7 @@ pub fn plan_stock_effects<X>(
             .and_then(V::as_str)
             .ok_or_else(|| stock_invalid("missing partition effective timestamp"))?;
         if norn_expr::temporal::timestamp_ordering_key(prior)
-            .map_err(|_| stock_invalid("invalid partition timestamp"))?
+            .map_err(|_source| stock_invalid("invalid partition timestamp"))?
             > effective_key
         {
             return Err(stock_invalid("CP1 refuses backdated stock posting"));
@@ -642,7 +642,7 @@ pub fn plan_stock_effects<X>(
         .filter(|(k, _)| k.object_type.as_str() == "stock.StockEvent")
         .try_fold(0_u64, |sum, (_, state)| {
             let bytes = norn_ir::canonical::canonical_json_of(&state.values)
-                .map_err(|_| stock_invalid("invalid stock history encoding"))?
+                .map_err(|_source| stock_invalid("invalid stock history encoding"))?
                 .len();
             Ok::<_, crate::ActionRefusal<X>>(
                 sum.saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX)),
@@ -674,7 +674,7 @@ pub fn plan_stock_effects<X>(
         history_bytes = history_bytes.saturating_add(
             u64::try_from(
                 norn_ir::canonical::canonical_json_of(&values)
-                    .map_err(|_| stock_invalid("invalid stock event encoding"))?
+                    .map_err(|_source| stock_invalid("invalid stock event encoding"))?
                     .len(),
             )
             .unwrap_or(u64::MAX),
@@ -710,7 +710,7 @@ pub fn plan_stock_effects<X>(
     history_bytes = history_bytes.saturating_add(
         u64::try_from(
             norn_ir::canonical::canonical_json_of(&values)
-                .map_err(|_| stock_invalid("invalid stock witness encoding"))?
+                .map_err(|_source| stock_invalid("invalid stock witness encoding"))?
                 .len(),
         )
         .unwrap_or(u64::MAX),
