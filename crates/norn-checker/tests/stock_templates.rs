@@ -113,9 +113,7 @@ fn receipt_delivery_templates_certify_every_parameter_coefficient() {
             assert_eq!(certificate.constant_residual_unscaled, "0");
             assert_eq!(certificate.parameter_residuals_unscaled["amount"], "0");
         }
-        let (validation, compiled) = compile_ledger_pack(&pack);
-        assert!(validation.ok);
-        let Some(compiled) = compiled else {
+        let Ok(compiled) = compile_ledger_pack(&pack) else {
             panic!("valid templates compile")
         };
         for (template, amount, scale, expected) in [
@@ -172,8 +170,7 @@ fn specialization_cannot_drop_or_change_the_declared_counterpart() {
 #[test]
 fn exact_parameter_scale_and_bounds_are_admission_obligations() {
     for gl in [false, true] {
-        let (_, compiled) = compile_ledger_pack(&templates(gl));
-        let Some(compiled) = compiled else {
+        let Ok(compiled) = compile_ledger_pack(&templates(gl)) else {
             panic!("valid templates compile")
         };
         for (scale, unscaled) in [
