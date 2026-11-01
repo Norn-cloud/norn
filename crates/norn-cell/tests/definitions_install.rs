@@ -5232,19 +5232,10 @@ fn capture_purity(
         world: World::Main,
         consumes: Some(pending.consumed()),
     };
-    commit_observed_snapshot(
-        cell,
-        &catalog,
-        &slice,
-        &turn,
-        ObservedSnapshot {
-            key: &key,
-            values: &values,
-            lifecycles: &[],
-            provenance: &provenance,
-        },
-    )
-    .expect("source violation remains captured");
+    let snapshot = ObservedSnapshot {key: &key, values: &values, lifecycles: &[], provenance: &provenance};
+    let first = commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot).expect("source violation remains captured");
+    let retry = commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot).expect("exact retry");
+    assert_eq!(first, retry, "retry retains its original normalized receipt");
 }
 
 norn_testkit::proptest::proptest! {
@@ -5318,4 +5309,32 @@ fn obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses() {
     assert!(
         matches!(&findings[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range")
     );
+}
+
+// OBS-EVIDENCE-1: local delivery/restart metadata cannot duplicate a persisted finding.
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn obs_evidence_redelivery_persists_one_law_finding_after_restart(deliveries in 2usize..6, fraction in 1u16..1000) {
+        for purity in ["1.20".to_owned(), format!("1.{fraction:03}")] {
+            let directory = tempfile::tempdir().expect("directory");
+            let path = directory.path().join("quality.sqlite");
+            let mut cell = purity_quality_host(&path);
+            let mut id = None;
+            for delivery in 0..deliveries {
+                capture_purity(&mut cell, &format!("delivery-{delivery}"), &purity);
+                let model = cell.store().model().clone();
+                drop(cell);
+                cell = norn_cell::SqliteCell::open(&path, model, StoreOptions::default(), "org_demo/dev", |_| BTreeMap::new()).expect("restart");
+                let reader = cell.store().read();
+                let findings: Vec<_> = reader.ledger_page(0, 100).expect("ledger").into_iter().filter(|event| event.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")).collect();
+                norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+                let verified = reader.verified_history_event(&findings[0]).expect("proof").expect("retained producer");
+                let finding: norn_ir::DataQualityFinding = norn_ir::runtime::decode(verified.get("fact").expect("fact")).expect("finding");
+                norn_testkit::proptest::prop_assert!(matches!(&finding.rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range"), "retained purity law pin");
+                if let Some(ref before) = id { norn_testkit::proptest::prop_assert_eq!(before, &finding.id); }
+                id = Some(finding.id);
+                norn_testkit::proptest::prop_assert!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").is_some());
+            }
+        }
+    }
 }

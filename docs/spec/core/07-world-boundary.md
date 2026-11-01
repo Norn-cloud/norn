@@ -43,7 +43,7 @@ Unsupported timing, response, lifecycle or commitment scope fails closed with
 OBS-EVIDENCE-1 evaluates observations against those same retained direct laws,
 retaining the actual law ID/declaration digest in each finding. The emitting
 receipt pins the definition version for historical re-evaluation; current laws
-cannot substitute for that snapshot. A law pin is classified as enforced only
+cannot substitute for that snapshot. A law pin is classified as `Integrity` or `Quality` only
 when it resolves to the supported direct-law contract.
 
 ## Ingestion versus governed action
