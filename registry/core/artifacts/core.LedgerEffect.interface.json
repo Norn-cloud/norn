@@ -1,0 +1,57 @@
+{
+  "artifactId": "core.LedgerEffect.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Ledger effect",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "The value view of an economic event: one signed amount on one account. A positive amount is a debit and a negative one a credit; the side is presentation only and is never stored. The effects posted together balance (core.law.value_conservation).",
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "The economic event this effect values.",
+          "id": "event",
+          "target": "core.EconomicEvent"
+        }
+      ],
+      "name": "core.LedgerEffect",
+      "properties": [
+        {
+          "id": "account_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "amount",
+          "type": {
+            "kind": "ref",
+            "name": "core.money_amount"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.LedgerEffect.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

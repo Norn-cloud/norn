@@ -1,0 +1,20 @@
+{
+  "sha256": "1bf3d212122ed835daef22488aec026c13fcf64ca0d6d4bc15d7543f38da66ee",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/norn-ts/fixtures/schema/precision.source.ts",
+    "tools/norn-ts/src/compiler/definitions.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

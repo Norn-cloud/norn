@@ -6,7 +6,7 @@
     reason = "synthetic policy fixtures"
 )]
 
-use norn_skeleton_guard::ci::provenance::{self, MANIFEST};
+use norn_skeleton_guard::ci::provenance::{self, CONTROL, MANIFEST, RECORDS};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
@@ -67,13 +67,21 @@ impl Fixture {
         json!({"id":"toy-upstream","revision":"1.2.3","evidence":self.reference(path)})
     }
     fn save(&self) {
+        if self.root().join(CONTROL).exists() {
+            fs::remove_dir_all(self.root().join(CONTROL)).unwrap();
+        }
         self.write(
             MANIFEST,
-            &serde_json::to_vec(
-                &json!({"version":1,"software_sources":self.software,"artifacts":self.records}),
-            )
-            .unwrap(),
+            &serde_json::to_vec(&json!({"version":2,"software_sources":self.software})).unwrap(),
         );
+        for record in &self.records {
+            let mut body = record.clone();
+            let path = body.as_object_mut().unwrap().remove("path").unwrap();
+            self.write(
+                &format!("{RECORDS}{}.json", path.as_str().unwrap()),
+                &serde_json::to_vec(&body).unwrap(),
+            );
+        }
     }
     fn report(&self) -> provenance::Report {
         self.save();
@@ -142,8 +150,57 @@ fn unknown_ambiguous_and_cyclic_ancestry_fails_closed() {
     f.derived("a", "b", "generated");
     f.derived("b", "a", "generated");
     f.rejects("cyclic ancestry");
-    f.records.push(f.records[0].clone());
-    f.rejects("duplicate artifact");
+}
+
+/// #121: each refusal the single manifest gave survives per-file records.
+#[test]
+fn per_file_records_refuse_wrong_hash_missing_and_unlisted() {
+    let mut f = Fixture::new();
+    let i = f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.passes();
+    f.records[i]["sha256"] = json!("0".repeat(64));
+    f.rejects("content hash drift");
+    let mut f = Fixture::new();
+    f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.save();
+    fs::remove_file(f.root().join(format!("{RECORDS}crates/a/src/lib.rs.json"))).unwrap();
+    let r = provenance::check_distribution(f.root());
+    assert!(r.rejected_paths["crates/a/src/lib.rs"][0].contains("missing shipped-artifact"));
+    let mut f = Fixture::new();
+    f.add("crates/a/src/lib.rs", b"// a", "code");
+    f.save();
+    fs::remove_file(f.root().join("crates/a/src/lib.rs")).unwrap();
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.rejected_paths["crates/a/src/lib.rs"]
+            .iter()
+            .any(|e| e.contains("missing artifact"))
+    );
+    let f = Fixture::new();
+    f.save();
+    for stray in [
+        format!("{CONTROL}extra.json"),
+        format!("{RECORDS}LICENSE.yaml"),
+    ] {
+        f.write(&stray, b"{}");
+        let r = provenance::check_distribution(f.root());
+        assert!(
+            r.rejected_paths[&stray]
+                .iter()
+                .any(|e| e.contains("unknown provenance control"))
+        );
+        fs::remove_file(f.root().join(&stray)).unwrap();
+    }
+    // The path is the record's file name, never a field it can claim.
+    f.write(
+        &format!("{RECORDS}LICENSE.json"),
+        &serde_json::to_vec(&f.records[0]).unwrap(),
+    );
+    let r = provenance::check_distribution(f.root());
+    assert!(
+        r.rejected_paths[&format!("{RECORDS}LICENSE.json")][0]
+            .contains("malformed provenance record")
+    );
 }
 
 #[test]
@@ -213,7 +270,7 @@ fn authored_queries_proofs_verdicts_may_analyze_rejected_sources() {
         "accounting-domain",
         "inventory-domain",
         "certified-domain-law",
-        "soliman",
+        "private-business",
     ] {
         let mut bad = Fixture::new();
         bad.add("renamed.json", b"never admitted", category);
@@ -413,7 +470,6 @@ fn strict_records_reject_unknown_fields_categories_origins_and_directory_claims(
         ("category", json!("unknown")),
         ("origin", json!("unknown")),
         ("bypass", json!(true)),
-        ("path", json!("folder/../LICENSE")),
     ] {
         let mut f = Fixture::new();
         f.records[0][field] = value;
@@ -434,6 +490,9 @@ fn symlink_to_outside_candidate_is_never_read() {
     f.rejects("symlink refused");
 }
 
+const COVERAGE_INDEX: &str = "verification/coverage-v1/manifest/index.json";
+const COVERAGE_LEDGER: &str = "verification/coverage-v1/manifest/subsystems/quantity-ledger.json";
+
 fn policy_fixture() -> Fixture {
     let mut fixture = Fixture::new();
     fixture.add(".github/workflows/core.yml", b"on: pull_request\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
@@ -443,6 +502,7 @@ fn policy_fixture() -> Fixture {
         "scripts/ci/validate-runner-policy.py",
         "scripts/proof_enrollment.py",
         "verification/coverage-v1/validate.py",
+        "scripts/coverage_manifest.py",
         "scripts/verify-promoted-subsystems.sh",
         "scripts/check-proof-holes.py",
     ] {
@@ -452,7 +512,12 @@ fn policy_fixture() -> Fixture {
             "code",
         );
     }
-    fixture.add("verification/coverage-v1/coverage.json", br#"{"subsystems":[{"id":"quantity-ledger","obligations":["synthetic-preserved-obligation"]}]}"#, "code");
+    fixture.add(COVERAGE_INDEX, b"{}", "code");
+    fixture.add(
+        COVERAGE_LEDGER,
+        br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        "code",
+    );
     fixture.add("crates/norn-skeleton-guard/baseline.json", b"{}", "code");
     fixture.add(
         "crates/norn-ir/src/lib.rs",
@@ -535,16 +600,13 @@ fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated
 fn trusted_policy_preserves_retained_core_obligations() {
     let base = policy_fixture();
     let mut candidate = policy_fixture();
-    let path = "verification/coverage-v1/coverage.json";
+    let path = COVERAGE_LEDGER;
     let record = candidate
         .records
         .iter()
         .position(|record| record["path"] == path)
         .expect("coverage record");
-    candidate.write(
-        path,
-        br#"{"subsystems":[{"id":"quantity-ledger","obligations":[]}]}"#,
-    );
+    candidate.write(path, br#"{"obligations":[]}"#);
     candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
     candidate.save();
     let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
@@ -554,6 +616,44 @@ fn trusted_policy_preserves_retained_core_obligations() {
             .any(|error| error.contains("retained core obligations were removed")),
         "{errors:?}"
     );
+}
+
+/// Remove `path` and its record from a fixture, as a pull request would.
+fn drop_file(fixture: &mut Fixture, path: &str) {
+    fixture.records.retain(|record| record["path"] != path);
+    fs::remove_file(fixture.root().join(path)).unwrap();
+    fixture.save();
+    index_fixture(fixture);
+}
+
+#[test]
+fn trusted_policy_refuses_a_dropped_subsystem_a_missing_index_and_stray_entries() {
+    let base = policy_fixture();
+    let refused = |candidate: &Fixture, reason: &str| {
+        let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+        assert!(
+            errors.iter().any(|error| error.contains(reason)),
+            "{reason}: {errors:?}"
+        );
+    };
+    let mut dropped = policy_fixture();
+    drop_file(&mut dropped, COVERAGE_LEDGER);
+    refused(
+        &dropped,
+        "quantity-ledger: retained core obligations were removed",
+    );
+    let mut headless = policy_fixture();
+    drop_file(&mut headless, COVERAGE_INDEX);
+    refused(&headless, "manifest/index.json is missing");
+    let mut stray = policy_fixture();
+    stray.add(
+        "verification/coverage-v1/manifest/subsystems/notes.txt",
+        b"synthetic",
+        "code",
+    );
+    stray.save();
+    index_fixture(&stray);
+    refused(&stray, "unknown entry notes.txt");
 }
 
 #[test]
