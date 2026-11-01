@@ -1869,6 +1869,24 @@ fn validate_store_format<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
 }
 
 impl<E: SqlEngine> CellStore<E> {
+    /// Require a fresh tenant engine before initializing any cell state.
+    ///
+    /// # Errors
+    /// Refuses any pre-existing application schema, including cells without
+    /// active definitions but with metadata, ledger or value history.
+    pub fn require_fresh_engine(engine: &E) -> Result<(), CellError> {
+        let schema = engine.query(
+            "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' LIMIT 1",
+            &[],
+        )?;
+        if !schema.is_empty() {
+            return Err(CellError::Engine(
+                "a fresh tenant engine is required".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Initialize this store over an already-open engine.
     ///
     /// The engine supplies transaction and parameter/result handling; the
