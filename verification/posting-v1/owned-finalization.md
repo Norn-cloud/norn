@@ -167,11 +167,14 @@ POST-REOPEN preserves state/chain. POST-REAL-REPLAY rebuilds the export through 
 - ADAPTER-COVERAGE: only fresh serial FIFO receipt/delivery requests in warehouse a
   are supported. Other methods, operations, retries and barriers are explicit unsupported
   cases; none disappear from the dump. Moving average remains unavailable in CP1.
-- ADAPTER-OBSERVATION: initial and per-attempt checkpoints retain committed event/GL
+- ADAPTER-INITIAL: read and require empty stock/GL tables before the first action.
+- ADAPTER-OBSERVATION: per-attempt checkpoints retain every committed event/GL
   identities, numeric document status and exact decimal text. Historical balances are
   captured from committed partition state; raw legs are retained, FIFO unavailable is null.
 - ADAPTER-REPLAY: typed journal restore must reproduce the full durable dump and ledger
-  head before output is published. Refusals must leave all committed business rows intact.
+  head before output is published. ADAPTER-NO-WRITES requires refusal to preserve the full dump.
+- ADAPTER-EXACT: decode line decimals directly into runtime values; serialize observed
+  amounts as exact JSON text without an intermediate floating-point number.
 - ADAPTER-EVIDENCE: `NORN_STOCK_TRACE=validated.json NORN_STOCK_DUMP=norn.json cargo test
   --locked -p norn-cell --test parent_rows post_trace_dump -- --ignored` runs the adapter.
   Compare against the same validated trace through lane g's runner/comparator (#284).
