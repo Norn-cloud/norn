@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { join, resolve } from "node:path"
 import { compileDefinitions } from "../src/compiler/definitions.ts"
-import { readArtifacts, checkPack } from "../src/pack.ts"
+import { readArtifacts, checkPack, artifactId } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { canonicalJson } from "../src/canonical.ts"
 import { checker, CHECKER_PKG_ENV } from "./checker.ts"
@@ -10,10 +10,8 @@ const file = join(TOOL_ROOT, "fixtures/stock/stock.source.ts")
 const options = { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "tools/norn-ts/fixtures/stock/stock.source.ts" }
 const core = readArtifacts(join(resolve(TOOL_ROOT, "../.."), "registry/core/artifacts"))
   .map(({ artifact }) => artifact)
-  .filter(artifact => typeof artifact === "object" && artifact !== null && !Array.isArray(artifact)
-    && typeof artifact.artifactId === "string"
-    && (/^core\.(Agent|AgentRole|Resource|Commitment|Hold|EconomicEvent|LedgerEffect|Claim)\.interface$/.test(artifact.artifactId)
-      || ["core.value_types.entity", "std.value_types.entity"].includes(artifact.artifactId)))
+  .filter(artifact => /^core\.(Agent|AgentRole|Resource|Commitment|Hold|EconomicEvent|LedgerEffect|Claim)\.interface$/.test(artifactId(artifact))
+    || ["core.value_types.entity", "std.value_types.entity"].includes(artifactId(artifact)))
 
 function compile() {
   const result = compileDefinitions(file, options)

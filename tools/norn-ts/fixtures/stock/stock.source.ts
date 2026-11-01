@@ -144,6 +144,15 @@ export const OrderLine = Norn.type({
     due_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity"),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
   }),
+  defaults: { status: "requested" },
+  lifecycles: [{ property: "status", initial: ["requested"], terminal: ["fulfilled", "cancelled", "breached"],
+    transitions: [
+      { id: "promise", from: ["requested"], to: "promised" },
+      { id: "fulfil", from: ["promised"], to: "fulfilled" },
+      { id: "cancel", from: ["requested", "promised"], to: "cancelled" },
+      { id: "breach", from: ["promised"], to: "breached" },
+    ],
+  }],
   links: [
     { id: "provider", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
     { id: "receiver", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
@@ -158,6 +167,14 @@ export const Reservation = Norn.type({
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
     expires_at: Schema.NullOr(Norn.ref("iso8601.timestamp")),
   }),
+  defaults: { status: "open" },
+  lifecycles: [{ property: "status", initial: ["open"], terminal: ["released", "consumed", "expired"],
+    transitions: [
+      { id: "release", from: ["open"], to: "released" },
+      { id: "consume", from: ["open"], to: "consumed" },
+      { id: "expire", from: ["open"], to: "expired" },
+    ],
+  }],
   links: [
     { id: "resource", target: Holding, cardinality: { to: "one", from: "many", required: true } },
     { id: "holder", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
