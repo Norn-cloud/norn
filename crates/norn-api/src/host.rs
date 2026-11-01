@@ -557,6 +557,24 @@ mod alpha_surface {
         } else {
             json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"call_action","arguments":args,"_meta":{"norn/idempotencyKey":key}}})
         };
+        let (status, text) = post(app, surface, actor, body.to_string()).await;
+        let failed = !status.is_success();
+        let value: Value = serde_json::from_str(&text).expect("JSON");
+        if surface == "api" || failed {
+            (value, failed)
+        } else {
+            (
+                value["result"]["structuredContent"].clone(),
+                value["result"]["isError"] == true,
+            )
+        }
+    }
+    async fn post(
+        app: &axum::Router,
+        surface: &str,
+        actor: &str,
+        body: String,
+    ) -> (http::StatusCode, String) {
         let request = http::Request::builder()
             .method("POST")
             .uri(if surface == "api" {
@@ -567,22 +585,14 @@ mod alpha_surface {
             .header("x-norn-org-id", "org_alpha")
             .header("x-norn-environment-id", "dev")
             .header("x-norn-actor", actor)
-            .body(axum::body::Body::from(body.to_string()))
+            .body(axum::body::Body::from(body))
             .expect("request");
         let response = app.clone().oneshot(request).await.expect("response");
-        let failed = !response.status().is_success();
+        let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
             .await
             .expect("response body");
-        let value: Value = serde_json::from_slice(&bytes).expect("JSON");
-        if surface == "api" || failed {
-            (value, failed)
-        } else {
-            (
-                value["result"]["structuredContent"].clone(),
-                value["result"]["isError"] == true,
-            )
-        }
+        (status, String::from_utf8(bytes.to_vec()).expect("JSON"))
     }
     fn dump(host: &DevHost<NativeEngine>) -> BTreeMap<String, Vec<String>> {
         host.cell()
@@ -774,28 +784,21 @@ mod alpha_surface {
                     r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"call_action","arguments":{args},"_meta":{{"norn/idempotencyKey":"exact"}}}}}}"#
                 )
             };
-            let request = http::Request::builder()
-                .method("POST")
-                .uri(if surface == "api" {
-                    "/v1/actions"
-                } else {
-                    "/mcp"
-                })
-                .header("x-norn-org-id", "org_alpha")
-                .header("x-norn-environment-id", "dev")
-                .header("x-norn-actor", "demo")
-                .body(axum::body::Body::from(body))
-                .expect("request");
-            let response = router(Arc::clone(&host))
-                .oneshot(request)
-                .await
-                .expect("response");
-            assert_eq!(response.status(), http::StatusCode::OK);
-            let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
-                .await
-                .expect("body");
-            let text = String::from_utf8(bytes.to_vec()).expect("JSON");
+            let app = router(Arc::clone(&host));
+            let (status, text) = post(&app, surface, "demo", body).await;
+            assert_eq!(status, http::StatusCode::OK);
             assert!(text.contains("0.1234567890123456789012345678"), "{text}");
+            let before = dump(&host);
+            for body in [
+                r#"{"jsonrpc":"2.0","id":"bad","method":"unknown"}"#,
+                r#"{"jsonrpc":"2.0","id":"bad","method":"tools/call","params":{"name":"call_action","arguments":{}}}"#,
+            ] {
+                let (_, text) = post(&app, "mcp", "demo", body.into()).await;
+                let error: Value = serde_json::from_str(&text).expect("protocol error");
+                assert_eq!(error["id"], "bad");
+                assert_eq!(error["error"]["data"]["code"], "request.invalid");
+                assert_eq!(before, dump(&host));
+            }
             let cell = host.cell().expect("cell");
             let stored = cell
                 .store()

@@ -132,3 +132,5 @@ refusals; it does not claim to run the asynchronous invoice-fold workflow.
 
 SURFACE-EXACT-JSON: nested exact decimals and integers retain their values
 in committed JSON fields, HTTP records and MCP structured content/text.
+
+SURFACE-PROTOCOL: MCP failures preserve request id and refusal data without writes.
