@@ -152,3 +152,16 @@ POST-RETRY-PIN: stock receipts bind the admitting definition and full call scope
 identical retry still requires current voucher and stock-read authorization.
 A changed binding refuses without writes. POST-P4 is the durable engine
 conformance scenario for this join; surface acceptance is separate.
+
+
+## CP1 engine conformance
+
+POST-CP1-ENGINE: the file-backed kernel commit_action path receives 2 @ 10 and
+3 @ 20, posting Dr stock 80 / Cr SRBNB 80. Delivering 4 posts Dr COGS 60 /
+Cr stock 60; the partition retains 1 worth 20. POST-OVERDELIVERY refuses 2 with
+the readable item/warehouse/requested/available reason and POST-NO-WRITES.
+POST-RETRY and POST-CONFLICTING-RETRY check identical and changed calls.
+POST-RETRY-READ-AUTHZ refuses replay after read authorization is lost.
+POST-REOPEN preserves the state and hash chain. POST-REAL-REPLAY rebuilds the
+export through the existing typed restore path and compares the complete state
+and ledger head. These are tested execution claims, separate from surface parity.
