@@ -341,11 +341,7 @@ class DefinitionCompiler {
       if (!value) throw new CompileError("NORN-FLOW-LITERAL", `a definition needs ${key}`, call)
       return value
     }
-    const roleNode = members.get("role")
-    const role = roleNode ? this.string(roleNode) : undefined
-    if (role !== undefined && role !== "thing" && role !== "happening") {
-      throw new CompileError("NORN-FLOW-LITERAL", "role must be thing or happening", roleNode!)
-    }
+    const role = this.conceptRole(members.get("role"))
     const description = members.get("description")
     const markings = members.get("markings")
     const schema = this.schemas.read(required("properties"))
@@ -359,6 +355,13 @@ class DefinitionCompiler {
       ...(markings ? { markings: this.strings(markings) } : {}),
       projected,
     }
+  }
+
+  private conceptRole(node: ts.Expression | undefined): E.InterfaceDef["role"] {
+    if (!node) return undefined
+    const role = this.string(node)
+    if (role === "thing" || role === "happening") return role
+    throw new CompileError("NORN-FLOW-LITERAL", "role must be thing or happening", node)
   }
 
   private propertyMarkings(members: Members, properties: ReadonlyArray<string>): Map<string, ReadonlyArray<string>> {
