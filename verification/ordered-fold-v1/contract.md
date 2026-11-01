@@ -152,3 +152,7 @@ FOLD-ORACLE-REFUSALS: the allocation fixture declares positive demand, positive
 source quantities, nonnegative source values and complete satisfaction of demand.
 Oversell, zero/negative requests and malformed source amounts refuse through the
 declared schema/output guards; none is a privileged evaluator condition.
+
+FOLD-CLOSURE-WORK: check each call site once and memoize helper-graph validation
+by artifact key and deepest checked depth. Check depth before the memo and bound
+its size by the existing closure limit. Equal payload rule IDs never alias.
