@@ -49,3 +49,15 @@ is `invoke(surface, action, args, actor)`. Action input is `{ id: voucherId }`;
 scope and idempotency key remain invoke transport metadata. Lines and account
 identities are read from owned manifests and linked masters, never action input.
 P1 is admission evidence only; the genuine alpha acceptance remains P4.
+
+## Shared extension-link contract
+
+POST-LINK-PARITY: link lookup and relation ownership include admitted extension
+members on every type in the lineage, using the same nearest-declaration and
+furthest-owner rules as ordinary links. The stock checker can admit these paths;
+the shared commit shape check must accept their complete read fences too.
+`extension_links_share_declaration_owner_and_empty_fence_admission` checks base
+and subtype lookup, common owner, successful empty-fence admission and continued
+refusal of an undeclared extension member. No link target/cardinality, scope,
+CAS or complete-adjacency guard is weakened. This fixes the shared lookup before
+stock preparation consumes it; full stock invocation remains subsequent work.

@@ -978,3 +978,74 @@ fn scalar_put_still_checks_required_inherited_owned_links() {
         .is_ok()
     );
 }
+
+#[test]
+fn extension_links_share_declaration_owner_and_empty_fence_admission()
+-> Result<(), Box<dyn std::error::Error>> {
+    struct EmptyAdjacency;
+    impl CommitView for EmptyAdjacency {
+        type Error = Infallible;
+        fn pending(&self, _: &Consumed) -> Result<bool, Infallible> {
+            Ok(false)
+        }
+        fn version(&self, _: &FactKey) -> Result<FactVersion, Infallible> {
+            Ok(FactVersion::ABSENT)
+        }
+        fn concrete(&self, _: &FactKey) -> Result<Option<ObjectTypeName>, Infallible> {
+            Ok(None)
+        }
+        fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Infallible> {
+            Ok(FactVersion::ABSENT)
+        }
+        fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Infallible> {
+            Ok(vec![])
+        }
+        fn link_targets(
+            &self,
+            _: &FactKey,
+            _: &str,
+        ) -> Result<Option<Vec<norn_kernel::cell_host::LinkReadTarget>>, Infallible> {
+            Ok(Some(vec![]))
+        }
+    }
+    let types = law_object_types();
+    let extension: norn_ir::ObjectTypeExtension = serde_json::from_value(serde_json::json!({
+        "namespace": "demo", "target": LAW_THING,
+        "links": [{"id": "demo__peer", "target": LAW_THING,
+            "cardinality": {"to": "one", "from": "many"}}]
+    }))?;
+    let catalog = TypeCatalog::new(&types).with_extensions([&extension]);
+    let model = CommitModel::new(&catalog);
+    for source_type in [LAW_THING, LAW_CHILD] {
+        let source = FactKey::new(source_type, "source");
+        assert_eq!(
+            model
+                .link(&source.object_type, "demo__peer")
+                .map(|link| link.target.as_str()),
+            Some(LAW_THING)
+        );
+        assert_eq!(
+            model.link_owner(&source.object_type, "demo__peer"),
+            Some(ObjectTypeName(LAW_THING.into()))
+        );
+        let mut commit = CellCommit::<(), (), ()> {
+            link_reads: vec![LinkReadExpectation {
+                source: source.clone(),
+                link: "demo__peer".into(),
+                targets: vec![],
+            }],
+            ..CellCommit::empty()
+        };
+        assert!(check_commit(&commit, &model, &EmptyAdjacency).is_ok());
+        commit.link_reads = vec![LinkReadExpectation {
+            source,
+            link: "demo__missing".into(),
+            targets: vec![],
+        }];
+        assert!(matches!(
+            check_commit(&commit, &model, &EmptyAdjacency),
+            Err(CommitError::InvalidLinkRead { .. })
+        ));
+    }
+    Ok(())
+}
