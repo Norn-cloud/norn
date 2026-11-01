@@ -1,7 +1,6 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 import { Setting, Registry } from "./binding.source.ts"
-
 const RateInput = Schema.Struct({ id: Schema.String, setting_key: Schema.String, value: Schema.Finite, effective_from: Schema.String, effective_to: Schema.String, review_state: Schema.Literal("approved"), org_id: Schema.String, environment_id: Schema.String, tenant_id: Schema.Null, workspace_id: Schema.Null, business_unit_id: Schema.Null })
 export const SetRate = Norn.action({
   id: "demo.tax.set", title: "Set tax rate", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
