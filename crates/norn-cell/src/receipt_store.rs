@@ -273,20 +273,7 @@ mod tests {
         }
     }
     type Cell = SqliteCell<norn_kernel::FactEvent, norn_ir::RuntimeObject, norn_ir::RuntimeObject>;
-    fn setup(path: &std::path::Path) -> (Cell, DispatchedCommand, FunctionReceipt, Checks, Model) {
-        let manifest: FunctionManifest = fixture("manifest");
-        let checks =
-            Checks(norn_checker::function::admit_function_manifest(&manifest).expect("manifest"));
-        let mut invocation: FunctionInvocation = fixture("invocation");
-        invocation.freshness = norn_ir::function::FreshnessMode::DestinationCas;
-        invocation.destination = Some(norn_ir::function::Destination { object_type:"test.ReceiptTarget".into(), key:"target-1".into(), expected_owner_version:1 });
-        invocation.dependency.facts.clear(); invocation.dependency.predicates.clear();
-        let dispatched = DispatchedCommand::pin(invocation, checks.0.execution_profile.clone())
-            .expect("dispatch");
-        let mut receipt: FunctionReceipt = fixture("receipt");
-        receipt.dispatch = dispatched.dispatch.clone();
-        receipt.input_identity = dispatched.input_identity.clone();
-        receipt.dependency_token = dispatched.dependency_token.clone();
+    fn fixture_model() -> Model {
         let definition = serde_json::from_value(json!({"name":"norn.FunctionCommand","properties":[{"id":"state","type":{"kind":"json-ext"}}]})).expect("type");
         let mut definitions = vec![definition];
         let mut target: norn_ir::ObjectTypeDef = serde_json::from_value(json!({"name":"test.ReceiptTarget", "properties":[
@@ -326,7 +313,23 @@ mod tests {
             })
             .collect();
         definitions.push(target);
-        let model = Model::from_definitions(&definitions, &[]).expect("model");
+        Model::from_definitions(&definitions, &[]).expect("model")
+    }
+    fn setup(path: &std::path::Path) -> (Cell, DispatchedCommand, FunctionReceipt, Checks, Model) {
+        let manifest: FunctionManifest = fixture("manifest");
+        let checks =
+            Checks(norn_checker::function::admit_function_manifest(&manifest).expect("manifest"));
+        let mut invocation: FunctionInvocation = fixture("invocation");
+        invocation.freshness = norn_ir::function::FreshnessMode::DestinationCas;
+        invocation.destination = Some(norn_ir::function::Destination { object_type:"test.ReceiptTarget".into(), key:"target-1".into(), expected_owner_version:1 });
+        invocation.dependency.facts.clear(); invocation.dependency.predicates.clear();
+        let dispatched = DispatchedCommand::pin(invocation, checks.0.execution_profile.clone())
+            .expect("dispatch");
+        let mut receipt: FunctionReceipt = fixture("receipt");
+        receipt.dispatch = dispatched.dispatch.clone();
+        receipt.input_identity = dispatched.input_identity.clone();
+        receipt.dependency_token = dispatched.dependency_token.clone();
+        let model = fixture_model();
         let mut store =
             CellStore::open(path, model.clone(), StoreOptions::default()).expect("store");
         let command = Command {
@@ -521,7 +524,7 @@ mod tests {
             "effectProgram":{"kind":"fire_transition","objectIdField":"id","objectKind":"test.ReceiptTarget","entityArtifactId":"test.target","entityArtifactVersion":"0.1.0","lifecycle":"status","transition":"publish", "acceptReceipt":{"referenceField":"receipt","manifestDigest":receipt.manifest.0,"digestProperty":"digest","resultBindings":{"intent":member}}}
         })).expect("action");
         let catalog = TypeCatalog::new(model.object_types());
-        let mut call = ActionCall {
+        let mut request = ActionCall {
             action: &action,
             action_artifact_id: "test.accept",
             action_version: "0.1.0",
@@ -544,21 +547,21 @@ mod tests {
             },
         };
         let before = cell.store().verified_head().expect("head");
-        call.input.insert(
+        request.input.insert(
             "receipt".into(),
             norn_ir::runtime::encode(&receipt).expect("body"),
         );
-        assert!(commit_action(&mut cell, &catalog, &call, &ActionAllow).is_err());
+        assert!(commit_action(&mut cell, &catalog, &request, &ActionAllow).is_err());
         assert_eq!(cell.store().verified_head().expect("head"), before);
-        call.input
+        request.input
             .insert("receipt".into(), RuntimeValue::String(digest.0));
         if !accepts {
-            assert!(commit_action(&mut cell, &catalog, &call, &ActionAllow).is_err());
+            assert!(commit_action(&mut cell, &catalog, &request, &ActionAllow).is_err());
             assert_eq!(cell.store().verified_head().expect("head"), before);
             assert!(
                 cell.resolve_accepted_receipt(
                     &norn_kernel::receipt_binding::ReceiptReference::parse(
-                        call.input.get("receipt").expect("reference")
+                        request.input.get("receipt").expect("reference")
                     )
                     .expect("reference"),
                     &receipt.manifest
@@ -569,7 +572,7 @@ mod tests {
             return;
         }
         assert!(matches!(
-            commit_action(&mut cell, &catalog, &call, &ActionAllow).expect("publish"),
+            commit_action(&mut cell, &catalog, &request, &ActionAllow).expect("publish"),
             ActionOutcome::Committed { .. }
         ));
         assert_eq!(
@@ -583,12 +586,12 @@ mod tests {
         );
         let published = cell.store().verified_head().expect("head");
         assert!(matches!(
-            commit_action(&mut cell, &catalog, &call, &ActionAllow).expect("retry"),
+            commit_action(&mut cell, &catalog, &request, &ActionAllow).expect("retry"),
             ActionOutcome::Replayed { .. }
         ));
         assert_eq!(cell.store().verified_head().expect("head"), published);
-        call.idempotency_key = "accept-2".into();
-        assert!(commit_action(&mut cell, &catalog, &call, &ActionAllow).is_err());
+        request.idempotency_key = "accept-2".into();
+        assert!(commit_action(&mut cell, &catalog, &request, &ActionAllow).is_err());
         assert_eq!(cell.store().verified_head().expect("head"), published);
     }
     #[test]
