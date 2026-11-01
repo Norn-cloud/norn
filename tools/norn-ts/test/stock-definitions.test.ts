@@ -19,7 +19,7 @@ test("stock schemas and lifecycle compile deterministically and are admitted", (
   const result = checker.checkArtifactSet(compiled.artifacts)
   expect(result.diagnostics.diagnostics).toEqual([])
   expect(result.admitted).toBe(true)
-  const voucher = compiled.artifacts.find(value => value && typeof value === "object" && !Array.isArray(value) && value.artifactId === "stock.Voucher.entity")
+  const voucher = compiled.artifacts.find(value => value && typeof value === "object" && "artifactId" in value && value.artifactId === "stock.Voucher.entity")
   expect(voucher).toMatchObject({ payload: { objectType: { lifecycles: [{
     property: "status", initial: ["draft"], terminal: ["cancelled"], transitions: [
       { id: "submit", from: ["draft"], to: "submitted" }, { id: "cancel", from: ["submitted"], to: "cancelled" },
