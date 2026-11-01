@@ -2825,12 +2825,21 @@
         {
           "id": "INV-JEWELRY-FINE-CONSERVATION",
           "runtime": "missing",
-          "model": "missing",
+          "model": "bounded_model_checked",
           "proof": "reference_proved",
           "residual": "One metal and fixed custody owner in exact normalized fine ticks; runtime, purity normalization, valuation, lifecycle reversal and checked inherited mappings remain unbound.",
           "evidence": {
             "runtime": [],
-            "model": [],
+            "model": [
+              {
+                "artifact": "verification/jewelry-v1/refining.qnt",
+                "command": "quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved lossValued recordsAligned custodyIsolated refusedIsNoop --max-steps 4",
+                "selectors": [
+                  "invariant:fineConserved",
+                  "invariant:nonnegative"
+                ]
+              }
+            ],
             "proof": [
               {
                 "artifact": "verification/jewelry-v1/FineMetal.lean",
@@ -2847,12 +2856,21 @@
         {
           "id": "INV-JEWELRY-CUSTODY",
           "runtime": "missing",
-          "model": "missing",
+          "model": "bounded_model_checked",
           "proof": "reference_proved",
           "residual": "One metal and fixed custody owner in exact normalized fine ticks; runtime, purity normalization, valuation, lifecycle reversal and checked inherited mappings remain unbound.",
           "evidence": {
             "runtime": [],
-            "model": [],
+            "model": [
+              {
+                "artifact": "verification/jewelry-v1/refining.qnt",
+                "command": "quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved lossValued recordsAligned custodyIsolated refusedIsNoop --max-steps 4",
+                "selectors": [
+                  "invariant:custodyIsolated",
+                  "invariant:lossValued"
+                ]
+              }
+            ],
             "proof": [
               {
                 "artifact": "verification/jewelry-v1/FineMetal.lean",
@@ -2869,12 +2887,21 @@
         {
           "id": "INV-JEWELRY-REFUSAL-ATOMIC",
           "runtime": "missing",
-          "model": "missing",
+          "model": "bounded_model_checked",
           "proof": "reference_proved",
           "residual": "One metal and fixed custody owner in exact normalized fine ticks; runtime, purity normalization, valuation, lifecycle reversal and checked inherited mappings remain unbound.",
           "evidence": {
             "runtime": [],
-            "model": [],
+            "model": [
+              {
+                "artifact": "verification/jewelry-v1/refining.qnt",
+                "command": "quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved lossValued recordsAligned custodyIsolated refusedIsNoop --max-steps 4",
+                "selectors": [
+                  "invariant:refusedIsNoop",
+                  "invariant:recordsAligned"
+                ]
+              }
+            ],
             "proof": [
               {
                 "artifact": "verification/jewelry-v1/FineMetal.lean",
@@ -2895,11 +2922,21 @@
         "resultArtifacts": []
       },
       "model": {
-        "status": "missing",
-        "artifacts": [],
-        "commands": [],
+        "status": "bounded_model_checked",
+        "scope": "reference",
+        "artifacts": [
+          "verification/jewelry-v1/refining.qnt"
+        ],
+        "commands": [
+          "quint typecheck verification/jewelry-v1/refining.qnt",
+          "quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved lossValued recordsAligned custodyIsolated refusedIsNoop --max-steps 4",
+          "quint test verification/jewelry-v1/refining.qnt --backend rust --match .*Test --max-samples 1 --seed 1"
+        ],
         "generatedArtifacts": [],
-        "resultArtifacts": []
+        "resultArtifacts": [
+          "target/verification-results/jewelry-refining-quint.json"
+        ],
+        "bound": "Apalache max-steps 4; one metal, company and one custody owner; amounts 0..6 exact normalized fine ticks, initial company 6 and custody 0, at most one custody receipt of 6; synthetic valuation 1 per tick."
       },
       "proof": {
         "status": "reference_proved",
@@ -2914,10 +2951,12 @@
         "resultArtifacts": []
       },
       "limitations": [
-        "Reference only: one metal and fixed owner per custody partition; quantities already normalized to exact fine ticks. No runtime posting, numeric representation, purity parser, valuation, lifecycle reversal, multi-party allocation or inherited-receipt correspondence is claimed."
+        "Reference only: one metal and fixed owner per custody partition; quantities already normalized to exact fine ticks. No runtime posting, numeric representation, purity parser, valuation, lifecycle reversal, multi-party allocation or inherited-receipt correspondence is claimed.",
+        "Model: depth 4, one metal and one custody party, 0..6 normalized fine ticks and synthetic unit valuation. i128 overflow, purity input precision, multiple metals/parties and runtime correspondence remain unbound."
       ],
       "sourceFiles": [
-        "verification/jewelry-v1/FineMetal.lean"
+        "verification/jewelry-v1/FineMetal.lean",
+        "verification/jewelry-v1/refining.qnt"
       ]
     }
   ]
