@@ -348,7 +348,7 @@ fn law_contained_unknown_stale_missing_duplicate_cycle_and_budget_refuse() {
 #[test]
 fn law_contained_pending_path_bytes_refuse_before_multiplying_large_identities() {
     let (mut law, mut base) = membership_case();
-    let large_id = "r".repeat(2_000_000);
+    let large_id = "r".repeat(1_600_000);
     let mut declaration: LawIR =
         serde_json::from_value(serde_json::to_value(law.payload.to_json_value()).expect("wire"))
             .expect("law");
