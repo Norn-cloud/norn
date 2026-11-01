@@ -151,19 +151,20 @@ fn d1b_catalog_not_holding_and_unresolved_references() {
         2,
         "id and objectId only; no Holding quantity"
     );
-    for reference in [
-        "",
-        ",\"custom_shipment_ref\":null",
-        ",\"custom_shipment_ref\":\"\"",
-        ",\"custom_shipment_ref\":[\"A\",\"B\"]",
+    for (reference, code) in [
+        ("", "mapping.runtime.invalid_record"),
+        (",\"custom_shipment_ref\":null", "mapping.runtime.invalid_record"),
+        (",\"custom_shipment_ref\":\"\"", "mapping.runtime.invalid_key_value"),
+        (",\"custom_shipment_ref\":[\"A\",\"B\"]", "mapping.runtime.invalid_record"),
     ] {
-        let document = SourceDocument::from_json(
-            "Fulfillment",
-            &format!("{{\"id\":\"SYN-UNRESOLVED\"{reference}}}"),
-            None,
-        )
-        .expect("raw evidence");
-        assert!(shopify.apply(&[document], &recorded).is_err());
+        for (mapping, dataset, field) in [(&shopify, "Fulfillment", "id"), (&erp, "Delivery Note", "name")] {
+            let document = SourceDocument::from_json(dataset,
+                &format!("{{\"{field}\":\"SYN-UNRESOLVED\"{reference}}}"), None).expect("raw evidence");
+            let findings = mapping.apply(&[document], &recorded).expect_err("unresolved reference");
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0].code, code);
+            assert_eq!(findings[0].span, norn_checker::Span::pointer("/documents/0"));
+        }
     }
 }
 
@@ -226,8 +227,13 @@ fn d1a_exact_measurements_history_and_showcase() {
         .expect("all measurements map");
     assert_eq!(records.len(), 240);
     assert_eq!(gold_inputs.len(), 64);
-    assert_eq!(gold_inputs[..48].len(), 48);
-    assert_eq!(gold_inputs[48..].len(), 16);
+    let gold_times = records.iter().filter_map(|record| {
+        let values = &record.invocations[0].input;
+        (values["metal"].as_str() == Some("gold") && values["role"].as_str() == Some("input"))
+            .then(|| values["occurred_at"].as_str().expect("measurement timestamp"))
+    }).collect::<Vec<_>>();
+    assert_eq!(gold_times.len(), 64);
+    assert!(gold_times[..48].iter().max() < gold_times[48..].iter().min());
     assert_ne!(gold_inputs.iter().min(), gold_inputs.iter().max());
     assert!(residuals.len() > 1);
     let showcase = mapping
@@ -257,7 +263,12 @@ fn d1a_exact_measurements_history_and_showcase() {
             record.links.is_empty(),
             "no canonical promotion before link qualification"
         );
-        assert!(record.provenance.source.record.contains("SYN-MELT"));
+        let mut parts = record.provenance.source.record.rsplitn(3, '/');
+        let child = parts.next().expect("child row");
+        let parent = parts.next().expect("parent document");
+        assert!(parts.next().is_some(), "dataset prefix");
+        assert!(parent.starts_with("SYN-MELT-"));
+        assert!(child.starts_with("SYN-") && !child.starts_with("SYN-MELT-"));
     }
     let replay = mapping.apply(&docs, &recorded).expect("replay");
     assert_eq!(records, replay);
