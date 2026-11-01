@@ -346,10 +346,10 @@
     "crates/norn-kernel/src/decision_commit.rs",
     "crates/norn-kernel/src/effect.rs",
     "crates/norn-kernel/src/envelope.rs",
-    "crates/norn-kernel/src/guard_diagnostic.rs",
     "crates/norn-kernel/src/limits.rs",
     "crates/norn-kernel/src/naming_series.rs",
     "crates/norn-kernel/src/observations.rs",
+    "crates/norn-kernel/src/receipt_binding.rs",
     "crates/norn-kernel/src/refusal.rs",
     "crates/norn-kernel/src/result_reconciliation.rs",
     "crates/norn-kernel/src/snapshot_observe.rs",
@@ -496,8 +496,9 @@
     "verification/kernel-l1/Audit.lean",
     "verification/kernel-l1/Reference.lean",
     "verification/kernel-l1/VersionProof.lean",
-    "verification/kernel-l1/guard_diagnostic_kani.rs",
     "verification/kernel-l1/version_kani.rs",
-    "verification/kernel-l1/version_verus.rs"
+    "verification/kernel-l1/version_verus.rs",
+    "crates/norn-kernel/src/guard_diagnostic.rs",
+    "verification/kernel-l1/guard_diagnostic_kani.rs"
   ]
 }

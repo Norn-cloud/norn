@@ -470,6 +470,36 @@ pub static REGISTRY: &[CodeEntry] = &[
         "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
         "0.2.0",
     ),
+    introduced(
+        "core.composition.duplicate_instance",
+        Tier::T3,
+        "instance ID must be unique in the retained scoped graph",
+        "0.2.0",
+    ),
+    introduced(
+        "core.composition.instance_cycle",
+        Tier::T3,
+        "instance imports and containment must be acyclic",
+        "0.2.0",
+    ),
+    introduced(
+        "core.composition.unresolved_pin",
+        Tier::T3,
+        "instance reference must resolve to an exact scoped pack pin",
+        "0.2.0",
+    ),
+    introduced(
+        "core.compute.ambiguous_grain",
+        Tier::T3,
+        "Query requires an explicit unambiguous identity grain.",
+        "0.2.0",
+    ),
+    introduced(
+        "core.compute.unsupported_engine",
+        Tier::T3,
+        "Query semantics are unsupported by the selected compute profile.",
+        "0.2.0",
+    ),
     entry(
         crate::lifecycles::codes::PUBLICATION_GUARD,
         Tier::T6,
