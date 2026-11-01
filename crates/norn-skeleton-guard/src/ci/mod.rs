@@ -10,12 +10,13 @@ type Obligations = BTreeMap<String, BTreeSet<String>>;
 const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 
 /// Gate files pinned to the trusted base, besides every workflow.
-const GATE_FILES: [&str; 9] = [
+const GATE_FILES: [&str; 10] = [
     "scripts/ci/core.sh",
     ".config/nextest.toml",
     "scripts/ci/validate-runner-policy.py",
     "scripts/proof_enrollment.py",
     "verification/coverage-v1/validate.py",
+    "scripts/coverage_manifest.py",
     "scripts/verify-promoted-subsystems.sh",
     "scripts/check-proof-holes.py",
     "crates/norn-skeleton-guard/baseline.json",
@@ -313,42 +314,13 @@ pub fn maintainer_approval(
     approver.ok_or_else(|| format!("no admin commented `{command}` unedited"))
 }
 
+/// The split coverage: `index.json` plus one `subsystems/<id>.json` per subsystem.
+const COVERAGE_MANIFEST: &str = "verification/coverage-v1/manifest";
+const COVERAGE_SUBSYSTEMS: &str = "verification/coverage-v1/manifest/subsystems";
+
 fn retained_obligations(root: &Path, base: &Path) -> Result<(), String> {
-    let path = "verification/coverage-v1/coverage.json";
-    let load = |directory: &Path| -> Result<serde_json::Value, String> {
-        let bytes = std::fs::read(directory.join(path)).map_err(|error| error.to_string())?;
-        serde_json::from_slice(&bytes).map_err(|error| error.to_string())
-    };
-    let previous = load(base)?;
-    let current = load(root)?;
-    let subsystems = |document: &serde_json::Value| -> Result<Obligations, String> {
-        document
-            .get("subsystems")
-            .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| "missing source enrollment".to_owned())?
-            .iter()
-            .map(|subsystem| {
-                let id = subsystem
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| "missing subsystem id".to_owned())?;
-                let obligations = subsystem
-                    .get("obligations")
-                    .and_then(serde_json::Value::as_array)
-                    .ok_or_else(|| "missing subsystem obligations".to_owned())?
-                    .iter()
-                    .map(|id| {
-                        id.as_str()
-                            .map(str::to_owned)
-                            .ok_or_else(|| "invalid obligation id".to_owned())
-                    })
-                    .collect::<Result<BTreeSet<_>, _>>()?;
-                Ok((id.to_owned(), obligations))
-            })
-            .collect()
-    };
-    let after = subsystems(&current)?;
-    for (id, required) in subsystems(&previous)? {
+    let after = enrolled_obligations(root)?;
+    for (id, required) in enrolled_obligations(base)? {
         if !after
             .get(&id)
             .is_some_and(|actual| required.is_subset(actual))
@@ -357,6 +329,59 @@ fn retained_obligations(root: &Path, base: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn enrolled_obligations(root: &Path) -> Result<Obligations, String> {
+    let load = |path: &Path| -> Result<serde_json::Value, String> {
+        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+    };
+    let manifest = root.join(COVERAGE_MANIFEST);
+    if !manifest.join("index.json").is_file() {
+        return Err(format!("{COVERAGE_MANIFEST}/index.json is missing"));
+    }
+    let mut enrolled = Obligations::new();
+    let entries = std::fs::read_dir(root.join(COVERAGE_SUBSYSTEMS))
+        .map_err(|error| format!("missing source enrollment: {error}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name();
+        let id = name
+            .to_str()
+            .and_then(|name| name.strip_suffix(".json"))
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "{COVERAGE_SUBSYSTEMS}: unknown entry {}",
+                    name.to_string_lossy()
+                )
+            })?;
+        if !entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_file()
+        {
+            return Err(format!(
+                "{COVERAGE_SUBSYSTEMS}/{id}.json is not a regular file"
+            ));
+        }
+        enrolled.insert(id.to_owned(), obligations(&load(&entry.path())?)?);
+    }
+    Ok(enrolled)
+}
+
+fn obligations(subsystem: &serde_json::Value) -> Result<BTreeSet<String>, String> {
+    subsystem
+        .get("obligations")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "missing subsystem obligations".to_owned())?
+        .iter()
+        .map(|id| {
+            id.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "invalid obligation id".to_owned())
+        })
+        .collect()
 }
 
 fn artifact_promotion_variants(root: &Path) -> Result<(), String> {

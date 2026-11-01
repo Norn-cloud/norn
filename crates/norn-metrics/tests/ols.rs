@@ -11,7 +11,7 @@ use norn_metrics::{
     temporal::{TemporalPlan, TemporalRow, TemporalTable, TemporalValue},
 };
 
-fn table(outcomes: &[i64], constant_predictor: bool) -> TemporalTable {
+fn table(outcomes: &[impl ToString], constant_predictor: bool) -> TemporalTable {
     let root = std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR").expect("prepare typed fixtures");
     let artifacts: Vec<ArtifactEnvelope> = serde_json::from_slice(
         &std::fs::read(std::path::Path::new(&root).join("metric-demand.json")).expect("fixture"),
@@ -20,7 +20,7 @@ fn table(outcomes: &[i64], constant_predictor: bool) -> TemporalTable {
     let catalog = EffectiveCatalog::from_artifacts(&artifacts);
     let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0)
         .expect("plan");
-    let value = |n: i64, at| TemporalValue {
+    let value = |n: String, at| TemporalValue {
         value: RuntimeValue::from_json_text(n.to_string()).expect("number"),
         valid_at: at,
         recorded_at: at,
@@ -28,7 +28,6 @@ fn table(outcomes: &[i64], constant_predictor: bool) -> TemporalTable {
     };
     let rows = outcomes
         .iter()
-        .copied()
         .enumerate()
         .map(|(i, y)| TemporalRow {
             key: format!("row-{i}"),
@@ -38,10 +37,10 @@ fn table(outcomes: &[i64], constant_predictor: bool) -> TemporalTable {
                     1
                 } else {
                     i64::try_from(i).expect("bounded index") + 1
-                },
+                }.to_string(),
                 100,
             )],
-            outcome: value(y, 200),
+            outcome: value(y.to_string(), 200),
         })
         .collect();
     plan.materialize(200, 1, rows).expect("table")
@@ -119,4 +118,10 @@ fn residuals_are_invariant_under_a_representable_large_outcome_translation() {
     for (a, b) in baseline.diagnostics.iter().zip(&shifted.diagnostics) {
         assert!((a.statistic - b.statistic).abs() < 1e-12);
     }
+}
+
+#[test]
+fn decimal_perfect_fit_refuses_rounding_noise() {
+    let admitted = table(&["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"], false);
+    assert_eq!(ols(&admitted, 0.05).expect_err("unstable fit"), norn_metrics::analysis::AnalysisError::Data("zero or unstable residual variance"));
 }

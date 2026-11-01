@@ -327,6 +327,22 @@ impl<'a> TypeCatalog<'a> {
             .and_then(|object_type| object_type.property(property.as_str()))
     }
 
+    pub(crate) fn declared_links(&self, owner: &ObjectTypeName) -> Vec<&'a norn_ir::Link> {
+        let mut links: Vec<_> = self
+            .types
+            .get(owner.as_str())
+            .copied()
+            .into_iter()
+            .flat_map(|definition| &definition.links)
+            .collect();
+        for extension in self.extensions.iter().copied() {
+            if extension.target == *owner {
+                links.extend(&extension.links);
+            }
+        }
+        links
+    }
+
     /// The effective object type in this catalog, if it resolves.
     pub(crate) fn effective_type(
         &self,
@@ -1412,7 +1428,7 @@ pub enum DecisionRefusal<X> {
         property: String,
     },
     /// A property write to an object in a declared immutable lifecycle state.
-    #[error("{key} is in immutable {lifecycle} state {state:?}; property writes are refused")]
+    #[error("{key} is in immutable {lifecycle} state {state}; property writes are refused")]
     ImmutableStateWrite {
         /// The object.
         key: FactKey,
@@ -1422,7 +1438,7 @@ pub enum DecisionRefusal<X> {
         state: String,
     },
     /// `create` writes a lifecycle property that is not an initial state.
-    #[error("{key}: {lifecycle} must start in one of {initial:?}, not {state:?}")]
+    #[error("{key}: {lifecycle} must start in {allowed}, not {actual}", allowed = initial.join(" or "), actual = state.as_deref().unwrap_or("unset"))]
     InvalidInitialState {
         /// The object.
         key: FactKey,
@@ -1454,7 +1470,7 @@ pub enum DecisionRefusal<X> {
         lifecycle: String,
     },
     /// `transition` names a transition the lifecycle does not declare.
-    #[error("{key}: the {lifecycle} lifecycle declares no transition {transition:?}")]
+    #[error("{key}: the {lifecycle} lifecycle declares no transition {transition}")]
     UnknownTransition {
         /// The object.
         key: FactKey,
@@ -1465,11 +1481,13 @@ pub enum DecisionRefusal<X> {
     },
     /// The object's current state is not a source state of the transition.
     #[error(
-        "{key} is {current:?}; transition {transition:?} only leaves {from:?}, so it cannot fire now"
+        "{key}: {lifecycle} is {actual}; transition {transition} only leaves {allowed}, so it cannot fire now", actual = current.as_deref().unwrap_or("unset"), allowed = from.join(" or ")
     )]
     NotFromState {
+        /// The lifecycle property.
+        lifecycle: String,
         /// The object.
-        key: FactKey,
+        key: Box<FactKey>,
         /// The transition.
         transition: String,
         /// The object's current state, if it has one.
@@ -1478,7 +1496,7 @@ pub enum DecisionRefusal<X> {
         from: Vec<String>,
     },
     /// A guard of the transition is false.
-    #[error("{key}: guard `{guard}` of transition {transition:?} does not hold")]
+    #[error("{key}: guard `{guard}` of transition {transition} does not hold")]
     GuardFalse {
         /// The object.
         key: FactKey,
@@ -1489,7 +1507,7 @@ pub enum DecisionRefusal<X> {
     },
     /// A guard could not be evaluated to a boolean; refused fail-closed.
     #[error(
-        "{key}: guard `{guard}` of transition {transition:?} could not be evaluated ({reason}); refused fail-closed"
+        "{key}: guard `{guard}` of transition {transition} could not be evaluated ({reason}); refused fail-closed"
     )]
     GuardError {
         /// The object.
@@ -1628,14 +1646,15 @@ impl<X> DecisionRefusal<X> {
             | Self::UnknownLifecycle { key, .. }
             | Self::UnresolvedLifecycle { key, .. }
             | Self::UnknownTransition { key, .. }
-            | Self::NotFromState { key, .. }
             | Self::GuardFalse { key, .. }
             | Self::GuardError { key, .. }
             | Self::Stale { key, .. }
             | Self::AccountingPosting { key, .. }
             | Self::InvariantBudgetExceeded { key, .. }
             | Self::TraversalLimitExceeded { key, .. } => Some(key),
-            Self::InvariantViolation { key, .. } => Some(key.as_ref()),
+            Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
+                Some(key.as_ref())
+            }
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
@@ -2572,7 +2591,8 @@ fn resolve_transition<X>(
             transition: transition.as_str().to_owned(),
         }),
         Err(FiringRefusal::NotFromState) => Err(DecisionRefusal::NotFromState {
-            key: key.clone(),
+            lifecycle: lifecycle.as_str().to_owned(),
+            key: Box::new(key.clone()),
             transition: transition.as_str().to_owned(),
             current,
             from: declared

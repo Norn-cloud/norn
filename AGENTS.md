@@ -54,13 +54,25 @@ third-party code; keep its notices and provenance.
 
 ## Provenance
 
-Every tracked file except `.github/ci/shipped-artifacts.json` has an entry in
-that manifest with its SHA-256, origin, category and licence. For those files, a
-change updates the hash and a new file adds an entry. Never add an entry for the
-manifest itself. `cargo xtask ci provenance` enforces this, and
+Every tracked file `<path>` outside `.github/ci/provenance/` has one record,
+`.github/ci/provenance/artifacts/<path>.json`, with its SHA-256, origin,
+category and licence. A change updates that record's hash, a new file adds a
+record, and a deleted file deletes it. The path comes from the record's file
+name, so it is not a field. `.github/ci/provenance/manifest.json` holds the
+version and software sources; nothing else lives in that directory.
+`cargo xtask ci provenance` enforces this, and
 the trusted policy lane checks pull requests against the base branch's rules.
 Symlinks, customer data, credentials, vendor schemas and copied GPL-family code
 are refused.
+
+## Verification coverage
+
+Coverage lives in `verification/coverage-v1/manifest/`: `index.json` holds the
+status vocabulary and evidence roots, and `subsystems/<id>.json` holds one
+subsystem's obligations, claims and `sourceFiles`. The id is the file name, so
+it is not a field. A new executable source joins exactly one subsystem's
+`sourceFiles`; edit only that subsystem's file and its provenance record.
+`scripts/coverage_manifest.py` is the only reader and writer.
 
 ## Changes and merging
 
@@ -93,3 +105,13 @@ are refused.
   --frozen-lockfile` inside `tools/norn-ts` or `packages/norn-sdk`).
 - Do not commit `.env` files, credentials, logs or scratch output.
 - Never revert changes you did not make.
+
+## Norn authoring
+
+Before writing or reviewing Norn definitions or engine features, every agent must read:
+
+- [The authoring reference](docs/authoring/README.md), including CURRENT versus TARGET syntax.
+- The relevant `docs/spec/core/01–08` file selected through the [core spec index](docs/spec/core/README.md), and its named acceptance scenarios.
+- [The 2026-11-01 decision record](docs/architecture/decisions/2026-11-01.md), which governs older designs.
+
+Use the [norn-authoring skill](.claude/skills/norn-authoring/SKILL.md) for definitions, packs, laws, mappings and authoring SDK work. Implement specified invariants, refusals and scenarios; report ambiguous contracts rather than inventing domain kernel behavior.

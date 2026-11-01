@@ -1,0 +1,692 @@
+{
+  "artifactId": "norn.ontology-pack.odoo",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Odoo Community 19.0 system pack (map-only)",
+  "namespace": "norn.ontology",
+  "payload": {
+    "mappings": [
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move.py"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move.py",
+        "justification": "The term names the model this file of the pinned release defines.",
+        "mappingId": "map.norn.odoo.account.move",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.odoo",
+        "termId": "norn.odoo.account.move"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move.py"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move.py",
+        "justification": "The term names the model this file of the pinned release defines.",
+        "mappingId": "map.norn.odoo.account.move.posting",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.odoo",
+        "termId": "norn.odoo.account.move.posting"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move_line.py"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move_line.py",
+        "justification": "The term names the model this file of the pinned release defines.",
+        "mappingId": "map.norn.odoo.account.move.line",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.odoo",
+        "termId": "norn.odoo.account.move.line"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_payment.py"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_payment.py",
+        "justification": "The term names the model this file of the pinned release defines.",
+        "mappingId": "map.norn.odoo.account.payment",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.odoo",
+        "termId": "norn.odoo.account.payment"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/odoo/addons/base/models/res_partner.py"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/odoo/addons/base/models/res_partner.py",
+        "justification": "The term names the model this file of the pinned release defines.",
+        "mappingId": "map.norn.odoo.res.partner",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.odoo",
+        "termId": "norn.odoo.res.partner"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/product/models/product_product.py"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/product/models/product_product.py",
+        "justification": "The term names the model this file of the pinned release defines.",
+        "mappingId": "map.norn.odoo.product.product",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.odoo",
+        "termId": "norn.odoo.product.product"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/stock/models/stock_picking.py"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/stock/models/stock_picking.py",
+        "justification": "The term names the model this file of the pinned release defines.",
+        "mappingId": "map.norn.odoo.stock.picking",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.odoo",
+        "termId": "norn.odoo.stock.picking"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/stock/models/stock_move.py"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/stock/models/stock_move.py",
+        "justification": "The term names the model this file of the pinned release defines.",
+        "mappingId": "map.norn.odoo.stock.move",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.odoo",
+        "termId": "norn.odoo.stock.move"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/sale/models/sale_order.py"
+        ],
+        "externalIri": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/sale/models/sale_order.py",
+        "justification": "The term names the model this file of the pinned release defines.",
+        "mappingId": "map.norn.odoo.sale.order",
+        "relation": "close_match",
+        "reviewedAt": "2026-10-31T00:00:00Z",
+        "reviewedBy": "lane-g (agent, proposed)",
+        "sourceId": "source.odoo",
+        "termId": "norn.odoo.sale.order"
+      }
+    ],
+    "packId": "norn.ontology-pack.odoo",
+    "packKind": "ontology",
+    "packVersion": "0.1",
+    "shapes": [
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "integer"
+          }
+        ],
+        "shapeId": "shape.norn.odoo.account.move",
+        "termId": "norn.odoo.account.move"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "integer"
+          }
+        ],
+        "shapeId": "shape.norn.odoo.account.move.posting",
+        "termId": "norn.odoo.account.move.posting"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "integer"
+          }
+        ],
+        "shapeId": "shape.norn.odoo.account.move.line",
+        "termId": "norn.odoo.account.move.line"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "integer"
+          }
+        ],
+        "shapeId": "shape.norn.odoo.account.payment",
+        "termId": "norn.odoo.account.payment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "integer"
+          }
+        ],
+        "shapeId": "shape.norn.odoo.res.partner",
+        "termId": "norn.odoo.res.partner"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "integer"
+          }
+        ],
+        "shapeId": "shape.norn.odoo.product.product",
+        "termId": "norn.odoo.product.product"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "integer"
+          }
+        ],
+        "shapeId": "shape.norn.odoo.stock.picking",
+        "termId": "norn.odoo.stock.picking"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "integer"
+          }
+        ],
+        "shapeId": "shape.norn.odoo.stock.move",
+        "termId": "norn.odoo.stock.move"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "integer"
+          }
+        ],
+        "shapeId": "shape.norn.odoo.sale.order",
+        "termId": "norn.odoo.sale.order"
+      }
+    ],
+    "sources": [
+      {
+        "canonicalUrl": "https://github.com/odoo/odoo/tree/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2",
+        "files": [
+          {
+            "path": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/COPYRIGHT",
+            "sha256": "86e49232d2162708d05405ed5ff6dc5594b73ef4b0f25d2749cfae13493b620c"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/LICENSE",
+            "sha256": "abc09dad5f84a76e1b0279237053cae16c03228ab27d8d467677054c2bd17eeb"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move.py",
+            "sha256": "4f904e5c9ad14af68d14d5bf0d9480641fbe916020f2bf1071247880fa311147"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_move_line.py",
+            "sha256": "d1023d3c738b405770584225ac1c389ab8301b1e3513447a2361b2a1c3d3da11"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/account/models/account_payment.py",
+            "sha256": "98e46b8767d7be62848efd853626da369ca56d6c5b00aa9bbc156c200eb21c2f"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/product/models/product_product.py",
+            "sha256": "69f93f2e8d23d7d9ae473f7a28918db2bfbbb7e010d3cc3af38dcd57f93a0355"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/sale/models/sale_order.py",
+            "sha256": "c2e51afe8919f3de53ad6504477a01fbebf4bb58cfd56836aa65d001a1734514"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/stock/models/stock_move.py",
+            "sha256": "b867349664caaa4db7ce1005bc6425adac3fa966e578d1400f361562e855f979"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/addons/stock/models/stock_picking.py",
+            "sha256": "e25e3cfb1e08172ebb0f10452ce35c34f6c45a7d694ec259ee6c6ea400bce4a0"
+          },
+          {
+            "path": "https://raw.githubusercontent.com/odoo/odoo/005e0a0eb7ef80cd15b0c82b570b2b0843181ba2/odoo/addons/base/models/res_partner.py",
+            "sha256": "1d5764c7aa35b2c086e987410b78f0b9aff920fd247122d44c0309402a3d5953"
+          }
+        ],
+        "importMode": "map_only",
+        "license": "LGPL-3.0-only",
+        "redistribution": "reference_only",
+        "releaseId": "19.0@005e0a0eb7ef80cd15b0c82b570b2b0843181ba2",
+        "releasedAt": "2026-10-30",
+        "retrievedAt": "2026-10-31",
+        "sourceId": "source.odoo"
+      }
+    ],
+    "terms": [
+      {
+        "definition": "Odoo's single model for journal entries, customer and vendor invoices, credit notes and receipts.",
+        "label": "account.move",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move",
+        "termKind": "class"
+      },
+      {
+        "definition": "The accounting transaction a move posts: the move itself for a journal entry, the invoice's accounting for an invoice (lead ruling 2026-10-31).",
+        "label": "account.move (posting view)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.posting",
+        "termKind": "class"
+      },
+      {
+        "definition": "One journal item (debit or credit) of a move.",
+        "label": "account.move.line",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.line",
+        "termKind": "class"
+      },
+      {
+        "definition": "Money received from or paid to a partner.",
+        "label": "account.payment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.payment",
+        "termKind": "class"
+      },
+      {
+        "definition": "Odoo's record for companies, people and their contact or delivery addresses.",
+        "label": "res.partner",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.res.partner",
+        "termKind": "class"
+      },
+      {
+        "definition": "A product variant.",
+        "label": "product.product",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.product.product",
+        "termKind": "class"
+      },
+      {
+        "definition": "A receipt, delivery or internal transfer of stock.",
+        "label": "stock.picking",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.stock.picking",
+        "termKind": "class"
+      },
+      {
+        "definition": "One product quantity moving between locations, including production consumption.",
+        "label": "stock.move",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.stock.move",
+        "termKind": "class"
+      },
+      {
+        "definition": "A quotation or confirmed sales order.",
+        "label": "sale.order",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.sale.order",
+        "termKind": "class"
+      },
+      {
+        "definition": "The move_type field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "move_type (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.move.type",
+        "termKind": "property"
+      },
+      {
+        "definition": "The state field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "state (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.state",
+        "termKind": "property"
+      },
+      {
+        "definition": "The payment_state field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "payment_state (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.payment.state",
+        "termKind": "property"
+      },
+      {
+        "definition": "The partner_id field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "partner_id (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.partner.id",
+        "termKind": "property"
+      },
+      {
+        "definition": "The date field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "date (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "The invoice_date field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "invoice_date (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.invoice.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "The invoice_date_due field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "invoice_date_due (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.invoice.date.due",
+        "termKind": "property"
+      },
+      {
+        "definition": "The currency_id field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "currency_id (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.currency.id",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount_untaxed field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "amount_untaxed (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.amount.untaxed",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount_tax field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "amount_tax (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.amount.tax",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount_total field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "amount_total (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.amount.total",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount_residual field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "amount_residual (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.amount.residual",
+        "termKind": "property"
+      },
+      {
+        "definition": "The posting view field of account.move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "posting view (account.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.gives.rise.to",
+        "termKind": "property"
+      },
+      {
+        "definition": "The debit field of account.move.line.",
+        "domainTermId": "norn.odoo.account.move.line",
+        "label": "debit (account.move.line)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.line.debit",
+        "termKind": "property"
+      },
+      {
+        "definition": "The credit field of account.move.line.",
+        "domainTermId": "norn.odoo.account.move.line",
+        "label": "credit (account.move.line)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.line.credit",
+        "termKind": "property"
+      },
+      {
+        "definition": "The payment_type field of account.payment.",
+        "domainTermId": "norn.odoo.account.payment",
+        "label": "payment_type (account.payment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.payment.payment.type",
+        "termKind": "property"
+      },
+      {
+        "definition": "The partner_id field of account.payment.",
+        "domainTermId": "norn.odoo.account.payment",
+        "label": "partner_id (account.payment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.payment.partner.id",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount field of account.payment.",
+        "domainTermId": "norn.odoo.account.payment",
+        "label": "amount (account.payment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.payment.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "The date field of account.payment.",
+        "domainTermId": "norn.odoo.account.payment",
+        "label": "date (account.payment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.payment.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "The is_company field of res.partner.",
+        "domainTermId": "norn.odoo.res.partner",
+        "label": "is_company (res.partner)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.res.partner.is.company",
+        "termKind": "property"
+      },
+      {
+        "definition": "The type field of res.partner.",
+        "domainTermId": "norn.odoo.res.partner",
+        "label": "type (res.partner)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.res.partner.type",
+        "termKind": "property"
+      },
+      {
+        "definition": "The default_code field of product.product.",
+        "domainTermId": "norn.odoo.product.product",
+        "label": "default_code (product.product)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.product.product.default.code",
+        "termKind": "property"
+      },
+      {
+        "definition": "The partner_id field of stock.picking.",
+        "domainTermId": "norn.odoo.stock.picking",
+        "label": "partner_id (stock.picking)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.stock.picking.partner.id",
+        "termKind": "property"
+      },
+      {
+        "definition": "The picking_type_id field of stock.picking.",
+        "domainTermId": "norn.odoo.stock.picking",
+        "label": "picking_type_id (stock.picking)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.stock.picking.picking.type.id",
+        "termKind": "property"
+      },
+      {
+        "definition": "The product_uom_qty field of stock.move.",
+        "domainTermId": "norn.odoo.stock.move",
+        "label": "product_uom_qty (stock.move)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.stock.move.product.uom.qty",
+        "termKind": "property"
+      },
+      {
+        "definition": "The partner_id field of sale.order.",
+        "domainTermId": "norn.odoo.sale.order",
+        "label": "partner_id (sale.order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.sale.order.partner.id",
+        "termKind": "property"
+      },
+      {
+        "definition": "The amount_total field of sale.order.",
+        "domainTermId": "norn.odoo.sale.order",
+        "label": "amount_total (sale.order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.sale.order.amount.total",
+        "termKind": "property"
+      },
+      {
+        "definition": "The state field of sale.order.",
+        "domainTermId": "norn.odoo.sale.order",
+        "label": "state (sale.order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.sale.order.state",
+        "termKind": "property"
+      },
+      {
+        "definition": "The invoice_status field of sale.order.",
+        "domainTermId": "norn.odoo.sale.order",
+        "label": "invoice_status (sale.order)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.sale.order.invoice.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "Posts a draft move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "action_post",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.action.post",
+        "termKind": "action"
+      },
+      {
+        "definition": "Resets a posted move to draft so it can be edited.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "button_draft",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.button.draft",
+        "termKind": "action"
+      },
+      {
+        "definition": "Creates the reversing move of a posted move.",
+        "domainTermId": "norn.odoo.account.move",
+        "label": "reverse (account.move.reversal)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.move.reverse",
+        "termKind": "action"
+      },
+      {
+        "definition": "Posts a draft payment.",
+        "domainTermId": "norn.odoo.account.payment",
+        "label": "action_post",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.odoo.account.payment.action.post",
+        "termKind": "action"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/odoo/artifacts/norn.ontology-pack.odoo.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

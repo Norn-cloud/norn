@@ -1,0 +1,20 @@
+{
+  "sha256": "158250fb250dfbf0b93e91aa61abf43caa4ebd16b2a504dca3de1ed8b8ca8149",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/norn-ts/corpus/reject/throw.ts",
+    "tools/norn-ts/test/profile-corpus.test.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

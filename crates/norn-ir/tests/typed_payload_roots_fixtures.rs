@@ -86,8 +86,8 @@ fn fixtures() -> Vec<Fixture> {
             )
             .into(),
             kind: ArtifactKind::BusinessPack,
-            canonical_hash: "b5fa103c6eb569b2d6d1ef859017e31f9c323fa6dd7eea02dfdf73559c1ea4f0",
-            raw_sha256: "6092f5c524326c7880f67bb832086ee3cadf46d61cc1170ecedad00c8f0ab8f7",
+            canonical_hash: "ac62a2d1cd4e3eea1e3f1132d91be9cc587aa714510c2558f2a4ff8929ded202",
+            raw_sha256: "c98dc82f0972fd422410580b3506f47485d007c2d40263b8aff829dd003589ca",
         },
         Fixture {
             name: "verification/ontology/packs/quantity-units-v0/pack.json",
@@ -96,8 +96,8 @@ fn fixtures() -> Vec<Fixture> {
             )
             .into(),
             kind: ArtifactKind::BusinessPack,
-            canonical_hash: "26e115335b3ee968b3068b6b06275a0c284bec34f13cc217b468aa73e4c86e3c",
-            raw_sha256: "6b88fb36aae22bfaec330635de5d92460d0fbe58698a6b648889c876c57d4db6",
+            canonical_hash: "264c2007efbc6b81feeb55688456b81be7701c1a8771fc0709dc5c339af382aa",
+            raw_sha256: "aa1c39e6c0352843dfb630bc76af01688ff46591a375ac028ad2848e52ffb9e2",
         },
         Fixture {
             name: "verification/archive/rules-dmn-v1/fixtures/conformance.json#artifact",
