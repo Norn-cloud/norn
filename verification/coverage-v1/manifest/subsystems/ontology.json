@@ -258,6 +258,9 @@
     "verification/ontology/scripts/build_company_commerce_pack.py",
     "verification/ontology/scripts/semantic_check.py",
     "verification/ontology/scripts/validate.py",
-    "verification/ontology/scripts/validate_semantics.py"
+    "verification/ontology/scripts/validate_semantics.py",
+    "crates/norn-checker/src/unit_admission.rs",
+    "crates/norn-checker/src/unit_codes.rs",
+    "verification/canonical-values-v1/unit_codes_kani.rs"
   ]
 }

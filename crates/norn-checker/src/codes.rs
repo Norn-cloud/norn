@@ -471,6 +471,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     entry(
+        "core.values.unit_mismatch",
+        Tier::T3,
+        "VAL-UNIT-1: unit requires a visible, exact core unit catalog pin and an admitted UCUM code; conversion must be explicit",
+    ),
+    entry(
         "customization.validation.invalid_payload",
         Tier::T2,
         "CustomizationIR payload is invalid at {path}: {detail}",

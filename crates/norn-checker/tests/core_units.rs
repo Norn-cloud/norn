@@ -105,5 +105,75 @@ proptest! {
         record.as_object_mut().expect("record").insert("denominator".to_owned(), denominator.into());
         record.as_object_mut().expect("record").insert("dimension".to_owned(), RuntimeValue::from("currency"));
         prop_assert!(constraint.check_runtime_value(&record).is_err());
+        let other_dimension = if dimension == "time" { "mass" } else { "time" };
+        record.as_object_mut().expect("record").insert("dimension".to_owned(), other_dimension.into());
+        prop_assert!(constraint.check_runtime_value(&record).is_err());
+    }
+}
+
+fn unit_type(code: &str, system: norn_ir::UnitSystem) -> PropertyType {
+    PropertyType::Decimal { scale: norn_ir::WholeNumber(2),
+        unit: Some(norn_ir::UnitRef { system, code: code.to_owned() }), currency_source: None }
+}
+
+fn declaration(ty: PropertyType) -> norn_ir::ArtifactEnvelope {
+    let mut artifact = units::pack().expect("pack");
+    artifact.artifact_id = "demo.units".to_owned();
+    artifact.namespace = "demo".to_owned();
+    artifact.dependencies = vec![norn_ir::ArtifactDependency { artifact_id: "core.units".to_owned(),
+        kind: norn_ir::ArtifactKind::Entity, version: Some("1.0.0".to_owned()), required: true }];
+    let mut def = catalog().into_iter().next().expect("definition");
+    def.name = PropertyTypeName("demo.amount".to_owned());
+    def.property_type = ty;
+    let root = norn_ir::PropertyTypeCatalogRootV2 { entity_version: norn_ir::EntityIrVersion::V2_0,
+        property_types: vec![def], extensions: None };
+    artifact.payload = ArtifactPayload::Entity(serde_json::from_str(&serde_json::to_string(&root).expect("typed root")).expect("payload"));
+    artifact
+}
+
+fn unit_findings(artifact: &norn_ir::ArtifactEnvelope, base: &[norn_ir::ArtifactEnvelope]) -> Vec<norn_checker::Diagnostic> {
+    norn_checker::check_entity_artifacts(std::slice::from_ref(artifact), &norn_checker::EntityArtifactSetContext {
+        registry: &BTreeSet::new(), base, tenant: None,
+    })
+}
+
+#[test]
+fn val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins() {
+    let base = [units::pack().expect("pack")];
+    for (code, _, _, _, _) in units::UNITS {
+        let mut artifact = declaration(unit_type(code, norn_ir::UnitSystem::Ucum));
+        assert!(unit_findings(&artifact, &base).is_empty());
+        assert!(unit_findings(&artifact, &[]).iter().any(|d| d.code == "core.values.unit_mismatch"));
+        artifact.dependencies.clear();
+        assert!(unit_findings(&artifact, &base).iter().any(|d| d.code == "core.values.unit_mismatch"));
+    }
+    for variant in 0..5 {
+        let mut artifact = declaration(unit_type("g", norn_ir::UnitSystem::Ucum));
+        let pin = artifact.dependencies.first_mut().expect("pin");
+        let duplicate = pin.clone();
+        match variant {
+            0 => pin.version = Some("2.0.0".to_owned()),
+            1 => pin.required = false,
+            2 => pin.kind = norn_ir::ArtifactKind::Rule,
+            3 => artifact.dependencies.push(duplicate),
+            _ => { let mut hidden = base.clone(); hidden.first_mut().expect("catalog").scope.org_id = Some("other".to_owned());
+                assert!(!unit_findings(&artifact, &hidden).is_empty()); continue; }
+        }
+        assert!(unit_findings(&artifact, &base).iter().any(|d| d.code == "core.values.unit_mismatch"));
+    }
+}
+
+proptest! {
+    #[test]
+    fn val_unit_admission_preserves_case_and_system(code in "[A-Za-z]{1,5}", ucum in any::<bool>()) {
+        let system = if ucum { norn_ir::UnitSystem::Ucum } else { norn_ir::UnitSystem::Qudt };
+        let member = norn_ir::RecordMember { id: PropertyId("amount".to_owned()), property_type: unit_type(&code, system), constraints: PropertyConstraints::default() };
+        let artifact = declaration(PropertyType::Record { members: vec![member] });
+        let findings = unit_findings(&artifact, &[units::pack().expect("pack")]);
+        let expected = ucum && units::UNITS.iter().any(|unit| unit.0 == code);
+        prop_assert_eq!(findings.is_empty(), expected);
+        if !expected {
+            prop_assert!(findings.iter().any(|d| d.code == "core.values.unit_mismatch" && d.span.as_ref().is_some_and(|s| s.pointer == "/payload/propertyTypes/0/type/members/0/type/unit")));
+        }
     }
 }
