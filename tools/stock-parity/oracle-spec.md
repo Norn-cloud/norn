@@ -141,3 +141,15 @@ remain later units; this witness alone never claims full moving-average parity.
   REST updates, as supported by the background-jobs documentation. Keep the
   native computation unchanged and allow one minute plus scheduler/worker
   latency within the 120-second checkpoint deadline.
+
+- **CP2-snapshot-timeout-receipt:** retain the attempted command before reading
+  its checkpoint. A read/repost timeout leaves `status: "unsupported"` on that
+  checkpoint and preserves its native ID and outcome, even when accepted.
+  Empty stock/GL arrays there are placeholders, never observed empty business
+  state; the comparator marks the checkpoint unsupported and fails.
+
+Checkpoint limitation: the development fork still did not settle valuation
+reposts after the scheduler configuration corrections. The full 20-checkpoint
+lifecycle witness is not qualified. Positive receipt/delivery/transfer/return
+observations do not establish cancellation or cross-engine parity. The next
+unit must qualify a fresh fork with the final configuration and lifecycle budget.
