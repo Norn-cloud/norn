@@ -787,6 +787,66 @@ where
     commit_action_with_limits(host, catalog, call, authorizer, &EnvelopeLimits::V1)
 }
 
+/// Replay a model candidate through the kernel's admission and commit path.
+/// The host must be an isolated replay host: earlier successful steps remain
+/// committed if a later step refuses. The returned availability describes only
+/// this definition, authorization, scope and initial-state replay context.
+#[must_use]
+pub fn replay_control_candidate<H>(
+    host: &mut H,
+    catalog: &TypeCatalog<'_>,
+    candidate: &norn_ir::ControlVerdict,
+    calls: &[ActionCall<'_>],
+    authorizer: &dyn ActionAuthorizer,
+) -> norn_ir::ControlVerdict
+where
+    H: CellHost + ?Sized,
+    H::Event: From<FactEvent>,
+    H::Command: From<JsonObject>,
+    H::Input: From<JsonObject>,
+{
+    let mut result = candidate.clone();
+    result.reachability = norn_ir::Reachability::Unknown;
+    let trace_actions: Vec<_> = candidate
+        .trace
+        .iter()
+        .map(|step| step.action.clone())
+        .collect();
+    if candidate.actions.is_empty()
+        || candidate.trace.is_empty()
+        || calls.len() != candidate.trace.len()
+        || !trace_actions.ends_with(&candidate.actions)
+        || calls
+            .iter()
+            .zip(&candidate.trace)
+            .any(|(call, step)| call.action.action_id != step.action || call.actor != step.role)
+    {
+        return result;
+    }
+    let mut target = None;
+    let mut scope = None;
+    for call in calls {
+        if scope.as_ref().is_some_and(|prior| prior != &call.scope) {
+            return result;
+        }
+        scope = Some(call.scope.clone());
+        let Ok(outcome) = commit_action(host, catalog, call, authorizer) else {
+            return result;
+        };
+        let record = match outcome {
+            ActionOutcome::Committed { record, .. } | ActionOutcome::Replayed { record } => record,
+        };
+        if record.object.object_type != candidate.object_type
+            || target.as_ref().is_some_and(|prior| prior != &record.object)
+        {
+            return result;
+        }
+        target = Some(record.object);
+    }
+    result.reachability = norn_ir::Reachability::Witnessed;
+    result
+}
+
 /// Commits one action call using an input preparation already computed for
 /// this exact action definition, artifact identity/version, and raw input.
 ///

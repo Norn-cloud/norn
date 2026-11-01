@@ -47,3 +47,9 @@ required witnesses through artifact-set admission. The kernel replay slice must
 cover promotion and refusal. These are target contracts, deferred in the wire and
 evidence-table slice; they do not claim those implementations are present here.
 Evidence is finite model evidence, never a temporal proof or a live-runtime claim.
+
+Kernel conformance (`candidate_promotion_requires_kernel_admission_and_commit`):
+normal upserts promote only after the whole trace commits; missing effects,
+create-only collisions, false guards, authorization denial and overlong command
+identities stay unknown. A mismatched actor is rejected before any commit.
+Replay records must address one object of the declared type in one scope.
