@@ -658,7 +658,10 @@ class DefinitionCompiler {
     if (!receipt) return A.fireTransition(type, field, this.string(lifecycle), this.string(transition))
     const r = this.closedRecord(receipt, ["referenceField", "manifestDigest", "digestProperty", "resultBindings"], ["referenceField", "manifestDigest", "digestProperty", "resultBindings"])
     const resultBindings: Record<string, string> = {}
-    for (const [target, source] of this.record(r.get("resultBindings")!)) resultBindings[target] = this.string(source)
+    for (const [target, source] of this.record(r.get("resultBindings")!)) {
+      if (target === "__proto__") throw new CompileError("NORN-FLOW-LITERAL", "__proto__ is not a portable JSON member name", source.parent)
+      resultBindings[target] = this.string(source)
+    }
     return A.fireTransition(type, field, this.string(lifecycle), this.string(transition), {
       referenceField: this.string(r.get("referenceField")!), manifestDigest: this.string(r.get("manifestDigest")!),
       digestProperty: this.string(r.get("digestProperty")!), resultBindings,
