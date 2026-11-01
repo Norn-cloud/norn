@@ -75,6 +75,7 @@ use crate::observations::{LogicalTime, World};
 #[derive(Debug, Clone, Default)]
 pub struct TypeCatalog<'a> {
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
+    pub(crate) rules: BTreeMap<&'a str, &'a crate::AdmittedRule>,
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
     extensions: Vec<&'a ObjectTypeExtension>,
     property_types: Option<&'a [PropertyTypeDef]>,
@@ -110,11 +111,23 @@ impl<'a> TypeCatalog<'a> {
                 .into_iter()
                 .map(|object_type| (object_type.name.as_str(), object_type))
                 .collect(),
+            rules: BTreeMap::new(),
             interfaces: BTreeMap::new(),
             extensions: Vec::new(),
             property_types: None,
             effective_model: OnceLock::new(),
         }
+    }
+
+    /// Bind rule evaluation authority to the cell's admitted definitions.
+    #[must_use]
+    pub fn with_rules(mut self, rules: impl IntoIterator<Item = &'a crate::AdmittedRule>) -> Self {
+        self.rules.extend(
+            rules
+                .into_iter()
+                .map(|rule| (rule.decision().rule_id(), rule)),
+        );
+        self
     }
 
     /// The same catalog with the admitted interfaces implemented by its
@@ -1821,7 +1834,7 @@ pub fn prepare_decision<X>(
     prepare_decision_with_source_owned_targets(catalog, slice, turn, output, &BTreeSet::new())
 }
 
-/// Prepares a rule decision while refusing direct fact changes to the
+/// Prepares unsealed decision data while refusing direct fact changes to the
 /// source-owned targets resolved by its host. The protected set is supplied
 /// from persisted observation authority markers and trigger provenance.
 /// Native objects of the same type remain writable.
@@ -1888,26 +1901,8 @@ fn prepare_decision_with_limits_and_source_owned_targets<X>(
         turn,
         output,
         limits,
-        AdmissionOrigin::Rule,
-        source_owned_targets,
-    )
-}
-
-pub(crate) fn prepare_action_decision<X>(
-    catalog: &TypeCatalog<'_>,
-    slice: &FactSlice,
-    turn: &DecisionTurn,
-    output: &DecisionOutput,
-    limits: &EnvelopeLimits,
-) -> Result<PreparedDecision, DecisionRefusal<X>> {
-    prepare_decision_with_limits_for(
-        catalog,
-        slice,
-        turn,
-        output,
-        limits,
         AdmissionOrigin::Action,
-        &BTreeSet::new(),
+        source_owned_targets,
     )
 }
 
@@ -1961,14 +1956,14 @@ pub(crate) fn prepare_observed_properties<X>(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AdmissionOrigin {
+pub(crate) enum AdmissionOrigin {
     Rule,
     Action,
     Observation,
     OwnedRows,
 }
 
-fn prepare_decision_with_limits_for<X>(
+pub(crate) fn prepare_decision_with_limits_for<X>(
     catalog: &TypeCatalog<'_>,
     slice: &FactSlice,
     turn: &DecisionTurn,
@@ -2186,6 +2181,22 @@ where
         output.commands.len(),
         output.timers.len(),
     );
+    commit_prepared_decision(host, turn, prepared, counts, meter)
+}
+
+pub(crate) fn commit_prepared_decision<H>(
+    host: &mut H,
+    turn: &DecisionTurn,
+    prepared: PreparedDecision,
+    counts: EnvelopeCounts,
+    meter: Option<&mut TurnEnvelopeMeter>,
+) -> Result<CommitReceipt, DecisionRefusal<H::Error>>
+where
+    H: CellHost + ?Sized,
+    H::Event: From<FactEvent>,
+    H::Command: From<JsonObject>,
+    H::Input: From<JsonObject>,
+{
     if let Some(meter) = meter.as_deref() {
         meter
             .check(counts)
@@ -2423,7 +2434,16 @@ fn apply_change<X>(
             }
             FactChange::Set { property, .. } => protected(property.as_str()),
             FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
-            FactChange::Delete { .. } => false,
+            FactChange::Delete { .. } => {
+                catalog
+                    .effective_type(&key.object_type)
+                    .is_some_and(|effective| {
+                        effective
+                            .properties
+                            .iter()
+                            .any(norn_checker::EffectiveProperty::protected)
+                    })
+            }
         };
         if forbidden {
             return Err(DecisionRefusal::InvalidOutput {
@@ -2780,4 +2800,77 @@ fn timer<X>(
         due,
         payload: record.clone(),
     })
+}
+
+#[cfg(test)]
+mod field_authority_tests {
+    use super::{
+        AdmissionOrigin, BTreeMap, BTreeSet, FactChange, FactKey, FactSlice, FactVersion,
+        JsonObject, JsonValue, ObjectTypeDef, TypeCatalog, Working, apply_change,
+    };
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "test fixtures and assertions require successful setup and existing keys"
+    )]
+    fn protected_delete_then_recreate_is_refused() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" }, "protected": true }]
+        }))
+        .unwrap();
+        let catalog = TypeCatalog::new([&object]);
+        let key = FactKey::new("test.Counter", "one");
+        for origin in [
+            AdmissionOrigin::Action,
+            AdmissionOrigin::Observation,
+            AdmissionOrigin::OwnedRows,
+        ] {
+            let values = Some(JsonObject::from([(
+                "total".to_owned(),
+                JsonValue::from(2_i64),
+            )]));
+            let mut working = BTreeMap::from([(
+                key.clone(),
+                Working {
+                    expected: FactVersion(1),
+                    values: values.clone(),
+                    written: false,
+                },
+            )]);
+            for change in [
+                FactChange::Delete {
+                    object_type: key.object_type.clone(),
+                    key: key.key.clone(),
+                },
+                FactChange::Create {
+                    object_type: key.object_type.clone(),
+                    key: key.key.clone(),
+                    values: JsonObject::default(),
+                },
+            ] {
+                let error = apply_change::<std::convert::Infallible>(
+                    &catalog,
+                    &FactSlice::new(),
+                    &mut working,
+                    &change,
+                    origin,
+                    &BTreeSet::new(),
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.code(),
+                    if matches!(change, FactChange::Delete { .. }) {
+                        "decision.invalid_output"
+                    } else {
+                        "decision.object_exists"
+                    }
+                );
+                assert_eq!(working[&key].values, values);
+                assert!(!working[&key].written);
+            }
+        }
+    }
 }

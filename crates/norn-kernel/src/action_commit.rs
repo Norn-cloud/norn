@@ -64,7 +64,7 @@ use crate::cell_host::{
 };
 use crate::decision_commit::{
     DecisionRefusal, DecisionTurn, FactEvent, FactSlice, TypeCatalog, expr_value,
-    fill_lifecycle_defaults, prepare_action_decision, prepare_owned_rows, widen_effect,
+    fill_lifecycle_defaults, prepare_decision_with_limits, prepare_owned_rows, widen_effect,
 };
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::{EnvelopeLimits, SliceMeter};
@@ -3521,7 +3521,7 @@ where
         commands,
         timers: Vec::new(),
     };
-    let mut prepared = prepare_action_decision(catalog, &slice, &call.turn, &output, limits)?;
+    let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
     let mut created_links = Vec::new();
     for binding in &call.action.create_links {
         let target_id = effective_input
