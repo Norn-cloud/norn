@@ -8,6 +8,8 @@ the same decision remain fenced, including absent objects. Loading provides no
 authorization; callers retain their existing admitted read and commit authority.
 
 FENCE-BOUNDS: the host must provide a complete bounded snapshot or refuse it.
+Facts use load_bounded with remaining bytes before host decoding; unsupported
+or oversized bounded point/member reads refuse as well as bounded list reads.
 A prefix, unsupported list operation or oversized list is never input to a
 successful decision. Canonical fact snapshots and membership expectations are
 charged to one existing SliceMeter; no per-partition reset. Target identities

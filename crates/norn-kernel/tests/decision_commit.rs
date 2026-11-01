@@ -2306,6 +2306,10 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
             )
             .is_err()
         );
+        // FENCE-BOUNDS: a point snapshot exceeding remaining bytes refuses too.
+        let mut tiny = ResourceLimitProfile::norn_limits_v1().slice;
+        tiny.max_canonical_bytes = 1;
+        assert!(load_partition_slice(&cell, &catalog, [keys[3].clone()], &[], tiny).is_err());
         let slice = load_partition_slice(
             &cell,
             &catalog,
