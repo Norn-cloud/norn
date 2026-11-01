@@ -3,10 +3,53 @@
  * Do not make direct changes to the file.
  */
 
-export type paths = Record<string, never>;
+export interface paths {
+    "/v1/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispatch under a single definition epoch through the governed kernel.
+         * @description # Errors
+         *     Scope, policy, revision, argument and kernel refusals change no business state.
+         */
+        post: operations["call_action_in_epoch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Exact action invocation; the actor comes exclusively from the transport. */
+        ActionRequest: {
+            /** @description Admitted action identity. */
+            actionId: string;
+            /** @description Stable retry identity. */
+            idempotencyKey: string;
+            /** @description Exact business arguments. */
+            input: Record<string, never>;
+            /**
+             * Format: int64
+             * @description Required admitted revision pin.
+             */
+            version: number;
+        };
+        /** @description Successful committed or replayed kernel record. */
+        ActionResponse: {
+            /** @description Kernel call record without transport reinterpretation. */
+            record: Record<string, never>;
+            /** @description Whether this was an identical retry. */
+            replayed: boolean;
+        };
         /**
          * LayoutSidecar
          * @description Versioned sidecar containing editor state for semantic artifacts.
@@ -1357,6 +1400,21 @@ export interface components {
             op: components["schemas"]["NornIrCompareOp"];
             value: components["schemas"]["NornIrAccessLiteral"];
         };
+        /** @description Controls belonging to the enclosing object type. */
+        NornIrControls: {
+            /**
+             * @description Closed wire profile.
+             * @enum {string}
+             */
+            format: "norn.controls/1";
+            /** @description Ordered sensitive action sequences. */
+            sensitivePaths: components["schemas"]["NornIrSensitivePath"][];
+        };
+        /**
+         * @description Versioned controls vocabulary.
+         * @enum {string}
+         */
+        NornIrControlsFormat: "norn.controls/1";
         /**
          * @description How a source term relates to its target terms.
          * @enum {string}
@@ -3335,6 +3393,8 @@ export interface components {
              *     Inherited by subtypes. Omitted for object types that are not GL legs.
              */
             accountingLeg?: components["schemas"]["NornIrAccountingLegDeclaration"] | null;
+            /** @description Definition-owned finite duty controls, inherited by subtypes. */
+            controls?: components["schemas"]["NornIrControls"];
             description?: string;
             /**
              * @description The single supertype. The subtype inherits every property, key, and
@@ -3348,6 +3408,8 @@ export interface components {
              *     declare a business key.
              */
             identity?: components["schemas"]["NornIrKeySpec"][];
+            /** @description Append-only: existing instances cannot be changed or deleted. Inherited. */
+            immutable?: boolean;
             /**
              * @description Interfaces the type implements, in addition to those its supertypes
              *     implement. Omitted when empty.
@@ -3739,6 +3801,8 @@ export interface components {
              *     by the checker and cannot be removed by narrowing. Omitted when empty.
              */
             markings?: components["schemas"]["NornIrMarkingId"][];
+            /** @description System-maintained: declared rules may write it, actions may not. */
+            protected?: boolean;
             /** @description The value kind: inline, or a shared property type through `ref`. */
             type: components["schemas"]["NornIrPropertyType"];
         };
@@ -4394,6 +4458,15 @@ export interface components {
          * @enum {string}
          */
         NornIrSemanticAuthority: "semantic_only";
+        /** @description A sensitive action sequence on the enclosing object type. */
+        NornIrSensitivePath: {
+            /** @description Exact action identities in required order. */
+            actions: string[];
+            /** @description Must equal the enclosing type, not an arbitrary external target. */
+            objectType: string;
+            /** @description Require concrete availability evidence in addition to separation. */
+            requireWitness?: boolean;
+        };
         NornIrSettingPayload: {
             effectiveFrom: string;
             /** @description Must sort after `effectiveFrom` (checker rule). */
@@ -5786,6 +5859,23 @@ export interface components {
             /** @description Pack, artifact digest and stable law member identity. */
             inherited_from: components["schemas"]["NornInheritedLawOrigin"];
         };
+        /** @description A refused request. */
+        Refusal: {
+            /** @description What the caller can do about it (the discriminant SDKs switch on). */
+            category: components["schemas"]["RefusalCategory"];
+            /** @description Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …). */
+            code: string;
+            /** @description Why, and what would make the request admissible. */
+            explanation: string;
+            /** @description One-line summary. */
+            message: string;
+        };
+        /**
+         * @description What the caller can do about a refusal: the kernel refusal taxonomy's
+         *     closed category set (`norn_kernel::RefusalCategory`).
+         * @enum {string}
+         */
+        RefusalCategory: "visibility" | "permission" | "precondition" | "conflict" | "invalid" | "limit" | "internal";
     };
     responses: never;
     parameters: never;
@@ -5794,4 +5884,89 @@ export interface components {
     pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    call_action_in_epoch: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Explicit organization */
+                "x-norn-org-id": string;
+                /** @description Explicit environment */
+                "x-norn-environment-id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+}
