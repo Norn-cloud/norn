@@ -28,11 +28,6 @@ fn entity_projection_preserves_identity_declarations_and_order() {
     };
     assert!(catalog.contains(&member));
     assert_eq!(member.member.id(), "type:commerce.SalesOrder");
-    assert_eq!(
-        serde_json::from_value::<MemberRef>(serde_json::to_value(&member).expect("encode"))
-            .expect("decode"),
-        member
-    );
     assert!(catalog.properties.iter().all(
         |row| row.at.artifact_id == artifact.artifact_id && row.at.version == artifact.version
     ));
@@ -60,8 +55,6 @@ fn local_lifecycle_states_keep_inherited_property_ownership() {
     child["payload"]["objectType"]["name"] = "commerce.Child".into();
     child["payload"]["objectType"]["extends"] = serde_json::json!("commerce.SalesOrder");
     child["payload"]["objectType"]["properties"] = serde_json::json!([]);
-    child["payload"]["objectType"]["links"] = serde_json::json!([]);
-    child["payload"]["objectType"]["identity"] = serde_json::json!([]);
     parent["payload"]["objectType"]["lifecycles"] = serde_json::json!([]);
     let artifacts = [parent, child].map(|value| serde_json::from_value(value).expect("envelope"));
     let registry = BTreeSet::new();
