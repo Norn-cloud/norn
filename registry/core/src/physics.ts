@@ -14,6 +14,46 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 
+const ConversionMeasurements = Schema.Struct({
+  input_quantity: Norn.decimal(3),
+  output_quantity: Norn.decimal(3),
+  loss_quantity: Norn.decimal(3),
+})
+
+/** LAW-CONVERSION-1: measured quantities in one declared unit conserve exactly. */
+export const Conversion = Norn.interfaceType({
+  name: "core.Conversion",
+  title: "Conversion",
+  version: "0.1.0",
+  description: "A measured conversion in one unit, at three decimal places. These are accepted measurements, not a certificate of the associated stock or value effects.",
+  properties: Schema.Struct({
+    input_quantity: Norn.decimal(3),
+    output_quantity: Norn.decimal(3),
+    loss_quantity: Norn.decimal(3),
+    quantity_unit: Norn.ref("ucum.unit_code"),
+  }),
+  invariants: [{
+    id: "core.law.conversion_conservation",
+    expression: Norn.expression(ConversionMeasurements, input => input.input_quantity >= 0 && input.output_quantity >= 0 && input.loss_quantity >= 0 && input.input_quantity === input.output_quantity + input.loss_quantity),
+    message: "Input quantity must equal output plus explicitly recorded loss in the same unit.",
+  }],
+})
+
+export const quantityConservation = Norn.law({
+  id: "core.law.conversion_conservation.law",
+  title: "Conversion quantity conservation",
+  version: "0.1.0",
+  law: {
+    lawVersion: "0.1", id: "core.law.conversion_conservation", owner: "norn.core",
+    severity: "error", rationale: "A conversion retains its input as output and explicit loss.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/core/src/physics.ts" },
+    scope: { root: { kind: "entity", id: "core.Conversion" }, objectTypes: ["core.Conversion"] },
+    subject: "core.Conversion", modality: { kind: "always" },
+    response: { kind: "invariant", objectType: "core.Conversion", invariantId: "core.law.conversion_conservation" },
+  },
+  dependencies: [{ artifactId: "core.Conversion.interface", kind: "entity", version: "0.1.0", required: true }],
+})
+
 export const Agent = Norn.interfaceType({
   name: "core.Agent",
   title: "Agent",

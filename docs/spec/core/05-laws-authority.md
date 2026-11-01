@@ -51,6 +51,8 @@ Evidence levels remain separate. Lean proof bodies must check the generated theo
 - **AUTH-REVOKE:** Given delegated approval at generation 1, when revoked before commit/dispatch, then no new governed action/external attempt; already dispatched results are recorded and reconciled.
 - **PROOF-STALE:** Given a passing old statement, when a writer/unit/mapping changes, then old evidence is unknown for the new goal, never proved.
 
+**LAW-CONVERSION-1 (first B4 cut):** `core.Conversion` carries the single `core.law.conversion_conservation` invariant over nonnegative accepted input/output/loss measurements in one explicit unit, at scale 3. Its LawIR references that invariant, and effective instances retain its core origin on a Melt implementor without copying the predicate. A balanced measurement is accepted; omitted loss, negative loss and wrong scale refuse. The shared commit invariant check rejects every write and outbox effect in the proposal on failure. Measurement conservation does not establish stock/value effect closure or derive totals from allocations; those aggregate obligations remain unknown until the declared fold/effect bindings are implemented.
+
 ## Main and gaps
 
 Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-checker/src/{deontic,verification,law_enrollment}.rs`, `obligations/`, `crates/norn-authz/src/grants.rs`, `crates/norn-kernel/src/decision_commit.rs`. #316 merged; #322 open. Narrow induction generation exists; general aggregate laws, retained interface/containment closure, generated solver dispatch and full delegation chains are not established. Core physics declarations in `registry/core/src/physics.ts` are not complete runtime law enforcement.
