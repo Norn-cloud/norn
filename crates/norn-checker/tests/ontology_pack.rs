@@ -252,6 +252,101 @@ fn mapping_cannot_cite_a_study_only_source() {
     );
 }
 
+fn vocabulary_term(term_id: &str, kind: &str, domain: Option<&str>) -> serde_json::Value {
+    let mut term = serde_json::json!({
+        "termId": term_id,
+        "label": term_id,
+        "definition": "A vocabulary handle used by test mutations.",
+        "termKind": kind,
+        "status": "active",
+        "semanticAuthority": "semantic_only"
+    });
+    if let Some(domain) = domain {
+        term["domainTermId"] = serde_json::json!(domain);
+    }
+    term
+}
+
+fn with_terms(terms: &[serde_json::Value]) -> serde_json::Value {
+    let mut candidate = fixture_json();
+    candidate["payload"]["terms"]
+        .as_array_mut()
+        .expect("terms must be an array")
+        .extend(terms.iter().cloned());
+    candidate
+}
+
+fn expect_term_diagnostic(candidate: serde_json::Value, message: &str) {
+    let diagnostics = validate_fixture(candidate).expect_err("vocabulary rule must refuse");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains(message)),
+        "expected '{message}': {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn action_property_and_predicate_handles_need_no_shape() {
+    validate_fixture(with_terms(&[
+        vocabulary_term(
+            "norn.commerce.order.place",
+            "action",
+            Some("norn.commerce.order"),
+        ),
+        vocabulary_term(
+            "norn.commerce.order.total",
+            "property",
+            Some("norn.commerce.order"),
+        ),
+        vocabulary_term("norn.commerce.guard.order.empty", "predicate", None),
+    ]))
+    .expect("vocabulary handles validate without shapes");
+}
+
+#[test]
+fn members_and_operations_name_an_active_class_domain() {
+    expect_term_diagnostic(
+        with_terms(&[vocabulary_term("norn.commerce.order.place", "action", None)]),
+        "names the class it belongs to",
+    );
+    expect_term_diagnostic(
+        with_terms(&[vocabulary_term(
+            "norn.commerce.order.total",
+            "property",
+            Some("norn.commerce.order.place"),
+        )]),
+        "must resolve to an active class term",
+    );
+    expect_term_diagnostic(
+        with_terms(&[vocabulary_term(
+            "norn.commerce.order.kind",
+            "class",
+            Some("norn.commerce.order"),
+        )]),
+        "has no domainTermId",
+    );
+}
+
+#[test]
+fn vocabulary_handles_take_no_closed_shape() {
+    let mut candidate = with_terms(&[vocabulary_term(
+        "norn.commerce.guard.order.empty",
+        "predicate",
+        None,
+    )]);
+    candidate["payload"]["shapes"]
+        .as_array_mut()
+        .expect("shapes must be an array")
+        .push(serde_json::json!({
+            "shapeId": "shape.guard.order.empty",
+            "termId": "norn.commerce.guard.order.empty",
+            "closed": true,
+            "fields": [{"fieldId": "x", "valueType": "string", "minCount": 0, "maxCount": 1}]
+        }));
+    expect_term_diagnostic(candidate, "takes no closed shape");
+}
+
 #[test]
 fn commerce_pack_covers_schema_classes_and_order_item_cardinality() {
     let candidate = fixture_json();

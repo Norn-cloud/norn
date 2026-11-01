@@ -1,0 +1,35 @@
+{
+  "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae",
+  "origin": "derived",
+  "category": "software",
+  "license": "MIT",
+  "sources": [
+    {
+      "id": "software.differential-dataflow",
+      "revision": "6e53ac674feacac83b0c3c5d123bdd5db488ef9d",
+      "evidence": {
+        "path": "welldb/patches/PATCHES.md",
+        "sha256": "df56df63a6208e1cbdd449d3c7933ce303bea85018554cfad92bd8831148c222"
+      }
+    }
+  ],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "welldb/patches/PATCHES.md",
+      "sha256": "df56df63a6208e1cbdd449d3c7933ce303bea85018554cfad92bd8831148c222"
+    },
+    {
+      "path": "welldb/patches/differential-dataflow/LICENSE",
+      "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+    }
+  ],
+  "notices": [
+    {
+      "path": "welldb/patches/differential-dataflow/LICENSE",
+      "sha256": "8bd76b34a8facd3cb1ba94d228e66231e226b674c94e446529c475f0f54d4bae"
+    }
+  ],
+  "connector": null
+}
