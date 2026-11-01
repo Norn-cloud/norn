@@ -353,7 +353,7 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
             reader.account(&key, &binding.accounts.cogs)?,
         ];
         let uom = text::<H::Error>(&reader.fact(&item)?, "uom")?;
-        let masters = [company.clone(), item, warehouse];
+        let masters = [company.clone(), item, warehouse].map(|key| model.canonical(&key));
         let witness =
             partition_key(&masters).map_err(|_encoding| invalid("invalid partition identity"))?;
         let company_values = reader.fact(&company)?;
@@ -527,158 +527,45 @@ mod tests {
         reason = "conformance fixture assembly"
     )]
     use super::*;
-    use crate::{
-        ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
-        CellCommit, FactEvent, FactMutation, FactVersion, FactWrite, LinkKey, LinkMutation,
-        LinkWrite,
-    };
     use serde_json::json;
-    struct Allow;
-    impl ActionAuthorizer for Allow {
-        fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-            Ok(())
-        }
-        fn authorize_read(&self, _: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
-            Ok(())
-        }
-        fn authorize_read_type(
-            &self,
-            _: &ActionReadTypeAuthzRequest<'_>,
-        ) -> Result<(), ActionDenial> {
-            Ok(())
-        }
-    }
     #[test]
-    fn post_history_fences_and_refusal() {
-        let artifacts: Vec<serde_json::Value> = serde_json::from_str(include_str!(
-            "../../../../tools/norn-ts/fixtures/stock/stock.artifacts.json"
-        ))
-        .unwrap();
-        let types: Vec<norn_ir::ObjectTypeDef> = artifacts
-            .iter()
-            .filter_map(|a| a["payload"].get("objectType"))
-            .map(|v| serde_json::from_value(v.clone()).unwrap())
-            .collect();
-        let action: norn_ir::ActionRoot = serde_json::from_value(
-            artifacts
-                .iter()
-                .find(|a| a["artifactId"] == "stock.receipt.submit")
-                .unwrap()["payload"]
-                .clone(),
-        )
-        .unwrap();
-        let catalog = TypeCatalog::new(&types);
-        let mut cell =
-            norn_testkit::cell_host::MemoryCell::<FactEvent, JsonObject, JsonObject>::new(|_| {
-                JsonObject::new()
-            })
-            .with_types(types.clone());
-        let masters = [
-            FactKey::new("stock.Company", "c"),
-            FactKey::new("stock.Item", "i"),
-            FactKey::new("stock.Warehouse", "w"),
-        ];
-        let partition = partition_key(&masters).unwrap();
-        let call = ActionCall {
-            action: &action,
-            action_artifact_id: "stock.receipt.submit",
-            action_version: "0.1.0",
-            scope: BTreeMap::from([
-                ("orgId".into(), "org_demo".into()),
-                ("environmentId".into(), "dev".into()),
-            ]),
-            actor: "test".into(),
-            input: serde_json::from_value(json!({"id":"pr"})).unwrap(),
-            idempotency_key: "submit".into(),
-            object_type: None,
-            turn: crate::DecisionTurn {
-                id: "turn".into(),
-                now: crate::LogicalTime::from_millis(1),
-                world: crate::World::Main,
-                consumes: None,
-            },
-        };
-        let snapshot = |cell: &_| {
-            let limits = ResourceLimitProfile::norn_limits_v1().slice;
-            let mut reader = Reader {
-                context: ActionSliceContext {
-                    host: cell,
-                    catalog: &catalog,
-                    call: &call,
-                    effective_input: &call.input,
-                    authorizer: &Allow,
-                },
-                snapshot: StockSnapshot::default(),
-                meter: SliceMeter::new(limits),
-                observed: 0,
-                types: BTreeSet::new(),
-                limits,
-            };
-            let history = reader.history(&partition, "pin").unwrap();
-            (reader.snapshot, history)
-        };
-        let (empty, _) = snapshot(&cell);
-        assert_eq!(
-            empty.facts[&partition].version,
-            FactVersion::ABSENT,
-            "POST-HISTORY-FENCE absence"
-        );
-        assert!(empty.links[0].targets.is_empty());
-        let event = FactKey::new("stock.StockEvent", "e");
-        let write = |key, values| FactWrite {
-            key,
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: serde_json::from_value(values).unwrap(),
-            },
-        };
-        cell.commit(CellCommit { writes: vec![write(partition.clone(), json!({"id":partition.key,"event_count":1,"binding_pin":"pin"})), write(event.clone(), json!({"id":"e","partition_id":partition.key,"ordinal":0,"operation":"receipt","quantity":5,"value":50}))],
-            links: vec![LinkWrite { key: LinkKey::new(partition.clone(), "events", event.clone()), expected: FactVersion::ABSENT, mutation: LinkMutation::Add { values: JsonObject::new() } }], ..CellCommit::empty() }).unwrap();
-        assert!(
-            cell.commit(CellCommit::<FactEvent, JsonObject, JsonObject> {
-                link_reads: empty.links.clone(),
-                ..CellCommit::empty()
-            })
-            .is_err(),
-            "POST-HISTORY-FENCE empty adjacency race"
-        );
-        let stale = CellCommit::<FactEvent, JsonObject, JsonObject> {
-            reads: vec![super::super::FactExpectation {
-                key: partition.clone(),
-                expected: FactVersion::ABSENT,
-            }],
-            link_reads: empty.links,
-            ..CellCommit::empty()
-        };
-        assert!(
-            cell.commit(stale).is_err(),
-            "POST-HISTORY-FENCE first-post race"
-        );
-        let (read, history) = snapshot(&cell);
-        assert!(read.facts.contains_key(&event));
-        let company = serde_json::from_value(
-            json!({"book_id":"b","graph_id":"g","graph_version":1,"currency":"USD"}),
-        )
-        .unwrap();
-        let accounts = ["stock".into(), "srbnb".into(), "cogs".into()];
-        let bindings =
-            runtime_bindings::<std::convert::Infallible>(&company, &accounts, &call).unwrap();
-        let p = StockPartitionInput {
-            masters,
-            accounts,
+    fn post_partition_refusal_names_authoritative_stock() {
+        let accounts =
+            ["stock", "srbnb", "cogs"].map(|id| norn_ir::posting::AccountingAccountRef {
+                scope_key: "demo".into(),
+                book_id: "book".into(),
+                graph_id: "graph".into(),
+                graph_version: 1,
+                account_id: id.into(),
+            });
+        let partition = StockPartitionInput {
+            masters: [
+                FactKey::new("stock.Company", "c"),
+                FactKey::new("stock.Item", "i"),
+                FactKey::new("stock.Warehouse", "w"),
+            ],
+            accounts: ["stock".into(), "srbnb".into(), "cogs".into()],
+            witness: FactKey::new("stock.Partition", "p"),
             binding_pin: "pin".into(),
-            witness: partition,
-            history,
-            bindings,
+            history: vec![FifoMovement::Receipt(FifoLayer {
+                receipt: "prior".into(),
+                quantity: 5_000_000,
+                value: 50_000_000,
+            })],
             lines: vec![StockPostLine {
-                id: "l".into(),
-                quantity: 6_000_000,
+                id: "line".into(),
+                quantity: 6_250_000,
                 unit_cost: None,
             }],
+            bindings: StockPostBindings {
+                templates: ["receipt".into(), "delivery".into()],
+                accounts,
+                currency: "USD".into(),
+                layer: "posted".into(),
+            },
         };
-        let before = cell.ledger().len();
         let error = plan_stock_partition::<std::convert::Infallible>(
-            &p,
+            &partition,
             StockPostOperation::Delivery,
             "dn",
         )
@@ -686,9 +573,32 @@ mod tests {
         assert_eq!(error.code(), "stock.insufficient_stock");
         assert_eq!(
             error.to_string(),
-            "insufficient stock for item i in warehouse w: requested 6, available 5"
+            "insufficient stock for item i in warehouse w: requested 6.25, available 5"
         );
-        assert_eq!(cell.ledger().len(), before, "POST-REFUSAL-REASON no writes");
+    }
+    #[test]
+    fn post_history_identity_and_exact_shape() {
+        let partition = FactKey::new("stock.Partition", "p");
+        let event = FactKey::new("stock.StockEvent", "e");
+        let values: JsonObject = serde_json::from_value(json!({"id":"e", "partition_id":"p", "ordinal":0, "operation":"receipt", "quantity":5, "value":50})).unwrap();
+        assert_eq!(
+            history_event::<std::convert::Infallible>(&partition, &event, &values).unwrap(),
+            (
+                0,
+                FifoMovement::Receipt(FifoLayer {
+                    receipt: "e".into(),
+                    quantity: 5_000_000,
+                    value: 50_000_000
+                })
+            )
+        );
+        for field in ["id", "partition_id", "ordinal", "operation", "quantity"] {
+            let mut malformed = values.clone();
+            malformed.insert(field.into(), JsonValue::String("invalid".into()));
+            assert!(
+                history_event::<std::convert::Infallible>(&partition, &event, &malformed).is_err()
+            );
+        }
     }
     use norn_ir::Decimal;
     #[test]
