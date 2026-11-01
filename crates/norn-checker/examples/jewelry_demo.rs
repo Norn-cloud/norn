@@ -32,11 +32,8 @@ fn wording() -> RequirementWording {
     };
     RequirementWording {
         scope: text("Each core conversion", "كل عملية تحويل"),
-        activation: text("When its state is posted", "عندما تكون حالتها مرحلة"),
-        component: text(
-            "Its fine-metal measurements",
-            "قياسات المعدن الخالص الخاصة بها",
-        ),
+        activation: text("At every accepted measurement", "عند كل قياس مقبول"),
+        component: text("Its measurements in one unit", "قياساتها بوحدة واحدة"),
         response: text(
             "Input equals output plus recorded loss",
             "المدخل يساوي المخرج مع الفاقد المسجل",
@@ -65,6 +62,12 @@ fn source(artifacts: &[ArtifactEnvelope]) -> DemoResult<DefinitionSource> {
 }
 
 fn main() -> DemoResult<()> {
+    let mut arguments = std::env::args().skip(1);
+    let challenge_only = match (arguments.next().as_deref(), arguments.next()) {
+        (None, None) => false,
+        (Some("--challenge-json"), None) => true,
+        _ => return Err("usage: jewelry_demo [--challenge-json]".into()),
+    };
     let mut stdout = std::io::stdout().lock();
     let mut input = String::new();
     std::io::stdin()
@@ -92,6 +95,19 @@ fn main() -> DemoResult<()> {
     if !diagnostics.is_empty() {
         return Err(format!("admission: {diagnostics:?}").into());
     }
+    let exact = source(&artifacts)?;
+    let authority = ApprovedContract::approve(
+        &exact,
+        &registry,
+        json!({"expression":"norn-zen/6","execution":"unqualified"}),
+        json!({"scope":"local admission example, not deployment authority"}),
+        json!({"required":"unknown; no solver result supplied"}),
+    )?;
+    let challenge = authority.challenge(&exact, &registry)?;
+    if challenge_only {
+        writeln!(stdout, "{}", serde_json::to_string(challenge.body())?)?;
+        return Ok(());
+    }
     writeln!(
         stdout,
         "CURRENT: admitted Melt inherits the unchanged core conversion law (measurement scope)"
@@ -103,15 +119,6 @@ fn main() -> DemoResult<()> {
         law.id
     )?;
     writeln!(stdout, "{}", serde_json::to_string_pretty(&wording())?)?;
-    let exact = source(&artifacts)?;
-    let authority = ApprovedContract::approve(
-        &exact,
-        &registry,
-        json!({"expression":"norn-zen/6","execution":"unqualified"}),
-        json!({"scope":"local admission example, not deployment authority"}),
-        json!({"required":"unknown; no solver result supplied"}),
-    )?;
-    let challenge = authority.challenge(&exact, &registry)?;
     writeln!(
         stdout,
         "Checker-generated obligations {}; no handwritten theorem or proof:",
