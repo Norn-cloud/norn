@@ -68,7 +68,6 @@ Admission rejects unknown, computed, reserved and lifecycle binding targets. Bot
 destinations exclude objectIdField and every effective identity-key component;
 a result destination also cannot equal digestProperty. The normal exact writer
 closure remains required. Catalogs preserve the declaration.
-Only the cell host may resolve authenticated, scoped evidence. An unsupported host
-refuses. Declaration admission does not grant completed acceptance: execution is
-fail-closed until the receipt's single-use consumption and all action effects can
-be fenced in one transaction, with no partial persistence on refusal.
+Only the cell host resolves authenticated, scoped evidence; unsupported hosts refuse.
+Execution remains closed until receipt consumption and effects commit atomically,
+with no partial persistence on refusal.
