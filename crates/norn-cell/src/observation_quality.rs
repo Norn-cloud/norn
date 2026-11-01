@@ -32,11 +32,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let key = FactKey::new(&record.object_type, &record.id);
         let invariants =
             norn_kernel::evaluate_invariants(&catalog, &key, &record.values, &mut remaining)
-                .map_err(|error| {
-                    match error {
-                        norn_kernel::InvariantEvaluationError::InvalidEffectiveValues(_invalid) => CellError::QualityEvaluation("invalid effective values".into()),
-                        norn_kernel::InvariantEvaluationError::BudgetExceeded => CellError::QualityEvaluation("invariant evaluation budget exhausted".into()),
-                        norn_kernel::InvariantEvaluationError::MissingInterface(name) => CellError::QualityEvaluation(format!("missing interface {name}")),
+                .map_err(|error| match error {
+                    norn_kernel::InvariantEvaluationError::InvalidEffectiveValues(_invalid) => {
+                        CellError::QualityEvaluation("invalid effective values".into())
+                    }
+                    norn_kernel::InvariantEvaluationError::BudgetExceeded => {
+                        CellError::QualityEvaluation("invariant evaluation budget exhausted".into())
+                    }
+                    norn_kernel::InvariantEvaluationError::MissingInterface(name) => {
+                        CellError::QualityEvaluation(format!("missing interface {name}"))
                     }
                 })?;
         norn_kernel::governing_laws::evaluate(
@@ -126,47 +130,49 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 ORDER BY seq LIMIT 64"),
                 params![world, object_type, key, after],
             )?;
-            if sequences.is_empty() { break; }
-        for values in sequences {
-            let seq: i64 = crate::engine::SqlRow(values).get(0)?;
-            after = seq;
-            if let Some(event) =
-                self.verified_finding_at(crate::read::to_u64(seq, "finding sequence")?)?
-            {
-                let mut finding: DataQualityFinding = norn_ir::runtime::decode(
-                    event
-                        .get("fact")
-                        .ok_or(CellError::OutOfRange("finding fact"))?,
-                )
-                .map_err(CellError::Encoding)?;
-                if seen.insert(finding.id.clone()) {
-                    if let Some(record) = &current {
-                        let probe = finding.clone().with_evidence_digest(format!(
-                            "sha256:{}",
-                            crate::codec::hash_json(&record.values)?
-                        ))?;
-                        if !norn_kernel::snapshot_observe::verify_finding_values(
-                            &catalog,
-                            &FactKey::new(object_type, key),
-                            &record.values,
-                            &probe,
-                        )
-                        .map_err(|error| CellError::QualityEvaluation(error.to_string()))?
-                        {
-                            finding.status = if catalog
-                                .classify_data_quality_rule(&finding.rule_ref)?
-                                == norn_kernel::DataQualityRuleClassification::Unverified
+            if sequences.is_empty() {
+                break;
+            }
+            for values in sequences {
+                let seq: i64 = crate::engine::SqlRow(values).get(0)?;
+                after = seq;
+                if let Some(event) =
+                    self.verified_finding_at(crate::read::to_u64(seq, "finding sequence")?)?
+                {
+                    let mut finding: DataQualityFinding = norn_ir::runtime::decode(
+                        event
+                            .get("fact")
+                            .ok_or(CellError::OutOfRange("finding fact"))?,
+                    )
+                    .map_err(CellError::Encoding)?;
+                    if seen.insert(finding.id.clone()) {
+                        if let Some(record) = &current {
+                            let probe = finding.clone().with_evidence_digest(format!(
+                                "sha256:{}",
+                                crate::codec::hash_json(&record.values)?
+                            ))?;
+                            if !norn_kernel::snapshot_observe::verify_finding_values(
+                                &catalog,
+                                &FactKey::new(object_type, key),
+                                &record.values,
+                                &probe,
+                            )
+                            .map_err(|error| CellError::QualityEvaluation(error.to_string()))?
                             {
-                                DataQualityFindingStatus::Superseded
-                            } else {
-                                DataQualityFindingStatus::Resolved
-                            };
+                                finding.status = if catalog
+                                    .classify_data_quality_rule(&finding.rule_ref)?
+                                    == norn_kernel::DataQualityRuleClassification::Unverified
+                                {
+                                    DataQualityFindingStatus::Superseded
+                                } else {
+                                    DataQualityFindingStatus::Resolved
+                                };
+                            }
                         }
+                        findings.push(finding);
                     }
-                    findings.push(finding);
                 }
             }
-        }
         }
         Ok(findings)
     }
@@ -246,10 +252,14 @@ pub(crate) fn deduplicate<E: SqlEngine>(
 
 fn quality_law_error(error: norn_kernel::governing_laws::LawEvaluationError) -> CellError {
     match error {
-        norn_kernel::governing_laws::LawEvaluationError::UnsupportedUntilB2(law_id) => CellError::UnsupportedLawScope {law_id},
+        norn_kernel::governing_laws::LawEvaluationError::UnsupportedUntilB2(law_id) => {
+            CellError::UnsupportedLawScope { law_id }
+        }
         other @ (norn_kernel::governing_laws::LawEvaluationError::Unsupported(_)
-            | norn_kernel::governing_laws::LawEvaluationError::Invalid(_)
-            | norn_kernel::governing_laws::LawEvaluationError::BudgetExceeded
-            | norn_kernel::governing_laws::LawEvaluationError::Violated(_)) => CellError::QualityEvaluation(other.to_string()),
+        | norn_kernel::governing_laws::LawEvaluationError::Invalid(_)
+        | norn_kernel::governing_laws::LawEvaluationError::BudgetExceeded
+        | norn_kernel::governing_laws::LawEvaluationError::Violated(_)) => {
+            CellError::QualityEvaluation(other.to_string())
+        }
     }
 }
