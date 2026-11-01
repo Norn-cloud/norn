@@ -45,7 +45,7 @@ GRAPH-CLASS-1 evaluation is a separate cut; admission creates no writable member
 GRAPH-DAG-1 checks classification dependencies over exact artifact/version identities,
 including retained declarations. A cycle containing a candidate refuses `core.graph.cycle`;
 self references count as cycles and ambiguous identities never select a version.
-The shared ordering primitive has a three-vertex bounded harness and generated-graph
+The shared ordering primitive has a two-vertex bounded harness and generated-graph
 correspondence against an independent transitive-closure oracle; these are bounded/sampled evidence.
 
 ## Evaluation and enforcement
