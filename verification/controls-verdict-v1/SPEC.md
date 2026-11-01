@@ -47,3 +47,8 @@ required witnesses through artifact-set admission. The kernel replay slice must
 cover promotion and refusal. These are target contracts, deferred in the wire and
 evidence-table slice; they do not claim those implementations are present here.
 Evidence is finite model evidence, never a temporal proof or a live-runtime claim.
+
+- **Unique installed command identity:** duplicate action IDs in the installed
+  base refuse admission even when the candidate artifact list is empty. An
+  ambiguous graph must not turn a refuted control into an admitted unknown.
+  Conformance: `duplicate_installed_action_ids_refuse_before_unknown_controls_can_admit`.

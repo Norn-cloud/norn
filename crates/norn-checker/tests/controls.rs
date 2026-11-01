@@ -150,3 +150,14 @@ fn separated_model_cannot_supply_required_witness() {
     );
     assert!(!checked.receipt.admitted);
 }
+
+#[test]
+fn duplicate_installed_action_ids_refuse_before_unknown_controls_can_admit() {
+    let mut base = fixture(false, false, false);
+    let mut duplicate = base[1].clone();
+    duplicate.artifact_id = "demo.other_approve".into();
+    base.push(duplicate);
+    let checked = check(&[], &base);
+    assert!(checked.diagnostics.iter().any(|diagnostic| diagnostic.code.as_str() == "artifact_set.action.duplicate_action_id"));
+    assert!(!checked.receipt.admitted);
+}

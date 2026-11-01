@@ -172,16 +172,11 @@ pub fn check_action_set(
         .collect();
     let model = Model::new(artifacts, base, context.registry, !actions.is_empty());
     let mut findings = model.duplicate_findings();
-    if actions.is_empty() {
-        return findings;
-    }
-
-    let mut action_ids: BTreeSet<String> = base
-        .iter()
-        .filter_map(decode_action)
-        .map(|root| root.action_id)
-        .collect();
-    for (artifact, root) in &actions {
+    let mut action_ids = BTreeSet::new();
+    for artifact in base.iter().chain(artifacts) {
+        let Some(root) = decode_action(artifact) else {
+            continue;
+        };
         if !action_ids.insert(root.action_id.clone()) {
             findings.push(finding(
                 codes::DUPLICATE_ACTION_ID,
@@ -193,6 +188,8 @@ pub fn check_action_set(
                 "/payload/actionId",
             ));
         }
+    }
+    for (artifact, root) in &actions {
         findings.extend(check_action(artifact, root, &model, artifacts, base));
     }
     findings
