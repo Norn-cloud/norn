@@ -518,7 +518,7 @@ def core_physics_closure_canaries() -> None:
     removed = "INV-CORE-COMMITMENT-COMPLETION"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     registry["obligations"] = [item for item in registry["obligations"] if item["id"] != removed]
-    coverage = json.loads(COVERAGE.read_text(encoding="utf-8"))
+    coverage = coverage_manifest.load(COVERAGE)
     for subsystem in coverage["subsystems"]:
         if subsystem["id"] == "core-physics":
             subsystem["obligations"].remove(removed)
@@ -527,9 +527,9 @@ def core_physics_closure_canaries() -> None:
             ]
     with tempfile.TemporaryDirectory() as directory:
         candidate_registry = Path(directory) / "obligations.json"
-        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_coverage = Path(directory) / "manifest"
         candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
-        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        coverage_manifest.write(coverage, candidate_coverage)
         message = expect_coverage_validator_rejection(
             "coordinated core-physics law deletion",
             coverage_path=candidate_coverage,
@@ -545,9 +545,9 @@ def core_physics_closure_canaries() -> None:
             item["priority"] = "P1"
     with tempfile.TemporaryDirectory() as directory:
         candidate_registry = Path(directory) / "obligations.json"
-        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_coverage = Path(directory) / "manifest"
         candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
-        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        coverage_manifest.write(coverage, candidate_coverage)
         message = expect_coverage_validator_rejection(
             "core-physics law demotion and coverage removal",
             coverage_path=candidate_coverage,
