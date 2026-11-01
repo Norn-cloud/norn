@@ -5266,7 +5266,7 @@ norn_testkit::proptest::proptest! {
                 norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
                 let verified = reader.verified_history_event(&findings[0]).expect("proof").expect("retained producer");
                 let finding: norn_ir::DataQualityFinding = norn_ir::runtime::decode(verified.get("fact").expect("fact")).expect("finding");
-                norn_testkit::proptest::prop_assert!(matches!(&finding.rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range"));
+                norn_testkit::proptest::prop_assert!(matches!(&finding.rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range"), "retained purity law pin");
                 if let Some(ref before) = id { norn_testkit::proptest::prop_assert_eq!(before, &finding.id); }
                 id = Some(finding.id);
                 norn_testkit::proptest::prop_assert!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").is_some());
