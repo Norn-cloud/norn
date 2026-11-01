@@ -496,7 +496,7 @@ fn commit_quantity(
         scope: "tenant/proof".into(),
         logical_time: now,
         idempotency_key: Some(key.into()),
-        quantity: Some(quantity),
+        quantity: Some((quantity).into()),
         consumes,
         ..CommitBatch::default()
     })
