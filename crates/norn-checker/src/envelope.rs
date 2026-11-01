@@ -1938,9 +1938,15 @@ fn validate_action_effect_program(
             }
         }
         if program.contains_key("acceptReceipt")
-            && let Err(error) = serde_json::to_value(value).and_then(serde_json::from_value::<ActionEffectProgram>)
+            && let Err(error) =
+                serde_json::to_value(value).and_then(serde_json::from_value::<ActionEffectProgram>)
         {
-            diagnostics.push(invalid_diagnostic(CODE, format!("invalid acceptReceipt declaration: {error}"), "payload.effectProgram.acceptReceipt", artifact_id));
+            diagnostics.push(invalid_diagnostic(
+                CODE,
+                format!("invalid acceptReceipt declaration: {error}"),
+                "payload.effectProgram.acceptReceipt",
+                artifact_id,
+            ));
         }
     } else if mutates_rows {
         for member in ["parentValuesField", "rowOpsField", "parentVersionField"]

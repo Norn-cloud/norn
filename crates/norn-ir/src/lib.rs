@@ -642,7 +642,11 @@ pub enum ActionEffectProgram {
         lifecycle: PropertyId,
         transition: TransitionId,
         /// Bind a host-authenticated Function result before firing the transition.
-        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::members::present_non_null")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::members::present_non_null"
+        )]
         accept_receipt: Option<ReceiptAcceptance>,
     },
     /// Atomically mutate a parent and its declared ordered child rows.

@@ -912,8 +912,16 @@ where
     };
     // RECEIPT-EFFECT-1: declaration precedes the atomic receipt-consumption
     // implementation. No host configuration can grant partial acceptance.
-    if matches!(action.effect_program.as_ref(), Some(ActionEffectProgram::FireTransition { accept_receipt: Some(_), .. })) {
-        return Err(ActionRefusal::UnsupportedEffect { action_id: action.action_id.clone() });
+    if matches!(
+        action.effect_program.as_ref(),
+        Some(ActionEffectProgram::FireTransition {
+            accept_receipt: Some(_),
+            ..
+        })
+    ) {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: action.action_id.clone(),
+        });
     }
     match action.effect_program.as_ref() {
         Some(ActionEffectProgram::FireTransition {

@@ -238,12 +238,33 @@ fn transition_meta(program: &ActionEffectProgram) -> Option<JsonObject> {
         .collect(),
     );
     if let (Some(binding), JsonValue::Object(fields)) = (accept_receipt, &mut descriptor) {
-        fields.insert("acceptReceipt".to_owned(), JsonValue::Object(JsonObject::from([
-            ("referenceField".to_owned(), string(&binding.reference_field)),
-            ("manifestDigest".to_owned(), string(&binding.manifest_digest.0)),
-            ("digestProperty".to_owned(), string(binding.digest_property.as_str())),
-            ("resultBindings".to_owned(), JsonValue::Object(binding.result_bindings.iter().map(|(target, source)| (target.0.clone(), string(source.as_str()))).collect())),
-        ])));
+        fields.insert(
+            "acceptReceipt".to_owned(),
+            JsonValue::Object(JsonObject::from([
+                (
+                    "referenceField".to_owned(),
+                    string(&binding.reference_field),
+                ),
+                (
+                    "manifestDigest".to_owned(),
+                    string(&binding.manifest_digest.0),
+                ),
+                (
+                    "digestProperty".to_owned(),
+                    string(binding.digest_property.as_str()),
+                ),
+                (
+                    "resultBindings".to_owned(),
+                    JsonValue::Object(
+                        binding
+                            .result_bindings
+                            .iter()
+                            .map(|(target, source)| (target.0.clone(), string(source.as_str())))
+                            .collect(),
+                    ),
+                ),
+            ])),
+        );
     }
     Some(JsonObject::from([(
         TRANSITION_META_KEY.to_owned(),

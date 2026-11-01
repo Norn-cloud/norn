@@ -843,22 +843,65 @@ impl Defined<'_> {
                 collections,
             ));
         }
-        if let ActionEffectProgram::FireTransition { accept_receipt: Some(binding), .. } = program {
-            let reference = root.input_schema.get("properties").and_then(JsonValue::as_object)
+        if let ActionEffectProgram::FireTransition {
+            accept_receipt: Some(binding),
+            ..
+        } = program
+        {
+            let reference = root
+                .input_schema
+                .get("properties")
+                .and_then(JsonValue::as_object)
                 .and_then(|properties| properties.get(&binding.reference_field));
-            let required = root.input_schema.get("required").and_then(JsonValue::as_array)
-                .is_some_and(|fields| fields.iter().any(|field| field.as_string() == Some(binding.reference_field.as_str())));
-            let view = self.effective_object_type.as_ref().and_then(|view| view.as_ref().ok());
-            let writable = |id: &norn_ir::PropertyId| !id.as_str().starts_with("_norn") && view.is_some_and(|view| {
-                view.property(id.as_str()).is_some_and(|property| !property.computed)
-                    && view.lifecycle(id.as_str()).is_none()
-            });
-            let digest_text = view.and_then(|view| view.property(binding.digest_property.as_str()))
-                .is_some_and(|property| matches!(property.kind, crate::EffectiveKind::Base(norn_ir::PropertyType::Text { .. })));
-            if !required || reference.and_then(|field| field.get("type")).and_then(JsonValue::as_string) != Some("string")
-                || !binding.manifest_digest.is_well_formed() || !writable(&binding.digest_property) || !digest_text
-                || binding.result_bindings.is_empty() || binding.result_bindings.keys().any(|id| !writable(id) || id == &binding.digest_property)
-                || binding.result_bindings.values().any(|id| !crate::property_types::matches_grammar(&crate::object_types::MEMBER_ID_GRAMMAR, id.as_str()))
+            let required = root
+                .input_schema
+                .get("required")
+                .and_then(JsonValue::as_array)
+                .is_some_and(|fields| {
+                    fields
+                        .iter()
+                        .any(|field| field.as_string() == Some(binding.reference_field.as_str()))
+                });
+            let view = self
+                .effective_object_type
+                .as_ref()
+                .and_then(|view| view.as_ref().ok());
+            let writable = |id: &norn_ir::PropertyId| {
+                !id.as_str().starts_with("_norn")
+                    && view.is_some_and(|view| {
+                        view.property(id.as_str())
+                            .is_some_and(|property| !property.computed)
+                            && view.lifecycle(id.as_str()).is_none()
+                    })
+            };
+            let digest_text = view
+                .and_then(|view| view.property(binding.digest_property.as_str()))
+                .is_some_and(|property| {
+                    matches!(
+                        property.kind,
+                        crate::EffectiveKind::Base(norn_ir::PropertyType::Text { .. })
+                    )
+                });
+            if !required
+                || reference
+                    .and_then(JsonValue::as_object)
+                    .and_then(|field| field.get("type"))
+                    .and_then(JsonValue::as_string)
+                    != Some("string")
+                || !binding.manifest_digest.is_well_formed()
+                || !writable(&binding.digest_property)
+                || !digest_text
+                || binding.result_bindings.is_empty()
+                || binding
+                    .result_bindings
+                    .keys()
+                    .any(|id| !writable(id) || id == &binding.digest_property)
+                || binding.result_bindings.values().any(|id| {
+                    !crate::property_types::matches_grammar(
+                        &crate::object_types::MEMBER_ID_GRAMMAR,
+                        id.as_str(),
+                    )
+                })
             {
                 findings.push(finding(codes::TARGET_NOT_WRITABLE, "acceptReceipt requires a required string reference, a manifest digest, and writable typed result/digest properties".to_owned(), action, "/payload/effectProgram/acceptReceipt"));
             }
