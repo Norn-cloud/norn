@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { parseExact, stringifyExact, exactText } from "../src/json.ts"
+import { parseExact, stringifyExact, exactText, isRecord } from "../src/json.ts"
 import { actionIdOf, pageBindings, directPath, installedApps, objectTypeOf, orderedChildren, text, type Ux, type UxDataBinding, type UxPage, type WidgetDefinitionSet, type UxNode } from "../src/model.ts"
 
 // Presentation contract: admitted documents supply meaning; this layer never authorizes.
@@ -70,4 +70,15 @@ test("W6: navigation condition bindings are collected once in first-use order", 
     dataBindings: [binding("selection"), binding("record"), binding("unused")],
   }
   expect(pageBindings(page, ux).map(item => item.bindingId)).toEqual(["record", "selection"])
+})
+
+test("W1: installed app metadata exposes lossless numeric values", () => {
+  const payload = parseExact('{"ux":{"app":{"appId":"alpha"},"dataBindings":[{"query":{"page":{"size":10,"maxSize":100}}}],"pages":[{"root":{"component":{"kind":"section","section":{"order":1.00}},"children":[]}}]}}')
+  if (!isRecord(payload)) throw new Error("expected widget payload")
+  const app = installedApps({ artifacts: [{ artifactId: "alpha.ui", kind: "widget", version: "0.1.0", payload }] })[0]
+  const page = app?.ux.dataBindings[0]?.query
+  expect(page && "page" in page ? exactText(page.page.size) : undefined).toBe("10")
+  const component = app?.ux.pages[0]?.root.component
+  expect(component?.kind === "section" ? exactText(component.section.order) : undefined).toBe("1.00")
+  expect(stringifyExact(payload)).toContain('"order":1.00')
 })

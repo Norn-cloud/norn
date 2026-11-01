@@ -1,20 +1,23 @@
 import type { Schemas } from "../../norn-sdk/src/index.ts"
-import { asArray, asString, isRecord } from "./json"
+import { asArray, asString, isRecord, type LosslessNumber } from "./json"
 
-/** The generated WidgetIR UX contract; the renderer restates none of it. */
-export type Ux = Schemas["NornIrWidgetUx"]
-export type UxPage = Schemas["NornIrWidgetPage"]
-export type UxNode = Schemas["NornIrWidgetNode"]
-export type UxComponent = Schemas["NornIrWidgetComponent"]
-export type UxDataBinding = Schemas["NornIrWidgetDataBinding"]
-export type UxField = Schemas["NornIrWidgetFieldPresentation"]
-export type UxForm = Schemas["NornIrWidgetForm"]
-export type UxPlacement = Schemas["NornIrWidgetActionPlacement"]
-export type UxNavigationItem = Schemas["NornIrWidgetNavigationItem"]
-export type UxActionBinding = Schemas["NornIrWidgetUxActionBinding"]
-export type UxPropertyRef = Schemas["NornIrPropertyRef"]
-export type UxCondition = Schemas["NornIrZenCondition"]
-export type LocaleText = Schemas["NornIrLocaleText"]
+type Exact<T> = T extends number ? number | LosslessNumber
+  : T extends object ? { [K in keyof T]: Exact<T[K]> } : T
+
+/** The generated WidgetIR UX contract with lossless numeric metadata. */
+export type Ux = Exact<Schemas["NornIrWidgetUx"]>
+export type UxPage = Exact<Schemas["NornIrWidgetPage"]>
+export type UxNode = Exact<Schemas["NornIrWidgetNode"]>
+export type UxComponent = Exact<Schemas["NornIrWidgetComponent"]>
+export type UxDataBinding = Exact<Schemas["NornIrWidgetDataBinding"]>
+export type UxField = Exact<Schemas["NornIrWidgetFieldPresentation"]>
+export type UxForm = Exact<Schemas["NornIrWidgetForm"]>
+export type UxPlacement = Exact<Schemas["NornIrWidgetActionPlacement"]>
+export type UxNavigationItem = Exact<Schemas["NornIrWidgetNavigationItem"]>
+export type UxActionBinding = Exact<Schemas["NornIrWidgetUxActionBinding"]>
+export type UxPropertyRef = Exact<Schemas["NornIrPropertyRef"]>
+export type UxCondition = Exact<Schemas["NornIrZenCondition"]>
+export type LocaleText = Exact<Schemas["NornIrLocaleText"]>
 
 /** The admitted artifact fields used by the renderer; The host's richer view model is structurally compatible. */
 export interface WidgetArtifact {
