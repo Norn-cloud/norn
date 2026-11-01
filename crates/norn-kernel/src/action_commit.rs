@@ -3641,7 +3641,7 @@ where
         if let Some(proof) = reference_reads {
             host.commit_action_references(commit, proof, Some((&request, &key)))
         } else {
-            host.commit_action_quantity(commit, &request, &key)
+            host.commit_action_quantity(commit, std::slice::from_ref(&request), &key)
         }
     } else if let Some(proof) = reference_reads {
         host.commit_action_references(commit, proof, None)
