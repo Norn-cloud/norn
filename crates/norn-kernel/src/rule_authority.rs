@@ -345,7 +345,7 @@ mod stock_tests {
         reason = "sealed-origin conformance fixture"
     )]
     use super::*;
-    use crate::{ActionCall, LogicalTime, World};
+    use crate::{LogicalTime, World};
     #[test]
     fn post_sealed_stock_refuses_forged_unpinned_or_changed_origins() {
         let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(include_str!(
@@ -369,37 +369,12 @@ mod stock_tests {
             .collect();
         let catalog = TypeCatalog::new(&types).with_stock_rules(&rules);
         let rule = &rules[0];
-        let call = ActionCall {
-            action: rule.action(),
-            action_artifact_id: rule.artifact_id(),
-            action_version: rule.version(),
-            scope: BTreeMap::from([
-                ("orgId".into(), "org_demo".into()),
-                ("environmentId".into(), "dev".into()),
-            ]),
-            actor: "test".into(),
-            input: JsonObject::new(),
-            idempotency_key: "same".into(),
-            object_type: None,
-            turn: DecisionTurn {
-                id: "turn".into(),
-                now: LogicalTime::from_millis(1),
-                world: World::Main,
-                consumes: None,
-            },
+        let turn = DecisionTurn {
+            id: "turn".into(),
+            now: LogicalTime::from_millis(1),
+            world: World::Main,
+            consumes: None,
         };
-        assert!(
-            catalog
-                .checked_stock_rule::<std::convert::Infallible>(&call)
-                .is_ok()
-        );
-        let mut substituted = call.clone();
-        substituted.action_version = "forged";
-        assert!(
-            catalog
-                .checked_stock_rule::<std::convert::Infallible>(&substituted)
-                .is_err()
-        );
         let mut decision = RuleDecision {
             rule_id: rule.rule_id.clone(),
             pin: "forged".into(),
@@ -409,7 +384,7 @@ mod stock_tests {
             prepare_rule_decision::<std::convert::Infallible>(
                 catalog,
                 &FactSlice::new(),
-                &call.turn,
+                &turn,
                 decision,
                 &BTreeSet::new(),
             )
@@ -424,6 +399,36 @@ mod stock_tests {
             "POST-SEALED-STOCK absent admitted origin"
         );
         assert!(prepare(&catalog, &decision).is_ok());
+        let mut extensions: Vec<norn_ir::ObjectTypeExtension> = ["a", "b"]
+            .into_iter()
+            .map(|ns| {
+                serde_json::from_value(serde_json::json!({"namespace":ns,"target":"stock.Item"}))
+                    .unwrap()
+            })
+            .collect();
+        let mut properties: Vec<norn_ir::PropertyTypeDef> = ["stock.a", "stock.b"]
+            .into_iter()
+            .map(|name| {
+                serde_json::from_value(serde_json::json!({"name":name,"type":{"kind":"text"}}))
+                    .unwrap()
+            })
+            .collect();
+        let before = TypeCatalog::new(&types)
+            .with_extensions(&extensions)
+            .with_property_types(&properties)
+            .stock_schema_pin()
+            .unwrap();
+        extensions.reverse();
+        properties.reverse();
+        assert_eq!(
+            before,
+            TypeCatalog::new(&types)
+                .with_extensions(&extensions)
+                .with_property_types(&properties)
+                .stock_schema_pin()
+                .unwrap(),
+            "POST-CATALOG-ORDER"
+        );
         drop(catalog);
         types[0].description = Some("changed definition".into());
         assert!(

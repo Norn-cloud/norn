@@ -146,14 +146,13 @@ impl<'a> TypeCatalog<'a> {
                     || !ty.owned_collections.is_empty()
             })
             .collect();
+        let mut extensions = self.extensions.clone();
+        extensions.sort_by(|a, b| (&a.target, &a.namespace).cmp(&(&b.target, &b.namespace)));
+        let mut properties: Vec<_> = self.property_types.unwrap_or(&[]).iter().collect();
+        properties.sort_by(|a, b| a.name.cmp(&b.name));
         norn_ir::canonical::domain_hash_hex(
             b"norn.stock-schema/1\0",
-            &(
-                types,
-                &self.interfaces,
-                &self.extensions,
-                self.property_types.unwrap_or(&[]),
-            ),
+            &(types, &self.interfaces, extensions, properties),
         )
     }
 

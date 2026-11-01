@@ -115,3 +115,8 @@ POST-HISTORY-CAPACITY: CP1 activation caps each partition at 256 events. Reads
 reserve the full ceiling beside non-event work; planning refuses a candidate
 that would cross it before any publication. Boundary conformance covers 255+1,
 256+1 and exact non-event reserve. No checkpoint or unbounded-history claim.
+
+POST-QUANTITY-SNAPSHOT: all quantity reconstruction reads share one SQLite read
+snapshot, including inside an existing transaction; refusal releases its scope.
+POST-CATALOG-ORDER: extension and property-type order does not change the schema
+pin. Conformance reverses both lists and checks the same pin.
