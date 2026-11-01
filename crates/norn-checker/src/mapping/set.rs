@@ -49,7 +49,8 @@ pub fn check_mapping_artifacts(
     for artifact in artifacts {
         if artifact.kind == ArtifactKind::Mapping
             && matches!(
-                serde_json::from_value::<MappingDocument>(artifact.payload.to_json_value()),
+                serde_json::to_value(artifact.payload.to_json_value())
+                    .and_then(serde_json::from_value::<MappingDocument>),
                 Ok(MappingDocument::LawInterpretation(_))
             )
         {

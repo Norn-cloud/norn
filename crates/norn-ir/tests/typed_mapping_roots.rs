@@ -39,7 +39,10 @@ fn map_roles_interpretation_survives_closed_root_without_becoming_source_records
     )
     .expect("mapping root");
     assert!(root.unknown_fields().is_empty());
-    assert_eq!(root.to_json_value(), wire);
+    assert_eq!(
+        serde_json::to_value(root.to_json_value()).expect("wire JSON"),
+        wire
+    );
     assert_eq!(
         serde_json::from_value::<MappingDocument>(wire.clone()).expect("strict document"),
         MappingDocument::LawInterpretation(document)
