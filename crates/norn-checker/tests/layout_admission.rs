@@ -233,7 +233,7 @@ fn source_decode_verbatim_and_hash_correspondence() {
         } else {
             &checked.receipt.artifact_set.artifacts
         };
-        assert_eq!(refs[0].artifact_id, "test.cafe\u{301}");
+        assert_eq!(refs[0].artifact_id, "test.café");
         assert_eq!(refs[0].sha256, expected_hash);
         let body = String::from_utf8(checked.receipt.canonical_json().expect("receipt JSON"))
             .expect("receipt UTF-8");
@@ -334,4 +334,36 @@ fn receipt_shape_refuses_unknown_formats_and_malformed_law_origins() {
             assert!(norn_checker::receipt::validate_receipt_shape(&receipt).is_err());
         }
     }
+}
+
+#[test]
+fn source_hash_order_is_independent_of_unicode_spelling() {
+    let (_, semantic) = unicode_rule_sources();
+    let first = norn_ir::runtime::encode(&semantic).expect("source");
+    let composed = norn_ir::RuntimeValue::from_json_text(first.canonical_json().expect("Norn1"))
+        .expect("canonical source");
+    let mut other = semantic;
+    other["artifactId"] = json!("test.cafz");
+    other["payload"]["ruleId"] = json!("test.rule.z");
+    let other = norn_ir::runtime::encode(&other).expect("other source");
+    let receipt = |source| {
+        let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
+            &[source, other.clone()],
+            &[],
+            &BTreeSet::new(),
+            None,
+            &ResourceLimitProfile::norn_limits_v1(),
+            None,
+        )
+        .expect("receipt");
+        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+        checked.receipt
+    };
+    let decomposed = receipt(first);
+    let composed = receipt(composed);
+    assert_eq!(decomposed.artifact_set, composed.artifact_set);
+    assert_eq!(
+        decomposed.content_sha256().expect("hash"),
+        composed.content_sha256().expect("hash")
+    );
 }
