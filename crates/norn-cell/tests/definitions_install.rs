@@ -5072,7 +5072,14 @@ fn host_provision_atomic_crash_child() {
         .parse()
         .expect("number");
     let engine = ProvisionFault {
-        inner: NativeEngine::open(Path::new(&path), StoreOptions::default()).expect("open"),
+        inner: NativeEngine::open(
+            Path::new(&path),
+            StoreOptions {
+                cache_pages: Some(1),
+                ..StoreOptions::default()
+            },
+        )
+        .expect("open"),
         step: std::rc::Rc::new(std::cell::Cell::new(0)),
         fail,
         crash: true,
@@ -5112,7 +5119,14 @@ fn host_provision_atomic_at_every_storage_boundary() {
                 assert_eq!(output.status.code(), Some(73), "step {fail}");
             } else {
                 let engine = ProvisionFault {
-                    inner: NativeEngine::open(&path, StoreOptions::default()).expect("open"),
+                    inner: NativeEngine::open(
+                        &path,
+                        StoreOptions {
+                            cache_pages: Some(1),
+                            ..StoreOptions::default()
+                        },
+                    )
+                    .expect("open"),
                     step: std::rc::Rc::new(std::cell::Cell::new(0)),
                     fail,
                     crash: false,
@@ -5127,7 +5141,14 @@ fn host_provision_atomic_at_every_storage_boundary() {
                     .is_err()
                 );
             }
-            let engine = NativeEngine::open(&path, StoreOptions::default()).expect("reopen");
+            let engine = NativeEngine::open(
+                &path,
+                StoreOptions {
+                    cache_pages: Some(1),
+                    ..StoreOptions::default()
+                },
+            )
+            .expect("reopen");
             assert_eq!(
                 CellStore::engine_is_fresh(&engine).expect("fresh"),
                 fail < steps,
@@ -5152,8 +5173,14 @@ fn host_provision_atomic_at_every_storage_boundary() {
             );
             drop(store);
             for change in 0..3 {
-                let engine =
-                    NativeEngine::open(&path, StoreOptions::default()).expect("reopen conflict");
+                let engine = NativeEngine::open(
+                    &path,
+                    StoreOptions {
+                        cache_pages: Some(1),
+                        ..StoreOptions::default()
+                    },
+                )
+                .expect("reopen conflict");
                 let mut input = provision_input();
                 if change == 0 {
                     input.canonical_set = "[{}]".to_owned();
@@ -5165,7 +5192,14 @@ fn host_provision_atomic_at_every_storage_boundary() {
                 );
             }
             let store = CellStore::provision_definitions(
-                NativeEngine::open(&path, StoreOptions::default()).expect("reopen retry"),
+                NativeEngine::open(
+                    &path,
+                    StoreOptions {
+                        cache_pages: Some(1),
+                        ..StoreOptions::default()
+                    },
+                )
+                .expect("reopen retry"),
                 model(false),
                 &provision_input(),
                 "demo/dev",
