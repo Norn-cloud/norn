@@ -221,6 +221,7 @@ impl<E: SqlEngine> CellStore<E> {
 #[derive(Clone, Default)]
 pub(crate) struct Totals(BTreeMap<String, Vec<i128>>);
 impl Totals {
+    /// COMPUTE-DETERMINISTIC-1: apply one signed identity contribution with checked exact arithmetic.
     pub(crate) fn adjust(&mut self, value: &Contribution, retract: bool) -> Result<(), CellError> {
         let key = bucket_key(value)?;
         let totals = self
