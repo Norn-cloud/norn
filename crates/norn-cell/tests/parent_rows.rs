@@ -2960,7 +2960,7 @@ mod cp1_stock {
             Ok(())
         }
     }
-    fn definitions() -> (Vec<ArtifactEnvelope>, Vec<ObjectTypeDef>) {
+    fn definitions(metal: bool) -> (Vec<ArtifactEnvelope>, Vec<ObjectTypeDef>) {
         let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
             "../../../tools/norn-ts/fixtures/stock/stock.artifacts.json"
         ))
@@ -2987,6 +2987,103 @@ mod cp1_stock {
             );
             artifacts.retain(|a| a.artifact_id != artifact.artifact_id);
             artifacts.push(artifact);
+        }
+        if metal {
+            let mut lot = stock_output_types().remove(0);
+            lot.name = "jewelry.MetalLot".into();
+            lot.extends = Some("stock.Item".into());
+            lot.immutable = false;
+            let mut text = lot.properties[0].clone();
+            text.protected = false;
+            lot.properties.clear();
+            for name in ["ownership", "metal"] {
+                text.id = name.into();
+                lot.properties.push(text.clone());
+            }
+            for name in ["gross_micrograms", "purity_numerator", "fine_ticks"] {
+                text.id = name.into();
+                text.property_type = norn_ir::PropertyType::Decimal {
+                    scale: norn_ir::WholeNumber(0),
+                    unit: None,
+                    currency_source: None,
+                };
+                lot.properties.push(text.clone());
+            }
+            let mut owner = stock_output_types().remove(1).links.remove(0);
+            owner.id = "custody_owner".into();
+            owner.target = "stock.Party".into();
+            owner.cardinality.to = norn_ir::Multiplicity::One;
+            owner.cardinality.from = norn_ir::Multiplicity::Many;
+            owner.cardinality.required = true;
+            lot.links.push(owner.clone());
+            let mut envelope = artifacts[0].clone();
+            envelope.artifact_id = "jewelry.MetalLot.entity".into();
+            envelope.name = "MetalLot".into();
+            envelope.namespace = "jewelry".into();
+            envelope.payload = ArtifactPayload::Entity(
+                serde_json::from_value(
+                    serde_json::to_value(EntityRootV2 {
+                        entity_version: EntityIrVersion::V2_0,
+                        object_type: lot,
+                        mutation_authority: None,
+                        extensions: None,
+                    })
+                    .unwrap(),
+                )
+                .unwrap(),
+            );
+            artifacts.push(envelope);
+            for artifact in &mut artifacts {
+                match &mut artifact.payload {
+                    ArtifactPayload::Entity(payload) => {
+                        let mut ty: ObjectTypeDef = serde_json::from_value(
+                            serde_json::to_value(payload.object_type.as_value().unwrap()).unwrap(),
+                        )
+                        .unwrap();
+                        if ["stock.ReceiptLine", "stock.DeliveryLine"].contains(&ty.name.as_str()) {
+                            ty.links
+                                .iter_mut()
+                                .find(|l| l.id.as_str() == "item")
+                                .unwrap()
+                                .target = "jewelry.MetalLot".into();
+                        }
+                        if ["stock.PurchaseReceipt", "stock.DeliveryNote"]
+                            .contains(&ty.name.as_str())
+                        {
+                            owner.id = "owner".into();
+                            ty.links.push(owner.clone());
+                        }
+                        artifact.payload = ArtifactPayload::Entity(
+                            serde_json::from_value(
+                                serde_json::to_value(EntityRootV2 {
+                                    entity_version: EntityIrVersion::V2_0,
+                                    object_type: ty,
+                                    mutation_authority: None,
+                                    extensions: None,
+                                })
+                                .unwrap(),
+                            )
+                            .unwrap(),
+                        );
+                    }
+                    ArtifactPayload::Action(payload) => {
+                        let mut action: norn_ir::ActionRoot =
+                            serde_json::from_value(payload.to_json_value()).unwrap();
+                        if let Some(post) = &mut action.stock_post {
+                            post.operation = match post.operation {
+                                norn_ir::ActionStockOperation::Receipt => {
+                                    norn_ir::ActionStockOperation::CustodyReceipt
+                                }
+                                _ => norn_ir::ActionStockOperation::CustodyReturn,
+                            };
+                        }
+                        artifact.payload = ArtifactPayload::Action(
+                            serde_json::from_value(serde_json::to_value(action).unwrap()).unwrap(),
+                        );
+                    }
+                    _ => {}
+                }
+            }
         }
         let mut definitions: Vec<ObjectTypeDef> = artifacts
             .iter()
@@ -3020,7 +3117,7 @@ mod cp1_stock {
             values: BTreeMap::new(),
         }
     }
-    fn seed(store: &mut CellStore) {
+    fn seed(store: &mut CellStore, metal: bool) {
         let mut writes = vec![
             put(
                 "stock.Company",
@@ -3110,6 +3207,46 @@ mod cp1_stock {
                 json!({"parentType":ty,"parentKey":id,"collectionId":"lines","rowIds":rows}),
             ));
         }
+        if metal {
+            for write in &mut writes {
+                if let FactWriteRow::Put {
+                    object_type,
+                    values,
+                    ..
+                } = write
+                {
+                    if object_type == "stock.Item" {
+                        *object_type = "jewelry.MetalLot".into();
+                        values.extend(serde_json::from_value::<JsonObject>(json!({"ownership":"custody","metal":"Au","gross_micrograms":8,"purity_numerator":18000000,"fine_ticks":144000000})).unwrap());
+                    }
+                }
+            }
+            for change in &mut links {
+                if let LinkChange::Add {
+                    target_type: Some(ty),
+                    ..
+                } = change
+                {
+                    if ty == "stock.Item" {
+                        *ty = "jewelry.MetalLot".into();
+                    }
+                }
+            }
+            links.push(link(
+                "jewelry.MetalLot",
+                "i",
+                "custody_owner",
+                "stock.Party",
+                "party",
+            ));
+            for (ty, id) in [
+                ("stock.PurchaseReceipt", "pr"),
+                ("stock.DeliveryNote", "dn"),
+                ("stock.DeliveryNote", "over"),
+            ] {
+                links.push(link(ty, id, "owner", "stock.Party", "party"));
+            }
+        }
         store
             .commit(&CommitBatch {
                 world: "main".into(),
@@ -3151,7 +3288,7 @@ mod cp1_stock {
             .values
             .expect("exists")
     }
-    fn check_gl(cell: &NativeCell, receipt: &CommitReceipt, expected: [(&str, &str); 2]) {
+    fn check_gl(cell: &NativeCell, receipt: &CommitReceipt, expected: &[(&str, &str)]) {
         let mut actual: Vec<_> = receipt
             .written
             .iter()
@@ -3164,13 +3301,23 @@ mod cp1_stock {
             })
             .collect();
         actual.sort();
-        let mut expected: Vec<_> = expected.map(|(a, v)| (a.to_owned(), v.to_owned())).into();
+        let mut expected: Vec<_> = expected
+            .iter()
+            .map(|(a, v)| ((*a).to_owned(), (*v).to_owned()))
+            .collect();
         expected.sort();
         assert_eq!(actual, expected, "POST-GL");
     }
     #[tokio::test]
     async fn post_cp1_engine_atomic_fifo_retry_reopen_and_replay() {
-        let (artifacts, definitions) = definitions();
+        run(false).await;
+    }
+    #[tokio::test]
+    async fn custody_isolated_refused_is_noop_durable_correspondence() {
+        run(true).await;
+    }
+    async fn run(metal: bool) {
+        let (artifacts, definitions) = definitions(metal);
         let rules =
             norn_kernel::admit_stock_rules(&artifacts).expect("checker-admitted stock definitions");
         let catalog = TypeCatalog::new(&definitions).with_stock_rules(&rules);
@@ -3182,7 +3329,7 @@ mod cp1_stock {
         store
             .bind("scope", "org_demo/dev")
             .expect("POST-STORE-BIND-BEFORE-FIRST-COMMIT");
-        seed(&mut store);
+        seed(&mut store, metal);
         let mut cell: NativeCell =
             NativeCell::new(store, "org_demo/dev", |c| c.payload.clone()).expect("host");
         let receipt = invoke(&catalog, "stock.receipt.submit", "pr", "receive");
@@ -3212,7 +3359,15 @@ mod cp1_stock {
         else {
             panic!("new receipt")
         };
-        check_gl(&cell, &received, [("stock", "8000"), ("srbnb", "-8000")]);
+        check_gl(
+            &cell,
+            &received,
+            if metal {
+                &[]
+            } else {
+                &[("stock", "8000"), ("srbnb", "-8000")]
+            },
+        );
         let before = cell.store().read().dump().expect("dump");
         assert!(matches!(
             commit_action(&mut cell, &catalog, &receipt, &Reads).expect("POST-RETRY"),
@@ -3226,14 +3381,22 @@ mod cp1_stock {
         else {
             panic!("new delivery")
         };
-        check_gl(&cell, &delivered, [("cogs", "6000"), ("stock", "-6000")]);
+        check_gl(
+            &cell,
+            &delivered,
+            if metal {
+                &[]
+            } else {
+                &[("cogs", "6000"), ("stock", "-6000")]
+            },
+        );
         assert_eq!(
             object(&cell, "stock.Partition", &partition.key).get("quantity"),
             Some(&JsonValue::from_json(json!(1)).expect("one"))
         );
         assert_eq!(
             object(&cell, "stock.Partition", &partition.key).get("value"),
-            Some(&JsonValue::from_json(json!(20)).expect("twenty"))
+            Some(&JsonValue::from_json(json!(if metal { 0 } else { 20 })).expect("twenty"))
         );
         let balance = cell
             .store()
