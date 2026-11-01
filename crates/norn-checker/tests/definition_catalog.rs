@@ -1126,7 +1126,7 @@ proptest::proptest! {
 fn graph_catalog_roles_follow_declarations_not_lifecycle_shape() {
     let [parent, _] = request_types();
     assert_eq!(
-        catalog(&[parent.clone()], &[]).types[0].role,
+        catalog(std::slice::from_ref(&parent), &[]).types[0].role,
         norn_ir::ConceptRole::Thing
     );
     let marker = entity(
