@@ -186,15 +186,27 @@ export function checkClosure(program: ts.Program, source: ts.SourceFile, limits:
 }
 
 /** Fail before emission if hashing would change definition text. */
-export function requireNfcText(value: unknown, node: ts.Node, path = ""): void {
-  const refuse = (pointer: string): never => { throw new CompileError("definition.text.not_nfc", `definition text at ${pointer} must already be Unicode NFC`, node) }
-  if (typeof value === "string" && value.normalize("NFC") !== value) refuse(path)
-  if (Array.isArray(value)) value.forEach((item, i) => requireNfcText(item, node, `${path}/${i}`))
-  else if (value !== null && typeof value === "object") for (const [key, item] of Object.entries(value)) {
-    const pointer = `${path}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`
-    if (key.normalize("NFC") !== key) refuse(pointer)
-    requireNfcText(item, node, pointer)
+export function requireNfcText(value: unknown, node: ts.Node): void {
+  const artifactId = value !== null && typeof value === "object" && "artifactId" in value && typeof value.artifactId === "string" ? value.artifactId : "<definition>"
+  const payload = value !== null && typeof value === "object" && "payload" in value ? value.payload : null
+  const rule = value !== null && typeof value === "object" && "kind" in value && value.kind === "rule" && payload !== null && typeof payload === "object" && "ruleVersion" in payload && payload.ruleVersion === "2.0"
+  const editorField = (path: string, key: string): boolean => rule && (
+    (path === "/payload/graph" && ["settings", "viewport"].includes(key)) ||
+    (/^\/payload\/graph\/nodes\/\d+$/.test(path) && ["position", "description", "folded"].includes(key)) ||
+    (/^\/payload\/graph\/nodes\/\d+\/content\/(inputs|outputs)\/\d+$/.test(path) && key === "width") ||
+    (/^\/payload\/graph\/edges\/\d+$/.test(path) && ["name", "targetHandle", "type"].includes(key))
+  )
+  const refuse = (pointer: string): never => { throw new CompileError("definition.text.not_nfc", `definition ${artifactId} text at ${pointer} must already be Unicode NFC`, node) }
+  const visit = (value: unknown, path: string): void => {
+    if (typeof value === "string" && value.normalize("NFC") !== value) refuse(path)
+    if (Array.isArray(value)) value.forEach((item, i) => visit(item, `${path}/${i}`))
+    else if (value !== null && typeof value === "object") for (const [key, item] of Object.entries(value)) {
+      const pointer = `${path}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`
+      if (key.normalize("NFC") !== key) refuse(pointer)
+      if (!editorField(path, key)) visit(item, pointer)
+    }
   }
+  visit(value, "")
 }
 
 /** Batched profile recognition shares one Program; rejected roots never reach lowering. */
@@ -223,7 +235,7 @@ export function compileFiles(files: ReadonlyArray<string>, options: BuildOptions
         }) })
       } else {
         lowering.checkBudget(source)
-        requireNfcText(built.artifacts, source)
+        for (const artifact of built.artifacts) requireNfcText(artifact, source)
         const result = { definition, artifacts: built.artifacts, sourceMap: built.sourceMap, warnings: lowering.warnings, ...(built.flowSourceMap ? { flowSourceMap: built.flowSourceMap } : {}) }
         expansion.addOutput(result)
         results.set(path, { ok: true, ...result })
