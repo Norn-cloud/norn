@@ -161,3 +161,39 @@ unit must qualify a fresh fork with the final configuration and lifecycle budget
   Retrieval is bounded to 60 seconds and skipped when creation never reached
   execution, so an allocated creation stall still starts cleanup immediately.
   `test_failed_acceptance_keeps_dump_before_deletion` is its correspondence.
+
+## CP2 audience report contract
+
+- **REPORT-SIDES:** each available checkpoint presents active quantity and value
+  per warehouse as sums of uncancelled ledger deltas, plus value/quantity rate
+  (undefined at zero quantity; repeating rates remain exact fractions). Historical
+  row balances are not summed. Both engines appear side by side.
+- **REPORT-GROSS:** display every raw GL leg, grouped by aliased account, request,
+  currency and cancellation flag. Sort debit/credit pairs within each group; a
+  missing leg is shown as unavailable, never netted against another leg.
+- **REPORT-REASON:** show bucket, differing field, value-bound fingerprint and
+  reviewed evidence/decision where supplied. Unsupported snapshots show no
+  invented stock or GL. Case coverage remains visible even for a matched prefix.
+- **REPORT-GATE-STABLE:** presentation adds sanitized `balances` to report JSON;
+  dump inputs, difference fingerprints, dispositions, counts and pass/fail are
+  unchanged. Summary preserves count units rather than calling them all cases.
+
+`test_report_sides_and_cancelled_history` and
+`test_report_unavailable_and_disposition_reason` correspond to these items.
+A report from synthetic Norn data must be labelled as a stub by its publisher;
+only a real dump from the Norn driver qualifies cross-engine parity.
+
+- **CP2-fresh-scheduler-dispatch:** a fresh fork with the committed 10-second
+  scheduler tick and once-per-minute valuation Cron reproduced a queued repost
+  at the first cancellation for both methods. Ten preceding checkpoints passed
+  exact Q/V and balanced GL. Both cancel-return commands were accepted, but
+  their snapshots timed out at the 120-second settlement bound. Native
+  diagnostics reported scheduler enabled and one worker
+  online, but both valuation jobs had no `last_execution` and Scheduled Job Log
+  was empty. The scheduler process was running and its logs were empty. This
+  falsifies stale errors from the earlier development fork as the sole cause.
+  An operational cache-clear probe is diagnostic only; it does not qualify the
+  committed bootstrap. Investigate scheduler dispatch before increasing budgets
+  or changing valuation semantics. Cancellation remains unsupported/incomplete,
+  never an intentional difference or a demonstrated ERPNext valuation bug.
+  See native [scheduler diagnostics](https://docs.frappe.io/framework/user/en/bench/guides/diagnosing-the-scheduler).

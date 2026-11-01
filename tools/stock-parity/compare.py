@@ -1,7 +1,8 @@
 """Exact checkpoint parity; only evidence-bound reviewed dispositions close a diff."""
 import argparse
 from collections import defaultdict
-from decimal import Decimal
+from decimal import Decimal, localcontext
+from fractions import Fraction
 import hashlib
 import json
 from pathlib import Path
@@ -124,6 +125,15 @@ def compare(norn, erpnext, dispositions):
                 counts['unsupported'] += 1
                 continue
             entry['rawGl'] = dict(norn=legs(pair[0]), erpnext=legs(pair[1]))
+            entry['balances'] = {}
+            for engine, cp in zip(('norn', 'erpnext'), pair):
+                balances = defaultdict(lambda: [0, 0])
+                for r in cp['stock']:
+                    if not r['cancelled']:
+                        amounts = balances[alias('warehouse', r['warehouse'])]
+                        amounts[0] += exact(r['quantityDelta'], 6)
+                        amounts[1] += exact(r['valueDelta'], 6)
+                entry['balances'][engine] = dict(balances)
             views = [view(c) for c in pair]
             if step >= 0:
                 for i, engine in enumerate(('norn', 'erpnext')):
@@ -177,15 +187,91 @@ def compare(norn, erpnext, dispositions):
                 decisions=list(DECISIONS), scales=dict(stock=6, gl=2), cases=rows)
 
 
+def amount(value, scale):
+    with localcontext() as context:
+        context.prec = len(str(abs(value))) + scale + 1
+        return format(Decimal(value).scaleb(-scale), 'f')
+
+
+def rate(quantity, value):
+    if not quantity:
+        return '—'
+    ratio = Fraction(value, quantity)
+    denominator = ratio.denominator
+    places = 0
+    for factor in (2, 5):
+        power = 0
+        while denominator % factor == 0:
+            denominator //= factor
+            power += 1
+        places = max(places, power)
+    with localcontext() as context:
+        context.prec = len(str(abs(ratio.numerator))) + places + 1
+        return (format(Decimal(ratio.numerator) / Decimal(ratio.denominator), 'f')
+                if denominator == 1 else str(ratio))
+
+
 def markdown(report):
-    lines = ['# Checkpoint parity (bounded corpus)', '', '| Case | Method | Checkpoint | Result |', '|---|---|---|---|']
+    lines = ['# Checkpoint parity (bounded corpus)', '',
+             'Sampled checkpoint evidence; this report does not prove equivalence.', '',
+             '| Case | Method | Checkpoint | Result |', '|---|---|---|---|']
     for case in report['cases']:
         for cp in case['checkpoints']:
             lines.append(f"| {case['case']} | {case['method']} | {cp['step']} | {cp['status']} |")
         if not case['checkpoints']:
             lines.append(f"| {case['case']} | {case['method']} | — | {case['status']} |")
-    lines.extend(['', f"Gate: {'pass' if report['passed'] else 'fail'}.", '',
-                  *[f'{k}: {v}' for k, v in report['counts'].items()]])
+    for case in report['cases']:
+        lines.extend(['', f"## {case['case']} · {case['method']}", '', f"Case coverage: {case['status']}."])
+        for cp in case['checkpoints']:
+            lines.extend(['', f"### Checkpoint {cp['step']} · {cp['status']}", ''])
+            if cp['status'] == 'unsupported':
+                lines.append('Bucket: unsupported. A checkpoint is missing or its snapshot is unavailable; no empty state is inferred.')
+                continue
+            if not cp['differences']:
+                lines.append('Bucket: matched. Exact stock, gross GL, documents and outcomes agree; refusal preservation holds where applicable.')
+            for diff in cp['differences']:
+                evidence = diff.get('evidence', {})
+                reason = evidence.get('decision', evidence.get('invariant', ''))
+                lines.append(f"- Bucket: {diff['bucket']}. Field: `{diff['field']}`. "
+                             + (f"Reason: {reason}. " if reason else
+                                'Reason: reviewed bug evidence. ' if evidence else 'Reason: no reviewed disposition. ')
+                             + f"Fingerprint: `{diff['fingerprint']}`.")
+                for key in ('review', 'decisionRecord', 'issue', 'reproduction', 'receipt'):
+                    if key in evidence:
+                        lines.append(f"  [{key}]({evidence[key]})")
+            lines.extend(['', 'Warehouse balances (active stock deltas; exact amounts). Rate = value / quantity; fractions remain exact.', '',
+                          '| Warehouse | Norn quantity | ERPNext quantity | Norn value | ERPNext value | Norn rate | ERPNext rate |',
+                          '|---|---:|---:|---:|---:|---:|---:|'])
+            balances = cp['balances']
+            warehouses = sorted(set(balances['norn']) | set(balances['erpnext']))
+            for warehouse in warehouses:
+                pairs = [balances[e].get(warehouse, [0, 0]) for e in ('norn', 'erpnext')]
+                q, v = zip(*pairs)
+                lines.append(f"| {warehouse} | {amount(q[0], 6)} | {amount(q[1], 6)} | "
+                             f"{amount(v[0], 6)} | {amount(v[1], 6)} | {rate(*pairs[0])} | {rate(*pairs[1])} |")
+            if not warehouses:
+                lines.append('| No active stock | 0 | 0 | 0 | 0 | — | — |')
+            lines.extend(['', 'Raw GL legs by account (gross amounts; cancelled legs remain visible).', '',
+                          '| Account | Request | Currency | Cancelled | Leg | Norn debit | ERPNext debit | Norn credit | ERPNext credit |',
+                          '|---|---|---|---|---:|---:|---:|---:|---:|'])
+            groups = {}
+            for engine in ('norn', 'erpnext'):
+                groups[engine] = defaultdict(list)
+                for leg in cp['rawGl'][engine]:
+                    key = tuple(leg[k] for k in ('account', 'request', 'currency', 'cancelled'))
+                    groups[engine][key].append((leg['debit'], leg['credit']))
+            for key in sorted(set(groups['norn']) | set(groups['erpnext'])):
+                sides = [sorted(groups[e][key]) for e in ('norn', 'erpnext')]
+                for i in range(max(map(len, sides))):
+                    legs = [side[i] if i < len(side) else None for side in sides]
+                    cells = [amount(leg[j], 2) if leg else '—' for j in (0, 1) for leg in legs]
+                    lines.append('| ' + ' | '.join([*map(str, key), str(i + 1), *cells]) + ' |')
+            if not any(groups.values()):
+                lines.append('| No GL legs | — | — | — | — | — | — | — | — |')
+    lines.extend(['', '## Summary', '', f"Gate: {'pass' if report['passed'] else 'fail'}.", '',
+                  'Counts retain gate units: matched checkpoints, intentional differing fields, unsupported cases/checkpoints, untriaged fields and unique open bug issues.', '',
+                  '| Count | Value |', '|---|---:|',
+                  *[f'| {k} | {v} |' for k, v in report['counts'].items()]])
     return '\n'.join(lines) + '\n'
 
 
