@@ -96,17 +96,17 @@ impl DefinitionSource {
             &[artifacts.as_bytes(), base.as_bytes()],
         )?;
         let exact_candidates = norn_ir::RuntimeValue::from_json_text(artifacts)
-            .map_err(|_| ChallengeError::LossyInput)?;
-        let exact_base =
-            norn_ir::RuntimeValue::from_json_text(base).map_err(|_| ChallengeError::LossyInput)?;
+            .map_err(|_error| ChallengeError::LossyInput)?;
+        let exact_base = norn_ir::RuntimeValue::from_json_text(base)
+            .map_err(|_error| ChallengeError::LossyInput)?;
         let candidates = exact_candidates
             .as_array()
             .ok_or(ChallengeError::LossyInput)?;
         let installed = exact_base.as_array().ok_or(ChallengeError::LossyInput)?;
         let receipt_sources = crate::receipt::ReceiptSources::new(candidates, installed)
-            .map_err(|_| ChallengeError::LossyInput)?;
+            .map_err(|_error| ChallengeError::LossyInput)?;
         let base_sources = crate::receipt::ReceiptSources::new(installed, &[])
-            .map_err(|_| ChallengeError::LossyInput)?;
+            .map_err(|_error| ChallengeError::LossyInput)?;
         let artifacts = decode(artifacts)?;
         let base = decode(base)?;
         // Qualify inputs before ordinary admission can construct diagnostics or

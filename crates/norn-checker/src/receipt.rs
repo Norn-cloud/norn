@@ -535,7 +535,8 @@ pub fn check_artifact_set_for_install_with_flow_source_map(
     flow_source_map: Option<&FlowSourceMap>,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
     if let Some(version) = verified_active {
-        if artifacts.identity == version.semantic_artifact_set {
+        let artifact_set = &artifacts.identity;
+        if artifact_set == &version.semantic_artifact_set {
             let mut install_version = version.clone();
             install_version.flow_source_map = flow_source_map.cloned();
             return check_artifact_set_with_verified_receipt(
