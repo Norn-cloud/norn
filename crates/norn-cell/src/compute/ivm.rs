@@ -86,6 +86,7 @@ impl IncrementalQuestion {
         store: &CellStore<E>,
         context: &QueryContext,
     ) -> Result<String, CellError> {
+        store.check_question_scope(&context.scope)?;
         let old = &self.result.context;
         let stale = || refused("core.compute.stale_input");
         if (

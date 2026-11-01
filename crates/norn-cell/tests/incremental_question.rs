@@ -6,7 +6,7 @@
 )]
 mod query_support;
 use norn_cell::compute::{Engine, ivm::IncrementalQuestion};
-use norn_cell::{CellStore, CommitBatch, CommitOutcome, FactWriteRow, StoreOptions};
+use norn_cell::{CellError, CellStore, CommitBatch, CommitOutcome, FactWriteRow, StoreOptions};
 use query_support::*;
 
 proptest::proptest! {
@@ -71,6 +71,19 @@ proptest::proptest! {
 }
 
 #[test]
+fn empty_generation_refuses_a_new_foreign_scope_binding() {
+    let (mut store, plan, context) = fixture();
+    let mut view = IncrementalQuestion::rebuild(&store, &plan, context.clone(), |_| Ok(true))
+        .expect("rebuild");
+    let before = view.result().clone();
+    store.bind("scope", "other").expect("bound scope");
+    assert!(matches!(
+        view.advance(&store, context, |_| Ok(true)),
+        Err(CellError::ComputeRefused("core.compute.stale_input"))
+    ));
+    assert_eq!(view.result(), &before);
+}
+#[test]
 fn skipped_receipt_or_changed_population_refuses_without_partial_publication() {
     let (mut store, plan, mut context) = fixture();
     load(&mut store);
@@ -80,32 +93,25 @@ fn skipped_receipt_or_changed_population_refuses_without_partial_publication() {
     context.authorization_epoch = 2;
     assert!(matches!(
         view.advance(&store, context.clone(), |_| Ok(true)),
-        Err(norn_cell::CellError::ComputeRefused(
-            "core.compute.stale_input"
-        ))
+        Err(CellError::ComputeRefused("core.compute.stale_input"))
     ));
     assert_eq!(view.result(), &before);
     context.authorization_epoch = 1;
+    let at = "2026-10-23T00:00:00Z";
     store
         .commit(&CommitBatch {
             world: WORLD.into(),
             scope: "synthetic".into(),
             logical_time: CLOCK,
-            writes: vec![put(
-                "SYN-MELT-15-0",
-                75_000,
-                70_000,
-                "2026-10-23T00:00:00Z",
-                "gold",
-            )],
+            writes: vec![put("SYN-MELT-15-0", 75_000, 70_000, at, "gold")],
             ..CommitBatch::default()
         })
         .expect("one correction");
     assert!(matches!(
-        view.advance(&store, context.clone(), |_| Err(
-            norn_cell::CellError::ComputeRefused("test.refusal")
-        )),
-        Err(norn_cell::CellError::ComputeRefused("test.refusal"))
+        view.advance(&store, context.clone(), |_| Err(CellError::ComputeRefused(
+            "test.refusal"
+        ))),
+        Err(CellError::ComputeRefused("test.refusal"))
     ));
     assert_eq!(view.result(), &before);
     view.advance(&store, context.clone(), |_| Ok(true))
@@ -117,16 +123,14 @@ fn skipped_receipt_or_changed_population_refuses_without_partial_publication() {
                 world: WORLD.into(),
                 scope: "synthetic".into(),
                 logical_time: CLOCK,
-                writes: vec![put(id, 1_000, 980, "2026-10-23T00:00:00Z", "gold")],
+                writes: vec![put(id, 1_000, 980, at, "gold")],
                 ..CommitBatch::default()
             })
             .expect("commit");
     }
     assert!(matches!(
         view.advance(&store, context, |_| Ok(true)),
-        Err(norn_cell::CellError::ComputeRefused(
-            "core.compute.stale_input"
-        ))
+        Err(CellError::ComputeRefused("core.compute.stale_input"))
     ));
     assert_eq!(view.result(), &before);
 }
