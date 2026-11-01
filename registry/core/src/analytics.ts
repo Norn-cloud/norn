@@ -14,7 +14,7 @@ const Evidence = Schema.Struct({
   frontier_age_ms: Schema.Int, max_frontier_age_ms: Schema.Int,
   late_feature_count: Schema.Int, latest_training_label_ms: Schema.Int,
   training_count: Schema.Int, holdout_count: Schema.Int, non_forward_outcome_count: Schema.Int,
-  holdout_error: Norn.decimal(9), holdout_error_limit: Norn.decimal(9),
+  holdout_error_nanos: Schema.Int, holdout_error_limit_nanos: Schema.Int,
   error_unit: Schema.String, result_error_unit: Schema.String, diagnostics_passed: Schema.Boolean,
 })
 
@@ -32,7 +32,7 @@ export const PublicationEvidence = Norn.interfaceType({
       self.max_frontier_age_ms >= 0 && self.frontier_age_ms <= self.max_frontier_age_ms &&
       self.late_feature_count === 0 && self.latest_training_label_ms < self.split_at_ms &&
       self.training_count > 0 && self.holdout_count > 0 && self.non_forward_outcome_count === 0 &&
-      self.holdout_error >= 0 && self.holdout_error_limit >= 0 && self.holdout_error <= self.holdout_error_limit &&
+      self.holdout_error_nanos >= 0 && self.holdout_error_limit_nanos >= 0 && self.holdout_error_nanos <= self.holdout_error_limit_nanos &&
       self.error_unit !== "" && self.error_unit === self.result_error_unit &&
       self.assumptions_digest !== "" && self.assumptions_digest === self.result_assumptions_digest &&
       self.remedy_digest !== "" && self.remedy_digest === self.result_remedy_digest &&
@@ -65,8 +65,8 @@ export const Publication = Norn.type({
         Norn.expression(Evidence, self => self.late_feature_count === 0),
         Norn.expression(Evidence, self => self.latest_training_label_ms < self.split_at_ms),
         Norn.expression(Evidence, self => self.training_count > 0 && self.holdout_count > 0 && self.non_forward_outcome_count === 0),
-        Norn.expression(Evidence, self => self.holdout_error >= 0 && self.holdout_error_limit >= 0 &&
-          self.holdout_error <= self.holdout_error_limit && self.error_unit !== "" && self.error_unit === self.result_error_unit),
+        Norn.expression(Evidence, self => self.holdout_error_nanos >= 0 && self.holdout_error_limit_nanos >= 0 &&
+          self.holdout_error_nanos <= self.holdout_error_limit_nanos && self.error_unit !== "" && self.error_unit === self.result_error_unit),
         Norn.expression(Evidence, self => self.assumptions_digest !== "" && self.assumptions_digest === self.result_assumptions_digest &&
           self.remedy_digest !== "" && self.remedy_digest === self.result_remedy_digest &&
           (self.diagnostics_passed || self.mode === "descriptive")),
