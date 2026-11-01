@@ -15,7 +15,7 @@ export const Registry = Norn.type({
   properties: Schema.Struct({ id: Schema.String }), identity: [{ name: "primary", properties: ["id"] }],
   links: [{ id: "settings", target: Setting, cardinality: { to: "many", from: "many" } }],
 })
-export const Probe = Norn.type({ name: "demo.ParameterProbe", title: "Probe", version: "1.0.0", properties: Schema.Struct({ id: Schema.String, value: Norn.decimal(4) }), identity: [{ name: "primary", properties: ["id"] }] })
+export const Probe = Norn.type({ name: "demo.ParameterProbe", title: "Probe", version: "1.0.0", properties: Schema.Struct({ id: Schema.String, value: Norn.decimal(4), effective_at: Norn.timestamp("utc") }), links: [{ id: "configuration", target: Registry, cardinality: { to: "one", from: "many", required: true } }], identity: [{ name: "primary", properties: ["id"] }] })
 const Input = Schema.Struct({ id: Schema.String, registry: Schema.String, value: Schema.Finite, effective_at: Schema.String })
 const Context = Schema.Struct({ input: Input, slice: Schema.Struct({ selected: Schema.Struct({ value: Schema.Finite }) }) })
 export const RecordProbe = Norn.action({
@@ -27,6 +27,7 @@ export const RecordProbe = Norn.action({
     { name: "settings", type: Setting, key: { link: { from: "registry", link: "settings" } } },
     { name: "selected", type: Setting, key: { parameter: { from: "settings", settingKey: "example.rate", effectiveAt: "effective_at", precedence: [{ orgId: "org_demo", environmentId: "dev" }, { orgId: "org_demo" }, {}] } } },
   ],
+  createLinks: [{ link: "configuration", targetType: Registry, targetIdField: "registry" }],
   preconditions: [Norn.expression(Context, context => context.input.value === context.slice.selected.value, { root: "context" })],
   writes: [{ type: Probe, change: "created" }],
   effect: { kind: "upsert_input_object", type: Probe, objectIdField: "id", writeMode: { kind: "create_only" } },
