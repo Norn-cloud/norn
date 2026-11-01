@@ -422,8 +422,8 @@ fn scope_members(
     Some(out)
 }
 
-/// LAW-COMPLETE-1: project distinct applications of unchanged laws, preserving
-/// every declared origin path. Empty instance sets are not non-vacuity evidence.
+/// LAW-COMPLETE-1 / LAW-CONTAINED-INSTANCE-1: project unchanged laws with every
+/// origin/retained instance path. Empty instances are not non-vacuity evidence.
 /// This structural projection grants no runtime or proof authority.
 ///
 /// # Errors
