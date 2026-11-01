@@ -420,7 +420,7 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
                 };
                 n.canonical()
                     .parse::<i128>()
-                    .map_err(|_| ActionRefusal::StockPosting(StockPostError::Purity))
+                    .map_err(|_parse| ActionRefusal::StockPosting(StockPostError::Purity))
             };
             let gross = integer("gross_micrograms")?;
             let purity = integer("purity_numerator")?;
@@ -431,7 +431,7 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
                 .checked_mul(purity)
                 .ok_or(ActionRefusal::StockPosting(StockPostError::Overflow))?;
             norn_ir::runtime::Decimal::parse(&fine.to_string())
-                .map_err(|_| ActionRefusal::StockPosting(StockPostError::Overflow))?;
+                .map_err(|_range| ActionRefusal::StockPosting(StockPostError::Overflow))?;
             if fine != integer("fine_ticks")? {
                 return Err(ActionRefusal::StockPosting(StockPostError::Purity));
             }
