@@ -14,6 +14,10 @@
 //!   `X-Shopify-Triggered-At` (deletes and bodies without `updated_at`),
 //!   normalized to UTC microseconds ([`normalize_instant`]).
 //!
+//! DP-SHOPIFY-1: authenticate raw bytes before reading headers or payload.
+//! DP-SHOPIFY-2: configured shop and required identity fields refuse mismatches.
+//! DP-SHOPIFY-3: signed replay preserves exact IDs, normalized source time and
+//! pipeline provenance through submission and convergence (`shopify_ingest_conforms`).
 //! Observations are history, not authorization.
 
 use serde_json::Value;
@@ -159,4 +163,56 @@ pub fn ingest_shopify_webhook(
         pipeline_version: SHOPIFY_WEBHOOK_PIPELINE.to_owned(),
     };
     Ok(draft.seal(source.redaction.as_ref())?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    #[test]
+    #[allow(clippy::expect_used, reason = "conformance assertions")]
+    fn shopify_ingest_conforms() {
+        let source = ShopifySource {
+            source: "fixture".into(),
+            shop_domain: "fixture.myshopify.com".into(),
+            redaction: None,
+        };
+        let body = br#"{"id":9007199254740993,"updated_at":"2026-11-01T00:00:00Z"}"#;
+        let mut mac = Hmac::<Sha256>::new_from_slice(b"fixture").expect("key");
+        mac.update(body);
+        let mut headers = ShopifyHeaders {
+            hmac: Some(STANDARD.encode(mac.finalize().into_bytes())),
+            topic: Some("orders/updated".into()),
+            shop_domain: Some(source.shop_domain.clone()),
+            event_id: Some("event/fixture".into()),
+            ..ShopifyHeaders::default()
+        };
+        let obs = ingest_shopify_webhook(&source, b"fixture", &headers, body, 42).expect("signed");
+        assert_eq!(obs.source_id, "orders/9007199254740993");
+        assert_eq!(obs.source_version, "00001793491200000000");
+        assert_eq!(obs.pipeline_version, SHOPIFY_WEBHOOK_PIPELINE);
+        let submission = obs.submission().expect("submission");
+        assert_eq!(submission.mapping_version, SHOPIFY_WEBHOOK_PIPELINE);
+        assert_eq!(submission.payload["payload_digest"], obs.payload_digest);
+        let view = crate::Convergence::from_log([&obs, &obs]).expect("replay");
+        assert_eq!(
+            view.current("fixture", &obs.source_id)
+                .expect("record")
+                .payload,
+            obs.payload
+        );
+        headers.shop_domain = Some("other.myshopify.com".into());
+        assert!(matches!(
+            ingest_shopify_webhook(&source, b"fixture", &headers, body, 42),
+            Err(IngestError::ShopMismatch { .. })
+        ));
+        headers.hmac = None;
+        assert!(matches!(
+            ingest_shopify_webhook(&source, b"fixture", &headers, b"not JSON", 42),
+            Err(IngestError::MissingSignature { .. })
+        ));
+    }
 }
