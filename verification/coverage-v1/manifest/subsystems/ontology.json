@@ -217,7 +217,6 @@
     "crates/norn-dataplane/Cargo.toml",
     "crates/norn-dataplane/src/converge.rs",
     "crates/norn-dataplane/src/frappe.rs",
-    "crates/norn-dataplane/src/iceberg.rs",
     "crates/norn-dataplane/src/lib.rs",
     "crates/norn-dataplane/src/raw_observation.rs",
     "crates/norn-dataplane/src/webhook.rs",
