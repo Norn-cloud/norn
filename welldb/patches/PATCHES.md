@@ -35,7 +35,7 @@ trimmed in five retained upstream files.
 Public-port qualification: cross-slice `PointStamp` equality now compares through
 the longer coordinate list, padding missing entries with the minimum in both
 directions. A regression covers trailing minimum and non-minimum coordinates.
-Upstream documentation claims referring to unshipped Lean proofs are removed; this
+An upstream documentation reference to unshipped Lean proofs is removed; this
 port claims no formal qualification for the dependency or WellDB.
 
 ## Immutable archive provenance
