@@ -31,6 +31,19 @@ description: Write or review Norn app definitions, packs, laws, mappings, and th
 - Melt: reserve inputs, fund WIP/`melting`, record output and loss provenance, derive declared totals/ratio, provide APPROVE/REJECT paths, invalidate stale approvals, and post output + loss + value effects atomically.
 - A balanced constructor covers its own pairs; it does not certify account selection, valuation or arbitrary writers. Cardinality alone does not prevent double counting.
 
+## Data engineering checklist (TARGET unless verified CURRENT)
+
+Read [the authoring section](../../../docs/authoring/README.md#data-engineering-target-unless-marked-current), [acceptance](../../../docs/spec/acceptance/data-engineering.md) and the decision record's data-engineering section.
+
+- Declare one question for exact cell, IVM and DuckDB/Iceberg; require equivalent canonical totals and contribution IDs at the same version, temporal slice and frontier. Generated pipelines replace authored DAGs.
+- Specify grain, stable keys, source ownership/gaps, units, rounding and fan-out; distinguish enrichment from numeric contributions. Use synthetic orders/payments only for a generic contrast.
+- Return per-source cursors, lag, freshness, completeness, quarantine count and generation identity; fresh does not imply complete. Stale analytical reads need labels; exact governed-law use refuses.
+- Preserve column/source-document and definition-level lineage, including transforms, mapping versions/digests and visible redaction.
+- Capture invalid imports as evidence plus law-linked DataQualityFinding/quarantine, not refusals; native invalid actions refuse. Replay/redelivery creates no duplicate active finding or contribution.
+- Pin effective and knowledge times. Append late evidence; restate explicitly, preserve old answers/books and expose only complete generations. Reject publication using features/labels recorded after their declared cutoff.
+- Check incremental = recompute, exact cell and OLAP through the nine DATA-* scenarios, including restart, quarantine and restatement. Guard statistical publication and retain refused unpublished results.
+- Verify MappingIR, DataQualityFinding, lineage and QuestionIR/metric behavior on main before marking anything CURRENT; distinguish IR, checking, runtime, authoring and proof evidence.
+
 ## Reject these shortcuts
 
 - No domain code/opcodes in the kernel, including stock helpers renamed as generic operations. Domain compositions must expose their reads and effects.
