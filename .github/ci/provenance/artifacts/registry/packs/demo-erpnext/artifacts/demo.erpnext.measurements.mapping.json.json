@@ -1,11 +1,13 @@
 {
   "sha256": "aba54d5f6692db886628f3a209a7a709ff98fbee8689bdf4128c53bad57b40aa",
-  "origin": "authored",
-  "category": "code",
+  "origin": "derived",
+  "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "registry/packs/demo-erpnext/measurements.ts"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",
