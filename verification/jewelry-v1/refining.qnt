@@ -16,9 +16,9 @@ module jewelry_refining {
   action init = all { book' = initial, before' = initial,
     reason' = "", customerAction' = false }
 
-  action publish(next: Book, verdict: str, customer: bool, event: str): bool = all {
+  action publish(candidate: Book, verdict: str, customer: bool, event: str): bool = all {
     before' = book, reason' = verdict, customerAction' = customer,
-    book' = if (verdict != "") book else { ...next,
+    book' = if (verdict != "") book else { ...candidate,
       events: book.events.append(event), receipts: book.receipts.append(book.events.length() + 1) },
   }
   action receiveCustody = publish({ ...book, received: [6, 6], stock: [book.stock[0], 6] },
