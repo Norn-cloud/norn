@@ -218,6 +218,9 @@ pub struct CheckReceipt {
 /// The findings of one artifact-set check and its receipt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckedArtifactSet {
+    /// Bounded finite-table evidence; it grants no admission or proof authority.
+    pub analysis:
+        Result<crate::definition_analysis::DefinitionAnalysis, crate::definition_analysis::Unknown>,
     /// Every finding, as [`crate::check_artifact_set`] reports them, plus
     /// [`codes::ENVIRONMENT_UNDERIVABLE`].
     pub diagnostics: Vec<Diagnostic>,
@@ -489,7 +492,23 @@ fn check_artifact_set_with_profile(
             crate::law_enrollment::inherited_laws(context.base)?
         },
     };
+    let analysis = if receipt.admitted {
+        context
+            .base
+            .iter()
+            .chain(artifacts)
+            .map(|artifact| {
+                crate::layout::normalize_artifact(artifact)
+                    .map(|(artifact, _layout)| artifact)
+                    .map_err(|_diagnostics| crate::definition_analysis::Unknown::GraphInput)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .and_then(|pool| crate::definition_analysis::analyze(&pool))
+    } else {
+        Err(crate::definition_analysis::Unknown::NotAdmitted)
+    };
     Ok(CheckedArtifactSet {
+        analysis,
         diagnostics,
         receipt,
     })

@@ -140,6 +140,11 @@ fn domain(schema: &Schema) -> Result<Domain, Unknown> {
     Ok(out)
 }
 
+/// The same closed, bounded enumeration used by finite definition evidence.
+pub(crate) fn finite_inputs(schema: &Schema) -> Result<Vec<Json>, Unknown> {
+    domain(schema).map(|domain| domain.values)
+}
+
 fn noncanonical(value: &Value) -> bool {
     match value {
         Value::String(text) => norn_ir::canonical::nfc(text) != *text,
