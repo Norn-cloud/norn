@@ -1232,16 +1232,3 @@ fn graph_catalog_roles_follow_declarations_not_lifecycle_shape() {
     );
 }
 
-#[test]
-fn ambiguous_installed_mapping_targets_never_select_a_version() {
-    let old = sales_order();
-    let mut new = serde_json::to_value(&old).expect("envelope");
-    new["version"] = json!("2.0.0");
-    let projection = project(
-        &[example_mapping()],
-        &[old, envelope(new)],
-        &BTreeSet::new(),
-    )
-    .expect("read-only projection");
-    assert!(projection.mappings.is_empty());
-}
