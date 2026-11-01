@@ -2,7 +2,7 @@
 
 Projects the Rust IR and checker schemas into OpenAPI components for the TypeScript SDK.
 Run `norn openapi` to regenerate the contract. Cell execution uses `norn-cell` and
-`norn-kernel` directly; this crate supplies no server.
+`norn-kernel` directly; the fixture example supplies a local definitions server.
 
 ## Host export contract (slice 1a)
 
@@ -66,7 +66,7 @@ that compiles stock, starts the command and checks both namespaces via `/v1/defs
 From the repository root (fixture sources require #147 and #227):
 
 ```sh
-mkdir -p ~/.cache/agent-scratch/norn-demo-host && bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/stock --org org_demo --env dev --out ~/.cache/agent-scratch/norn-demo-host/stock.json && NORN_DEMO_TOKEN=local-demo cargo run --locked -p norn-api --example fixture-server -- fixtures/engine-alpha/sales-order.definitions.json ~/.cache/agent-scratch/norn-demo-host/stock.json
+(cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile) && mkdir -p ~/.cache/agent-scratch/norn-demo-host && bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/stock --org org_demo --env dev --out ~/.cache/agent-scratch/norn-demo-host/stock.json && NORN_DEMO_TOKEN=local-demo cargo run --locked -p norn-api --example fixture-server -- fixtures/engine-alpha/sales-order.definitions.json ~/.cache/agent-scratch/norn-demo-host/stock.json
 ```
 
 Read with `Authorization: Bearer local-demo` at
