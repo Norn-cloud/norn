@@ -12,10 +12,13 @@ use sha2::{Digest, Sha256};
 
 use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 
+mod induction;
+
 /// Generator semantics; changing the obligation rules invalidates all challenges.
-/// Profile 7 admits verbatim Unicode with exact-byte commitments; profile 8 is
-/// reserved for induction obligations. Profiles 5/6 required NFC at proof ingress.
-pub const GENERATOR_PROFILE: &str = "norn.application-obligations/7";
+/// Profile 8 admits verbatim Unicode and binds exact source/expression bytes
+/// and induction statements; profile 7 is the distinct inventory-only format.
+/// Profiles 5/6 required NFC at proof ingress.
+pub const GENERATOR_PROFILE: &str = "norn.application-obligations/8";
 
 /// Why a fixed challenge could not be reconstructed or a submission was rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,7 +367,7 @@ impl ApprovedContract {
             return Err(ChallengeError::Limit);
         }
         preflight_goal_bytes(&self.laws, &writers, &boundaries)?;
-        let obligations = self.obligations(&pool, &writers, &boundaries);
+        let induction = induction::build(&pool, &self.laws, &writers, &boundaries, registry)?;
         let body = json!({
             "generator": GENERATOR_PROFILE,
             "admissionReceipt": receipt,
@@ -375,7 +378,10 @@ impl ApprovedContract {
             "semantics": self.semantics,
             "assumptions": self.assumptions,
             "assurance": self.assurance,
-            "obligations": obligations,
+            "inductionRules": induction::rules(),
+            "lawStatements": induction.laws,
+            "writerStatements": induction.writers,
+            "obligations": induction.goals,
         });
         let bytes = norn_canonical::serialize_json_verbatim(&body)
             .map_err(|_error| ChallengeError::Closure)?;
@@ -389,45 +395,6 @@ impl ApprovedContract {
             sha256,
             writers,
         })
-    }
-
-    /// Every required goal of every law, in canonical order.
-    fn obligations(
-        &self,
-        pool: &[ArtifactEnvelope],
-        writers: &BTreeSet<crate::verification::LawWriter>,
-        boundaries: &BTreeSet<String>,
-    ) -> Vec<Value> {
-        let mut obligations = Vec::new();
-        for law in pool.iter().filter(|a| a.kind() == ArtifactKind::Law) {
-            // These are goals, not generated proofs. Temporal laws additionally
-            // require their temporal semantics; safety induction alone cannot
-            // discharge eventually/strong-until.
-            let mut goals = vec![
-                json!({"kind":"initialization"}),
-                json!({"kind":"non_vacuity"}),
-                json!({"kind":"law_semantics"}),
-            ];
-            goals.extend(
-                writers
-                    .iter()
-                    .map(|writer| json!({"kind":"preservation","writer":writer.to_json()})),
-            );
-            goals.extend(
-                boundaries
-                    .iter()
-                    .map(|boundary| json!({"kind":"open_boundary","boundary":boundary})),
-            );
-            for goal in goals {
-                obligations.push(json!({
-                    "law": law.artifact_id,
-                    "lawDigest": self.laws.get(&law.artifact_id),
-                    "goal": goal,
-                }));
-            }
-        }
-        obligations.sort_by_key(Value::to_string);
-        obligations
     }
 }
 
