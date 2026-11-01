@@ -221,9 +221,8 @@ fn dependencies_resolve_to_exact_versions_including_the_base() {
     assert!(catalog.contains(&invoice_transition()));
 }
 
-#[test]
-fn a_mapping_observes_members_and_declares_gaps() {
-    let mapping = envelope(json!({
+fn example_mapping() -> ArtifactEnvelope {
+    envelope(json!({
         "irVersion": "0.1",
         "artifactId": "erpnext.sales_order.mapping",
         "kind": "mapping",
@@ -257,7 +256,12 @@ fn a_mapping_observes_members_and_declares_gaps() {
                 "gaps": [{ "member": "amended_from", "reason": "deferred" }]
             }]
         }
-    }));
+    }))
+}
+
+#[test]
+fn a_mapping_observes_members_and_declares_gaps() {
+    let mapping = example_mapping();
     let catalog = catalog(&[sales_order(), mapping], &[]);
     let mut rows: Vec<(String, MapRule)> = catalog
         .mappings
@@ -655,4 +659,18 @@ fn local_lifecycle_states_keep_inherited_property_ownership() {
             .iter()
             .any(|row| row.at.member.id() == "property:commerce.SalesOrder#status")
     );
+}
+
+#[test]
+fn ambiguous_installed_mapping_targets_never_select_a_version() {
+    let old = sales_order();
+    let mut new = serde_json::to_value(&old).expect("envelope");
+    new["version"] = json!("2.0.0");
+    let projection = project(
+        &[example_mapping()],
+        &[old, envelope(new)],
+        &BTreeSet::new(),
+    )
+    .expect("read-only projection");
+    assert!(projection.mappings.is_empty());
 }
