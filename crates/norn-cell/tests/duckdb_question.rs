@@ -18,7 +18,7 @@ use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, EntityIrVersion, EntityRootV2, PropertyType,
     WholeNumber,
 };
-use query_support::*;
+use query_support::{CLOCK, TYPE, WORLD, fixture, load, put};
 
 fn row(id: &str, input: i64, recovered: i64) -> FactWriteRow {
     put(id, input, recovered, "2026-10-23T12:00:00Z", "gold")
@@ -44,10 +44,7 @@ fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) -> Que
         .expect("SQL");
     assert_eq!(sql.engine, Engine::Duckdb);
     sql.engine = Engine::Cell;
-    assert_eq!(
-        sql, exact,
-        "same rows, operand amounts, identities, versions, pins and frontier"
-    );
+    assert_eq!(sql, exact);
     sql
 }
 
