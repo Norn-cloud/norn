@@ -1,5 +1,6 @@
 """First oracle checkpoint: serial receipt and delivery through document REST."""
 from rest import NativeError
+from decimal import Decimal
 
 
 class Driver:
@@ -19,9 +20,11 @@ class Driver:
         doctype = 'Purchase Receipt' if receipt else 'Delivery Note'
         doc = dict(company=f['company'], posting_date=date, posting_time=time, set_posting_time=1,
                    currency='USD', conversion_rate=1,
-                   items=[dict(item_code=f['item'], qty=op['quantity'], rate=op.get('rate', '1'),
+                   items=[dict(item_code=f['item'], qty=Decimal(op['quantity']), rate=Decimal(op.get('rate', '1')),
                                warehouse=f['warehouses'][op['warehouse']], uom='Unit', stock_uom='Unit',
                                conversion_factor=1, expense_account=f['accounts']['cogs'])])
+        if not receipt:
+            doc.update(selling_price_list='Parity Selling', price_list_currency='USD', plc_conversion_rate=1)
         doc['supplier' if receipt else 'customer'] = f['supplier' if receipt else 'customer']
         result = dict(attempt=0, requestId=key, nativeId=None, outcome='accepted',
                       nativeCode=None, reason=None, completionOrder=0)
