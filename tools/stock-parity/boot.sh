@@ -24,7 +24,7 @@ PY
 dc() { docker compose -p stock-parity -f compose.json "$@"; }
 dc up -d --pull never > start.log 2>&1
 for ((i=0; i<60; i++)); do
-  if dc exec -T db sh -c 'mariadb-admin ping -uroot -p"$MARIADB_ROOT_PASSWORD" --silent' >/dev/null 2>&1; then break; fi
+  if dc exec -T db sh -c 'mariadb --protocol=TCP -h db -P 3306 -uroot -p"$MARIADB_ROOT_PASSWORD" -e "SELECT 1"' >/dev/null 2>&1; then break; fi
   if (( i == 59 )); then echo 'Database readiness timeout' >&2; exit 1; fi
   sleep 1
 done

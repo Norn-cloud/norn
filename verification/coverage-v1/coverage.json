@@ -2400,6 +2400,7 @@
         "tools/stock-parity/rest.py",
         "tools/stock-parity/run.py",
         "tools/stock-parity/setup.py",
+        "tools/stock-parity/test_timeout.py",
         "vendor/zen/core/engine/tests/decision.rs",
         "vendor/zen/core/engine/tests/engine.rs",
         "vendor/zen/core/engine/tests/metering.rs",

@@ -39,5 +39,10 @@ checkpoint, every attempted command, native identities, raw GL legs and status.
   Redis 7 image tags; version output is an array of app/version/commit records.
   App commits are unavailable in this image; version plus image digest pin it.
 
+- **socket-only-bootstrap:** database ping may accept a temporary socket-only
+  server; site creation waits for an authenticated TCP query instead.
+- **creation-stream-stall:** a stalled controller creation stream must be killed
+  within 300 seconds so allocated VM cleanup runs; other CLI calls are bounded.
+
 Remaining contract scenarios and 10b reviewed dispositions are the next unit.
 No result in this checkpoint claims cross-engine parity or race correctness.
