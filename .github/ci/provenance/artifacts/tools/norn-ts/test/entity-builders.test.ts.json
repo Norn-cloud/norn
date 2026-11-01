@@ -1,11 +1,5 @@
 {
-<<<<<<< HEAD
-  "sha256": "23b28434d26d015e115d6aeddf084fe3b759b144ecdae1ddfed60ac7b9f0c948",
-||||||| e7f2fa0c1
-  "sha256": "801b32e245838ac4f497a74560bf61ba2cd96c43d9c4a823ea817c197fd119ba",
-=======
-  "sha256": "baf06a4c21a62ed886c1a91b0f3b0c2a38f8fb0afa6b0c4b2a59b4b289a14c47",
->>>>>>> composition/parameter-source
+  "sha256": "3a48d34b6e046b85b66c8d298a07f4f0732d245e1270815fb21d1d32a6f5cd44",
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",
