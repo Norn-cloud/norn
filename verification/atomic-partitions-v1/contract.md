@@ -15,3 +15,6 @@ one retry identity. The primitive has no application or valuation semantics.
   admission/current authorization govern writes; unsupported hosts refuse.
 
 Evidence is execution/conformance, not a formal implementation proof.
+
+POST-GROUP-SNAPSHOT: prepare all plans from the same verified pre-write state.
+Multiple first definitions must not inspect another plan's unreceipted writes.

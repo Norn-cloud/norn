@@ -1382,7 +1382,7 @@ pub struct CommitBatch {
     pub consumes: Option<Consumption>,
     /// Bounded quantity operation, atomically admitted with this batch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quantity: Option<norn_ir::quantity_ledger::QuantityRequest>,
+    pub quantity: Option<QuantityBatch<norn_ir::quantity_ledger::QuantityRequest>>,
     /// Store-generated input fingerprint retained in committed batches.
     /// Caller-supplied values are ignored when deriving retry identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1580,10 +1580,10 @@ pub struct ReceiptBody {
     /// Typed quantity provenance, bound into the receipt hash. Legacy ordinary
     /// receipts omit this field regardless of their event type names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quantity: Option<norn_ir::quantity_ledger::QuantityRequest>,
+    pub quantity: Option<QuantityBatch<norn_ir::quantity_ledger::QuantityRequest>>,
     /// Exact quantity result, derived under the transaction and hash bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quantity_result: Option<norn_kernel::quantity::QuantityResult>,
+    pub quantity_result: Option<QuantityBatch<norn_kernel::quantity::QuantityResult>>,
     /// Store-computed fingerprint of complete original inputs and the pinned
     /// definitions version, before materialization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1611,16 +1611,21 @@ pub struct ReceiptBody {
 }
 impl ReceiptBody {
     pub(crate) fn quantity_requests(&self) -> &[norn_ir::quantity_ledger::QuantityRequest] {
-        self.quantity.as_slice()
+        self.quantity.as_ref().map_or(&[], |requests| &requests.0)
     }
     pub(crate) fn quantity_result(
         &self,
         ledger: &str,
     ) -> Option<&norn_kernel::quantity::QuantityResult> {
-        self.quantity_requests()
+        let requests = self.quantity.as_ref()?;
+        let results = self.quantity_result.as_ref()?;
+        if requests.len() != results.len() {
+            return None;
+        }
+        requests
             .iter()
-            .find(|request| request.ledger_id == ledger)?;
-        self.quantity_result.as_ref()
+            .zip(results.iter())
+            .find_map(|(request, result)| (request.ledger_id == ledger).then_some(result))
     }
 }
 
@@ -2512,7 +2517,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
             if let Some(prior) = &prior_receipt && let Some(request) = &reconciled.quantity {
                 reconciled.logical_time = prior.body.logical_time;
-                crate::quantity::check_request(&self.conn, &reconciled, request)?;
+                for request in request.iter() { crate::quantity::check_request(&self.conn, &reconciled, request)?; }
             }
             let quantity_input = if reconciled.quantity.is_some() {
                 Some(match submitted {
@@ -2690,10 +2695,13 @@ impl<E: SqlEngine> CellStore<E> {
                     })
                     .collect(),
             };
-            if let Some((id, reservation)) = body.quantity_result.as_ref().and_then(|result| result.reservation.as_ref())
-                && reservation.status == "open" {
-                let request = effective_batch.quantity.as_ref().ok_or(CellError::Quantity(norn_kernel::quantity::QuantityError::Corrupt))?;
-                body.scheduled.push(crate::quantity::expiry_timer_id(&effective_batch.world, &request.ledger_id, id)?);
+            if let (Some(requests), Some(results)) = (&body.quantity, &body.quantity_result) {
+                for (request, result) in requests.iter().zip(results.iter()) {
+                    if let Some((id, reservation)) = &result.reservation
+                        && reservation.status == "open" {
+                        body.scheduled.push(crate::quantity::expiry_timer_id(&effective_batch.world, &request.ledger_id, id)?);
+                    }
+                }
             }
             let receipt = writer.write_receipt(body)?;
             self.conn.execute(r#"UPDATE "_norn_clock" SET logical_time=?1,commit_seq=?2,receipt_hash=?3 WHERE id=1"#,
