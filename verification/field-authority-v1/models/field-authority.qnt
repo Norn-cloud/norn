@@ -14,6 +14,7 @@ module field_authority {
   var op: str
   var origin: str
   var seal: Result
+  var lastSupplies: bool
   var lastAuthority: bool
   var lastRule: int
   var lastPin: int
@@ -24,7 +25,7 @@ module field_authority {
     present' = false, stored' = 0, immutable' = im, protected' = pr,
     beforeExists' = false, beforeValue' = 0, refused' = false,
     op' = "initial", origin' = "none", seal' = empty,
-    lastAuthority' = false, lastRule' = 0, lastPin' = 0,
+    lastSupplies' = false, lastAuthority' = false, lastRule' = 0, lastPin' = 0,
     checkerCas' = false, runtimeCas' = false,
   }
   action init = {
@@ -38,7 +39,7 @@ module field_authority {
     seal' = if (rule == 1 and pin == 1) { kind: kind, supplies: supplies, value: value, rule: rule, pin: pin } else empty,
     present' = present, stored' = stored, immutable' = immutable, protected' = protected,
     beforeExists' = present, beforeValue' = stored, refused' = false,
-    op' = "evaluate", origin' = "kernel", lastAuthority' = false, lastRule' = 0, lastPin' = 0,
+    op' = "evaluate", origin' = "kernel", lastSupplies' = false, lastAuthority' = false, lastRule' = 0, lastPin' = 0,
     checkerCas' = checkerCas, runtimeCas' = runtimeCas,
   }
   action apply(kind: str, producer: str, supplies: bool, nextValue: int, authority: bool, rule: int, pin: int): bool = {
@@ -49,7 +50,7 @@ module field_authority {
       refused' = not(allowed), op' = kind, origin' = producer,
       present' = if (allowed) kind != "delete" else present,
       stored' = if (allowed) (if (kind == "delete" or not(supplies)) 0 else nextValue) else stored,
-      seal' = empty, lastAuthority' = authority, lastRule' = rule, lastPin' = pin,
+      seal' = empty, lastSupplies' = supplies, lastAuthority' = authority, lastRule' = rule, lastPin' = pin,
       checkerCas' = checkerCas, runtimeCas' = runtimeCas,
     }
   }
@@ -61,7 +62,7 @@ module field_authority {
     else all {
       present' = present, stored' = stored, immutable' = immutable, protected' = protected,
       beforeExists' = present, beforeValue' = stored, refused' = true, op' = "invalid_seal", origin' = "rule",
-      seal' = empty, lastAuthority' = false, lastRule' = rule, lastPin' = pin,
+      seal' = empty, lastSupplies' = false, lastAuthority' = false, lastRule' = rule, lastPin' = pin,
       checkerCas' = checkerCas, runtimeCas' = runtimeCas,
     }
   }
@@ -73,9 +74,9 @@ module field_authority {
     runtimeCas' = properties.filter(p => not(p.computed) and not(p.protected) and not(p.lifecycle)).length() > 0,
     present' = present, stored' = stored, immutable' = immutable, protected' = protected,
     beforeExists' = present, beforeValue' = stored, refused' = false, op' = "cas", origin' = "action",
-    seal' = seal, lastAuthority' = false, lastRule' = 0, lastPin' = 0,
+    seal' = seal, lastSupplies' = false, lastAuthority' = false, lastRule' = 0, lastPin' = 0,
   }
-  def protectedWrite = protected and ((op == "create" and present and stored != 0) or (beforeExists and (op == "set" or op == "delete")))
+  def protectedWrite = protected and ((op == "create" and lastSupplies) or (beforeExists and (op == "set" or op == "delete")))
   def onlyDeclaredRulesOwnProtectedWrites = (protectedWrite and not(refused)) implies lastAuthority
   def ruleAuthorityIsKernelSealed = lastAuthority implies (origin == "rule" and lastRule == 1 and lastPin == 1)
   def callerCannotAssertRuleAuthority = (op != "initial" and origin == "rule" and not(lastAuthority) and protectedWrite) implies refused
