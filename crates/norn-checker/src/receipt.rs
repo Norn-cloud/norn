@@ -304,6 +304,7 @@ pub struct ReceiptSources {
     base: Vec<ArtifactEnvelope>,
     identity: ArtifactSetRef,
 }
+
 impl ReceiptSources {
     /// Prepare semantic sources without projecting numbers through f64.
     /// # Errors
@@ -335,6 +336,7 @@ impl ReceiptSources {
         })
     }
 }
+
 /// Check `artifacts` against `context` ([`crate::check_artifact_set`]) under
 /// `limits`, derive the set's type environment when the set is clean, and
 /// issue the [`CheckReceipt`]. See the module docs.
@@ -662,9 +664,9 @@ pub fn admission_receipt_sha256(stored: &str) -> Result<String, ReceiptError> {
 /// integrity, its exact versioned checker identity, and its bindings to the
 /// supplied definitions, base, limits, and derived type environment. Historic
 /// versions are accepted only when explicitly listed by this crate. A
-/// retained-definition caller can use the returned token to recheck current
-/// semantics while preserving the attested identifier profile; new installs
-/// separately use [`check_artifact_set_with_receipt`] and current limits.
+/// retained-definition caller must use [`verify_admission_receipt_sources`]
+/// to obtain a recheckable token from exact retained sources. This typed
+/// historical reader validates integrity only and grants no recheck authority.
 ///
 /// # Errors
 ///
@@ -677,8 +679,8 @@ pub fn verify_admission_receipt(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
     limits: &ResourceLimitProfile,
-) -> Result<ReceiptVersion, ReceiptError> {
-    verify_receipt(stored, expected_sha256, artifacts, base, limits, None)
+) -> Result<(), ReceiptError> {
+    verify_receipt(stored, expected_sha256, artifacts, base, limits, None).map(drop)
 }
 
 fn verify_receipt(
