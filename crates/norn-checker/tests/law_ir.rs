@@ -10,9 +10,12 @@ use norn_checker::{
     verification::{LawWriter, codes, conservative_closure},
 };
 use norn_graph::Budget;
-use norn_ir::ArtifactEnvelope;
+use norn_ir::{
+    ArtifactEnvelope, ArtifactPayload, CompositionPackRoot, LawIR, PackArtifactKind,
+    PackArtifactRef, PackInstance, PackInstanceRef,
+};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn projected(
     artifact: &ArtifactEnvelope,
@@ -151,6 +154,111 @@ proptest::proptest! {
         proptest::prop_assert_eq!(projected(&law, &base), expected);
     }
 }
+fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
+    let (mut law, mut base) = interface_case(true, "self.total_amount >= 0");
+    let pack = |id: &str, member: &str, instances| {
+        let mut artifact = law.clone();
+        artifact.artifact_id = id.to_owned();
+        artifact.namespace = "toy".to_owned();
+        artifact.dependencies.clear();
+        let root = CompositionPackRoot {
+            pack_id: id.to_owned(),
+            pack_version: artifact.version.clone(),
+            pack_kind: None,
+            provides: None,
+            artifacts: vec![PackArtifactRef {
+                artifact_id: member.to_owned(),
+                version: "0.1.0".to_owned(),
+                kind: PackArtifactKind::Entity,
+                additional: BTreeMap::new(),
+            }],
+            instances,
+            extensions: None,
+        };
+        artifact.payload = ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::BusinessPack,
+            serde_json::from_value(serde_json::to_value(root).expect("pack")).expect("tree"),
+        )
+        .expect("payload");
+        artifact
+    };
+    let root = pack("toy.root", "core.Order.interface", None);
+    let leaf = pack("toy.leaf", "commerce.SalesOrder.entity", None);
+    let reference = |id: &str, artifact: &ArtifactEnvelope| PackInstanceRef {
+        instance_id: id.to_owned(),
+        pack: norn_ir::mapping::InterpretationEndpoint {
+            artifact_id: artifact.artifact_id.clone(),
+            version: artifact.version.clone(),
+            sha256: norn_checker::ArtifactRef::of(artifact).expect("pin").sha256,
+        },
+    };
+    let refs = [
+        reference("app-root", &root),
+        reference("left", &root),
+        reference("right", &root),
+        reference("leaf", &leaf),
+    ];
+    let nodes = refs
+        .iter()
+        .enumerate()
+        .map(|(index, at)| PackInstance {
+            instance_id: at.instance_id.clone(),
+            scope: law.scope.clone(),
+            pack: at.pack.clone(),
+            imports: if index == 0 {
+                BTreeMap::from([
+                    ("left".to_owned(), refs[1].clone()),
+                    ("right".to_owned(), refs[2].clone()),
+                ])
+            } else {
+                BTreeMap::new()
+            },
+            instances: if index == 1 || index == 2 {
+                vec![refs[3].clone()]
+            } else {
+                Vec::new()
+            },
+        })
+        .collect();
+    let holder = pack("toy.instances", "core.Order.interface", Some(nodes));
+    base.extend([root, leaf, holder]);
+    assert!(
+        check_artifact_set(
+            &base,
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None
+            }
+        )
+        .is_empty(),
+        "retained fixture admission"
+    );
+    let mut declaration: LawIR =
+        serde_json::from_value(serde_json::to_value(law.payload.to_json_value()).expect("law"))
+            .expect("typed");
+    declaration.scope.root = norn_ir::LawRoot::App("app-root".to_owned());
+    law.payload = ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Law,
+        serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
+    )
+    .expect("payload");
+    (law, base)
+}
+
+#[test]
+fn law_contained_shared_graph_contract_is_closed_and_scoped() {
+    let (law, base) = membership_case();
+    let owner = base.last().expect("holder");
+    let root: CompositionPackRoot =
+        serde_json::from_value(serde_json::to_value(owner.payload.to_json_value()).expect("wire"))
+            .expect("pack");
+    let instances = root.instances.expect("declarations");
+    assert_eq!(instances.len(), 4);
+    assert!(instances.iter().all(|instance| instance.scope == law.scope));
+    assert_eq!(instances[0].imports.len(), 2);
+}
+
 fn entities() -> Vec<ArtifactEnvelope> {
     serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).expect("entities")
 }
