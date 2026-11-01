@@ -1034,10 +1034,11 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
             let body = compact(&receipt);
             verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits)
                 .expect("receipt fixture");
-            assert!(
-                verify_admission_receipt_sources(&body, &digest, changed, changed_base, &limits)
-                    .is_err()
-            );
+            assert!(matches!(
+                verify_admission_receipt_sources(&body, &digest, changed, changed_base, &limits),
+                Err(norn_checker::ReceiptError::InvalidStoredReceipt { detail })
+                    if detail == "receipt artifact-set identity does not match the persisted definitions"
+            ));
         }
     }
 }
