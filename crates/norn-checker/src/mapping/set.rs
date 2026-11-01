@@ -134,7 +134,7 @@ fn interpretation_endpoints(
                 && dependency.version.as_deref() == Some(pin.version.as_str()));
         let exact_retained = matches!(retained.as_slice(), [layer]
             if layer.kind() == ArtifactKind::BusinessPack
-                && ArtifactRef::of(layer).ok().is_some_and(|r| r.sha256 == pin.sha256));
+                && ArtifactRef::of(layer).is_ok_and(|r| r.sha256 == pin.sha256));
         let exact_version = SEMVER.as_ref().is_some_and(|g| g.is_match(&pin.version));
         if !exact_dependency || !exact_retained || !exact_version {
             out.push(in_payload(error(
