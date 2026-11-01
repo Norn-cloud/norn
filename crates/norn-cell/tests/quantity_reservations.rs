@@ -1821,8 +1821,10 @@ impl QuantityFixture for SqliteCell<String, String, String> {
             .receipt_by_idempotency_key("main", key)
             .map_err(norn_kernel::CommitError::Host)?
         {
-            if let Some(original) = prior.body.quantity {
-                request.balance_versions = original.balance_versions;
+            if let Some(original) = prior.body.quantity.as_ref() {
+                request
+                    .balance_versions
+                    .clone_from(&original.balance_versions);
             }
         } else {
             request.balance_versions = self
@@ -1845,8 +1847,10 @@ impl QuantityFixture for SqliteCell<String, String, String> {
             .read()
             .receipt_by_idempotency_key("main", key)?
         {
-            if let Some(original) = prior.body.quantity {
-                request.balance_versions = original.balance_versions;
+            if let Some(original) = prior.body.quantity.as_ref() {
+                request
+                    .balance_versions
+                    .clone_from(&original.balance_versions);
             }
         } else if request.balance_versions.is_empty()
             && let Ok(fences) = self
@@ -2437,4 +2441,30 @@ fn sparse_definition_with_shared_incoming() -> norn_ir::quantity_ledger::Quantit
             .account_id = "transit".into();
     }
     definition
+}
+
+#[test]
+fn post_group_codec_preserves_singleton_receipt_bytes_and_order() {
+    use norn_cell::store::QuantityBatch;
+    let original = define();
+    let scalar = serde_json::to_string(&original).expect("scalar");
+    let single = QuantityBatch::from(original.clone());
+    assert_eq!(
+        serde_json::to_string(&single).expect("single"),
+        scalar,
+        "POST-GROUP-REPLAY singleton hashes"
+    );
+    let decoded: QuantityBatch<norn_ir::quantity_ledger::QuantityRequest> =
+        serde_json::from_str(&scalar).expect("decode scalar");
+    assert_eq!(decoded, single);
+    let mut second = original.clone();
+    second.ledger_id = "destination".into();
+    let group = QuantityBatch(vec![original, second]);
+    let encoded = serde_json::to_string(&group).expect("group");
+    assert_eq!(
+        serde_json::from_str::<QuantityBatch<norn_ir::quantity_ledger::QuantityRequest>>(&encoded)
+            .expect("decode group"),
+        group,
+        "POST-GROUP-IDENTITY ordered requests"
+    );
 }
