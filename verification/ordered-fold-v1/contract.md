@@ -112,3 +112,7 @@ FOLD-VM-BOUNDARY: a profiled VM checks numeric leaves in its base scope, locals
 and complete result, including identity/negation and nested records/lists. The
 iterative walk charges nodes and pending children before allocating traversal
 work. No caller can attach a profile and pass excess-precision values through.
+
+FOLD-CLOSURE-WORK: check each call site once and memoize helper-graph validation
+by artifact key and deepest checked depth. Check depth before the memo and bound
+its size by the existing closure limit. Equal payload rule IDs never alias.
