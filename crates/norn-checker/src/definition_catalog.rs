@@ -287,10 +287,21 @@ impl Rows {
             self.link(artifact, &name, link.id.as_str(), link.target.as_str());
         }
         for lifecycle in &def.lifecycles {
-            if let Some(Ok(object)) = effective.object_type(&artifact.artifact_id)
-                && let Some(machine) = object.lifecycle(lifecycle.property.as_str())
-            {
-                self.states.extend(machine.states.iter().map(|state| {
+            let states = def
+                .properties
+                .iter()
+                .find(|p| p.id == lifecycle.property)
+                .and_then(|p| lifecycle_states(p, &def.lifecycles))
+                .map(|s| s.states)
+                .or_else(|| {
+                    effective
+                        .object_type(&artifact.artifact_id)?
+                        .ok()?
+                        .lifecycle(lifecycle.property.as_str())
+                        .map(|m| m.states.clone())
+                });
+            if let Some(states) = states {
+                self.states.extend(states.iter().map(|state| {
                     at(
                         artifact,
                         Member::State {
