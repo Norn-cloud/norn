@@ -5014,6 +5014,10 @@ struct ProvisionFault {
 }
 
 impl ProvisionFault {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the crash probe deliberately exits without running transaction destructors"
+    )]
     fn boundary(&self) -> Result<(), CellError> {
         let step = self.step.get().saturating_add(1);
         self.step.set(step);
@@ -5095,6 +5099,10 @@ fn host_provision_atomic_crash_child() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "crash conformance requires an isolated copy of this test executable"
+)]
 fn host_provision_atomic_at_every_storage_boundary() {
     let engine = ProvisionFault {
         inner: NativeEngine::open_in_memory().expect("open"),
