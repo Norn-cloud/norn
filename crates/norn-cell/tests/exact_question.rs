@@ -125,11 +125,12 @@ fn query_zero_input_is_unavailable_and_scope_refusal_writes_nothing() {
     assert!(result.rows.values().next().expect("bucket").value.is_none());
     let head = store.verified_head().expect("head");
     context.scope = "other".into();
-    assert!(
-        store
-            .evaluate_question(&plan, context, |_| Ok(true))
-            .is_err()
-    );
+    assert!(matches!(
+        store.evaluate_question(&plan, context, |_| Ok(true)),
+        Err(norn_cell::CellError::ComputeRefused(
+            "core.compute.stale_input"
+        ))
+    ));
     assert_eq!(head, store.verified_head().expect("same head"));
 }
 
