@@ -11,7 +11,7 @@ use norn_checker::definition_catalog::project;
 use norn_checker::resolve_artifact_set;
 use norn_ir::ArtifactEnvelope;
 use norn_ir::definition_catalog::{DefinitionCatalog, Member, MemberRef, WriteVia};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::BTreeSet;
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 fn read_json(path: &str) -> Value {
