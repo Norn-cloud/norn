@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Conformance tests for GUAR-* in verification/guarantees-v1/spec.md."""
 import copy
+import coverage_manifest
 import json
 import unittest
 
@@ -62,7 +63,7 @@ class GuaranteesConformance(unittest.TestCase):
     def test_document_drift(self):
         payload = render(ROOT)
         self.assertEqual((ROOT / OUTPUT).read_bytes(), payload.encode("utf-8"))
-        enrolled = {c["id"] for s in read(ROOT, "verification/coverage-v1/coverage.json")["subsystems"]
+        enrolled = {c["id"] for s in coverage_manifest.load(ROOT / "verification/coverage-v1/manifest")["subsystems"]
                     for c in s["obligationClaims"]}
         rows = json.loads(payload)["guarantees"]
         self.assertTrue(enrolled <= {row["id"] for row in rows})
