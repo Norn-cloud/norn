@@ -127,3 +127,23 @@ fn host_definition_wire_keeps_empty_collections_and_revision_names() {
     assert!(wire.get("receiptSha256").is_some());
     let _: norn_ir::LayoutSidecar = response.layout;
 }
+
+#[test]
+fn host_admission_flag_requires_an_explicit_true_receipt() {
+    for receipt in [
+        serde_json::json!({"artifactSet": {"base": []}}),
+        serde_json::json!({"admitted": false, "artifactSet": {"base": []}}),
+        serde_json::json!({"admitted": null, "artifactSet": {"base": []}}),
+        serde_json::json!({"admitted": "true", "artifactSet": {"base": []}}),
+    ] {
+        let mut admitted = checked("25", false).unwrap();
+        admitted.receipt = receipt;
+        let refusal = defs_response(&admitted, 1, 0).unwrap_err();
+        assert_eq!(refusal.code, "host.error");
+        assert_eq!(refusal.status, 500);
+        assert_eq!(
+            refusal.explanation,
+            norn_api::refusal::Refusal::UNPROVEN_DETAIL
+        );
+    }
+}

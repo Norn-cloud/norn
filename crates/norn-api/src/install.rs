@@ -55,6 +55,9 @@ pub fn defs_response(
     version: u64,
     layout_revision: u64,
 ) -> Result<DefsResponse, Refusal> {
+    if admitted.receipt.get("admitted").and_then(Value::as_bool) != Some(true) {
+        return Err(Refusal::host("the receipt does not attest admission"));
+    }
     let flow_source_map = admitted
         .receipt
         .get("flowSourceMap")

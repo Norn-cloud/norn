@@ -39,3 +39,7 @@ Correspondence: `tests/definition_projection.rs` checks synthetic checker receip
 key-order independence, semantic changes, exact large integers and scale-28
 boundaries. Numeric admission refusal, scope admission, installed-revision binding
 and the definition epoch are host-wiring obligations, not projection guarantees.
+
+HOST-ADMISSION-FLAG: response projection requires the checker receipt's `admitted`
+field to be explicitly `true`; missing, false, null or non-boolean claims refuse
+with opaque `host.error`. This consistency check does not replace host admission.
