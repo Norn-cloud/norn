@@ -488,10 +488,14 @@
       "profile": "full",
       "command": "cargo test --locked -p norn-kernel --test accounting_commit",
       "evidenceKind": "rust-tests",
-      "role": "supporting-check",
+      "role": "claim-evidence",
       "classifications": [
         {
           "subsystem": "quantity-ledger",
+          "layer": "runtime"
+        },
+        {
+          "subsystem": "core-physics",
           "layer": "runtime"
         }
       ],
@@ -753,6 +757,53 @@
       "generatedArtifacts": []
     },
     {
+      "id": "core-value-ledger-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/core-physics-v1/models/core-value-ledger.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "core-value-ledger-quint",
+      "profile": "fast",
+      "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/core-value-ledger-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "core-value-ledger-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "quantity-kani",
       "profile": "full",
       "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
@@ -941,36 +992,6 @@
       "generatedArtifacts": []
     },
     {
-      "id": "verification-executed-test-selectors",
-      "profile": "full",
-      "command": "python3 scripts/validate-executed-test-selectors.py",
-      "evidenceKind": "command",
-      "role": "evidence-integrity",
-      "classifications": [
-        {
-          "subsystem": "verification-integrity",
-          "layer": "runtime"
-        }
-      ],
-      "resultArtifacts": [],
-      "generatedArtifacts": []
-    },
-    {
-      "id": "verification-executed-test-selectors-fast",
-      "profile": "fast",
-      "command": "python3 scripts/validate-executed-test-selectors.py --profile fast",
-      "evidenceKind": "command",
-      "role": "evidence-integrity",
-      "classifications": [
-        {
-          "subsystem": "verification-integrity",
-          "layer": "runtime"
-        }
-      ],
-      "resultArtifacts": [],
-      "generatedArtifacts": []
-    },
-    {
       "id": "verification-proof-hole-audit-fast",
       "profile": "fast",
       "command": "python3 scripts/check-proof-holes.py",
@@ -1103,6 +1124,66 @@
       "classifications": [
         {
           "subsystem": "kernel-v2",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-l1-reference",
+      "profile": "full",
+      "command": "scripts/verify-kernel-l1-lean.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-l1-version-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-kernel-l1-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "verification-executed-test-selectors",
+      "profile": "full",
+      "command": "python3 scripts/validate-executed-test-selectors.py",
+      "evidenceKind": "command",
+      "role": "evidence-integrity",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
+          "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "verification-executed-test-selectors-fast",
+      "profile": "fast",
+      "command": "python3 scripts/validate-executed-test-selectors.py --profile fast",
+      "evidenceKind": "command",
+      "role": "evidence-integrity",
+      "classifications": [
+        {
+          "subsystem": "verification-integrity",
           "layer": "runtime"
         }
       ],

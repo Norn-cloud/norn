@@ -4,11 +4,11 @@ use crate::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, EffectiveCatalog, Span,
 };
 use norn_expr::env::FieldSource;
-use norn_expr::{Expression, Type, ZenTypeEnv, check_expression};
+use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
 use norn_graph::{Budget, Direction, Graph, reachability};
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot,
-    LawTiming, ObjectTypeName, ResourceLimitProfile,
+    LawTiming, ObjectTypeName, PropertyTypeName, ResourceLimitProfile,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -129,20 +129,34 @@ fn local(law: &LawIR, artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
 
 /// Whole-set structural checks, against the same effective entities as invariants/guards.
 #[must_use]
-pub fn check_law_set(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<Diagnostic> {
+pub fn check_law_set(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    registry: &BTreeSet<PropertyTypeName>,
+) -> Vec<Diagnostic> {
     let pool: Vec<_> = base.iter().chain(artifacts).cloned().collect();
     if !pool.iter().any(|a| a.kind() == ArtifactKind::Law) {
         return Vec::new();
     }
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let env = crate::derive_type_env(artifacts, base, &limits);
-    let catalog = EffectiveCatalog::from_artifacts(&pool);
+    let catalog = EffectiveCatalog::from_artifacts_with_registry(&pool, registry);
     let mut layer = Layer::default();
     for (index, a) in pool.iter().enumerate() {
         if let Decoded::Root(root) = decode_v2(a) {
             layer.push(index, *root);
         }
     }
+    let property_types: Vec<_> = layer.catalog.iter().map(|(_, def)| def.clone()).collect();
+    let env = ZenTypeEnv::from_artifact_set_with_registry(
+        &EntityDefinitions {
+            property_types: &property_types,
+            interfaces: &layer.interfaces,
+            object_types: &layer.object_types,
+            extensions: &layer.extensions,
+        },
+        registry,
+        EnvOptions::from_limit_profile(&limits),
+    );
     let context = LawContext {
         pool: &pool,
         catalog: &catalog,
@@ -157,6 +171,7 @@ pub fn check_law_set(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) 
             conservative_closure(
                 law,
                 &pool,
+                registry,
                 Budget {
                     max_nodes: 16_384,
                     max_edges: 131_072,
@@ -473,6 +488,59 @@ fn predicate(
     }
 }
 
+/// Disjoint writer identities; artifact ids cannot collide with lifecycle coordinates.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LawWriter {
+    /// A complete admitted behavior artifact (including cascaded/opaque effects).
+    Artifact {
+        /// The artifact identity, without delimiter interpretation.
+        artifact_id: String,
+    },
+    /// One transition of an effective, possibly inherited lifecycle.
+    Transition {
+        /// Effective concrete type.
+        object_type: String,
+        /// Lifecycle property.
+        property: String,
+        /// Declared transition id.
+        transition: String,
+    },
+}
+impl LawWriter {
+    /// Tagged wire identity, with independently encoded components.
+    #[must_use]
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::Artifact { artifact_id } => {
+                serde_json::json!({"kind":"artifact","artifactId":artifact_id})
+            }
+            Self::Transition {
+                object_type,
+                property,
+                transition,
+            } => {
+                serde_json::json!({"kind":"transition","objectType":object_type,"property":property,"transition":transition})
+            }
+        }
+    }
+    /// Conservative UTF-8/JSON-escaping allocation bound, before copying any id.
+    #[must_use]
+    pub fn encoded_byte_bound(&self) -> usize {
+        let lengths = match self {
+            Self::Artifact { artifact_id } => artifact_id.len(),
+            Self::Transition {
+                object_type,
+                property,
+                transition,
+            } => object_type
+                .len()
+                .saturating_add(property.len())
+                .saturating_add(transition.len()),
+        };
+        lengths.saturating_mul(6).saturating_add(128)
+    }
+}
+
 /// Conservative invalidation inventory. Every artifact is retained: hidden/opaque writers
 /// cannot disappear merely because their write set is not syntactically visible.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -480,8 +548,8 @@ pub struct LawClosure {
     /// Exact artifact identities, including read-only base and laws.
     pub artifacts: BTreeSet<(String, String)>,
     /// Every action/decision/connector/mapping and effective transition.
-    pub writers: BTreeSet<String>,
-    /// Canonical semantic envelope digests; same-version content edits invalidate evidence too.
+    pub writers: BTreeSet<LawWriter>,
+    /// Exact-byte full-envelope digests; same-version content edits invalidate evidence too.
     pub content_digests: BTreeMap<String, String>,
     /// Runtime entrances requiring later verification contracts; never certified here.
     pub open_boundaries: BTreeSet<String>,
@@ -489,11 +557,14 @@ pub struct LawClosure {
 
 /// Compute bounded whole-set invalidation via the shared graph reachability library.
 /// The pool must be the complete effective set, not merely declared law dependencies.
+/// `registry` must be the admission registry, so registry-typed entities resolve.
 /// # Errors
-/// Refuses duplicate/missing nodes, absent required dependencies or exhausted budgets.
+/// Refuses duplicate/missing nodes, absent required dependencies, exhausted budgets
+/// or an entity type that does not resolve, whose writers would otherwise be omitted.
 pub fn conservative_closure(
     law: &ArtifactEnvelope,
     pool: &[ArtifactEnvelope],
+    registry: &BTreeSet<PropertyTypeName>,
     budget: Budget,
 ) -> Result<LawClosure, norn_graph::Error<String>> {
     if pool.len() > budget.max_nodes {
@@ -504,7 +575,7 @@ pub fn conservative_closure(
             },
         ));
     }
-    let nodes: Vec<_> = pool.iter().map(|a| a.artifact_id.clone()).collect();
+    let nodes: Vec<_> = pool.iter().map(|a| a.artifact_id.as_str()).collect();
     let by_id: BTreeMap<_, _> = pool.iter().map(|a| (a.artifact_id.as_str(), a)).collect();
     let mut edges = Vec::new();
     for a in pool {
@@ -517,7 +588,7 @@ pub fn conservative_closure(
                 },
             ));
         }
-        edges.push((law.artifact_id.clone(), a.artifact_id.clone()));
+        edges.push((law.artifact_id.as_str(), a.artifact_id.as_str()));
         for d in &a.dependencies {
             if let Some(target) = by_id.get(d.artifact_id.as_str()) {
                 if d.version.as_ref() != Some(&target.version) || d.kind != target.kind() {
@@ -531,7 +602,7 @@ pub fn conservative_closure(
                         },
                     ));
                 }
-                edges.push((a.artifact_id.clone(), target.artifact_id.clone()));
+                edges.push((a.artifact_id.as_str(), target.artifact_id.as_str()));
             } else if d.required {
                 return Err(norn_graph::Error::UnknownNode(d.artifact_id.clone()));
             }
@@ -539,24 +610,25 @@ pub fn conservative_closure(
     }
     let reached = reachability(
         &Graph { nodes, edges },
-        std::slice::from_ref(&law.artifact_id),
+        &[law.artifact_id.as_str()],
         Direction::Downstream,
         budget,
-    )?;
+    )
+    .map_err(owned_graph_error)?;
     let content_digests = pool
         .iter()
         .map(|a| {
-            crate::receipt::ArtifactRef::of(a)
-                .map(|identity| (identity.artifact_id, identity.sha256))
+            crate::obligations::exact_artifact_digest(a)
+                .map(|digest| (a.artifact_id.clone(), digest))
                 .map_err(|_hash_error| norn_graph::Error::Invariant)
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
     let artifacts = pool
         .iter()
-        .filter(|a| reached.contains(&a.artifact_id))
+        .filter(|a| reached.contains(a.artifact_id.as_str()))
         .map(|a| (a.artifact_id.clone(), a.version.clone()))
         .collect();
-    let writers = writer_inventory(pool);
+    let writers = writer_inventory(pool, registry)?;
     Ok(LawClosure {
         artifacts,
         writers,
@@ -575,7 +647,10 @@ pub fn conservative_closure(
     })
 }
 
-fn writer_inventory(pool: &[ArtifactEnvelope]) -> BTreeSet<String> {
+fn writer_inventory(
+    pool: &[ArtifactEnvelope],
+    registry: &BTreeSet<PropertyTypeName>,
+) -> Result<BTreeSet<LawWriter>, norn_graph::Error<String>> {
     let mut writers: BTreeSet<_> = pool
         .iter()
         .filter(|a| {
@@ -587,25 +662,55 @@ fn writer_inventory(pool: &[ArtifactEnvelope]) -> BTreeSet<String> {
                     | ArtifactKind::Mapping
             )
         })
-        .map(|a| a.artifact_id.clone())
+        .map(|a| LawWriter::Artifact {
+            artifact_id: a.artifact_id.clone(),
+        })
         .collect();
-    let catalog = EffectiveCatalog::from_artifacts(pool);
+    let catalog = EffectiveCatalog::from_artifacts_with_registry(pool, registry);
     for artifact in pool {
-        if let Some(object_type) = catalog
-            .object_type(&artifact.artifact_id)
-            .and_then(Result::ok)
-        {
-            for lifecycle in &object_type.lifecycles {
-                for transition in &lifecycle.lifecycle.transitions {
-                    writers.insert(format!(
-                        "{}:{}:{}",
-                        object_type.name.as_str(),
-                        lifecycle.lifecycle.property.as_str(),
-                        transition.id.as_str()
-                    ));
+        // An unresolved entity fails closed: dropping it would omit its transitions.
+        let object_type = match catalog.object_type(&artifact.artifact_id) {
+            None => {
+                if let ArtifactPayload::Entity(payload) = &artifact.payload {
+                    // Catalog-only entity artifacts define no object. Malformed or
+                    // unavailable object definitions must not disappear here.
+                    if !matches!(crate::entity_object_type(payload), Ok(None)) {
+                        return Err(norn_graph::Error::UnknownNode(artifact.artifact_id.clone()));
+                    }
                 }
+                continue;
+            }
+            Some(Ok(object_type)) => object_type,
+            Some(Err(_unresolved)) => {
+                return Err(norn_graph::Error::UnknownNode(artifact.artifact_id.clone()));
+            }
+        };
+        for lifecycle in &object_type.lifecycles {
+            for transition in &lifecycle.lifecycle.transitions {
+                writers.insert(LawWriter::Transition {
+                    object_type: object_type.name.as_str().to_owned(),
+                    property: lifecycle.lifecycle.property.as_str().to_owned(),
+                    transition: transition.id.as_str().to_owned(),
+                });
             }
         }
     }
-    writers
+    Ok(writers)
+}
+
+// Graphs borrow names: a large artifact id is never copied once per edge.
+// Only an actual refusal is projected back to the public owned diagnostic type.
+fn owned_graph_error(error: norn_graph::Error<&str>) -> norn_graph::Error<String> {
+    use norn_graph::Error;
+    match error {
+        Error::BudgetExceeded(limit) => Error::BudgetExceeded(limit),
+        Error::DuplicateNode(node) => Error::DuplicateNode(node.to_owned()),
+        Error::UnknownNode(node) => Error::UnknownNode(node.to_owned()),
+        Error::MissingValue(node) => Error::MissingValue(node.to_owned()),
+        Error::NegativeValue(node) => Error::NegativeValue(node.to_owned()),
+        Error::Cycle(nodes) => Error::Cycle(nodes.into_iter().map(str::to_owned).collect()),
+        Error::NotTree => Error::NotTree,
+        Error::Arithmetic(error) => Error::Arithmetic(error),
+        Error::Invariant => Error::Invariant,
+    }
 }

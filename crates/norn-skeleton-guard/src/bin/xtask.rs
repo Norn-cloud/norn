@@ -33,6 +33,9 @@ enum Gate {
         root: PathBuf,
         #[arg(long)]
         base_root: PathBuf,
+        /// API evidence of a maintainer approval of the exact candidate head.
+        #[arg(long)]
+        maintainer_evidence: Option<PathBuf>,
     },
 }
 fn main() -> ExitCode {
@@ -59,8 +62,12 @@ fn main() -> ExitCode {
             let errors = ci::run(&root, &root);
             (serde_json::to_string_pretty(&errors), errors.is_empty())
         }
-        Gate::Trusted { root, base_root } => {
-            let errors = ci::run(&root, &base_root);
+        Gate::Trusted {
+            root,
+            base_root,
+            maintainer_evidence,
+        } => {
+            let errors = ci::run_with_evidence(&root, &base_root, maintainer_evidence.as_deref());
             (serde_json::to_string_pretty(&errors), errors.is_empty())
         }
     };

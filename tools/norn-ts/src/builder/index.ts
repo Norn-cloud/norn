@@ -19,3 +19,5 @@ export * as L from "./law.ts"
 export * as C from "./connector.ts"
 
 export * as SS from "./source-schema.ts"
+export * as OP from "./ontology-pack.ts"
+export * as PL from "./pack-link.ts"

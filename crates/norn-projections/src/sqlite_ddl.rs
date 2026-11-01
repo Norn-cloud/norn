@@ -38,6 +38,14 @@
 //! - **Wide types** (ruling §6: ≤100 columns per table) keep their first
 //!   properties as columns and the rest in one JSON object column,
 //!   [`OVERFLOW_COLUMN`]. Key components must be columns.
+//! - **Property columns never carry a raw property id.** The physical name
+//!   of a stored property is [`property_column_name`]: the id behind the
+//!   fixed [`PROPERTY_COLUMN_PREFIX`]. No system column and no SQLite rowid
+//!   alias (`rowid`, `oid`, `_rowid_`) contains `:`, so a property can never
+//!   shadow one, whatever its id. Overflow JSON keys stay the raw ids.
+//!   [`project_logical_sqlite_ddl`] renders the same schema with property
+//!   columns named by their raw ids; that text is the schema's persisted
+//!   identity (DDL hash, export `ddlSql`), so physical naming changes no hash.
 //!
 //! Every value is stored in one of three SQLite storage classes, chosen by
 //! [`ValueEncoding`]: exact decimals, dates, timestamps, durations, enums,
@@ -95,6 +103,8 @@ pub const OVERFLOW_COLUMN: &str = "_overflow";
 pub const SOURCE_COLUMN: &str = "_source";
 /// The target object id column of a link table.
 pub const TARGET_COLUMN: &str = "_target";
+/// The prefix of every property column ([`property_column_name`]).
+pub const PROPERTY_COLUMN_PREFIX: &str = "p:";
 
 /// The projection input: object types and the shared property types their
 /// `ref`s resolve against.
@@ -155,8 +165,8 @@ impl ValueEncoding {
 pub struct PropertyColumn {
     /// The property id.
     pub property: PropertyId,
-    /// The column name, or `None` when the property lives in the table's
-    /// [`OVERFLOW_COLUMN`].
+    /// The column name ([`property_column_name`]), or `None` when the
+    /// property lives in the table's [`OVERFLOW_COLUMN`].
     pub column: Option<String>,
     /// The resolved kind (never `ref`).
     pub kind: PropertyKind,
@@ -364,6 +374,16 @@ pub fn link_table_name(source: &str, link: &str) -> String {
     format!("l:{source}.{link}")
 }
 
+/// The physical column of property `property`: `p:<property id>`.
+///
+/// This is the only mapping from property ids to SQL column names. It is
+/// injective, stable across store versions, and disjoint from every system
+/// column and SQLite rowid alias, none of which contains `:`.
+#[must_use]
+pub fn property_column_name(property: &str) -> String {
+    format!("{PROPERTY_COLUMN_PREFIX}{property}")
+}
+
 /// Quote an SQL identifier (`"` doubled).
 #[must_use]
 pub fn quote_identifier(name: &str) -> String {
@@ -376,6 +396,29 @@ pub fn quote_identifier(name: &str) -> String {
 ///
 /// Returns the first [`SqliteDdlError`] in object-table order.
 pub fn project_sqlite_ddl(input: &SqliteDdlInput<'_>) -> Result<SqliteSchema, SqliteDdlError> {
+    project(input, property_column_name)
+}
+
+/// The identity rendering of [`project_sqlite_ddl`]: the same tables and
+/// indexes with every property column named by its raw property id. Its
+/// text is hashed and exported as the schema's identity. Never execute it.
+///
+/// # Errors
+///
+/// As [`project_sqlite_ddl`].
+pub fn project_logical_sqlite_ddl(
+    input: &SqliteDdlInput<'_>,
+) -> Result<SqliteSchema, SqliteDdlError> {
+    project(input, str::to_owned)
+}
+
+/// The column name of a property id: physical or logical.
+type ColumnNaming = fn(&str) -> String;
+
+fn project(
+    input: &SqliteDdlInput<'_>,
+    naming: ColumnNaming,
+) -> Result<SqliteSchema, SqliteDdlError> {
     let mut by_name: BTreeMap<&str, &ObjectTypeDef> = BTreeMap::new();
     for def in input.object_types {
         if by_name.insert(def.name.as_str(), def).is_some() {
@@ -411,7 +454,7 @@ pub fn project_sqlite_ddl(input: &SqliteDdlInput<'_>) -> Result<SqliteSchema, Sq
         let chain = ancestors.get(name).map_or(&[][..], Vec::as_slice);
         schema
             .object_tables
-            .push(object_table(def, chain, &property_types)?);
+            .push(object_table(def, chain, &property_types, naming)?);
     }
 
     let mut links = Vec::new();
@@ -427,7 +470,7 @@ pub fn project_sqlite_ddl(input: &SqliteDdlInput<'_>) -> Result<SqliteSchema, Sq
             if inherited.contains(link.id.as_str()) {
                 continue;
             }
-            links.push(link_table(def, link, &by_name, &property_types)?);
+            links.push(link_table(def, link, &by_name, &property_types, naming)?);
         }
     }
     links.sort_by(|a, b| (&a.source, &a.link).cmp(&(&b.source, &b.link)));
@@ -504,6 +547,7 @@ fn property_columns(
     skip: &BTreeSet<&str>,
     budget: usize,
     property_types: &BTreeMap<&str, &PropertyTypeDef>,
+    naming: ColumnNaming,
 ) -> Result<(Vec<PropertyColumn>, bool), SqliteDdlError> {
     let stored: Vec<&Property> = properties
         .iter()
@@ -523,7 +567,7 @@ fn property_columns(
             .ok_or_else(|| SqliteDdlError::PropertyTypeChain(property.id.as_str().to_owned()))?;
         columns.push(PropertyColumn {
             property: property.id.clone(),
-            column: (index < fits).then(|| property.id.as_str().to_owned()),
+            column: (index < fits).then(|| naming(property.id.as_str())),
             kind,
             encoding,
             nullable,
@@ -599,6 +643,7 @@ fn object_table(
     def: &ObjectTypeDef,
     ancestors: &[&ObjectTypeDef],
     property_types: &BTreeMap<&str, &PropertyTypeDef>,
+    naming: ColumnNaming,
 ) -> Result<ObjectTable, SqliteDdlError> {
     let name = def.name.as_str();
     let table = object_table_name(name);
@@ -627,8 +672,14 @@ fn object_table(
                 .map(|property| property.id.as_str())
         })
         .collect();
-    let (columns, has_overflow) =
-        property_columns(name, &def.properties, &inherited, budget, property_types)?;
+    let (columns, has_overflow) = property_columns(
+        name,
+        &def.properties,
+        &inherited,
+        budget,
+        property_types,
+        naming,
+    )?;
 
     let mut definitions = Vec::new();
     for column in system {
@@ -695,6 +746,7 @@ fn link_table(
     link: &norn_ir::Link,
     by_name: &BTreeMap<&str, &ObjectTypeDef>,
     property_types: &BTreeMap<&str, &PropertyTypeDef>,
+    naming: ColumnNaming,
 ) -> Result<LinkTable, SqliteDdlError> {
     let source = def.name.as_str();
     let table = link_table_name(source, link.id.as_str());
@@ -709,6 +761,7 @@ fn link_table(
         &BTreeSet::new(),
         budget,
         property_types,
+        naming,
     )?;
 
     let mut definitions: Vec<String> = system

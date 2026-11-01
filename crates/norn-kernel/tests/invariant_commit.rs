@@ -2951,3 +2951,75 @@ fn observation_authorization_binds_its_write_and_does_not_exempt_other_writes() 
         assert!(cell.timers().is_empty());
     }
 }
+
+#[test]
+fn interface_diamond_retains_the_original_invariant_owner_at_commit() {
+    let (mut types, mut interfaces) = definitions();
+    for (name, parents) in [
+        ("invariant.Left", vec![INTERFACE]),
+        ("invariant.Right", vec![INTERFACE]),
+        (
+            "invariant.Diamond",
+            vec!["invariant.Left", "invariant.Right"],
+        ),
+    ] {
+        interfaces.push(serde_json::from_value(json!({"name":name,"extends":parents})).unwrap());
+    }
+    types[0].implements = vec![norn_ir::InterfaceName("invariant.Diamond".to_owned())];
+    let catalog = catalog(&types, &interfaces);
+    let mut cell = cell();
+    let slice = load_slice(&cell, []).unwrap();
+    let refusal = commit_decision(&mut cell, &catalog, &slice, &turn("diamond-invariant"),
+        &output(&json!([{"op":"create","objectType":ITEM,"key":"empty","values":{"item_id":"","amount":5}}]), false))
+        .unwrap_err();
+    assert!(matches!(refusal, DecisionRefusal::InvariantViolation {
+        owner: InvariantOwner::Interface(ref owner), ref id, ..
+    } if owner.as_str() == INTERFACE && id.as_str() == "named_item"));
+}
+
+#[test]
+fn concrete_implementers_of_child_interfaces_are_valid_parent_link_targets() {
+    let source: ObjectTypeDef = serde_json::from_value(json!({"name":"invariant.Source","links":[{
+        "id":"owner","target":"invariant.Parent","cardinality":{"to":"one","from":"many"}
+    }]}))
+    .unwrap();
+    let target: ObjectTypeDef =
+        serde_json::from_value(json!({"name":"invariant.Target","implements":["invariant.Child"]}))
+            .unwrap();
+    let interfaces: Vec<InterfaceDef> = serde_json::from_value(json!([
+        {"name":"invariant.Parent"},{"name":"invariant.Child","extends":["invariant.Parent"]}
+    ]))
+    .unwrap();
+    let mut cell = cell()
+        .with_types(vec![source, target])
+        .with_interfaces(interfaces);
+    let source = FactKey::new("invariant.Source", "s");
+    let target = FactKey::new("invariant.Target", "t");
+    cell.commit(CellCommit {
+        writes: vec![source.clone(), target.clone()]
+            .into_iter()
+            .map(|key| FactWrite {
+                key,
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: JsonObject::new(),
+                },
+            })
+            .collect(),
+        ..CellCommit::empty()
+    })
+    .expect("objects commit");
+    let key = LinkKey::new(source, "owner", target);
+    cell.commit(CellCommit {
+        links: vec![LinkWrite {
+            key: key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .expect("inherited parent membership admits link");
+    assert!(cell.load_link(&key).unwrap().values.is_some());
+}

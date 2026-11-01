@@ -40,7 +40,7 @@ use crate::read::{
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
     DEFINITION_VERSION, INBOX, MARKING_CURRENT, MARKING_SNAPSHOT, MARKING_VERSION, META, OUTBOX,
-    RUN, STORE_FORMAT, SYSTEM_DDL,
+    RUN, STORE_FORMAT, SYSTEM_DDL, ensure_marking_subject, marking_subject,
 };
 use crate::write::Writer;
 
@@ -332,8 +332,8 @@ fn backfill_computed_markings<E: SqlEngine>(
             })?;
             let encoded = serde_json::to_string(labels).map_err(CellError::Json)?;
             engine.execute(
-                &format!("UPDATE \"{table}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"id\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"),
-                params![encoded, &world, object_type, &id, property, version],
+                &format!("UPDATE \"{table}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"subject\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"),
+                params![encoded, &world, object_type, marking_subject(engine, &world, object_type, &id)?, property, version],
             )?;
         }
     }
@@ -366,11 +366,12 @@ fn backfill_marking_table<E: SqlEngine>(
         let world: String = row.get(0)?;
         let id: String = row.get(1)?;
         let version: i64 = row.get(2)?;
+        let subject = ensure_marking_subject(engine, &world, object_type, &id)?;
         let existing = engine.query_optional(
             &format!(
-                "SELECT \"markings\" FROM \"{values}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
+                "SELECT \"markings\" FROM \"{values}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
             ),
-            params![&world, object_type, &id, property, version],
+            params![&world, object_type, subject, property, version],
             |row| row.get::<String>(0),
         )?;
         let mut markings = existing
@@ -386,16 +387,16 @@ fn backfill_marking_table<E: SqlEngine>(
         let encoded = serde_json::to_string(&markings).map_err(CellError::Json)?;
         let sql = if current {
             format!(
-                "INSERT INTO \"{values}\" (\"world\", \"object_type\", \"id\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"id\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
+                "INSERT INTO \"{values}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
             )
         } else {
             format!(
-                "INSERT INTO \"{values}\" (\"world\", \"object_type\", \"id\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"id\", \"property\", \"version\") DO UPDATE SET \"markings\" = excluded.\"markings\""
+                "INSERT INTO \"{values}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\", \"version\") DO UPDATE SET \"markings\" = excluded.\"markings\""
             )
         };
         engine.execute(
             &sql,
-            params![&world, object_type, id, property, version, encoded],
+            params![&world, object_type, subject, property, version, encoded],
         )?;
     }
     Ok(())
@@ -1953,7 +1954,11 @@ impl<E: SqlEngine> CellStore<E> {
             for statement in SYSTEM_DDL {
                 conn.execute_batch(statement)?;
             }
+            crate::system::intern_marking_subjects(&conn)?;
             export_journal::init(&conn)?;
+            crate::payload_storage::init(&conn)?;
+            // Before the model's indexes name `p:` columns of an older file.
+            crate::migration::upgrade_raw_property_columns(&conn, &model)?;
             for statement in model.schema().statements() {
                 conn.execute_batch(statement)?;
             }
@@ -2035,13 +2040,14 @@ impl<E: SqlEngine> CellStore<E> {
     fn verify_definition_history(&self) -> Result<(), CellError> {
         let reader = self.read();
         let versions = reader.installed_definition_versions()?;
-        let receipts = reader.receipts()?;
+        let receipts = reader.receipt_stream();
         let mut next_version = 1_u64;
         let mut version_index = 0_usize;
         let mut active_version = 0_u64;
         let mut previous_install_seq = 0_u64;
 
         for receipt in receipts {
+            let receipt = receipt?;
             if let Some(version) = versions.get(version_index)
                 && version.commit_seq == receipt.body.commit_seq
             {
@@ -2688,7 +2694,7 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<bool, CellError> {
         self.conn.transaction(|| -> Result<bool, CellError> {
             let head = StoreReader::new(&self.conn, &self.model).head_command()?;
-            let is_head = head.is_some_and(|head| {
+            let is_head = head.as_ref().is_some_and(|head| {
                 head.command.command_id == command_id
                     && head.command.generation == generation
                     && head.result.is_none()
@@ -2696,8 +2702,13 @@ impl<E: SqlEngine> CellStore<E> {
             if !is_head {
                 return Ok(false);
             }
+            let head = head.ok_or_else(|| CellError::Encoding("pending result command disappeared".to_owned()))?;
+            crate::payload_storage::remember_command(&self.conn, command_id, generation, head.commit_seq)?;
+            let outcome = match self.export_record(head.commit_seq)? {
+                Some(record) => crate::payload_storage::encode_result(&self.conn, &record.batch.scope, &record.batch.world, outcome)?,
+                None => canonical_json(outcome)?,
+            };
             let generation = to_i64(generation, "generation")?;
-            let outcome = canonical_json(outcome)?;
             self.conn.execute(
                 &format!(
                     "UPDATE \"{OUTBOX}\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3"

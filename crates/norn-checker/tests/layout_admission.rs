@@ -6,7 +6,14 @@
     reason = "integration-test crate"
 )]
 
-use norn_checker::{check_artifact, check_artifact_json, decode_artifact_json, validate_artifact};
+use std::collections::BTreeSet;
+
+use norn_checker::{
+    ArtifactRef, EntityArtifactSetContext, check_artifact, check_artifact_json,
+    check_artifact_set_with_receipt, decode_artifact_json, obligations::DefinitionSource,
+    validate_artifact,
+};
+use norn_ir::{ArtifactEnvelope, ResourceLimitProfile};
 use serde_json::{Value, json};
 
 fn valid_rule() -> Value {
@@ -32,7 +39,7 @@ fn add_inline_layout(artifact: &mut Value) {
         .expect("rule node")
         .insert(
             "description".to_owned(),
-            Value::String("editor-only node description".to_owned()),
+            Value::String("editor-only cafe\u{301} description".to_owned()),
         );
     graph["edges"]
         .as_array_mut()
@@ -57,6 +64,39 @@ fn inline_editor_layout_is_admitted_by_json_and_typed_single_artifact_entries() 
     let typed = decode_artifact_json(&raw).expect("lenient envelope decode");
     assert!(validate_artifact(&typed).is_ok());
     assert_eq!(check_artifact(&typed), []);
+
+    // Retain the inline description rather than letting admission extract it.
+    let retained: ArtifactEnvelope =
+        serde_json::from_value(raw.clone()).expect("retained envelope");
+    assert_eq!(
+        serde_json::to_value(&retained).expect("retained JSON")["payload"]["graph"]["nodes"][0]["description"],
+        json!("editor-only cafe\u{301} description")
+    );
+    let clean: ArtifactEnvelope = serde_json::from_value(valid_rule()).expect("clean envelope");
+    assert_eq!(
+        ArtifactRef::of(&retained).expect("editor text is outside semantic identity"),
+        ArtifactRef::of(&clean).expect("clean identity")
+    );
+    let context = EntityArtifactSetContext {
+        registry: &BTreeSet::new(),
+        base: &[],
+        tenant: None,
+    };
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let checked = check_artifact_set_with_receipt(&[retained], &context, &limits)
+        .expect("ordinary receipt accepts decomposed editor text");
+    assert!(checked.diagnostics.is_empty());
+    assert_eq!(
+        checked.receipt,
+        check_artifact_set_with_receipt(&[clean], &context, &limits)
+            .expect("clean receipt")
+            .receipt
+    );
+
+    // Both proof source layers accept the verbatim decomposed editor description.
+    let source = serde_json::to_string(&[raw]).expect("source documents");
+    DefinitionSource::parse(&source, "[]").expect("candidate source retains editor spelling");
+    DefinitionSource::parse("[]", &source).expect("base source retains editor spelling");
 }
 
 #[test]

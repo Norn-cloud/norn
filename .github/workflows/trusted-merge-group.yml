@@ -1,0 +1,107 @@
+name: Trusted merge group
+# A merge queue runs `Public core` from each group's own commit, so that run
+# cannot vouch for the group's gates. This workflow always runs from the
+# default branch: it checks the group head as data with base-owned policy and
+# writes `trusted-policy` on it, as the pull_request_target job does for a
+# pull request head.
+on:
+  workflow_run:
+    workflows: [Public core]
+    types: [requested]
+permissions:
+  contents: read
+jobs:
+  trusted-policy:
+    if: github.event.workflow_run.event == 'merge_group' && github.event.workflow_run.head_repository.full_name == github.repository
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      statuses: write
+    concurrency:
+      group: trusted-merge-group-${{ github.event.workflow_run.head_sha }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # The gate walks the group's merges from its head down to its base: the
+      # newest commit of main it contains.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: candidate
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve the group base
+        id: group
+        run: echo "base_sha=$(git -C candidate merge-base HEAD refs/remotes/origin/${{ github.event.repository.default_branch }})" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.group.outputs.base_sha }}
+          path: trusted
+          persist-credentials: false
+      # Each queued pull request is the second parent of one merge on the
+      # first-parent path from the group head to its base. This records their
+      # `/approve-gates` comments; the base-owned gate walks the same path in
+      # git and decides.
+      - name: Record admin approvals of the queued heads
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const base = '${{ steps.group.outputs.base_sha }}';
+            const head = '${{ github.event.workflow_run.head_sha }}';
+            // A commenter the API does not know as a user (a bot) has no
+            // permission; any other API failure fails closed.
+            const permissions = new Map();
+            const permission = async (username) => {
+              if (!permissions.has(username)) {
+                const level = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username })
+                  .then(({ data }) => data.permission, (error) => {
+                    if (error.status === 404) return 'none';
+                    throw error;
+                  });
+                permissions.set(username, level);
+              }
+              return permissions.get(username);
+            };
+            const pull_requests = [];
+            let sha = head;
+            for (let step = 0; sha !== base && step < 64; step++) {
+              const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: sha });
+              if (commit.parents.length !== 2) break;
+              const pullHead = commit.parents[1].sha;
+              const { data: pulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: pullHead });
+              for (const pr of pulls.filter((pr) => pr.head.sha === pullHead)) {
+                const comments = [];
+                for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
+                  if (!comment.user || !(comment.body || '').trim().startsWith('/approve-gates')) continue;
+                  comments.push({ user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
+                }
+                pull_requests.push({ number: pr.number, head_repository: pr.head.repo ? pr.head.repo.full_name : null, head_sha: pr.head.sha, comments });
+              }
+              sha = commit.parents[0].sha;
+            }
+            require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify({
+              repository: `${owner}/${repo}`,
+              merge_group: { base_sha: base, head_sha: head },
+              pull_requests
+            }));
+      - name: Validate the group head as data with base-owned policy
+        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
+      - name: Report trusted policy on the group head
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ github.event.workflow_run.head_sha }}',
+              state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
+              context: 'trusted-policy',
+              description: 'Base-owned policy over the merge group',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });
