@@ -70,6 +70,31 @@ class EnrollmentTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "independently discovered authority/law presence"):
                     validate(root, candidate, self.gates)
 
+    def test_workflow_cleanup_contract_is_exact(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        source = module.FORMAL_WORKFLOW.read_text()
+        module.validate_workflow_integrity([])
+        workflow = module.yaml.load(source, Loader=module.WorkflowLoader)
+        for job in ("core", "test", "phase"):
+            for mutation in ("extra", "reordered", "missing", "changed"):
+                with self.subTest(job=job, mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                    candidate = copy.deepcopy(workflow)
+                    steps = candidate["jobs"][job]["steps"]
+                    if mutation == "extra":
+                        steps.insert(1, {"run": "echo unexpected"})
+                    elif mutation == "reordered":
+                        steps[0], steps[1] = steps[1], steps[0]
+                    elif mutation == "missing":
+                        steps.pop(0)
+                    else:
+                        steps[0]["run"] += "echo unexpected\n"
+                    path = Path(directory) / "workflow.yml"
+                    path.write_text(module.yaml.safe_dump(candidate, sort_keys=False))
+                    with self.assertRaisesRegex(module.InvalidCoverage, "preparation actions and inputs must match the approved contract"):
+                        module.validate_workflow_integrity([], formal_path=path)
+
     def test_missing_generic_obligation_rejected_by_actual_coverage_validator(self):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
         module = importlib.util.module_from_spec(spec)
