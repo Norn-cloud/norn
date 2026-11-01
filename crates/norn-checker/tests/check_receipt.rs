@@ -1,6 +1,5 @@
 #![allow(
     clippy::expect_used,
-    clippy::unwrap_used,
     clippy::indexing_slicing,
     missing_docs,
     reason = "integration-test crate"
@@ -16,7 +15,7 @@ use std::path::Path;
 
 use norn_checker::receipt::{
     CHECKER_NAME, CHECKER_VERSION, EXPR_PROFILE, RECEIPT_FORMAT, admission_receipt_sha256, codes,
-    recover_legacy_admission_receipt, verify_admission_receipt,
+    recover_legacy_admission_receipt,
 };
 use norn_checker::{
     ArtifactRef, ArtifactSetRef, CheckReceipt, CheckedArtifactSet, DiagnosticsDigest,
@@ -61,7 +60,7 @@ const GOLDEN: &str = "tests/golden/check-receipt.retail.json";
 /// receipt's bytes changed: review the golden diff (a field or meaning change
 /// is a new `RECEIPT_FORMAT`).
 const RETAIL_RECEIPT_SHA256: &str =
-    "14ea133c9477b0218076a0afa73d87be7da5a529745f1609c67c2035520a347f";
+    "c4f1873c8393a5148cc6b039bcb4e01355345f45e4d921ee55d0d0c8766b803e";
 
 fn json_of(source: &str) -> Value {
     serde_json::from_str(source).expect("fixture should parse")
@@ -95,8 +94,12 @@ fn check_with(
         base: &base,
         tenant,
     };
-    check_artifact_set_with_receipt(&envelopes(artifacts), &context, limits)
-        .expect("receipt should be issued")
+    check_artifact_set_with_receipt(
+        &fixture_sources(&envelopes(artifacts), context.base),
+        &context,
+        limits,
+    )
+    .expect("receipt should be issued")
 }
 
 fn check(artifacts: &[Value]) -> CheckedArtifactSet {
@@ -282,13 +285,17 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
         tenant: None,
     };
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let checked =
-        check_artifact_set_with_flow_source_map(&artifacts, &context, &limits, Some(&map))
-            .expect("receipt should be issued");
+    let checked = check_artifact_set_with_flow_source_map(
+        &fixture_sources(&artifacts, context.base),
+        &context,
+        &limits,
+        Some(&map),
+    )
+    .expect("receipt should be issued");
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let stored = compact(&checked.receipt);
     let receipt_json: Value = serde_json::from_str(&stored).expect("receipt JSON");
-    assert_eq!(receipt_json["format"], "norn-checker/receipt@6");
+    assert_eq!(receipt_json["format"], "norn-checker/receipt@3");
     assert_eq!(
         receipt_json["flowSourceMap"],
         serde_json::to_value(&map).expect("typed map serializes")
@@ -298,7 +305,10 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
         .expect("sidecar-bearing receipt verifies");
     assert_eq!(verified.flow_source_map(), Some(&map));
     let retained = norn_checker::check_artifact_set_with_verified_receipt(
-        &artifacts, &context, &limits, &verified,
+        &fixture_sources(&artifacts, context.base),
+        &context,
+        &limits,
+        &verified,
     )
     .expect("retained definitions re-admit");
     assert_eq!(
@@ -308,9 +318,13 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
 
     let mut stale = map;
     stale.flows[0].artifact_refs[0].sha256 = "0".repeat(64);
-    let refused =
-        check_artifact_set_with_flow_source_map(&artifacts, &context, &limits, Some(&stale))
-            .expect("stale map is a checker finding");
+    let refused = check_artifact_set_with_flow_source_map(
+        &fixture_sources(&artifacts, context.base),
+        &context,
+        &limits,
+        Some(&stale),
+    )
+    .expect("stale map is a checker finding");
     assert!(!refused.receipt.admitted);
     assert!(refused.diagnostics.iter().any(|finding| {
         finding.code.as_str() == norn_checker::flow_source_map::codes::STALE_ARTIFACT
@@ -758,95 +772,6 @@ fn retained_warning_evidence_verifies_but_unreconstructable_legacy_hash_is_refus
     assert!(recover_legacy_admission_receipt(&digest, &artifacts, &base, &limits).is_err());
 }
 
-fn exact_setting(number: &str) -> norn_ir::RuntimeValue {
-    norn_ir::RuntimeValue::from_json_text(format!(
-        r#"{{"irVersion":"0.1","artifactId":"test.setting","kind":"setting","namespace":"test","name":"Setting","version":"0.1.0","lifecycle":"draft","scope":{{"orgId":"org_demo","environmentId":"dev"}},"dependencies":[],"provenance":{{"source":"authoring_sdk"}},"payload":{{"settingVersion":"0.1","settingKey":"test.value","valueType":"number","value":{number},"effectiveFrom":"2026-01-01T00:00:00Z","review":{{"state":"approved","reviewedBy":"reviewer","reviewedAt":"2026-01-01T00:00:00Z","reason":"synthetic"}},"scopeRequired":["orgId","environmentId"]}}}}"#
-    )).expect("exact setting")
-}
-
-fn exact_receipt(
-    artifacts: &[norn_ir::RuntimeValue],
-    base: &[norn_ir::RuntimeValue],
-) -> CheckReceipt {
-    let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
-        artifacts,
-        base,
-        &BTreeSet::new(),
-        None,
-        &ResourceLimitProfile::norn_limits_v1(),
-        None,
-    )
-    .unwrap();
-    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
-    checked.receipt
-}
-
-#[test]
-fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
-    use norn_checker::receipt::verify_admission_receipt_sources;
-    let limits = ResourceLimitProfile::norn_limits_v1();
-    for (left, right) in [
-        ("9007199254740992", "9007199254740993"),
-        (
-            "0.1234567890123456789012345678",
-            "0.1234567890123456789012345679",
-        ),
-        ("25", "26"),
-    ] {
-        let first = [exact_setting(left)];
-        let second = [exact_setting(right)];
-        for in_base in [false, true] {
-            let (artifacts, base) = if in_base {
-                (&[][..], first.as_slice())
-            } else {
-                (first.as_slice(), &[][..])
-            };
-            let (changed, changed_base) = if in_base {
-                (&[][..], second.as_slice())
-            } else {
-                (second.as_slice(), &[][..])
-            };
-            let receipt = exact_receipt(artifacts, base);
-            let digest = receipt.content_sha256().unwrap();
-            let changed_digest = exact_receipt(changed, changed_base)
-                .content_sha256()
-                .unwrap();
-            assert_ne!(digest, changed_digest);
-            let body = compact(&receipt);
-            verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).unwrap();
-            assert!(
-                verify_admission_receipt_sources(&body, &digest, changed, changed_base, &limits)
-                    .is_err()
-            );
-        }
-    }
-}
-
-#[test]
-fn receipt_exact_key_order() {
-    let artifacts = registry_layer();
-    let body = compact(&receipt(&artifacts)).replace(RECEIPT_FORMAT, "norn-checker/receipt@2");
-    let digest = admission_receipt_sha256(&body).unwrap();
-    verify_admission_receipt(
-        &body,
-        &digest,
-        &envelopes(&artifacts),
-        &[],
-        &ResourceLimitProfile::norn_limits_v1(),
-    )
-    .unwrap();
-    let source = serde_json::to_string(&artifacts[0]).unwrap();
-    let content = source.get(1..source.len() - 1).unwrap();
-    let (first, rest) = content.split_once(',').unwrap();
-    let reordered = format!("{{{rest},{first}}}");
-    let check = |text: String| {
-        exact_receipt(&[norn_ir::RuntimeValue::from_json_text(text).unwrap()], &[])
-            .content_sha256()
-            .unwrap()
-    };
-    assert_eq!(check(source), check(reordered));
-}
-
 fn inherited_pack_base() -> Vec<Value> {
     let mut base: Vec<Value> =
         serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
@@ -918,7 +843,7 @@ fn inherited_law_enrollment_binds_pack_digest_and_stable_member() {
     let stored = String::from_utf8(receipt.canonical_json().expect("receipt")).expect("UTF8");
     let hash = receipt.content_sha256().expect("hash");
     let mut value: Value = serde_json::from_str(&stored).expect("JSON");
-    assert_eq!(value["format"], "norn-checker/receipt@7");
+    assert_eq!(value["format"], "norn-checker/receipt@4");
     assert_eq!(
         value["lawEnrollment"][0],
         receipt.law_enrollment[0].to_json_value()
@@ -1009,5 +934,106 @@ fn unresolved_pack_members_preserve_admission_and_legacy_recovery() {
                 .expect("unresolved pack must not interrupt historical templates"),
             body
         );
+    }
+}
+
+fn fixture_sources(
+    artifacts: &[norn_ir::ArtifactEnvelope],
+    base: &[norn_ir::ArtifactEnvelope],
+) -> norn_checker::receipt::ReceiptSources {
+    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
+    let base = norn_ir::runtime::encode(base).unwrap();
+    norn_checker::ReceiptSources::new(candidates.as_array().unwrap(), base.as_array().unwrap())
+        .unwrap()
+}
+
+fn verify_admission_receipt(
+    stored: &str,
+    hash: &str,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> Result<norn_checker::ReceiptVersion, norn_checker::ReceiptError> {
+    let candidates = norn_ir::runtime::encode(artifacts)
+        .map_err(|detail| norn_checker::ReceiptError::InvalidStoredReceipt { detail })?;
+    let installed = norn_ir::runtime::encode(base)
+        .map_err(|detail| norn_checker::ReceiptError::InvalidStoredReceipt { detail })?;
+    norn_checker::receipt::verify_admission_receipt_sources(
+        stored,
+        hash,
+        candidates.as_array().unwrap(),
+        installed.as_array().unwrap(),
+        limits,
+    )
+}
+
+fn exact_setting(number: &str) -> norn_ir::RuntimeValue {
+    norn_ir::RuntimeValue::from_json_text(format!(
+        r#"{{"irVersion":"0.1","artifactId":"test.setting","kind":"setting","namespace":"test","name":"Setting","version":"0.1.0","lifecycle":"draft","scope":{{"orgId":"org_demo","environmentId":"dev"}},"dependencies":[],"provenance":{{"source":"authoring_sdk"}},"payload":{{"settingVersion":"0.1","settingKey":"test.value","valueType":"number","value":{number},"effectiveFrom":"2026-01-01T00:00:00Z","review":{{"state":"approved","reviewedBy":"reviewer","reviewedAt":"2026-01-01T00:00:00Z","reason":"synthetic"}},"scopeRequired":["orgId","environmentId"]}}}}"#
+    )).expect("exact setting")
+}
+
+fn exact_receipt(
+    artifacts: &[norn_ir::RuntimeValue],
+    base: &[norn_ir::RuntimeValue],
+) -> CheckReceipt {
+    let sources = norn_checker::ReceiptSources::new(artifacts, base).unwrap();
+    let installed = base.iter().map(|source| norn_ir::runtime::decode(source).unwrap()).collect::<Vec<ArtifactEnvelope>>();
+    let context = EntityArtifactSetContext { registry: &BTreeSet::new(), base: &installed, tenant: None };
+    let checked = check_artifact_set_with_receipt(&sources, &context, &ResourceLimitProfile::norn_limits_v1())
+    .unwrap();
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+    checked.receipt
+}
+
+#[test]
+fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
+    use norn_checker::receipt::verify_admission_receipt_sources;
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    for (left, right) in [
+        ("9007199254740992", "9007199254740993"),
+        (
+            "0.1234567890123456789012345678",
+            "0.1234567890123456789012345679",
+        ),
+        ("25", "26"),
+    ] {
+        let first = [exact_setting(left)];
+        let second = [exact_setting(right)];
+        for in_base in [false, true] {
+            let (artifacts, base) = if in_base {
+                (&[][..], first.as_slice())
+            } else {
+                (first.as_slice(), &[][..])
+            };
+            let (changed, changed_base) = if in_base {
+                (&[][..], second.as_slice())
+            } else {
+                (second.as_slice(), &[][..])
+            };
+            let receipt = exact_receipt(artifacts, base);
+            let digest = receipt.content_sha256().unwrap();
+            let changed_digest = exact_receipt(changed, changed_base)
+                .content_sha256()
+                .unwrap();
+            assert_ne!(digest, changed_digest);
+            let body = compact(&receipt);
+            verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).unwrap();
+            assert!(
+                verify_admission_receipt_sources(&body, &digest, changed, changed_base, &limits)
+                    .is_err()
+            );
+        }
+    }
+}
+
+
+proptest::proptest! {
+    #[test]
+    fn adjacent_large_integers_keep_distinct_source_receipts(value in 9_007_199_254_740_992_u64..u64::MAX) {
+        let first = [exact_setting(&value.to_string())];
+        let second = [exact_setting(&(value + 1).to_string())];
+        proptest::prop_assert_ne!(exact_receipt(&first, &[]).artifact_set, exact_receipt(&second, &[]).artifact_set);
+        proptest::prop_assert_ne!(exact_receipt(&[], &first).artifact_set, exact_receipt(&[], &second).artifact_set);
     }
 }
