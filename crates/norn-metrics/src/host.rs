@@ -47,7 +47,7 @@ pub struct ForecastSummary {
     pub training_rows: u32,
     /// Held-out rows.
     pub holdout_rows: u32,
-    /// Features recorded after their prediction cutoffs.
+    /// Features violating their valid/recorded prediction cutoffs.
     pub late_features: u32,
     /// Training outcomes recorded at/after the split boundary.
     pub late_training_labels: u32,

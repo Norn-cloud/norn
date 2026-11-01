@@ -46,7 +46,7 @@ impl ForecastExport<'_> {
         let features: Vec<_> = self.plan.features().iter().map(|c| (&c.property, &c.unit)).collect();
         let bytes = norn_ir::canonical::canonical_json_of(&(
             self.tenant, self.world, self.version, &self.source_digest, self.source_head, self.as_of,
-            self.plan.object_type(), features, (&self.plan.outcome().property, &self.plan.outcome().unit),
+            self.plan.object_type(), self.plan.max_age_micros(), features, (&self.plan.outcome().property, &self.plan.outcome().unit),
             self.rows, self.complete, self.quarantine_count, self.fresh,
         )).map_err(failure)?;
         if bytes.len() > 4_194_304 { return Err(failure("input byte bound")); }
@@ -128,6 +128,7 @@ pub fn perform_forecast(invocation: &FunctionInvocation, export: &ForecastExport
     let admitted = norn_checker::function::admit_function_manifest(&crate::host::manifest().map_err(failure)?).map_err(failure)?;
     if invocation.tenant != export.tenant || invocation.world != "main" || export.world != "main"
         || invocation.deadline_millis < now_millis || executor.trim().is_empty()
+        || export.source_head > invocation.provenance_commit
         || !norn_checker::function::check_function_invocation(invocation, &admitted).is_empty() {
         return Err(failure("scope or dispatch"));
     }
@@ -139,12 +140,12 @@ pub fn perform_forecast(invocation: &FunctionInvocation, export: &ForecastExport
     let (result, mut resources) = measured(|| compute(export, &input, admitted.manifest.implementation.digest.clone()))?;
     let outcome = match result {
         Ok(summary) => {
-            let summary = norn_ir::runtime::encode(&summary).map_err(failure)?.into_object().ok_or_else(|| failure("summary object"))?;
+            let summary = norn_ir::runtime::encode(&summary).map_err(failure)?.as_object().cloned().ok_or_else(|| failure("summary object"))?;
             resources.output_bytes = u64::try_from(norn_ir::canonical::canonical_json_of(&summary).map_err(failure)?.len()).map_err(failure)?;
             FunctionOutcome::Success(SuccessOutcome { output_manifest: output_manifest_digest(&[], &summary).map_err(failure)?, outputs: vec![], summary })
         }
         Err(error) => {
-            let detail = norn_ir::runtime::encode(&error).map_err(failure)?.into_object().ok_or_else(|| failure("error object"))?;
+            let detail = norn_ir::runtime::encode(&error).map_err(failure)?.as_object().cloned().ok_or_else(|| failure("error object"))?;
             resources.output_bytes = u64::try_from(norn_ir::canonical::canonical_json_of(&detail).map_err(failure)?.len()).map_err(failure)?;
             FunctionOutcome::Failure(FailureOutcome { code: error.code, detail })
         }
@@ -152,7 +153,7 @@ pub fn perform_forecast(invocation: &FunctionInvocation, export: &ForecastExport
     let receipt = FunctionReceipt { command_id: invocation.command_id.clone(), run: invocation.run.clone(), attempt: 1,
         dispatch: invocation.content_digest().map_err(failure)?, manifest: admitted.digest,
         execution_profile: admitted.execution_profile, input_identity: invocation.input_identity().map_err(failure)?,
-        dependency_token: invocation.dependency.content_digest().map_err(failure)?, outcome,
+        dependency_token: invocation.dependency.digest().map_err(failure)?, outcome,
         provenance: ExecutionProvenance { executor: executor.into(), placement: "native-host".into(), runtime: admitted.manifest.runtime.digest },
         resources, cache: CacheOrigin::Miss {} };
     Ok(receipt)
