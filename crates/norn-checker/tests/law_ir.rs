@@ -355,6 +355,18 @@ fn law_contained_instances_keep_origins_and_import_diamonds() {
             .iter()
             .all(|p| p.last().expect("leaf").instance_id == "leaf")
     );
+    let mut pack_law = law;
+    let mut declaration: norn_ir::LawIR = serde_json::from_value(
+        serde_json::to_value(pack_law.payload.to_json_value()).expect("wire"),
+    )
+    .expect("law");
+    declaration.scope.root = norn_ir::LawRoot::Pack("app-root".to_owned());
+    pack_law.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Law,
+        serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
+    )
+    .expect("payload");
+    assert_eq!(projected(&pack_law, &base)[0].instance_paths.len(), 2);
 }
 
 #[test]
@@ -638,7 +650,7 @@ fn erpnext_laws_admit_through_the_shared_set_checker() {
 }
 
 #[test]
-fn law_contained_pack_root_refuses_until_retained_membership_is_resolved() {
+fn law_contained_pack_root_refuses_unknown_retained_instance() {
     let mut artifact: ArtifactEnvelope = serde_json::from_value(laws()[0].clone()).expect("law");
     let mut law: norn_ir::LawIR = serde_json::from_value(
         serde_json::to_value(artifact.payload.to_json_value()).expect("wire"),
@@ -651,9 +663,9 @@ fn law_contained_pack_root_refuses_until_retained_membership_is_resolved() {
     )
     .expect("root");
     assert!(
-        norn_checker::verification::check_law_local(&artifact)
+        norn_checker::verification::check_law_set(&[artifact], &entities(), &BTreeSet::new())
             .iter()
-            .any(|f| f.code == codes::UNKNOWN_BINDING)
+            .any(|f| f.code == codes::UNRESOLVED_SCOPE)
     );
 }
 #[test]
