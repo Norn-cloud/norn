@@ -382,6 +382,36 @@ proptest::proptest! {
 }
 
 #[test]
+fn law_contained_node_edge_and_step_budget_exhaustion_refuses() {
+    let (law, base) = membership_case();
+    for budget in [
+        Budget {
+            max_nodes: 1,
+            max_edges: 1024,
+            max_steps: 4096,
+        },
+        Budget {
+            max_nodes: 128,
+            max_edges: 1,
+            max_steps: 4096,
+        },
+        Budget {
+            max_nodes: 128,
+            max_edges: 1024,
+            max_steps: 1,
+        },
+    ] {
+        let errors = norn_checker::verification::retained_law_membership(&law, &base, budget)
+            .expect_err("budget exhaustion refuses");
+        assert!(
+            errors
+                .iter()
+                .any(|d| d.code.as_str() == codes::UNRESOLVED_SCOPE)
+        );
+    }
+}
+
+#[test]
 fn law_weaken_candidate_containment_cannot_replace_retained_membership() {
     let (law, base) = membership_case();
     let mut owner = base.last().expect("holder").clone();

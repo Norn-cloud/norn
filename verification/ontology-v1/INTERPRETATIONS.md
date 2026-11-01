@@ -176,5 +176,6 @@ LAYERS-EDGE-CHAIN-1 repeats EDGE-NEW/OMIT/NOPROOF and generated required-member
 refusals against three independently admitted layers, including two extensions.
 The flattened set cannot manufacture retained authority. Changed retained units
 or strengthened inherited-law conditions refuse under the original approval.
+Named independent node/edge/step exhaustion cases also refuse retained membership.
 These are production receipt/resolver/challenge conformance checks, not proofs.
 Kani remains infeasible for the allocated receipt/serde/hash pipeline.
