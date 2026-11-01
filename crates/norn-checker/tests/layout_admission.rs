@@ -39,7 +39,7 @@ fn add_inline_layout(artifact: &mut Value) {
         .expect("rule node")
         .insert(
             "description".to_owned(),
-            Value::String("editor-only café description".to_owned()),
+            Value::String("editor-only cafe\u{301} description".to_owned()),
         );
     graph["edges"]
         .as_array_mut()
@@ -70,7 +70,7 @@ fn inline_editor_layout_is_admitted_by_json_and_typed_single_artifact_entries() 
         serde_json::from_value(raw.clone()).expect("retained envelope");
     assert_eq!(
         serde_json::to_value(&retained).expect("retained JSON")["payload"]["graph"]["nodes"][0]["description"],
-        json!("editor-only café description")
+        json!("editor-only cafe\u{301} description")
     );
     let clean: ArtifactEnvelope = serde_json::from_value(valid_rule()).expect("clean envelope");
     assert_eq!(
@@ -371,7 +371,7 @@ fn admitted_text_nfc_closes_semantic_identity_gap() {
 fn definition_text_nfc_paths() {
     for (field, value, pointer) in [
         ("artifactId", json!("e\u{301}"), "/artifactId"),
-        ("title", json!("e\u{301}"), "/title"),
+        ("name", json!("e\u{301}"), "/name"),
         (
             "payload",
             json!({"e\u{301}/~": true}),
