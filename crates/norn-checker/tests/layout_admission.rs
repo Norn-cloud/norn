@@ -264,7 +264,8 @@ fn source_decode_verbatim_and_hash_correspondence() {
             )
             .is_err()
         );
-        let documents = serde_json::to_string(std::slice::from_ref(&raw)).expect("source documents");
+        let documents =
+            serde_json::to_string(std::slice::from_ref(&raw)).expect("source documents");
         let (candidate_text, base_text) = if in_base {
             ("[]", documents.as_str())
         } else {
