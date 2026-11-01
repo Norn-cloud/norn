@@ -471,6 +471,24 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     introduced(
+        "core.composition.duplicate_instance",
+        Tier::T3,
+        "instance ID must be unique in the retained scoped graph",
+        "0.2.0",
+    ),
+    introduced(
+        "core.composition.instance_cycle",
+        Tier::T3,
+        "instance imports and containment must be acyclic",
+        "0.2.0",
+    ),
+    introduced(
+        "core.composition.unresolved_pin",
+        Tier::T3,
+        "instance reference must resolve to an exact scoped pack pin",
+        "0.2.0",
+    ),
+    introduced(
         "core.compute.ambiguous_grain",
         Tier::T3,
         "Query requires an explicit unambiguous identity grain.",
@@ -481,21 +499,6 @@ pub static REGISTRY: &[CodeEntry] = &[
         Tier::T3,
         "Query semantics are unsupported by the selected compute profile.",
         "0.2.0",
-    ),
-    entry(
-        "core.composition.duplicate_instance",
-        Tier::T3,
-        "instance ID must be unique in the retained scoped graph",
-    ),
-    entry(
-        "core.composition.instance_cycle",
-        Tier::T3,
-        "instance imports and containment must be acyclic",
-    ),
-    entry(
-        "core.composition.unresolved_pin",
-        Tier::T3,
-        "instance reference must resolve to an exact scoped pack pin",
     ),
     entry(
         "customization.validation.invalid_payload",
