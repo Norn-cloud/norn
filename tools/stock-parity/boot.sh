@@ -12,9 +12,9 @@ import json, secrets
 password = secrets.token_hex(24)
 image = 'sha256:c84e378fc8b589299ab232855af5a50ebe78d2df911347ccfd0488e5d7668d39'
 services = {
-    'db': {'image': 'mariadb:10.6', 'environment': {'MARIADB_ROOT_PASSWORD': password}, 'mem_limit': '1g'},
-    'cache': {'image': 'redis:6.2-alpine', 'mem_limit': '128m'},
-    'queue': {'image': 'redis:6.2-alpine', 'mem_limit': '128m'},
+    'db': {'image': 'mariadb:10.11', 'environment': {'MARIADB_ROOT_PASSWORD': password}, 'mem_limit': '1g'},
+    'cache': {'image': 'redis:7-alpine', 'mem_limit': '128m'},
+    'queue': {'image': 'redis:7-alpine', 'mem_limit': '128m'},
     'web': {'image': image, 'entrypoint': ['sleep', 'infinity'], 'mem_limit': '5g',
             'ports': ['127.0.0.1:8000:8000'], 'environment': {'PARITY_PASSWORD': password}},
 }

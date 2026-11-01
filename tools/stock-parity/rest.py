@@ -21,7 +21,7 @@ class API:
         self.call('POST', '/api/method/login', {'usr': 'Administrator', 'pwd': password})
 
     def call(self, method, path, body=None):
-        data = None if body is None else json.dumps(body).encode()
+        data = None if body is None else json.dumps(body, default=str).encode()
         req = urllib.request.Request(self.url + path, data=data, method=method,
                                      headers={'Content-Type': 'application/json', 'Host': 'parity.localhost'})
         try:
