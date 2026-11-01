@@ -190,7 +190,7 @@ pub use ontology::{
 };
 pub use property_types::{check_property_type_defs, resolved_property_type};
 pub use receipt::{
-    ArtifactRef, ArtifactSetRef, CheckReceipt, CheckedArtifactSet, DiagnosticsDigest,
+    ReceiptSources, ArtifactRef, ArtifactSetRef, CheckReceipt, CheckedArtifactSet, DiagnosticsDigest,
     IDENTIFIER_ADMISSION_PROFILE, ReceiptError, ReceiptVersion, admission_receipt_sha256,
     check_artifact_set_for_install, check_artifact_set_for_install_with_flow_source_map,
     check_artifact_set_with_flow_source_map, check_artifact_set_with_receipt,

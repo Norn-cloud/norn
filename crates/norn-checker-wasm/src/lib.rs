@@ -247,7 +247,7 @@ pub fn check_artifact_set_json(
         base: &base,
         tenant,
     };
-    let envelopes = match decode_envelopes(&artifacts) {
+    let _envelopes = match decode_envelopes(&artifacts) {
         Err(findings) => {
             return Ok(json!({
                 "format": CHECK_FORMAT,
@@ -262,7 +262,10 @@ pub fn check_artifact_set_json(
     };
     let receipt_error = |error: &dyn fmt::Display| AbiError::Receipt(error.to_string());
     let checked = check_artifact_set_with_flow_source_map(
-        &envelopes,
+        &norn_checker::ReceiptSources::new(
+            norn_ir::RuntimeValue::from_json_text(artifacts_json).map_err(AbiError::Receipt)?.as_array().ok_or_else(|| AbiError::Receipt("artifacts must be an array".into()))?,
+            &context.base.iter().map(|value| norn_ir::RuntimeValue::from_json_text(value.to_string()).map_err(AbiError::Receipt)).collect::<Result<Vec<_>, _>>()?,
+        ).map_err(|error| receipt_error(&error))?,
         &set_context,
         &limits,
         context.flow_source_map.as_ref(),
