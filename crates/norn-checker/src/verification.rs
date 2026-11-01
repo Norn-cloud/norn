@@ -443,10 +443,21 @@ impl LawContext<'_> {
                 out,
             );
         }
+        self.check_interface_response(law, artifact, &owners, &env, out);
+    }
+
+    fn check_interface_response(
+        &self,
+        law: &LawIR,
+        artifact: &ArtifactEnvelope,
+        owners: &[&norn_ir::InterfaceDef],
+        env: &ZenTypeEnv,
+        out: &mut Vec<Diagnostic>,
+    ) {
         match &law.response {
             LawResponse::Predicate { expression } => predicate(
                 expression.as_str(),
-                &env,
+                env,
                 artifact,
                 "/payload/response/expression",
                 out,
@@ -469,7 +480,7 @@ impl LawContext<'_> {
                 } else if let Some(invariant) = invariant {
                     predicate(
                         invariant.expression.as_str(),
-                        &env,
+                        env,
                         artifact,
                         "/payload/response",
                         out,
