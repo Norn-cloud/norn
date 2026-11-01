@@ -1,6 +1,11 @@
 //! ANALYTICS-FUNCTION-1: statistical host code has a typed, source-pinned manifest.
 
-use norn_ir::{RuntimeValue, canonical::CanonicalJsonError, function::*};
+use norn_ir::{
+    RuntimeValue, canonical::CanonicalJsonError,
+    function::{CachePolicy, DependencyClosure, DependencyEntry, DependencyKind, DeterminismProfile,
+        Digest, EffectfulPolicy, FunctionManifest, Implementation, ImplementationFormat, Platform,
+        ResourceBounds, RetentionClass, RuntimeIdentity, SchemaRef, FUNCTION_ABI_V1, MAX_RECEIPT_SUMMARY_BYTES},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
