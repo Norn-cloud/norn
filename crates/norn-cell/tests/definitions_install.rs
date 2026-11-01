@@ -5232,10 +5232,22 @@ fn capture_purity(
         world: World::Main,
         consumes: Some(pending.consumed()),
     };
-    let snapshot = ObservedSnapshot {key: &key, values: &values, lifecycles: &[], provenance: &provenance};
-    commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot).expect("source violation remains captured");
-    let retry = commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot).expect_err("consumed delivery");
-    assert!(matches!(retry, norn_kernel::snapshot_observe::ObservationCommitRefusal::Commit(norn_kernel::CommitError::NotPending {..})));
+    let snapshot = ObservedSnapshot {
+        key: &key,
+        values: &values,
+        lifecycles: &[],
+        provenance: &provenance,
+    };
+    commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot)
+        .expect("source violation remains captured");
+    let retry = commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot)
+        .expect_err("consumed delivery");
+    assert!(matches!(
+        retry,
+        norn_kernel::snapshot_observe::ObservationCommitRefusal::Commit(
+            norn_kernel::CommitError::NotPending { .. }
+        )
+    ));
 }
 
 norn_testkit::proptest::proptest! {
@@ -5346,16 +5358,71 @@ fn obs_evidence_idempotent_capture_reuses_the_original_finding_cutoff() {
     let mut cell = purity_quality_host(&path);
     capture_purity(&mut cell, "initial", "1.20");
     let model = cell.store().model().clone();
-    let original = cell.store().read().ledger_page(0, 20).expect("ledger").into_iter().find(|event| event.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")).expect("finding");
-    let original: norn_ir::DataQualityFinding = norn_ir::runtime::decode(original.event.get("fact").expect("fact")).expect("decode");
-    let finding = norn_ir::DataQualityFinding::v2(norn_ir::DataQualityRuleRef::Builtin {id:"test.capture.retry".into(), version:"1".into()}, original.subjects, original.severity, original.message, original.outcome, original.provenance, original.first_seen, original.last_seen, original.status).expect("source finding").with_evidence_digest(original.evidence_digest.expect("digest")).expect("identity");
+    let original = cell
+        .store()
+        .read()
+        .ledger_page(0, 20)
+        .expect("ledger")
+        .into_iter()
+        .find(|event| event.event.get("op").and_then(Value::as_str) == Some("data_quality_finding"))
+        .expect("finding");
+    let original: norn_ir::DataQualityFinding =
+        norn_ir::runtime::decode(original.event.get("fact").expect("fact")).expect("decode");
+    let finding = norn_ir::DataQualityFinding::v2(
+        norn_ir::DataQualityRuleRef::Builtin {
+            id: "test.capture.retry".into(),
+            version: "1".into(),
+        },
+        original.subjects,
+        original.severity,
+        original.message,
+        original.outcome,
+        original.provenance,
+        original.first_seen,
+        original.last_seen,
+        original.status,
+    )
+    .expect("source finding")
+    .with_evidence_digest(original.evidence_digest.expect("digest"))
+    .expect("identity");
     drop(cell);
     let mut store = CellStore::open(&path, model, StoreOptions::default()).expect("store");
     let fact = norn_ir::runtime::encode(&finding).expect("encoded finding");
-    store.inject("retry-producer", &fact).expect("committed producer preimage");
-    let batch = norn_cell::CommitBatch {world:MAIN_WORLD.into(), scope:"org_demo/dev".into(), logical_time:store.read().clock_floor().expect("clock"), idempotency_key:Some("finding-request".into()), consumes:Some(norn_cell::Consumption::Observation {observation_id:"retry-producer".into()}), events:vec![norn_ir::runtime_object! {"op"=>"data_quality_finding", "fact"=>fact}], ..norn_cell::CommitBatch::default()};
-    assert!(matches!(store.commit(&batch).expect("first"), norn_cell::CommitOutcome::Committed(_)));
-    assert!(matches!(store.commit(&batch).expect("normalized retry"), norn_cell::CommitOutcome::Replayed(_)));
-    let retained = store.read().ledger_page(0, 100).expect("ledger").into_iter().filter(|entry| entry.event.get("fact").and_then(|fact| fact.get("id")).and_then(Value::as_str) == Some(finding.id.as_str())).count();
+    store
+        .inject("retry-producer", &fact)
+        .expect("committed producer preimage");
+    let batch = norn_cell::CommitBatch {
+        world: MAIN_WORLD.into(),
+        scope: "org_demo/dev".into(),
+        logical_time: store.read().clock_floor().expect("clock"),
+        idempotency_key: Some("finding-request".into()),
+        consumes: Some(norn_cell::Consumption::Observation {
+            observation_id: "retry-producer".into(),
+        }),
+        events: vec![norn_ir::runtime_object! {"op"=>"data_quality_finding", "fact"=>fact}],
+        ..norn_cell::CommitBatch::default()
+    };
+    assert!(matches!(
+        store.commit(&batch).expect("first"),
+        norn_cell::CommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        store.commit(&batch).expect("normalized retry"),
+        norn_cell::CommitOutcome::Replayed(_)
+    ));
+    let retained = store
+        .read()
+        .ledger_page(0, 100)
+        .expect("ledger")
+        .into_iter()
+        .filter(|entry| {
+            entry
+                .event
+                .get("fact")
+                .and_then(|fact| fact.get("id"))
+                .and_then(Value::as_str)
+                == Some(finding.id.as_str())
+        })
+        .count();
     assert_eq!(retained, 1);
 }
