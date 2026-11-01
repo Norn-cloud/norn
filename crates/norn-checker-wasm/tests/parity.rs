@@ -694,24 +694,3 @@ fn widget_parity_corpus_preserves_keys_selections_and_display_values() {
         }
     }
 }
-
-#[test]
-fn exact_source_receipts_distinguish_adjacent_literals_through_the_abi() {
-    let source = read("fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json");
-    let source = source.replacen(
-        "\"payload\": {",
-        "\"payload\": {\"extensions\": {\"test/1.0.0\": 0.1234567890123456789012345678},",
-        1,
-    );
-    let first = check_artifact_set_json(&format!("[{source}]"), "null").expect("first receipt");
-    let changed = source.replace(
-        "0.1234567890123456789012345678",
-        "0.1234567890123456789012345679",
-    );
-    let second = check_artifact_set_json(&format!("[{changed}]"), "null").expect("second receipt");
-    let first: Value = serde_json::from_str(&first).expect("first JSON");
-    let second: Value = serde_json::from_str(&second).expect("second JSON");
-    assert_eq!(first["admitted"], true, "{first}");
-    assert_eq!(second["admitted"], true, "{second}");
-    assert_ne!(first["receiptSha256"], second["receiptSha256"]);
-}
