@@ -237,7 +237,7 @@ fn structured_fragment_refuses_progress_mismatches_and_untyped_predicates() {
     r.norm.law.timing = Some(norn_ir::LawTiming::Within { millis: "1".into() });
     assert_eq!(
         check_requirement(&r, &env).expect_err("deadline").code(),
-        "requirement.timing.unsupported"
+        "law.validation.unsupported_temporal"
     );
     r = requirement();
     r.norm.modality = DeonticModality::Prohibition;
