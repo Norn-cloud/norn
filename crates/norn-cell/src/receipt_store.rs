@@ -84,10 +84,10 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         let reference = completion.receipt.content_digest().map_err(|_invalid| refused("digest"))?;
         let scope = self.scope.clone();
         let now = self.now;
+        if dispatched.invocation.tenant != scope || dispatched.invocation.world != MAIN_WORLD { return Err(refused("scope")); }
         self.store.verified_head()?;
         let reader = self.store.read();
         let source = reader.next_commit_seq()?;
-            if dispatched.invocation.tenant != scope || dispatched.invocation.world != MAIN_WORLD { return Err(refused("scope")); }
             let pending = reader.head_command()?.ok_or_else(|| refused("unknown"))?;
             let invocation = norn_ir::runtime_object! { "type" => "norn.function/v1", "invocation" => norn_ir::runtime::encode(&dispatched.invocation).map_err(|_invalid| refused("dispatch"))? };
             let receipt = norn_ir::runtime::encode(completion.receipt).map_err(|_invalid| refused("body"))?;
@@ -131,7 +131,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         &self,
         reference: &Digest,
     ) -> Result<Option<StoredReceipt>, CellError> {
-        let row = self.store.conn.query_optional("SELECT body FROM _norn_function_receipt WHERE reference=?1 AND scope=?2 AND length(body)<=?3", params![reference.0, self.scope, i64::try_from(LIMIT).map_err(|_invalid| refused("limit"))?], |row| row.get::<String>(0))?;
+        let row = self.store.conn.query_optional("SELECT body FROM _norn_function_receipt WHERE reference=?1 AND scope=?2 AND octet_length(body)<=?3", params![reference.0, self.scope, i64::try_from(LIMIT).map_err(|_invalid| refused("limit"))?], |row| row.get::<String>(0))?;
         let Some(body) = row else {
             return Ok(None);
         };
