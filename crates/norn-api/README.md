@@ -23,7 +23,8 @@ belong to host wiring; the perimeter performs no IO.
 ## Host admission epoch (slice 1b)
 
 HOST-ADMISSION: `DevHost::new` checks a full source array before initializing a
-fresh tenant store: any residual schema/state refuses before initialization.
+fresh tenant store: unrelated residual schema/state refuses. An identical
+initial provisioning request reopens without writing.
 Only a successful transactional definition install publishes
 the host. Trusted installs check before taking the exclusive definition epoch;
 failed admission and stale-version installs preserve both revision and ledger.
