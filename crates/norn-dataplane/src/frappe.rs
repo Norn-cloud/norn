@@ -240,7 +240,13 @@ mod tests {
                 .payload,
             obs.payload
         );
-        assert!(ingest_frappe_webhook(&source, b"fixture", b"not JSON", None, 42).is_err());
-        assert!(ingest_frappe_webhook(&source, b"other", body, Some(&signature), 42).is_err());
+        assert!(matches!(
+            ingest_frappe_webhook(&source, b"fixture", b"not JSON", None, 42),
+            Err(IngestError::MissingSignature { .. })
+        ));
+        assert!(matches!(
+            ingest_frappe_webhook(&source, b"other", body, Some(&signature), 42),
+            Err(IngestError::BadSignature)
+        ));
     }
 }
