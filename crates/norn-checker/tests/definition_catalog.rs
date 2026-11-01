@@ -12,7 +12,7 @@ use norn_ir::ArtifactEnvelope;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-fn artifact(id: &str, payload: Value) -> ArtifactEnvelope {
+fn artifact(id: &str, payload: &Value) -> ArtifactEnvelope {
     serde_json::from_value(json!({
         "irVersion": "0.1", "artifactId": id, "kind": "entity", "namespace": "test", "name": id,
         "version": "1.0.0", "lifecycle": "draft", "scope": {}, "dependencies": [],
@@ -28,11 +28,11 @@ fn check_ref_lifecycle(hops: usize) {
     let artifacts = [
         artifact(
             "test.types.entity",
-            json!({ "entityVersion": "2.0", "propertyTypes": types }),
+            &json!({ "entityVersion": "2.0", "propertyTypes": types }),
         ),
         artifact(
             "test.Order.entity",
-            json!({ "entityVersion": "2.0", "objectType": { "name": "test.Order",
+            &json!({ "entityVersion": "2.0", "objectType": { "name": "test.Order",
             "properties": [{ "id": "status", "type": { "kind": "ref", "name": format!("test.state{}", hops.saturating_sub(1)) } }],
             "lifecycles": [{ "property": "status", "initial": ["open"], "terminal": ["closed"],
                 "transitions": [{ "id": "finish", "from": ["open"], "to": "closed" }] }] } }),
