@@ -172,7 +172,7 @@ fn first_quantity_upgrade_rolls_back_at_every_write_seam_and_replays_lost_reply(
     let batch = CommitBatch {
         world: "main".into(),
         scope: "tenant/dev".into(),
-        quantity: Some(define()),
+        quantity: Some((define()).into()),
         idempotency_key: Some("define".into()),
         ..CommitBatch::default()
     };
@@ -242,7 +242,7 @@ fn quantity_boundary_projection_cannot_be_shifted_or_removed() {
             .commit_fenced(&CommitBatch {
                 world: "main".into(),
                 scope: "tenant/dev".into(),
-                quantity: Some(define()),
+                quantity: Some((define()).into()),
                 idempotency_key: Some("define".into()),
                 ..CommitBatch::default()
             })
@@ -255,7 +255,7 @@ fn quantity_boundary_projection_cannot_be_shifted_or_removed() {
                 .commit_fenced(&CommitBatch {
                     world: "main".into(),
                     scope: "tenant/dev".into(),
-                    quantity: Some(post(1, "fund", "fund", 20)),
+                    quantity: Some((post(1, "fund", "fund", 20)).into()),
                     idempotency_key: Some("fund".into()),
                     ..CommitBatch::default()
                 })
@@ -280,7 +280,7 @@ fn immutable_quantity_boundary_refuses_coordinated_legacy_downgrade_and_redefini
             .commit_fenced(&CommitBatch {
                 world: "main".into(),
                 scope: "tenant/dev".into(),
-                quantity: Some(define()),
+                quantity: Some((define()).into()),
                 idempotency_key: Some("define".into()),
                 ..CommitBatch::default()
             })
@@ -314,7 +314,7 @@ fn immutable_quantity_boundary_refuses_coordinated_legacy_downgrade_and_redefini
             store.commit_fenced(&CommitBatch {
                 world: "main".into(),
                 scope: "tenant/dev".into(),
-                quantity: Some(replacement),
+                quantity: Some((replacement).into()),
                 idempotency_key: Some("redefine-at-zero".into()),
                 ..CommitBatch::default()
             }),
@@ -343,7 +343,7 @@ fn legacy_open_handle_observes_another_handles_immutable_quantity_upgrade() {
         .commit_fenced(&CommitBatch {
             world: "main".into(),
             scope: "tenant/dev".into(),
-            quantity: Some(define()),
+            quantity: Some((define()).into()),
             idempotency_key: Some("define".into()),
             ..CommitBatch::default()
         })
@@ -352,7 +352,7 @@ fn legacy_open_handle_observes_another_handles_immutable_quantity_upgrade() {
         .commit_fenced(&CommitBatch {
             world: "main".into(),
             scope: "tenant/dev".into(),
-            quantity: Some(post(1, "fund", "fund", 20)),
+            quantity: Some((post(1, "fund", "fund", 20)).into()),
             idempotency_key: Some("fund".into()),
             ..CommitBatch::default()
         })
@@ -768,7 +768,7 @@ fn caller_quantity_intent_cannot_hide_changed_combined_inputs() {
         world: "main".into(),
         scope: "tenant/dev".into(),
         idempotency_key: Some("combined".into()),
-        quantity: Some(define()),
+        quantity: Some((define()).into()),
         quantity_intent: Some("caller-controlled".into()),
         writes: vec![FactWriteRow::Put {
             object_type: "fixture.Marker".into(),
@@ -793,6 +793,9 @@ fn caller_quantity_intent_cannot_hide_changed_combined_inputs() {
         .quantity
         .as_mut()
         .expect("quantity")
+        .0
+        .first_mut()
+        .expect("single")
         .operation
     {
         *account_limit += 1;
@@ -878,6 +881,8 @@ fn exact_retry_survives_time_and_state_changes_but_changed_input_conflicts() {
         .quantity
         .as_ref()
         .expect("original request")
+        .first()
+        .expect("single")
         .balance_versions;
     for fence in &mut stale.balance_versions {
         if let Some(old) = original.iter().find(|old| {
@@ -1034,7 +1039,7 @@ async fn reopen_restore_replay_preserve_heads_holds_history_and_receipts() {
         restored.commit(&CommitBatch {
             world: "main".into(),
             scope: "tenant/dev".into(),
-            quantity: Some(regressed),
+            quantity: Some((regressed).into()),
             idempotency_key: Some("regressed".into()),
             ..CommitBatch::default()
         }),
@@ -1073,7 +1078,7 @@ fn crash_before_commit_rolls_back_and_lost_reply_replays_once() {
     let mut batch = CommitBatch {
         world: "main".into(),
         scope: "tenant/dev".into(),
-        quantity: Some(req.clone()),
+        quantity: Some((req.clone()).into()),
         idempotency_key: Some("fault".into()),
         ..CommitBatch::default()
     };
@@ -1083,13 +1088,20 @@ fn crash_before_commit_rolls_back_and_lost_reply_replays_once() {
     for (id, req) in [("define", define()), ("fund", post(1, "fund", "fund", 20))] {
         store
             .commit_fenced(&CommitBatch {
-                quantity: Some(req),
+                quantity: Some((req).into()),
                 idempotency_key: Some(id.into()),
                 ..batch.clone()
             })
             .expect("setup");
     }
-    batch.quantity.as_mut().expect("quantity").balance_versions = store
+    batch
+        .quantity
+        .as_mut()
+        .expect("quantity")
+        .0
+        .first_mut()
+        .expect("single")
+        .balance_versions = store
         .read()
         .quantity_balance_versions("main", &req)
         .expect("fences");
@@ -1225,7 +1237,7 @@ fn quantity_scope_must_match_the_file_binding() {
     let batch = CommitBatch {
         world: "main".into(),
         scope: "another/dev".into(),
-        quantity: Some(define()),
+        quantity: Some((define()).into()),
         idempotency_key: Some("define".into()),
         ..CommitBatch::default()
     };
@@ -1822,7 +1834,9 @@ impl QuantityFixture for SqliteCell<String, String, String> {
             .map_err(norn_kernel::CommitError::Host)?
         {
             if let Some(original) = prior.body.quantity {
-                request.balance_versions = original.balance_versions;
+                request
+                    .balance_versions
+                    .clone_from(&original.first().expect("single").balance_versions);
             }
         } else {
             request.balance_versions = self
@@ -1831,7 +1845,7 @@ impl QuantityFixture for SqliteCell<String, String, String> {
                 .quantity_balance_versions("main", &request)
                 .map_err(norn_kernel::CommitError::Host)?;
         }
-        self.commit_with_quantity(commit, &request, key)
+        self.commit_with_partition_postings(commit, std::slice::from_ref(&request), key)
     }
 
     fn commit_quantity_fenced(
@@ -1846,7 +1860,9 @@ impl QuantityFixture for SqliteCell<String, String, String> {
             .receipt_by_idempotency_key("main", key)?
         {
             if let Some(original) = prior.body.quantity {
-                request.balance_versions = original.balance_versions;
+                request
+                    .balance_versions
+                    .clone_from(&original.first().expect("single").balance_versions);
             }
         } else if request.balance_versions.is_empty()
             && let Ok(fences) = self
@@ -1865,10 +1881,12 @@ trait QuantityStoreFixture {
 impl QuantityStoreFixture for CellStore {
     fn commit_fenced(&mut self, batch: &CommitBatch) -> Result<CommitOutcome, CellError> {
         let mut batch = batch.clone();
-        if let Some(request) = &mut batch.quantity
-            && let Ok(fences) = self.read().quantity_balance_versions(&batch.world, request)
-        {
-            request.balance_versions = fences;
+        if let Some(requests) = &mut batch.quantity {
+            for request in &mut requests.0 {
+                if let Ok(fences) = self.read().quantity_balance_versions(&batch.world, request) {
+                    request.balance_versions = fences;
+                }
+            }
         }
         self.commit(&batch)
     }
@@ -2081,7 +2099,7 @@ fn concurrent_retry_reconciles_transaction_timestamp_without_changing_identity()
         .commit_fenced(&CommitBatch {
             world: "main".into(),
             scope: "tenant/dev".into(),
-            quantity: Some(define()),
+            quantity: Some((define()).into()),
             idempotency_key: Some("define".into()),
             ..CommitBatch::default()
         })
@@ -2094,7 +2112,7 @@ fn concurrent_retry_reconciles_transaction_timestamp_without_changing_identity()
     let mut first = CommitBatch {
         world: "main".into(),
         scope: "tenant/dev".into(),
-        quantity: Some(quantity),
+        quantity: Some((quantity).into()),
         idempotency_key: Some("same".into()),
         logical_time: 5,
         ..CommitBatch::default()
@@ -2106,8 +2124,14 @@ fn concurrent_retry_reconciles_transaction_timestamp_without_changing_identity()
         receipt.receipt()
     );
     let before = store.read().dump().expect("dump");
-    if let QuantityOperation::Post { parameters, .. } =
-        &mut first.quantity.as_mut().expect("quantity").operation
+    if let QuantityOperation::Post { parameters, .. } = &mut first
+        .quantity
+        .as_mut()
+        .expect("quantity")
+        .0
+        .first_mut()
+        .expect("single")
+        .operation
     {
         *parameters = quantity_support::parameters(21);
     }
@@ -2142,7 +2166,7 @@ fn clock_floor_is_cell_wide_and_restart_and_fork_keep_independent_floors() {
             world: "main".into(),
             scope: "tenant/dev".into(),
             logical_time: 99,
-            quantity: Some(other.clone()),
+            quantity: Some((other.clone()).into()),
             idempotency_key: Some("other".into()),
             ..CommitBatch::default()
         }),
@@ -2437,4 +2461,275 @@ fn sparse_definition_with_shared_incoming() -> norn_ir::quantity_ledger::Quantit
             .account_id = "transit".into();
     }
     definition
+}
+
+#[test]
+fn post_group_codec_preserves_singleton_receipt_bytes_and_order() {
+    use norn_cell::store::QuantityBatch;
+    let original = define();
+    let scalar = serde_json::to_string(&original).expect("scalar");
+    let single = QuantityBatch::from(original.clone());
+    assert_eq!(
+        serde_json::to_string(&single).expect("single"),
+        scalar,
+        "POST-GROUP-REPLAY singleton hashes"
+    );
+    let decoded: QuantityBatch<norn_ir::quantity_ledger::QuantityRequest> =
+        serde_json::from_str(&scalar).expect("decode scalar");
+    assert_eq!(decoded, single);
+    let mut second = original.clone();
+    second.ledger_id = "destination".into();
+    let group = QuantityBatch(vec![original, second]);
+    let encoded = serde_json::to_string(&group).expect("group");
+    assert_eq!(
+        serde_json::from_str::<QuantityBatch<norn_ir::quantity_ledger::QuantityRequest>>(&encoded)
+            .expect("decode group"),
+        group,
+        "POST-GROUP-IDENTITY ordered requests"
+    );
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one durable atomic-group conformance history"
+)]
+async fn post_atomic_partitions_refusal_retry_reopen_restore() {
+    use norn_cell::store::QuantityBatch;
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("group.sqlite");
+    let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+    store.bind("scope", "tenant/dev").expect("binding");
+    let group = |key: &str, request: norn_ir::quantity_ledger::QuantityRequest| {
+        let mut other = request.clone();
+        other.ledger_id = "destination".into();
+        CommitBatch {
+            world: "main".into(),
+            scope: "tenant/dev".into(),
+            idempotency_key: Some(key.into()),
+            quantity: Some(QuantityBatch(vec![request, other])),
+            ..CommitBatch::default()
+        }
+    };
+    store
+        .commit_fenced(&group("define-group", define()))
+        .expect("POST-GROUP empty partitions");
+    store
+        .commit_fenced(&group("fund-group", post(0, "fund", "fund", 10)))
+        .expect("fund");
+    let mut batch = group("ship-group", post(0, "ship", "ship", 6));
+    for request in &mut batch.quantity.as_mut().expect("requests").0 {
+        request.balance_versions = store
+            .read()
+            .quantity_balance_versions("main", request)
+            .expect("fences");
+    }
+    let before = store.read().dump().expect("before");
+    let mut bad = batch.clone();
+    bad.writes.push(norn_cell::FactWriteRow::Put {
+        object_type: "fixture.Marker".into(),
+        key: "partial".into(),
+        values: BTreeMap::from([(
+            "label".into(),
+            norn_ir::RuntimeValue::String("must roll back".into()),
+        )]),
+    });
+    if let Some(last) = bad.quantity.as_mut().expect("requests").0.last_mut() {
+        last.operation = post(0, "ship", "ship", 11).operation;
+    }
+    assert!(
+        store.commit(&bad).is_err(),
+        "POST-ATOMIC-PARTITIONS later-partition refusal"
+    );
+    assert_eq!(before, store.read().dump().expect("unchanged"));
+    let mut duplicate = batch.clone();
+    duplicate.quantity.as_mut().expect("requests").0 = vec![post(0, "duplicate", "fund", 1); 2];
+    assert!(
+        store.commit(&duplicate).is_err(),
+        "POST-GROUP-IDENTITY duplicate ledger"
+    );
+    assert_eq!(before, store.read().dump().expect("unchanged"));
+    let mut competitor = batch.clone();
+    competitor.idempotency_key = Some("competing-delivery".into());
+    for request in &mut competitor.quantity.as_mut().expect("requests").0 {
+        if let QuantityOperation::Post { posting_id, .. } = &mut request.operation {
+            *posting_id = "competitor".into();
+        }
+    }
+    store.commit(&batch).expect("POST-GROUP commits together");
+    assert!(matches!(
+        store.commit(&batch).expect("identical retry"),
+        CommitOutcome::Replayed(_)
+    ));
+    let committed = store.read().dump().expect("winner");
+    assert!(
+        matches!(
+            store.commit(&competitor),
+            Err(CellError::Quantity(QuantityError::StaleVersion { .. }))
+        ),
+        "POST-PARTITION-FENCES overlapping deliveries oversell"
+    );
+    assert_eq!(committed, store.read().dump().expect("loser unchanged"));
+    let mut reordered = batch.clone();
+    reordered.quantity.as_mut().expect("requests").0.reverse();
+    assert!(
+        matches!(
+            store.commit(&reordered),
+            Err(CellError::IdempotencyConflict(_))
+        ),
+        "POST-GROUP-IDENTITY ordered complete intent"
+    );
+    let expected = store.read().dump().expect("expected");
+    let head = store.read().verify_ledger().expect("chain");
+    let mut exporter =
+        norn_cell::export::Exporter::local(&dir.path().join("export")).expect("exporter");
+    for seq in 1..=store.export_commit_count().expect("count") {
+        exporter
+            .append(&store.export_record(seq).expect("journal").expect("record"))
+            .await
+            .expect("append");
+    }
+    drop(store);
+    let mut store =
+        CellStore::open(&path, model(), StoreOptions::default()).expect("POST-GROUP-REOPEN");
+    assert_eq!(expected, store.read().dump().expect("reopened"));
+    assert!(matches!(
+        store.commit(&batch).expect("reopened retry"),
+        CommitOutcome::Replayed(_)
+    ));
+    let restored = dir.path().join("restore.sqlite");
+    CellStore::restore_from(
+        &mut exporter,
+        &restored,
+        model(),
+        "tenant/dev",
+        &BTreeMap::from([("scope".into(), "tenant/dev".into())]),
+        StoreOptions::default(),
+    )
+    .await
+    .expect("POST-GROUP-REPLAY");
+    let restored = CellStore::open(&restored, model(), StoreOptions::default()).expect("restored");
+    assert_eq!(expected, restored.read().dump().expect("restored state"));
+    assert_eq!(
+        head,
+        restored.read().verify_ledger().expect("restored chain")
+    );
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one native atomic-proposal conformance history"
+)]
+fn post_partition_plan_fences_absences_and_commits_all_effects_once() {
+    use norn_kernel::{CellHost, CommitError, FactExpectation};
+    let mut cell = initialized(10);
+    let mut definition = define();
+    definition.ledger_id = "destination".into();
+    cell.commit_quantity_fenced(&definition, "define-destination")
+        .expect("define");
+    let mut funding = post(0, "fund", "fund", 10);
+    funding.ledger_id = "destination".into();
+    cell.commit_quantity_fenced(&funding, "fund-destination")
+        .expect("fund");
+    let marker = |id: &str| FactWrite {
+        key: FactKey::new("fixture.Marker", id),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: BTreeMap::from([(
+                "label".into(),
+                norn_ir::RuntimeValue::String("atomic".into()),
+            )]),
+        },
+    };
+    let absent = FactKey::new("fixture.Marker", "empty-partition");
+    let mut proposal = CellCommit::empty();
+    proposal.reads.push(FactExpectation {
+        key: absent.clone(),
+        expected: FactVersion::ABSENT,
+    });
+    proposal.writes.push(marker("result"));
+    proposal.events.push("atomic".into());
+    proposal.effects = effects();
+    let mut postings = vec![
+        post(0, "consume", "ship", 6),
+        post(0, "consume", "ship", 11),
+    ];
+    postings.last_mut().expect("destination").ledger_id = "destination".into();
+    for posting in &mut postings {
+        posting.balance_versions = cell
+            .store()
+            .read()
+            .quantity_balance_versions("main", posting)
+            .expect("complete fences");
+    }
+    let mut competitor = CellCommit::empty();
+    competitor.writes.push(marker("empty-partition"));
+    CellHost::commit(&mut cell, competitor).expect("competing empty-partition creation");
+    let before = cell.store().read().dump().expect("before");
+    assert!(
+        matches!(CellHost::commit_action_quantity(&mut cell, proposal.clone(), &postings, "stale-fact"), Err(CommitError::Conflict { key, .. }) if key == absent),
+        "POST-PARTITION-FENCES absence"
+    );
+    assert_eq!(before, cell.store().read().dump().expect("unchanged"));
+    proposal.reads.clear();
+    assert!(
+        matches!(
+            CellHost::commit_action_quantity(
+                &mut cell,
+                proposal.clone(),
+                &postings,
+                "later-refusal"
+            ),
+            Err(CommitError::Host(CellError::Quantity(
+                QuantityError::InsufficientAvailable { .. }
+            )))
+        ),
+        "POST-ATOMIC-PARTITIONS later quantity refusal"
+    );
+    assert_eq!(
+        before,
+        cell.store().read().dump().expect("all effects unchanged")
+    );
+    postings.last_mut().expect("destination").operation = post(0, "consume", "ship", 6).operation;
+    let first =
+        CellHost::commit_action_quantity(&mut cell, proposal.clone(), &postings, "whole-proposal")
+            .expect("POST-ATOMIC-PARTITIONS");
+    let committed = cell.store().read().dump().expect("committed");
+    assert_eq!(
+        first,
+        CellHost::commit_action_quantity(&mut cell, proposal, &postings, "whole-proposal")
+            .expect("POST-GROUP-IDENTITY")
+    );
+    assert_eq!(
+        committed,
+        cell.store().read().dump().expect("retry unchanged")
+    );
+    assert_eq!(cell.pending_commands().expect("outbox").len(), 1);
+    assert_eq!(cell.pending_timers().expect("timers").len(), 1);
+    assert_eq!(
+        first.written.len(),
+        1,
+        "business output joins the quantity group"
+    );
+    for posting in &postings {
+        let balance = cell
+            .store()
+            .read()
+            .quantity_balance(
+                "main",
+                &posting.ledger_id,
+                &QuantityKey {
+                    account: "lot".into(),
+                    unit: "item".into(),
+                    layer: "physical".into(),
+                },
+            )
+            .expect("balance");
+        assert_eq!(balance.posted, "4");
+    }
+    cell.store()
+        .read()
+        .verify_ledger()
+        .expect("complete native journal");
 }
