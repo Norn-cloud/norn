@@ -1212,3 +1212,13 @@ fn typed_historical_verification_cannot_authorize_lossy_rechecks() {
         );
     }
 }
+
+proptest::proptest! {
+    #[test]
+    fn adjacent_large_integers_keep_distinct_source_receipts(value in 9_007_199_254_740_992_u64..u64::MAX) {
+        let first = [exact_setting(&value.to_string())];
+        let second = [exact_setting(&(value + 1).to_string())];
+        proptest::prop_assert_ne!(exact_receipt(&first, &[]).artifact_set, exact_receipt(&second, &[]).artifact_set);
+        proptest::prop_assert_ne!(exact_receipt(&[], &first).artifact_set, exact_receipt(&[], &second).artifact_set);
+    }
+}
