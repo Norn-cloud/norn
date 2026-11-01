@@ -316,7 +316,7 @@ pub fn effective_law_instances(
             let instance = law_instance(artifact, &law, subject, origin, paths, &digests)
                 .ok_or_else(refused)?;
             bytes = bytes.saturating_add(
-                serde_json::to_vec(&instance)
+                norn_canonical::serialize_json_verbatim(&instance)
                     .map_err(|_error| refused())?
                     .len(),
             );
@@ -452,7 +452,7 @@ fn law_paths(
                 let reference = owners.get(name)?;
                 work.bytes = work
                     .bytes
-                    .saturating_add(serde_json::to_vec(reference).ok()?.len());
+                    .saturating_add(norn_canonical::serialize_json_verbatim(reference).ok()?.len());
                 if work.bytes > 8_388_608 {
                     return None;
                 }
