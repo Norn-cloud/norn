@@ -446,6 +446,9 @@ pub const SYSTEM_DDL: &[&str] = &[
     r#"CREATE INDEX IF NOT EXISTS "_norn_receipt/quantity_boundary" ON "_norn_receipt"
       (json_extract("receipt", '$.firstEventSeq'))
       WHERE json_extract("receipt", '$.quantity.version')='norn.quantity.commit/2'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_receipt/quantity_group_boundary" ON "_norn_receipt"
+      (json_extract("receipt", '$.firstEventSeq'))
+      WHERE json_type("receipt", '$.quantity')='array'"#,
     r#"CREATE UNIQUE INDEX IF NOT EXISTS "_norn_receipt/idempotency" ON "_norn_receipt" ("world", "idempotency_key")"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_outbox" (
   "command_id" TEXT NOT NULL,
