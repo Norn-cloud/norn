@@ -52,6 +52,18 @@ pub enum MappingFormat {
     V1,
 }
 
+/// Exact Norn1 semantic envelope identity of an interpretation endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InterpretationEndpoint {
+    /// Retained artifact, resolved without namespace inference.
+    pub artifact_id: String,
+    /// Exact artifact version.
+    pub version: String,
+    /// Receipt-profile semantic content digest.
+    pub sha256: String,
+}
+
 /// An interface-scoped mapping from one source schema: the payload of a
 /// `mapping` artifact. The envelope's `artifactId` and `version` identify
 /// the mapping; its provenance key is `<artifactId>@<version>` (both
