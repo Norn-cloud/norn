@@ -8,6 +8,7 @@ type Metadata = Pick<Artifact, "artifactId" | "kind" | "name" | "version">
 export interface DefinitionEntry {
   readonly metadata: Metadata
   readonly source: string
+  /** The admitted payload from the same authorized read; never reconstructed from source text. */
   readonly definition?: Definition
 }
 
@@ -173,20 +174,25 @@ function describe({ metadata, definition }: DefinitionEntry, entries: readonly D
         <h3>Properties</h3><table><thead><tr><th>Name</th><th>Type / unit</th><th>Derivation</th></tr></thead><tbody>${(object.properties ?? []).map((property) => `<tr><td>${escape(property.id)}</td><td>${escape(typeLabel(property.type))}</td><td>${property.computed ? text(property.computed) : ""}</td></tr>`).join("")}</tbody></table>
         ${list("Relationships", (object.links ?? []).map((link) => `${text(link.id)} → ${text(link.target)} · ${escape(link.cardinality.from)}:${escape(link.cardinality.to)}${link.cardinality.required ? " · required" : ""}`))}
         ${lifecycleView(object, metadata.artifactId, entries)}
-        ${list("Protects", (object.invariants ?? []).map((law) => `${text(law.id)} · ${escape(law.message)} — ${text(law.expression)}`))}${dependencies}`
+        ${list("Invariants", (object.invariants ?? []).map((law) => `${text(law.id)} · ${escape(law.message)} — ${text(law.expression)}`))}${dependencies}`
     }
     case "action": {
       const action = definition.payload
       const effect = action.effectProgram
+      const constraints: string[] = []
       const transitions = effect?.kind === "fire_transition" ? entries.flatMap(({ metadata: target, definition: entity }) => {
         if (entity?.kind !== "entity" || !("objectType" in entity.payload) || target.artifactId !== effect.entityArtifactId || target.version !== effect.entityArtifactVersion) return []
+        constraints.push(...(entity.payload.objectType.invariants ?? []).filter((law) => law.classification !== "quality").map((law) => `${law.id}: ${law.expression}`))
         return (entity.payload.objectType.lifecycles ?? []).filter((cycle) => cycle.property === effect.lifecycle).flatMap((cycle) =>
-          (cycle.transitions ?? []).filter((transition) => transition.id === effect.transition).map((transition) => `${transition.from.join(", ")} → ${transition.to}`))
+          (cycle.transitions ?? []).filter((transition) => transition.id === effect.transition).map((transition) => {
+            constraints.push(...(transition.guards ?? []))
+            return `${transition.from.join(", ")} → ${transition.to}`
+          }))
       }) : []
       return `${action.description ? `<p>${escape(action.description)}</p>` : ""}
         ${effect?.kind === "fire_transition" ? `<h3>Performs transition</h3><p>${text(effect.objectKind)} · ${text(effect.lifecycle)} · ${text(effect.transition)}</p>${list("State change", transitions.map(text))}` : ""}
         <h3>Inputs</h3>${tree(action.inputSchema)}
-        ${list("Must satisfy", (action.preconditions ?? []).map(text))}
+        ${list("Must satisfy", [...(action.preconditions ?? []), ...constraints].map(text))}
         ${action.access ? `<h3>Access policy</h3><p>${text(action.access.artifactId)}</p>` : ""}${dependencies}`
     }
     case "rule": {

@@ -76,6 +76,7 @@ test("D5–D7: declared properties, units, relationships, states and action bind
   expect(html.indexOf('<h2>Entities')).toBeLessThan(html.indexOf('<h2>Actions'))
   expect(html).toContain('<summary>Source</summary>')
   expect(html).toContain('draft → sent')
+  expect(html).toContain('positive: self.mass &gt; 0')
 })
 
 test("D6: absent action stays unresolved; absent declarations invent no transitions", () => {
