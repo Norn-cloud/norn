@@ -1906,24 +1906,6 @@ fn prepare_decision_with_limits_and_source_owned_targets<X>(
     )
 }
 
-pub(crate) fn prepare_action_decision<X>(
-    catalog: &TypeCatalog<'_>,
-    slice: &FactSlice,
-    turn: &DecisionTurn,
-    output: &DecisionOutput,
-    limits: &EnvelopeLimits,
-) -> Result<PreparedDecision, DecisionRefusal<X>> {
-    prepare_decision_with_limits_for(
-        catalog,
-        slice,
-        turn,
-        output,
-        limits,
-        AdmissionOrigin::Action,
-        &BTreeSet::new(),
-    )
-}
-
 /// Prepare the object changes for a trusted parent-and-owned-rows action.
 /// Internal manifest writes are assembled separately in its one commit;
 /// this narrow path is the only place generic child writes and parent
