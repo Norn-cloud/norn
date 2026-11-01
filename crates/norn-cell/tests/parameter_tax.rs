@@ -54,6 +54,15 @@ fn definitions() -> (Vec<ObjectTypeDef>, Vec<ActionRoot>) {
     );
     let artifacts: Vec<ArtifactEnvelope> =
         serde_json::from_slice(&compiled.stdout).expect("canonical artifacts");
+    let diagnostics = norn_checker::check_artifact_set(
+        &artifacts,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &Default::default(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
     let mut types = Vec::new();
     let mut actions = Vec::new();
     for artifact in artifacts {
@@ -67,7 +76,7 @@ fn definitions() -> (Vec<ObjectTypeDef>, Vec<ActionRoot>) {
     }
     // The host's receipt storage schema is infrastructure, expressed in typed Rust.
     let receipt = ObjectTypeDef {
-        name: ACTION_CALL_TYPE.into(),
+        name: norn_ir::ObjectTypeName(ACTION_CALL_TYPE.into()),
         description: None,
         status: Default::default(),
         extends: None,
@@ -245,15 +254,14 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
         assert_eq!(effective.get("gross"), Some(&RuntimeValue::from(gross)));
         assert_eq!(effective.get("currency"), Some(&RuntimeValue::from("USD")));
         assert_eq!(record.parameter_reads.len(), 1);
+        let pin = record
+            .parameter_reads
+            .first()
+            .expect("selected setting pin");
+        assert_eq!(pin.key, FactKey::new("demo.NumericSetting", setting));
         assert_eq!(
-            record.parameter_reads[0].key,
-            FactKey::new("demo.NumericSetting", setting)
-        );
-        assert_eq!(
-            record.parameter_reads[0].expected,
-            cell.load(&record.parameter_reads[0].key)
-                .expect("selected version")
-                .version
+            pin.expected,
+            cell.load(&pin.key).expect("selected version").version
         );
         assert_eq!(recorded(&cell, id), record);
         originals.push((id, invocation.input, record));
@@ -290,15 +298,9 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
             .expect("posted invoice")
             .values
             .expect("posted values");
+        let derived = original.effective_input.as_ref().expect("derived input");
         for field in ["net", "tax", "gross"] {
-            assert_eq!(
-                posted.get(field),
-                original
-                    .effective_input
-                    .as_ref()
-                    .expect("derived")
-                    .get(field)
-            );
+            assert_eq!(posted.get(field), derived.get(field));
         }
     }
     let wrong_rate = call(
