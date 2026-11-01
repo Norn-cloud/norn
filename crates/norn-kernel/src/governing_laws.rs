@@ -94,7 +94,7 @@ fn supported(law: &LawIR) -> bool {
         && matches!(law.modality, LawModality::Always {} | LawModality::Never {})
         && matches!(law.response, LawResponse::Predicate { .. })
 }
-/// OBS-EVIDENCE-1 / LAW-SUPPORTED-1: evaluate retained direct laws, never caller payloads.
+/// LAW-COMMIT-1 / LAW-SUPPORTED-1: evaluate retained direct laws, never caller payloads.
 ///
 /// # Errors
 /// Incomplete scope, unsupported semantics, invalid context or exhausted fuel.

@@ -35,7 +35,7 @@ Applicable inherited or effective-instance scope refuses with
 `core.laws.unsupported_semantics` and an `unsupported until B2` detail, preserving
 LAW-COMPLETE-1 / LAW-SUPPORTED-1 rather than omitting governing constraints.
 
-CP2 direct-law evaluation uses the metered expression evaluator for pointwise
+LAW-COMMIT-1 uses the metered expression evaluator for CP2 pointwise laws:
 `always`/`never` predicates with an optional Boolean activation condition.
 Unsupported timing, response, lifecycle or commitment scope fails closed with
 `core.laws.unsupported_semantics`; native violations use `core.laws.violated`.
