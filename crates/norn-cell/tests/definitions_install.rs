@@ -5083,7 +5083,8 @@ fn host_provision_atomic_at_every_storage_boundary() {
         fail: usize::MAX,
         crash: false,
     };
-    let store =
+    let counter = engine.step.clone();
+    let _store =
         CellStore::provision_definitions(engine, model(false), provision_input(), "demo/dev")
             .expect("provision");
     // Count only the public provisioning path, including its commit/lost-reply boundary.
