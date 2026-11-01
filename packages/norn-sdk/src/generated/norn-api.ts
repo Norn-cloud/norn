@@ -871,6 +871,8 @@ export interface components {
             /** @description Non-empty list of the pack's artifacts. */
             artifacts: components["schemas"]["NornIrPackArtifactRef"][];
             extensions?: components["schemas"]["NornIrCompositionPackRootPropertyExtensions"];
+            /** @description Declarations in the retained scoped graph; omitted when there are none. */
+            instances?: components["schemas"]["NornIrPackInstance"][];
             packId: string;
             /**
              * @description Omitted by IR `0.1` composition packs; newly authored packs emit it.
@@ -2321,6 +2323,15 @@ export interface components {
             /** @description The widest type an implementing property may have. */
             type: components["schemas"]["NornIrPropertyType"];
         };
+        /** @description Exact Norn1 semantic envelope identity of an interpretation endpoint. */
+        NornIrInterpretationEndpoint: {
+            /** @description Retained artifact, resolved without namespace inference. */
+            artifactId: string;
+            /** @description Receipt-profile semantic content digest. */
+            sha256: string;
+            /** @description Exact artifact version. */
+            version: string;
+        };
         /** @description One declared invariant of an object type or interface. */
         NornIrInvariant: {
             /**
@@ -3747,6 +3758,32 @@ export interface components {
             version: string;
         } & {
             [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /**
+         * @description A scoped declaration; imports and contained instances reference this same model.
+         *     Identity survives release upgrades. Structural admission grants no execution authority.
+         */
+        NornIrPackInstance: {
+            imports: components["schemas"]["NornIrPackInstancePropertyImports"];
+            instanceId: string;
+            instances: components["schemas"]["NornIrPackInstanceRef"][];
+            pack: components["schemas"]["NornIrInterpretationEndpoint"];
+            scope: components["schemas"]["NornIrPackInstancePropertyScope"];
+        };
+        NornIrPackInstancePropertyImports: {
+            [key: string]: components["schemas"]["NornIrPackInstanceRef"];
+        };
+        NornIrPackInstancePropertyScope: {
+            businessUnitId?: string | null;
+            environmentId?: string | null;
+            orgId?: string | null;
+            tenantId?: string | null;
+            workspaceId?: string | null;
+        };
+        /** @description PACK-PIN-1: an opaque instance identity, pinned separately from its release. */
+        NornIrPackInstanceRef: {
+            instanceId: string;
+            pack: components["schemas"]["NornIrInterpretationEndpoint"];
         };
         /** @description One obligation of an [`ObligationPolicyRoot`]. */
         NornIrPolicyObligation: {
