@@ -76,14 +76,9 @@ impl<H: CellHost + ?Sized> Reader<'_, '_, '_, H> {
         link: &str,
     ) -> Result<Vec<FactKey>, ActionRefusal<H::Error>> {
         let c = &self.context;
-        let definition = c
-            .catalog
-            .effective_type(&key.object_type)
-            .ok_or(ActionRefusal::TargetNotFound)?;
-        let relation = definition
-            .links
-            .iter()
-            .find(|r| r.id.as_str() == link)
+        let model = crate::CommitModel::new(c.catalog);
+        let relation = model
+            .link(&key.object_type, link)
             .ok_or(ActionRefusal::TargetNotFound)?;
         authorize_slice_type(c.call, c.effective_input, c.authorizer, &relation.target)?;
         let targets = action_link_snapshot(
