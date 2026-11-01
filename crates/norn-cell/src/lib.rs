@@ -67,4 +67,3 @@ pub use store::{
     InstalledDefinitionSet, JournalMode, LinkChange, MAIN_WORLD, MarkingDeclassification,
     OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
 };
-
