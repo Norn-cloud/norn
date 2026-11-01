@@ -1385,14 +1385,7 @@
         ],
         "properties": {
           "acceptReceipt": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NornIrReceiptAcceptance"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "$ref": "#/components/schemas/NornIrReceiptAcceptance",
             "description": "Bind a host-authenticated Function result before firing the transition."
           },
           "entityArtifactId": {
