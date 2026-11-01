@@ -1330,6 +1330,7 @@
         "crates/norn-kernel/src/quantity.rs",
         "crates/norn-kernel/src/stock_fifo.rs",
         "crates/norn-kernel/src/stock_posting.rs",
+        "crates/norn-kernel/src/action_commit/stock.rs",
         "crates/norn-kernel/tests/stock_posting.rs",
         "crates/norn-kernel/tests/stock_fifo.rs",
         "crates/norn-kernel/tests/accounting_commit.rs",

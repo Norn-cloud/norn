@@ -49,3 +49,23 @@ is `invoke(surface, action, args, actor)`. Action input is `{ id: voucherId }`;
 scope and idempotency key remain invoke transport metadata. Lines and account
 identities are read from owned manifests and linked masters, never action input.
 P1 is admission evidence only; the genuine alpha acceptance remains P4.
+
+## Authoritative preparation reads (P2a)
+
+POST-READ-ORIGIN: `prepare_stock_snapshot` accepts only the admitted call, not
+caller-supplied lines, accounts or history. It reads stable row IDs and order
+from the owned manifest, requires the complete parent-link set to agree, and
+resolves each declared master/account path through complete to-one link reads.
+Every business object passes the existing type and object read authorization.
+The parent snapshot is the same snapshot authorized for the action. All facts
+and adjacency sets are retained for commit fencing; this read-only API grants
+no write authority, and the P1 execution refusal remains in place.
+
+POST-MASTER-PARTITION: each warehouse must belong to the voucher's company;
+only FIFO items are accepted in this CP1 cut. Lines retain manifest order
+within deterministic company/item/warehouse groups. Missing or inconsistent
+ownership, masters or accounts refuse. POST-EXACT-INPUT: quantities and rates
+convert to integer millionths without rounding; negative and finer-scale
+values refuse (`post_value_exact_millionths_never_round_or_accept_negative`).
+History enumeration, the absent-partition fence and fold planning follow in P2b;
+atomic finalization and installed alpha acceptance remain P3 and P4.
