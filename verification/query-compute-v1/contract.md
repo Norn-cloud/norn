@@ -29,32 +29,12 @@ QUERY-THREE, source frontier/result envelopes, exact evaluation and IVM remain
 unqualified. This cut does not select an engine. The governing demo fixture
 is scrap yield; inventory is post-demo under the ruling on #213.
 
-## G2a arithmetic profile
+## G2 arithmetic and projection
 
-COMPUTE-DETERMINISTIC-1 uses signed scale-six coefficients, bounded per input
-by 9e18 and per sum by 9e21 (the 1,000-object query bound). Sums never round.
-A same-unit ratio rounds exactly once, midpoint away from zero, at scale six;
-zero divisors refuse in the arithmetic kernel. The analytical evaluator must
-represent zero-input yield as unavailable. This profile covers #353 without
-adding a domain operation or changing Lane A's ordered-fold contract.
-
-Native scenarios cover 98%/97.5%, signed ties, zero and range refusals.
-Generated properties cover commutative sum and ratio error/sign symmetry.
-The Kani harness includes the production module: full-width checked-sum/ratio safety,
-zero-divisor refusal, and exhaustive i16 numerators with signed 128 divisors
-(nearest, tie-away and sign correspondence). This does not claim a
-universal arithmetic proof or an evaluator/frontier qualification.
-
-## G2b row projection
-
-COMPUTE-DETERMINISTIC-1 and QUERY-GRAIN-1 share one pure `project` operation
-between reference and incremental evaluation. It validates stored properties
-against the admitted effective types, selects the half-open question window,
-uses Monday-based ISO-UTC buckets, and evaluates each operand's own predicates.
-Missing/computed values and unsupported precision refuse; nothing rounds here.
-Timestamp equality uses instants; ordered predicates remain unsupported. Rows matching
-no operand contribute no membership. The original declarations and effective
-properties remain on the immutable plan for model binding and content identity.
-Named and generated projection scenarios cover weekly buckets, cutoff exclusion,
-exact coefficients and invalid inputs. Storage/frontier enforcement follows in
-G2c; this cut alone is not in-cell execution or source-receipt evidence.
+COMPUTE-DETERMINISTIC-1 and QUERY-GRAIN-1 use scale-six coefficients: per input ≤9e18, per sum ≤9e21, at most 1,000 objects. Sums never round; ratios round once, midpoint away from zero. Zero divisors refuse in the kernel; analytical zero-input ratios must be unavailable. No fold contract changes.
+The shared pure projector checks effective stored types, half-open time windows, Monday ISO-UTC buckets and each operand's own predicates. Missing/computed values and unsupported precision refuse. Timestamp equality uses instants; ordered predicates remain unsupported. Rows matching no operand contribute no membership.
+The immutable plan retains effective properties and canonically ordered declarations for store binding and content identity. These primitives alone do not qualify storage/frontier execution or authenticated receipt evidence.
+Native scenarios cover 98%/97.5%, signed ties, zero/range refusals, weekly buckets, cutoff exclusion and invalid values. Proptests cover sum commutativity, ratio error/sign and weekly projection.
+Kani includes the production module: full-width sum/ratio safety, zero-divisor refusal, and exhaustive i16 numerators with signed 128 divisors (nearest, tie-away and sign correspondence).
+The broader symbolic i16-divisor correspondence attempt timed out at 600 seconds; it is not counted as proof. Functional ratio evidence remains bounded; no universal arithmetic theorem is claimed.
+Storage/frontier enforcement and #353 cell-fixture correspondence follow in the next G2 cut. IVM and governed-read qualification remain separate cuts.

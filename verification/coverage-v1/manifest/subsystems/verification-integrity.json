@@ -171,6 +171,9 @@
     "crates/norn-checker/src/lint/smells.rs",
     "crates/norn-checker/src/markings.rs",
     "crates/norn-checker/src/metric.rs",
+    "crates/norn-checker/src/metric/compute/arithmetic.rs",
+    "crates/norn-checker/src/metric/compute/contribution.rs",
+    "verification/query-compute-v1/arithmetic_kani.rs",
     "crates/norn-checker/src/metric/compute.rs",
     "crates/norn-checker/src/metric_interchange.rs",
     "crates/norn-checker/src/naming_series.rs",
@@ -453,9 +456,6 @@
     "verification/stripmine-2026-08-22/scripts/validate.sh",
     "tools/norn-ts/fixtures/stock/stock.source.ts",
     "tools/norn-ts/test/stock-definitions.test.ts",
-    "crates/norn-checker/src/obligations/induction.rs",
-    "crates/norn-checker/src/metric/compute/arithmetic.rs",
-    "verification/query-compute-v1/arithmetic_kani.rs",
-    "crates/norn-checker/src/metric/compute/contribution.rs"
+    "crates/norn-checker/src/obligations/induction.rs"
   ]
 }
