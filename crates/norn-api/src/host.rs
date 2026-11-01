@@ -444,7 +444,6 @@ mod defs_read {
         );
     }
 }
-<<<<<<< HEAD
 
 #[cfg(all(test, feature = "native", feature = "http-host"))]
 #[allow(
@@ -457,18 +456,12 @@ mod defs_read {
 )]
 mod cp1_surface {
     use super::*;
-<<<<<<< HEAD
     use crate::{
         authz::{AccessRequest, Authorizer, DenyAll},
         routes::router,
     };
-||||||| 353074427
-    use crate::authz::{AccessRequest, Authorizer, DenyAll};
-=======
-    use norn_ir::quantity_ledger::{QUANTITY_CELL_VERSION, QuantityOperation, QuantityRequest};
-    use crate::authz::{AccessRequest, Authorizer, DenyAll};
->>>>>>> surface/cp1-stock-fixture
     use norn_cell::{CommitBatch, FactWriteRow, LinkChange, engine::NativeEngine};
+    use norn_ir::quantity_ledger::{QUANTITY_CELL_VERSION, QuantityOperation, QuantityRequest};
     use norn_ir::{ArtifactEnvelope, ArtifactPayload, EntityIrVersion, EntityRootV2};
     use norn_kernel::{
         ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
@@ -693,7 +686,10 @@ mod cp1_surface {
             .expect("seed drafts");
     }
 
-    #[allow(clippy::disallowed_methods, reason = "conformance invokes the real CLI process")]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "conformance invokes the real CLI process"
+    )]
     async fn invoke(
         app: &axum::Router,
         surface: &str,
@@ -890,7 +886,3 @@ mod cp1_surface {
         );
     }
 }
-||||||| 70be955a1
-
-=======
->>>>>>> surface/cp1-action-transports
