@@ -278,7 +278,7 @@ mod tests {
         wrong.tenant = "another-tenant".into();
         assert!(perform_forecast(&wrong, &export(&plan, &rows, &digest, version), "unit-host", 10_000).is_err());
         wrong = invocation.clone();
-        wrong.inputs.insert("tableVersion".into(), RuntimeValue::from(version.saturating_add(1)));
+        wrong.inputs.insert("tableVersion".into(), norn_ir::runtime::encode(&version.saturating_add(1)).expect("bounded version"));
         assert!(perform_forecast(&wrong, &export(&plan, &rows, &digest, version), "unit-host", 10_000).is_err());
         wrong = invocation.clone();
         wrong.blobs.clear();
