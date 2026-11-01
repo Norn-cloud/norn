@@ -402,12 +402,12 @@ impl Rows {
             )
             .chain(self.states.iter().map(|row| (ConceptFacet::States, row)));
         for (facet, member) in members {
-            let type_name = match &member.member {
-                Member::Property { type_name, .. }
-                | Member::Link { type_name, .. }
-                | Member::Transition { type_name, .. }
-                | Member::State { type_name, .. } => type_name,
-                _ => continue,
+            let (Member::Property { type_name, .. }
+            | Member::Link { type_name, .. }
+            | Member::Transition { type_name, .. }
+            | Member::State { type_name, .. }) = &member.member
+            else {
+                continue;
             };
             self.facets.insert(ConceptFacetRow {
                 concept: MemberRef {
