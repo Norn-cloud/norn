@@ -35,6 +35,12 @@ REQUIRED_CORE_PHYSICS_OBLIGATION_IDS = frozenset([
     "INV-CORE-QUANTITY-CONSERVATION",
     "INV-CORE-VALUE-CONSERVATION",
 ])
+JEWELRY_OBLIGATIONS = ROOT / "verification/jewelry-v1/obligations.json"
+REQUIRED_JEWELRY_OBLIGATION_IDS = frozenset([
+    "INV-JEWELRY-FINE-CONSERVATION",
+    "INV-JEWELRY-CUSTODY",
+    "INV-JEWELRY-REFUSAL-ATOMIC",
+])
 KERNEL_OBLIGATIONS = ROOT / "verification/archive/kernel-v1/obligations.json"
 KERNEL_OBLIGATIONS_SCHEMA = (
     ROOT / "verification/archive/kernel-v1/schemas/obligations.schema.json"
@@ -78,6 +84,7 @@ MANDATORY = {
     "verification-integrity",
     "kernel-v2",
     "core-physics",
+    "jewelry",
 }
 LAYERS = ("runtime", "model", "proof")
 GATE_ROLES = {
@@ -726,6 +733,7 @@ def validate(
     gate_manifest_source: Path | None = None,
     central_obligations_path: Path = CENTRAL_OBLIGATIONS,
     core_physics_obligations_path: Path = CORE_PHYSICS_OBLIGATIONS,
+    jewelry_obligations_path: Path = JEWELRY_OBLIGATIONS,
     formal_workflow_path: Path = FORMAL_WORKFLOW,
 ) -> int:
     """Validate canonical inputs, with explicit paths only for in-process canaries.
@@ -812,15 +820,24 @@ def validate(
         f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_ids)}, "
         f"unexpected={sorted(core_physics_ids - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
     )
+    jewelry_registry = load(jewelry_obligations_path)
+    jewelry_ids = obligation_ids(jewelry_registry)
+    require(
+        len(jewelry_registry.get("obligations", [])) == len(REQUIRED_JEWELRY_OBLIGATION_IDS)
+        and jewelry_ids == REQUIRED_JEWELRY_OBLIGATION_IDS,
+        "jewelry obligation registry must contain exactly the approved law closure",
+    )
     known_obligations = (
         central_ids
         | obligation_ids(phase1_registry)
         | core_physics_ids
+        | jewelry_ids
     )
     p0_obligations = (
         p0_obligation_ids(central_registry)
         | p0_obligation_ids(kernel_registry, default_priority="P0")
         | p0_obligation_ids(core_physics_registry)
+        | jewelry_ids
     )
 
     subsystems = coverage.get("subsystems")
@@ -1011,6 +1028,10 @@ def validate(
         "core-physics coverage must claim exactly the norn.core law closure, whatever their priority; "
         f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_claimed)}, "
         f"unexpected={sorted(core_physics_claimed - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
+    )
+    require(
+        set(by_id.get("jewelry", {}).get("obligations", [])) == REQUIRED_JEWELRY_OBLIGATION_IDS,
+        "jewelry coverage must claim exactly the approved law closure",
     )
     require(set(by_id) == MANDATORY | present_domains, f"mandatory subsystem mismatch: expected {sorted(MANDATORY)}, got {sorted(by_id)}")
 
