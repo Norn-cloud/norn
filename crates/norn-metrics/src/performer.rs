@@ -11,16 +11,16 @@ use norn_ir::{
     },
 };
 #[cfg(target_os = "linux")]
-fn measured(
-    work: impl FnOnce() -> Result<ForecastSummary, ForecastFailure>,
-) -> Result<(Result<ForecastSummary, ForecastFailure>, ResourceUse), ForecastFailure> {
+fn measured<T>(
+    work: impl FnOnce() -> Result<(T, u64), ForecastFailure>,
+) -> Result<(T, ResourceUse), ForecastFailure> {
     use nix::sys::{
         resource::{UsageWho, getrusage},
         time::TimeValLike,
     };
     let before = getrusage(UsageWho::RUSAGE_THREAD).map_err(failure)?;
     let start = std::time::Instant::now();
-    let result = work();
+    let (result, output_bytes) = work()?;
     let wall_millis = u64::try_from(start.elapsed().as_millis()).map_err(failure)?;
     let after = getrusage(UsageWho::RUSAGE_THREAD).map_err(failure)?;
     let cpu = after
@@ -40,21 +40,21 @@ fn measured(
                 .map_err(failure)?
                 .checked_mul(1024)
                 .ok_or_else(|| failure("RSS meter overflow"))?,
-            output_bytes: 0,
+            output_bytes,
             fuel: None,
         },
     ))
 }
 
 #[cfg(not(target_os = "linux"))]
-fn measured(
-    _: impl FnOnce() -> Result<ForecastSummary, ForecastFailure>,
-) -> Result<(Result<ForecastSummary, ForecastFailure>, ResourceUse), ForecastFailure> {
+fn measured<T>(
+    _: impl FnOnce() -> Result<(T, u64), ForecastFailure>,
+) -> Result<(T, ResourceUse), ForecastFailure> {
     Err(failure("native resource meter unavailable"))
 }
 
-fn encoded_outcome(result: Result<ForecastSummary, ForecastFailure>, resources: &mut ResourceUse)
-    -> Result<FunctionOutcome, ForecastFailure> {
+fn encoded_outcome(result: Result<ForecastSummary, ForecastFailure>)
+    -> Result<(FunctionOutcome, u64), ForecastFailure> {
     Ok(match result {
         Ok(summary) => {
             let summary = norn_ir::runtime::encode(&summary)
@@ -62,17 +62,17 @@ fn encoded_outcome(result: Result<ForecastSummary, ForecastFailure>, resources: 
                 .as_object()
                 .cloned()
                 .ok_or_else(|| failure("summary object"))?;
-            resources.output_bytes = u64::try_from(
+            let output_bytes = u64::try_from(
                 norn_ir::canonical::canonical_json_of(&summary)
                     .map_err(failure)?
                     .len(),
             )
             .map_err(failure)?;
-            FunctionOutcome::Success(SuccessOutcome {
+            (FunctionOutcome::Success(SuccessOutcome {
                 output_manifest: output_manifest_digest(&[], &summary).map_err(failure)?,
                 outputs: vec![],
                 summary,
-            })
+            }), output_bytes)
         }
         Err(error) => {
             let detail = norn_ir::runtime::encode(&error)
@@ -80,33 +80,22 @@ fn encoded_outcome(result: Result<ForecastSummary, ForecastFailure>, resources: 
                 .as_object()
                 .cloned()
                 .ok_or_else(|| failure("error object"))?;
-            resources.output_bytes = u64::try_from(
+            let output_bytes = u64::try_from(
                 norn_ir::canonical::canonical_json_of(&detail)
                     .map_err(failure)?
                     .len(),
             )
             .map_err(failure)?;
-            FunctionOutcome::Failure(FailureOutcome {
+            (FunctionOutcome::Failure(FailureOutcome {
                 code: error.code,
                 detail,
-            })
+            }), output_bytes)
         }
     })
 }
 
-/// Execute the real forecast and return its bound receipt for CellHost::perform.
-/// ANALYTICS-FUNCTION-2: metadata comes from a host-resolved export, statistics
-/// only from norn-metrics, and accounting from the native meter. RSS is the
-/// conservative process peak (Linux KiB), rather than isolated model allocation.
-/// Late evidence returns an assessment with no fabricated model or score.
-/// # Errors
-/// Unavailable meter, invalid scope/dispatch/table pins, or receipt encoding.
-pub fn perform_forecast(
-    invocation: &FunctionInvocation,
-    export: &ForecastExport<'_>,
-    executor: &str,
-    now_millis: u64,
-) -> Result<FunctionReceipt, ForecastFailure> {
+fn prepare(invocation: &FunctionInvocation, export: &ForecastExport<'_>, executor: &str, now_millis: u64)
+    -> Result<((norn_checker::function::AdmittedFunction, FunctionOutcome), u64), ForecastFailure> {
     let admitted =
         norn_checker::function::admit_function_manifest(&crate::host::manifest().map_err(failure)?)
             .map_err(failure)?;
@@ -133,8 +122,24 @@ pub fn perform_forecast(
     {
         return Err(failure("table version/digest or split pin"));
     }
-    let (result, mut resources) = measured(|| prepare_forecast(export, &input))?;
-    let outcome = encoded_outcome(result, &mut resources)?;
+    let (outcome, output_bytes) = encoded_outcome(prepare_forecast(export, &input))?;
+    Ok(((admitted, outcome), output_bytes))
+}
+
+/// Execute the real forecast and return its bound receipt for `CellHost::perform`.
+/// ANALYTICS-FUNCTION-2: metadata comes from a host-resolved export, statistics
+/// only from norn-metrics, and accounting from the native meter. RSS is the
+/// conservative process peak (Linux KiB), rather than isolated model allocation.
+/// Late evidence returns an assessment with no fabricated model or score.
+/// # Errors
+/// Unavailable meter, invalid scope/dispatch/table pins, or receipt encoding.
+pub fn perform_forecast(
+    invocation: &FunctionInvocation,
+    export: &ForecastExport<'_>,
+    executor: &str,
+    now_millis: u64,
+) -> Result<FunctionReceipt, ForecastFailure> {
+    let ((admitted, outcome), resources) = measured(|| prepare(invocation, export, executor, now_millis))?;
     let bounds = &admitted.manifest.bounds;
     let exhausted = [
         (
