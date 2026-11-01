@@ -471,6 +471,18 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     introduced(
+        "core.compute.ambiguous_grain",
+        Tier::T3,
+        "Query requires an explicit unambiguous identity grain.",
+        "0.2.0",
+    ),
+    introduced(
+        "core.compute.unsupported_engine",
+        Tier::T3,
+        "Query semantics are unsupported by the selected compute profile.",
+        "0.2.0",
+    ),
+    introduced(
         crate::property_codec::INEXACT,
         Tier::T6,
         "the number is outside the exact 96-bit decimal profile (scale at most 28)",
