@@ -118,7 +118,6 @@ fn defs_response(
 
 #[cfg(feature = "http-host")]
 /// HTTP adapter over the same authorized read used by other transports.
-#[must_use]
 pub fn router<E: SqlEngine + Send + 'static>(host: std::sync::Arc<DevHost<E>>) -> axum::Router {
     use axum::{
         extract::{Query, State},

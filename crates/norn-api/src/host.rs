@@ -278,7 +278,7 @@ mod defs_read {
         let host = DevHost::new(
             Spy(
                 NativeEngine::open_in_memory().expect("engine"),
-                reads.clone(),
+                Arc::clone(&reads),
             ),
             "[]",
             scope,
@@ -330,7 +330,7 @@ mod defs_read {
         let epoch = host.definition_read().expect("epoch");
         std::thread::scope(|threads| {
             let (sent, recv) = std::sync::mpsc::channel();
-            let writer = host.clone();
+            let writer = Arc::clone(&host);
             let installed = threads.spawn(move || {
                 sent.send(writer.definitions.try_write().is_err())
                     .expect("ready");
