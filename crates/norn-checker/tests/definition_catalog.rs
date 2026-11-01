@@ -9,7 +9,6 @@
 //! Correspondence to verification/definition-catalog-v1/SPEC.md.
 use norn_checker::definition_catalog::project;
 use norn_checker::{EntityArtifactSetContext, check_artifact_set, resolve_artifact_set};
-use norn_ir::ArtifactEnvelope;
 use norn_ir::definition_catalog::{
     ArtifactKey, DefinitionCatalog, DependencyVia, DependsOnRow, LawBinding, MapRule, Member,
     MemberRef, TypeKind, WriteVia,
