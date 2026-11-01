@@ -14,6 +14,8 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 
+import coverage_manifest
+
 
 IGNORED_EVIDENCE_DIRS = {".git", ".turbo", "__pycache__", "node_modules", "target"}
 EXPECTED_HAX_COMMIT = "37ecb8240fc237377f63614622650190a45617ff"
@@ -48,10 +50,8 @@ def expected_evidence_paths(
 ) -> set[str]:
     """Return the exact repository/generated evidence closure selected by coverage."""
 
-    paths = {
-        relative(root, coverage_path),
-        coverage["promotedGateManifest"],
-    }
+    paths = {relative(root, path) for path in coverage_manifest.files(coverage_path)}
+    paths.add(coverage["promotedGateManifest"])
     for evidence_root in coverage["evidenceRoots"]:
         paths.update(expand_evidence_root(root, root / evidence_root))
     for subsystem in coverage["subsystems"]:
