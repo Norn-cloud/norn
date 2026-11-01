@@ -39,13 +39,13 @@ impl<E: SqlEngine> DevHost<E> {
         let (model, input) = installation(admitted, now);
         let cell = CellStore::provision_definitions(engine, model, &input, &scope.key())
             .map_err(Refusal::host)?;
+        let driver =
+            ActionCell::new(cell, scope.key(), |c| c.payload.clone()).map_err(Refusal::host)?;
         Ok(Self {
-            scope: scope.clone(),
+            scope,
             authorizer: Box::new(crate::authz::DenyAll),
             definitions: RwLock::new(()),
-            cell: Mutex::new(
-                ActionCell::new(cell, scope.key(), |c| c.payload.clone()).map_err(Refusal::host)?,
-            ),
+            cell: Mutex::new(driver),
         })
     }
 
@@ -444,4 +444,3 @@ mod defs_read {
         );
     }
 }
-
