@@ -106,3 +106,7 @@ binding is unchanged. Missing, forged or unpinned origins refuse without writes.
 This expand cut registers and validates authority; evaluation/atomic commit follows.
 CP1-engine uses durable commit_action and store replay. CP1-surface through
 API/MCP/CLI follows the authorized transport adapters; no mock dispatch qualifies.
+
+POST-QUANTITY-READ: the native host exposes its existing verified, bounded quantity
+state to kernel-derived intents. Unsupported hosts return no snapshot and cannot
+activate posting. Pack matching and balance fencing remain kernel obligations.

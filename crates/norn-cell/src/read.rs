@@ -1166,6 +1166,18 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         crate::quantity::version(self.conn, world, ledger)
     }
 
+    /// Read the verified, pack-bounded inputs of one closed quantity intent.
+    ///
+    /// # Errors
+    /// Missing/corrupt state, invalid intent or storage errors.
+    pub fn quantity_state(
+        &self,
+        world: &str,
+        request: &norn_ir::quantity_ledger::QuantityRequest,
+    ) -> Result<norn_kernel::quantity::QuantityState, CellError> {
+        crate::quantity::state(self.conn, world, request)
+    }
+
     /// Read the complete balance CAS set for a quantity intent.
     ///
     /// # Errors
