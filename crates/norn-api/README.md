@@ -44,6 +44,13 @@ HOST-IDENTITY: artifacts, scope and logical time remain the canonical IR/kernel
 types. The API now owns a ring-1 host over ring-1 cells; pure contracts stay here.
 Correspondence: `host::tests`. HTTP reads and action parity follow in later slices.
 
+HOST-SCOPE/HOST-AUTHORITY: scope and `ReadDefinitions` precede store queries (SQL spy); default deny.
+HOST-ADMISSION: one definition epoch covers load and projection; retained versions remain readable.
+HOST-WIRE/HOST-EXACT: raw source/receipt JSON, camelCase, empty collections and exact numeric vectors.
+HOST-REFUSAL: absent version `defs.version_not_found` (404); malformed query `request.invalid` (400).
+HTTP requires an authenticated routing host to strip all client-supplied x-norn-actor
+values and set the header from its authenticated identity; never expose the router
+directly. Host errors conceal diagnostics.
 
 HOST-PROVISION-ATOMIC: initialization, scope binding, initial definitions, model
 snapshot, receipt and ledger publish in one engine transaction. Failure or abrupt
@@ -56,3 +63,13 @@ freshness check, so competing requests cannot both initialize the cell.
 Correspondence: `definitions_install::host_provision_atomic_at_every_storage_boundary`
 injects errors and abrupt subprocess exit after every SQL operation, before
 commit and after commit, then reopens, retries and checks conflicting retries.
+
+HOST-VERSION-ABSENT: every syntactically valid but unrepresentable revision is
+absent (404), including u64::MAX and the first integer above the SQL seam limit.
+HOST-HTTP-WORKER: synchronous store access and complete retained-set admission
+run on the blocking pool, outside the Tokio request worker; actor/scope admission
+still precedes store reads. HTTP correspondence covers allowed/denied actors.
+
+HOST-CACHE-PRIVATE: all definition HTTP responses, including refusals, declare
+`Cache-Control: no-store`; scope/actor-sensitive results never authorize shared
+cache reuse. The HTTP success/refusal matrices assert the header.

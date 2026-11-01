@@ -14,6 +14,7 @@ use crate::{refusal::Refusal, scope::CellScope};
 /// A checked set; construction always runs the shared checker.
 pub struct Admitted {
     pub(crate) model: Model,
+    pub(crate) diagnostics: serde_json::Value,
     pub(crate) layout: String,
     pub(crate) canonical_set: String,
     pub(crate) receipt: String,
@@ -90,6 +91,7 @@ impl Admitted {
             return Err(refused("artifact set has checker errors"));
         }
         Ok(Self {
+            diagnostics: norn_checker::diagnostics_to_json(&checked.diagnostics),
             layout: String::from_utf8(
                 norn_ir::runtime::encode(&layout)
                     .map_err(refused)?
