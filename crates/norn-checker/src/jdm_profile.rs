@@ -1455,6 +1455,20 @@ fn set_finding(
     }
 }
 
+fn fold_helper_matches(fold: &norn_ir::jdm::OrderedFold, target: &ArtifactEnvelope) -> bool {
+    let Ok((input, output)) = norn_expr::schema::fold_step_schemas(fold) else {
+        return false;
+    };
+    let payload = target.payload.to_json_value();
+    let parse = |name| {
+        payload
+            .as_object()
+            .and_then(|fields| fields.get(name))
+            .and_then(|value| norn_expr::schema::Schema::parse(value, name).ok())
+    };
+    parse("inputSchema") == Some(input) && parse("outputSchema") == Some(output)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::indexing_slicing, reason = "unit tests")]
@@ -1667,18 +1681,4 @@ mod tests {
             )]
         );
     }
-}
-
-fn fold_helper_matches(fold: &norn_ir::jdm::OrderedFold, target: &ArtifactEnvelope) -> bool {
-    let Ok((input, output)) = norn_expr::schema::fold_step_schemas(fold) else {
-        return false;
-    };
-    let payload = target.payload.to_json_value();
-    let parse = |name| {
-        payload
-            .as_object()
-            .and_then(|fields| fields.get(name))
-            .and_then(|value| norn_expr::schema::Schema::parse(value, name).ok())
-    };
-    parse("inputSchema") == Some(input) && parse("outputSchema") == Some(output)
 }
