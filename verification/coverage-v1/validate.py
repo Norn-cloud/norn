@@ -84,6 +84,7 @@ MANDATORY = {
     "verification-integrity",
     "kernel-v2",
     "core-physics",
+    "jewelry",
 }
 LAYERS = ("runtime", "model", "proof")
 GATE_ROLES = {
