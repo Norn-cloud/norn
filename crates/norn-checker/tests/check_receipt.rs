@@ -825,6 +825,16 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
 #[test]
 fn receipt_exact_key_order() {
     let artifacts = registry_layer();
+    let body = compact(&receipt(&artifacts)).replace(RECEIPT_FORMAT, "norn-checker/receipt@2");
+    let digest = admission_receipt_sha256(&body).unwrap();
+    verify_admission_receipt(
+        &body,
+        &digest,
+        &envelopes(&artifacts),
+        &[],
+        &ResourceLimitProfile::norn_limits_v1(),
+    )
+    .unwrap();
     let source = serde_json::to_string(&artifacts[0]).unwrap();
     let content = source.get(1..source.len() - 1).unwrap();
     let (first, rest) = content.split_once(',').unwrap();

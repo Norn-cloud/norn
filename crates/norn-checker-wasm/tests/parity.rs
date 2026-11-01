@@ -372,6 +372,9 @@ fn invalid_input_is_an_error() {
     assert!(output_of("artifacts-not-json").starts_with("error: invalid artifacts: "));
     assert!(output_of("context-unknown-member").starts_with("error: invalid context: "));
     assert!(output_of("expression-bad-expected-type").starts_with("error: invalid expectedType: "));
+    let source = read("fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json");
+    let duplicate = source.replacen("\"payload\": {", "\"payload\": {},\"payload\": {", 1);
+    assert!(check_artifact_set_json(&format!("[{duplicate}]"), "null").is_err());
 }
 
 #[test]
