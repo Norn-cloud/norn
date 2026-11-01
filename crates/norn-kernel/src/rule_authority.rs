@@ -187,6 +187,25 @@ pub struct AdmittedStockRule {
 }
 
 impl AdmittedStockRule {
+    pub(crate) fn receipt_binding<X>(
+        &self,
+        scope: &BTreeMap<String, String>,
+    ) -> Result<String, crate::ActionRefusal<X>> {
+        norn_ir::canonical::domain_hash_hex(b"stock.receipt/1\0", &(&self.pin, scope))
+            .map(|pin| format!("stock.post/1:{pin}"))
+            .map_err(|_error| crate::ActionRefusal::InvalidInput {
+                field: "scope".into(),
+            })
+    }
+
+    pub(crate) fn seal(&self, output: DecisionOutput) -> RuleDecision {
+        RuleDecision {
+            rule_id: self.rule_id.clone(),
+            pin: self.pin.clone(),
+            output,
+        }
+    }
+
     /// The admitted action; this immutable view grants no rule seal.
     #[must_use]
     pub const fn action(&self) -> &norn_ir::ActionRoot {
@@ -365,6 +384,22 @@ mod stock_tests {
             world: World::Main,
             consumes: None,
         };
+        let scope = BTreeMap::from([("orgId".into(), "org_demo".into())]);
+        let binding = rule
+            .receipt_binding::<std::convert::Infallible>(&scope)
+            .unwrap();
+        assert_eq!(
+            binding,
+            rule.receipt_binding::<std::convert::Infallible>(&scope)
+                .unwrap(),
+            "POST-RETRY-PIN"
+        );
+        assert_ne!(
+            binding,
+            rule.receipt_binding::<std::convert::Infallible>(&BTreeMap::new())
+                .unwrap(),
+            "POST-RETRY-SCOPE"
+        );
         let mut decision = RuleDecision {
             rule_id: rule.rule_id.clone(),
             pin: "forged".into(),

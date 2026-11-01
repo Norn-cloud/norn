@@ -758,6 +758,89 @@ pub fn plan_stock_effects<X>(
     })
 }
 
+pub(super) type PreparedStockCommit = (
+    crate::PreparedDecision,
+    Vec<crate::cell_host::LinkWrite>,
+    (norn_ir::quantity_ledger::QuantityRequest, String),
+);
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one sealed stock transaction preparation"
+)]
+pub(super) fn prepare_stock_commit<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    snapshot: StockSnapshot,
+    slice: &mut FactSlice,
+    links: &mut Vec<LinkReadExpectation>,
+    output: &norn_ir::DecisionOutput,
+) -> Result<PreparedStockCommit, ActionRefusal<H::Error>> {
+    use norn_ir::quantity_ledger::{
+        QUANTITY_CELL_VERSION, QuantityBalanceVersion, QuantityRequest,
+    };
+    let rule = catalog.checked_stock_rule::<H::Error>(call)?;
+    for (key, state) in &snapshot.facts {
+        super::reconcile_action_target_snapshot::<H::Error>(catalog, slice, key, state)?;
+    }
+    for link in &snapshot.links {
+        super::record_action_link_read(links, &link.source, &link.link, link.targets.clone())?;
+    }
+    let operation = match call
+        .action
+        .stock_post
+        .as_ref()
+        .ok_or_else(|| invalid("missing stock rule"))?
+        .operation
+    {
+        norn_ir::ActionStockOperation::Receipt => StockPostOperation::Receipt,
+        norn_ir::ActionStockOperation::Delivery => StockPostOperation::Delivery,
+    };
+    let posting_id = norn_ir::canonical::domain_hash_hex(
+        b"stock.posting/1\0",
+        &(&call.action.action_id, &call.idempotency_key),
+    )
+    .map_err(|_error| invalid("invalid stock posting identity"))?;
+    let mut plan = plan_stock_effects(&snapshot, operation, &posting_id, output.facts.clone())?;
+    plan.output.commands.clone_from(&output.commands);
+    let mut request = QuantityRequest {
+        version: QUANTITY_CELL_VERSION.into(),
+        ledger_id: plan.ledger_id,
+        balance_versions: vec![],
+        operation: plan.quantity,
+    };
+    let state = host
+        .load_quantity(&request)
+        .map_err(host_failure)?
+        .ok_or_else(|| invalid("stock quantity reads unavailable"))?;
+    let pack = crate::stock_posting::stock_quantity_pack(&plan.unit)
+        .map_err(|_error| invalid("invalid stock unit"))?;
+    if state.pack.as_ref() != Some(&pack) || state.unrestricted_accounts != ["external-source"] {
+        return Err(invalid(
+            "stock quantity configuration differs from admitted pack",
+        ));
+    }
+    request.balance_versions = crate::quantity::quantity_balance_keys(&request, &state)
+        .map_err(|error| ActionRefusal::Decision(crate::DecisionRefusal::Quantity(error)))?
+        .into_iter()
+        .map(|key| QuantityBalanceVersion {
+            version: state.balances.get(&key).map_or(0, |b| b.version),
+            account: key.account,
+            unit: key.unit,
+            layer: key.layer,
+        })
+        .collect();
+    let prepared = crate::prepare_rule_decision(
+        catalog,
+        slice,
+        &call.turn,
+        &rule.seal(plan.output),
+        &BTreeSet::new(),
+    )?;
+    Ok((prepared, plan.links, (request, posting_id)))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(

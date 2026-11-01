@@ -442,6 +442,15 @@ impl ActionCallRecord {
             && self.object == other.object
             && self.input == other.input
             && self.actor == other.actor
+            && (!(self
+                .effect_kind
+                .as_deref()
+                .is_some_and(|k| k.starts_with("stock.post/1:"))
+                || other
+                    .effect_kind
+                    .as_deref()
+                    .is_some_and(|k| k.starts_with("stock.post/1:")))
+                || self.effect_kind == other.effect_kind)
     }
 
     fn binds_same_generated_call(
@@ -909,9 +918,6 @@ where
     let action = call.action;
     if action.stock_post.is_some() {
         catalog.checked_stock_rule::<H::Error>(call)?;
-        return Err(ActionRefusal::UnsupportedEffect {
-            action_id: action.action_id.clone(),
-        });
     }
     if !action.create_links.is_empty()
         && matches!(
@@ -1062,7 +1068,19 @@ where
         ACTION_CALL_TYPE,
         format!("{}/{}", action.action_id, call.idempotency_key),
     );
-    let record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
+    let mut record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
+    let stock_snapshot = if action.stock_post.is_some() {
+        record.effect_kind = Some(
+            catalog
+                .checked_stock_rule::<H::Error>(call)?
+                .receipt_binding(&call.scope)?,
+        );
+        Some(stock::prepare_stock_snapshot(
+            host, catalog, call, authorizer,
+        )?)
+    } else {
+        None
+    };
     let recorded = host.load(&record_key).map_err(host_failure)?;
     if let Some(outcome) = replay(&recorded, &record, &call.idempotency_key)? {
         return Ok(outcome);
@@ -1116,6 +1134,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            stock_snapshot,
         },
         EnvelopePolicy { limits, meter },
     )
@@ -1390,6 +1409,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            stock_snapshot: None,
         },
         EnvelopePolicy { limits, meter },
     )
@@ -3277,6 +3297,7 @@ where
             record_key: record_key.clone(),
             recorded,
             record,
+            stock_snapshot: None,
             series_candidate: Some(candidate),
             remaining_fuel: preparation.remaining_fuel,
         };
@@ -3437,6 +3458,7 @@ struct Pending {
     recorded: FactState,
     record: ActionCallRecord,
     series_candidate: Option<SeriesCandidate>,
+    stock_snapshot: Option<stock::StockSnapshot>,
 }
 
 /// Per-decision limits and, when present, the shared aggregate turn meter.
@@ -3540,14 +3562,15 @@ where
         effective_input,
         mut remaining_fuel,
         target,
-        slice,
+        mut slice,
         reference_only,
-        link_reads,
+        mut link_reads,
         precondition_reads,
         record_key,
         recorded,
         record,
         series_candidate,
+        stock_snapshot,
     } = pending;
     let generated_key = series_candidate.is_some();
     let additional_events = usize::from(generated_key);
@@ -3573,8 +3596,29 @@ where
         commands,
         timers: Vec::new(),
     };
-    let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
-    let mut created_links = Vec::new();
+    let stock = stock_snapshot
+        .map(|snapshot| {
+            stock::prepare_stock_commit(
+                host,
+                catalog,
+                call,
+                snapshot,
+                &mut slice,
+                &mut link_reads,
+                &output,
+            )
+        })
+        .transpose()?;
+    let (mut prepared, mut created_links, stock_quantity) = if let Some(stock) = stock {
+        (stock.0, stock.1, Some(stock.2))
+    } else {
+        (
+            prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?,
+            Vec::new(),
+            None,
+        )
+    };
+    counts.events = prepared.events.len();
     for binding in &call.action.create_links {
         let target_id = effective_input
             .get(&binding.target_id_field)
@@ -3658,7 +3702,10 @@ where
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
-    let result = if let Some((request, key)) = quantity {
+    let result = if let Some(quantity) = stock_quantity {
+        let proof = OwnedRowsCommitProof::new(&commit, limits.max_events, Some(quantity));
+        host.commit_owned_rows(commit, proof)
+    } else if let Some((request, key)) = quantity {
         if let Some(proof) = reference_reads {
             host.commit_action_references(commit, proof, Some((&request, &key)))
         } else {
