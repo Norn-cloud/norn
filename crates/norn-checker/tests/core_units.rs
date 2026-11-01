@@ -124,8 +124,8 @@ fn unit_type(code: &str, system: norn_ir::UnitSystem) -> PropertyType {
 
 fn declaration(ty: PropertyType) -> norn_ir::ArtifactEnvelope {
     let mut artifact = units::pack().expect("pack");
-    artifact.artifact_id = "demo.units".to_owned();
-    artifact.namespace = "demo".to_owned();
+    "demo.units".clone_into(&mut artifact.artifact_id);
+    "demo".clone_into(&mut artifact.namespace);
     artifact.dependencies = vec![norn_ir::ArtifactDependency {
         artifact_id: "core.units".to_owned(),
         kind: norn_ir::ArtifactKind::Entity,
