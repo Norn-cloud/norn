@@ -15,7 +15,9 @@ bun tools/norn-ts/src/cli.ts compile scripts/demo/jewelry.source.ts --org org_de
 printf 'checker-admitted / refused; obligations generated; runtime execution not yet (#341 #342 #343)\n'
 printf 'not yet: #340 #218 (admitted catalog and equivalent governed UI/API/MCP/CLI)\n'
 printf 'Beat 3 — sell → scrap → melt\nnot yet: #216 #341 #342 (see TARGET definitions in scripts/demo/README.md)\n'
-printf 'Beat 4 — laws carry through\nnot yet: #343 #344 (whole-commit conservation and retained-layer overlay refusal)\n'
+printf 'Beat 4 — laws carry through (accepted measurements)\n'
+cargo test --locked -p norn-kernel --test conversion_conservation
+printf 'CURRENT: inherited core measurement law; atomic omitted-loss refusal scenarios passed.\nnot yet: #343 #344 (stock/value effect closure and shared overlay admission)\n'
 printf 'Beat 5 — evidence\nnot yet: #343 #322 #217 (solver counterexample, EN/AR renderer and Guarantees view)\n'
 printf 'Beat 6 — weekly gold scrap yield\n'
 for scenario in INGEST FRESH LINEAGE INCREMENTAL QUARANTINE ASOF RESTATEMENT-DELTA FORECAST PUBLISH-GUARD; do

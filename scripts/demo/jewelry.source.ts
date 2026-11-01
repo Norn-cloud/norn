@@ -4,11 +4,13 @@ import { Norn } from "@norn/authoring"
 // CURRENT admission fragment; full REA composition is TARGET in README.md.
 export const Melt = Norn.type({
   name: "demo.Melt", title: "Melt measurement", version: "0.1.0",
+  implements: ["core.Conversion"],
   properties: Schema.Struct({
     id: Schema.String,
-    input_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
-    output_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
-    loss_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
+    input_quantity: Norn.decimal(3),
+    output_quantity: Norn.decimal(3),
+    loss_quantity: Norn.decimal(3),
+    quantity_unit: Norn.ref("ucum.unit_code"),
     status: Schema.Literals(["draft", "measured", "approved", "posted", "rejected"]),
   }),
   identity: [{ name: "primary", properties: ["id"] }],
