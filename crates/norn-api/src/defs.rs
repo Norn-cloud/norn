@@ -205,3 +205,37 @@ fn action_system_types() -> Vec<norn_ir::ObjectTypeDef> {
     }
     types
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "reserved schema conformance")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reserved_kernel_types_refuse_sqlite_equivalent_tenant_names() {
+        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../../fixtures/engine-alpha/sales-order.definitions.json"
+        ))
+        .expect("authored declarations");
+        for name in ["norn.ActionCall", "norn.Actioncall", "norn.OWNEDROWS"] {
+            let mut artifact = artifacts.first().expect("customer").clone();
+            let mut root: norn_ir::EntityRootV2 =
+                serde_json::from_value(serde_json::to_value(&artifact.payload).expect("entity"))
+                    .expect("typed entity");
+            root.object_type.name = norn_ir::ObjectTypeName(name.into());
+            artifact.payload = norn_ir::ArtifactPayload::Entity(
+                serde_json::from_value(serde_json::to_value(root).expect("entity"))
+                    .expect("payload"),
+            );
+            let source = serde_json::to_string(&vec![artifact]).expect("typed source");
+            let scope = CellScope {
+                org_id: "org_alpha".into(),
+                environment_id: "dev".into(),
+            };
+            let refusal = Admitted::from_source(&source, &scope)
+                .err()
+                .expect("reserved name");
+            assert_eq!(refusal.code, "defs.not_admitted");
+        }
+    }
+}
