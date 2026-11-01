@@ -25,7 +25,9 @@ fn history_capacity<X>(
     if prior
         .checked_add(added)
         .is_none_or(|count| count > MAX_STOCK_HISTORY_EVENTS)
-        || u64::from(non_event).saturating_add(MAX_STOCK_HISTORY_EVENTS as u64) > u64::from(records)
+        || u64::from(non_event)
+            .saturating_add(u64::try_from(MAX_STOCK_HISTORY_EVENTS).unwrap_or(u64::MAX))
+            > u64::from(records)
     {
         return Err(invalid(
             "stock history capacity exceeded; posting activation refused",
