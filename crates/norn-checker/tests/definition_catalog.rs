@@ -1308,7 +1308,13 @@ fn defined_concept_wire_distinguishes_malformed_and_unsupported_semantics() {
             .any(|d| d.code.as_str() == "core.graph.incomplete_classification")
     );
     let wire = serde_json::to_value(&declaration).expect("wire");
+    let positional = json!(["test.Item.entity", "1.0.0", {"kind":"type", "typeName":"test.Item"}]);
+    let mut budget = wire["payload"]["bounds"].clone();
+    budget["decide"] = json!([1, 1, 1]);
     for (field, value) in [
+        ("base", positional.clone()),
+        ("dependencies", json!([positional])),
+        ("bounds", budget),
         ("base", json!(false)),
         ("bounds", json!({})),
         ("predicate", json!(1)),

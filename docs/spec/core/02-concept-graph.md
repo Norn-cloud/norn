@@ -34,7 +34,8 @@ Its strict payload contains `id`, `version`, `base: MemberRef`, `predicate: ZenE
 exact required envelope dependency. Bounds reuse the resource profile's existing fields
 and units, capped by the admitted profile; there is no separate classifier limits type.
 Classifications keep base object IDs, never store writable membership, and trigger no effects.
-Malformed payloads refuse `defined_concept.validation.invalid_payload`.
+Malformed payload objects refuse `defined_concept.validation.invalid_payload`;
+non-object payloads fail envelope decoding with `ir.validation.invalid_envelope`.
 The initial wire-only cut refuses semantic admission with `core.graph.incomplete_classification`;
 GRAPH-DAG-1 admission and GRAPH-CLASS-1 evaluation remove that refusal only for qualified semantics.
 

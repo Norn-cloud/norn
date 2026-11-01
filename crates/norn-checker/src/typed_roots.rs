@@ -1813,8 +1813,14 @@ pub(crate) fn check_typed_root(
             let decoded = norn_canonical::canonical_json_of(&object)
                 .map_err(|error| error.to_string())
                 .and_then(|bytes| {
-                    serde_json::from_slice::<norn_ir::DefinedConceptRoot>(&bytes)
-                        .map_err(|error| error.to_string())
+                    let root: norn_ir::DefinedConceptRoot =
+                        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+                    let encoded = norn_canonical::canonical_json_of(&root)
+                        .map_err(|error| error.to_string())?;
+                    if encoded != bytes {
+                        return Err("payload must use the declared object representation".into());
+                    }
+                    Ok(root)
                 });
             if let Err(error) = decoded {
                 diagnostics.push(invalid_diagnostic(
