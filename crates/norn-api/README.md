@@ -37,7 +37,9 @@ The host admission and authorized GET path follow in the next slice.
 
 Correspondence: `tests/definition_projection.rs` checks synthetic checker receipts,
 key-order independence, semantic changes, exact large integers and scale-28
-boundaries. Numeric admission refusal, scope admission, installed-revision binding
+boundaries. HOST-RECEIPT-EXACT-INTEGER and HOST-RECEIPT-EXACT-DECIMAL use the
+checker source-aware admission path and distinguish both adjacent-literal pairs;
+a present flow source map is retained unchanged. Numeric admission refusal, scope admission, installed-revision binding
 and the definition epoch are host-wiring obligations, not projection guarantees.
 
 HOST-ADMISSION-FLAG: response projection requires the checker receipt's `admitted`

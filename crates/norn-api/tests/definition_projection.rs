@@ -24,15 +24,13 @@ fn checked(number: &str, reverse_keys: bool) -> Result<Admitted, Box<dyn std::er
         prepare_artifact_source(source).map_err(|diagnostics| format!("{diagnostics:?}"))?;
     let artifacts: Vec<norn_ir::ArtifactEnvelope> = vec![prepared.artifact];
     let registry = BTreeSet::new();
-    let context = EntityArtifactSetContext {
-        registry: &registry,
-        base: &[],
-        tenant: None,
-    };
-    let result = check_artifact_set_with_receipt(
-        &artifacts,
-        &context,
+    let result = norn_checker::receipt::check_artifact_sources_with_receipt(
+        &[prepared.source.clone()],
+        &[],
+        &registry,
+        None,
         &ResourceLimitProfile::norn_limits_v1(),
+        None,
     )?;
     assert!(result.receipt.admitted, "{:?}", result.diagnostics);
     Ok(Admitted {
@@ -146,4 +144,48 @@ fn host_admission_flag_requires_an_explicit_true_receipt() {
             norn_api::refusal::Refusal::UNPROVEN_DETAIL
         );
     }
+}
+
+#[test]
+fn host_receipt_exact_integer_and_decimal_conformance() {
+    for (left, right) in [
+        ("9007199254740992", "9007199254740993"),
+        (
+            "0.1234567890123456789012345678",
+            "0.1234567890123456789012345679",
+        ),
+    ] {
+        let first = checked(left, false).unwrap();
+        let second = checked(right, false).unwrap();
+        assert_ne!(first.canonical_set, second.canonical_set);
+        let first = defs_response(&first, 1, 0).unwrap();
+        let second = defs_response(&second, 2, 0).unwrap();
+        assert_ne!(first.receipt_sha256, second.receipt_sha256);
+    }
+}
+
+#[test]
+fn host_receipt_projects_the_checker_flow_source_map() {
+    let mut admitted = checked("25", false).unwrap();
+    let sources = RuntimeValue::from_json_text(&admitted.canonical_set).unwrap();
+    let map = norn_ir::FlowSourceMap {
+        format: norn_ir::FlowSourceMapFormat::V1,
+        flows: vec![],
+    };
+    let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
+        sources.as_array().unwrap(),
+        &[],
+        &BTreeSet::new(),
+        None,
+        &ResourceLimitProfile::norn_limits_v1(),
+        Some(&map),
+    )
+    .unwrap();
+    assert!(checked.receipt.admitted);
+    admitted.receipt = serde_json::from_slice(&checked.receipt.canonical_json().unwrap()).unwrap();
+    admitted.receipt_sha256 = checked.receipt.content_sha256().unwrap();
+    let response = defs_response(&admitted, 1, 0).unwrap();
+    assert_eq!(response.flow_source_map.as_ref(), Some(&map));
+    let wire = serde_json::to_value(response).unwrap();
+    assert_eq!(wire["flowSourceMap"], admitted.receipt["flowSourceMap"]);
 }
