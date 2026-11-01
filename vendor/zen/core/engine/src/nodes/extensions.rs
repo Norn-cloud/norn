@@ -38,4 +38,12 @@ pub trait DecisionContracts: std::fmt::Debug + Send + Sync {
         input: bool,
         meter: Option<&zen_expression::meter::Meter>,
     ) -> Result<(), Box<dyn std::error::Error>>;
+    fn derive(
+        &self,
+        _key: &str,
+        _input: &zen_expression::Variable,
+        _meter: Option<&zen_expression::meter::Meter>,
+    ) -> Option<Result<zen_expression::Variable, Box<dyn std::error::Error>>> {
+        None
+    }
 }

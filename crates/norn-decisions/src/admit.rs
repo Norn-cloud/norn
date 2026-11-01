@@ -175,6 +175,8 @@ impl AdmittedDecision {
         }
 
         let content = graph_content(&root.rule_id, root_graph)?;
+        let loader = Arc::new(loader);
+        let policies = fold_policies(root, sub_decisions, &loader, contracts)?;
         let (slice_schema, event_schema) = decide_input(root)?;
         let output_schema = decide_output(root)?;
         let defaults = defaults(root, &output_schema, exact_defaults)?;
@@ -182,8 +184,8 @@ impl AdmittedDecision {
             rule_id: root.rule_id.clone(),
             binding,
             decision: Decision::from(Arc::new(content))
-                .with_loader(Arc::new(loader))
-                .with_contracts(Arc::new(contracts)),
+                .with_loader(loader)
+                .with_contracts(policies),
             slice_schema: Arc::new(slice_schema),
             event_schema: Arc::new(event_schema),
             output_schema,
@@ -416,13 +418,9 @@ fn validate_graph_expressions(rule_id: &str, graph: &JdmGraph) -> Result<(), Adm
                     )?;
                 }
             }
-            JdmNode::DecisionNode { content, .. } => validate_optional_source(
-                rule_id,
-                &format!("{base}.inputField"),
-                content.input_field.as_deref(),
-                false,
-                &limits,
-            )?,
+            JdmNode::DecisionNode { content, .. } => {
+                validate_call_sources(rule_id, content, &base, &limits)?;
+            }
             JdmNode::InputNode { .. }
             | JdmNode::OutputNode { .. }
             | JdmNode::FunctionNode { .. }
@@ -505,16 +503,22 @@ fn decision_node(rule_id: &str, node: &JdmNode) -> Result<DecisionNode, Admissio
             content: switch_content(content),
         },
         JdmNode::DecisionNode { content, .. } => {
+            if content.key.starts_with('\0')
+                || content.execution_mode == Some(JdmExecutionMode::Loop)
+                    && content.ordered_fold.is_some()
+            {
+                return Err(invalid_schema(
+                    rule_id,
+                    "decisionNode",
+                    "reserved key or fold loop mode",
+                ));
+            }
+            let mut mapped = sub_decision_content(content);
             if content.ordered_fold.is_some() {
-                return Err(AdmissionError::NodeNotAdmitted {
-                    rule_id: rule_id.to_owned(),
-                    node_id: node.id().to_owned(),
-                    node_type: "orderedFold",
-                });
+                mapped.key = Arc::from(crate::fold::fold_key(rule_id, node.id()));
+                mapped.transform_attributes.input_field = None;
             }
-            DecisionNodeKind::DecisionNode {
-                content: sub_decision_content(content),
-            }
+            DecisionNodeKind::DecisionNode { content: mapped }
         }
         JdmNode::FunctionNode { .. } | JdmNode::CustomNode { .. } => {
             return Err(AdmissionError::NodeNotAdmitted {
@@ -889,6 +893,90 @@ fn refuse_nested_folds(
         {
             refuse_nested_folds(child, closure, depth.saturating_add(1))?;
         }
+    }
+    Ok(())
+}
+
+fn fold_policies(
+    root: &RuleRoot,
+    sub_decisions: &BTreeMap<String, RuleRoot>,
+    loader: &Arc<MemoryLoader>,
+    contracts: crate::step::StepContracts,
+) -> Result<Arc<crate::step::StepContracts>, AdmissionError> {
+    let contracts = Arc::new(contracts);
+    let mut folds = BTreeMap::new();
+    for owner in std::iter::once(root).chain(sub_decisions.values()) {
+        let Some(graph) = &owner.graph else {
+            continue;
+        };
+        for node in &graph.nodes {
+            if let JdmNode::DecisionNode { content, .. } = node
+                && let Some(fold) = &content.ordered_fold
+            {
+                let helper = sub_decisions
+                    .get(&content.key)
+                    .ok_or_else(|| invalid_schema(&owner.rule_id, "key", "missing helper"))?;
+                let helper_graph = decision_graph(helper, RuleContractV2::SubDecision)?;
+                refuse_nested_folds(helper, sub_decisions, 0)?;
+                let plan = crate::fold::FoldPlan {
+                    declaration: fold.clone(),
+                    key: content.key.clone(),
+                    selector: content
+                        .input_field
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .ok_or_else(|| {
+                            invalid_schema(
+                                &owner.rule_id,
+                                "inputField",
+                                "fold requires a collection selector",
+                            )
+                        })?,
+                    helper: Decision::from(Arc::new(graph_content(&helper.rule_id, helper_graph)?))
+                        .with_loader(Arc::<MemoryLoader>::clone(loader))
+                        .with_contracts(Arc::<crate::step::StepContracts>::clone(&contracts)),
+                };
+                crate::step::validate_fold(&plan.declaration).map_err(|error| {
+                    invalid_schema(&owner.rule_id, "orderedFold", error.to_string())
+                })?;
+                folds.insert(crate::fold::fold_key(&owner.rule_id, node.id()), plan);
+            }
+        }
+    }
+    if !folds.is_empty() {
+        return Err(AdmissionError::NodeNotAdmitted {
+            rule_id: root.rule_id.clone(),
+            node_id: String::new(),
+            node_type: "orderedFold",
+        });
+    }
+    Ok(Arc::new(crate::step::StepContracts {
+        schemas: contracts.schemas.clone(),
+        folds,
+    }))
+}
+
+fn validate_call_sources(
+    rule_id: &str,
+    content: &JdmSubDecisionContent,
+    base: &str,
+    limits: &ResourceLimitProfile,
+) -> Result<(), AdmissionError> {
+    validate_optional_source(
+        rule_id,
+        &format!("{base}.inputField"),
+        content.input_field.as_deref(),
+        false,
+        limits,
+    )?;
+    if let Some(fold) = &content.ordered_fold {
+        validate_source(
+            rule_id,
+            &format!("{base}.orderedFold.initial"),
+            fold.initial.as_str(),
+            false,
+            limits,
+        )?;
     }
     Ok(())
 }

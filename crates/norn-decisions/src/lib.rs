@@ -66,6 +66,7 @@ mod admit;
 mod convert;
 mod error;
 mod evaluate;
+mod fold;
 mod schema;
 mod step;
 

@@ -18,6 +18,7 @@ use crate::convert::from_variable;
 #[derive(Debug, Default)]
 pub(crate) struct StepContracts {
     pub(crate) schemas: BTreeMap<String, (Schema, Schema)>,
+    pub(crate) folds: BTreeMap<String, crate::fold::FoldPlan>,
 }
 
 impl StepContracts {
@@ -65,6 +66,19 @@ impl StepContracts {
 }
 
 impl DecisionContracts for StepContracts {
+    fn derive(
+        &self,
+        key: &str,
+        input: &Variable,
+        meter: Option<&Meter>,
+    ) -> Option<Result<Variable, Box<dyn std::error::Error>>> {
+        self.folds.get(key).map(|plan| {
+            meter
+                .ok_or_else(|| "fold requires shared fuel".into())
+                .and_then(|meter| plan.run(input, meter, self))
+        })
+    }
+
     fn check(
         &self,
         key: &str,
@@ -139,6 +153,7 @@ mod tests {
         };
         let contracts = StepContracts {
             schemas: BTreeMap::from([("step".into(), (record.clone(), record))]),
+            folds: BTreeMap::new(),
         };
         let meter = Meter::new(100);
         let valid = to_variable(&Value::object([("n", Value::from(1))])).unwrap();

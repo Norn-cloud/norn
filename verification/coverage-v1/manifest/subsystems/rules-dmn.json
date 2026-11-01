@@ -76,6 +76,7 @@
     "crates/norn-decisions/src/convert.rs",
     "crates/norn-decisions/src/error.rs",
     "crates/norn-decisions/src/evaluate.rs",
+    "crates/norn-decisions/src/fold.rs",
     "crates/norn-decisions/src/lib.rs",
     "crates/norn-decisions/src/schema.rs",
     "crates/norn-decisions/src/step.rs",
