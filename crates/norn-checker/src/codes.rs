@@ -423,12 +423,6 @@ pub static REGISTRY: &[CodeEntry] = &[
         "resourceId '{resourceId}' does not match a declared connector resource",
     ),
     introduced(
-        crate::property_codec::INEXACT,
-        Tier::T6,
-        "the number is outside the exact 96-bit decimal profile (scale at most 28)",
-        "0.2.0",
-    ),
-    introduced(
         "consistency.chase.refused",
         Tier::T3,
         "the chase exceeded its {resource} budget of {limit}; consistency is unknown",
@@ -474,6 +468,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "consistency.theory.vacuous",
         Tier::T3,
         "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
+        "0.2.0",
+    ),
+    introduced(
+        crate::property_codec::INEXACT,
+        Tier::T6,
+        "the number is outside the exact 96-bit decimal profile (scale at most 28)",
         "0.2.0",
     ),
     entry(
