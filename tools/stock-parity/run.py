@@ -35,8 +35,6 @@ if __name__ == '__main__':
             driver = Driver(api, fixture, credentials)
             result['initial'] = checkpoint(driver, -1, [])
             for index, step in enumerate(trace['steps']):
-                if step['kind'] == 'concurrent' and len(step['commands']) > 8:
-                    raise ValueError('Barrier exceeds bounded runner concurrency')
                 attempts = driver.step(step)
                 result['checkpoints'].append(checkpoint(driver, index, attempts))
         except Exception as error:
