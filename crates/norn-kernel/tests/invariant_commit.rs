@@ -3064,6 +3064,10 @@ norn_testkit::proptest::proptest! {
             let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
             let key = FactKey::new(ITEM, "bounded");
             let values = object(json!({"item_id":"bounded", "amount":amount, "status":"draft"}));
+            for ty in ["norn.ActionCall", "norn.OwnedRows", "norn.ObservedTombstone", "norn.ObservedSource", "norn.PendingLinks"] {
+                prop_assert!(catalog.governing_laws(&ObjectTypeName(ty.into())).expect("kernel-owned record").is_empty());
+            }
+            prop_assert!(catalog.governing_laws(&ObjectTypeName("unknown.Application".into())).is_err());
             let mut budget = EvaluationBudget::default().units();
             let failures = norn_kernel::governing_laws::evaluate(
                 &catalog, &key, &values, &mut budget,
