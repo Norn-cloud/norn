@@ -2739,7 +2739,7 @@
             "model": [
               {
                 "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
-                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4",
                 "selectors": [
                   "invariant:quantityConserved"
                 ]
@@ -2756,7 +2756,7 @@
               }
             ]
           },
-          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is enrolled separately."
+          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is missing for these obligations."
         },
         {
           "id": "INV-CORE-ESCROW-NON-NEGATIVE",
@@ -2768,7 +2768,7 @@
             "model": [
               {
                 "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
-                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4",
                 "selectors": [
                   "invariant:escrowNonNegative"
                 ]
@@ -2786,7 +2786,7 @@
               }
             ]
           },
-          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is enrolled separately."
+          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is missing for these obligations."
         },
         {
           "id": "INV-CORE-COMMITMENT-COMPLETION",
@@ -2798,11 +2798,12 @@
             "model": [
               {
                 "artifact": "verification/core-physics-v1/models/core-quantity-commitment.qnt",
-                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4",
+                "command": "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4",
                 "selectors": [
                   "invariant:neverDropped",
                   "invariant:terminalAbsorbing",
-                  "invariant:endsByDue"
+                  "invariant:endsByDue",
+                  "invariant:deadlineBreach"
                 ]
               }
             ],
@@ -2819,7 +2820,7 @@
               }
             ]
           },
-          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is enrolled separately."
+          "residual": "Reference evidence only; no Rust refinement is proved. Quantity conservation covers per-resource movements, not transformation coupling. Commitment deadlines assume delivery of the deadline event. Runtime evidence is missing for these obligations."
         }
       ],
       "runtime": {
@@ -2844,7 +2845,7 @@
           "quint typecheck verification/core-physics-v1/models/core-value-ledger.qnt",
           "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
           "quint typecheck verification/core-physics-v1/models/core-quantity-commitment.qnt",
-          "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue --max-steps 4"
+          "quint verify verification/core-physics-v1/models/core-quantity-commitment.qnt --backend apalache --invariants typeOk quantityConserved escrowNonNegative neverDropped terminalAbsorbing endsByDue deadlineBreach --max-steps 4"
         ],
         "generatedArtifacts": [],
         "resultArtifacts": [
