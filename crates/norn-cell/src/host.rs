@@ -1262,6 +1262,7 @@ where
             &[],
             &[],
             &[],
+            None,
         )
     }
 
@@ -1278,7 +1279,7 @@ where
         commit: CellCommit<E, C, I>,
         derived: &[(FactKey, Vec<String>)],
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, derived, &[], &[])
+        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], None)
     }
 
     #[allow(
@@ -1295,6 +1296,7 @@ where
         derived: &[(FactKey, Vec<String>)],
         references: &[norn_kernel::FactExpectation],
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
+        receipt: Option<(&norn_ir::function::Digest, &crate::receipt_store::StoredReceipt)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1391,7 +1393,7 @@ where
                 .with_interfaces(model.interfaces())
                 .with_property_types(model.property_types());
             let model = CommitModel::new(&catalog);
-            match (authorization, owned_rows) {
+            let versions = match (authorization, owned_rows) {
                 (Some(authorization), None) => {
                     check_commit_observed(&commit, &model, &GuardView(reader), authorization)
                 }
@@ -1400,7 +1402,11 @@ where
                 }
                 (None, None) => check_commit(&commit, &model, &GuardView(reader)),
                 (Some(_), Some(_)) => Err(CommitError::ObservationAuthorization),
+            }?;
+            if let Some((reference, stored)) = receipt {
+                crate::receipt_store::claim(reader, &self.scope, reference, stored).map_err(CommitError::Host)?;
             }
+            Ok(versions)
         };
         match self.store.commit_guarded_submitted(
             &batch,
@@ -1589,7 +1595,25 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[])
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None)
+    }
+
+    fn resolve_accepted_receipt(&self, reference: &norn_kernel::receipt_binding::ReceiptReference, manifest: &norn_ir::function::Digest) -> Result<Option<norn_kernel::receipt_binding::ReceiptBinding<norn_kernel::cell_host::JsonObject>>, CellError> {
+        self.bind_function_receipt(reference, manifest)
+    }
+
+    fn commit_accepted_receipt(&mut self, mut commit: CellCommit<E, C, I>, reference: &norn_kernel::receipt_binding::ReceiptReference) -> Result<CommitReceipt, CommitError<CellError>> {
+        let stored = self.stored_function_receipt(reference.digest()).map_err(CommitError::Host)?.ok_or_else(|| CommitError::Host(crate::receipt_store::refused("unknown")))?;
+        if commit.consumes.as_ref().is_some_and(|delivery| delivery != &stored.acceptance.consumed) { return Err(CommitError::ObservationAuthorization); }
+        let state_key = FactKey::new("norn.FunctionCommand", &stored.receipt.command_id);
+        if commit.writes.iter().any(|write| write.key == state_key) { return Err(CommitError::ObservationAuthorization); }
+        let expected = stored.acceptance.reads.iter().find(|read| read.key == state_key).ok_or(CommitError::ObservationAuthorization)?.expected;
+        let mut values = self.load(&state_key).map_err(CommitError::Host)?.values.ok_or(CommitError::ObservationAuthorization)?;
+        values.insert("state".into(), to_runtime(&stored.acceptance.state).map_err(CommitError::Host)?);
+        commit.writes.push(norn_kernel::FactWrite { key: state_key, expected, mutation: FactMutation::Put { values } });
+        let mut accepted = stored.acceptance.commit(commit.writes, commit.events, commit.effects).map_err(|_| CommitError::ObservationAuthorization)?;
+        accepted.reads.extend(commit.reads); accepted.links = commit.links; accepted.link_reads = commit.link_reads;
+        self.commit_with_authorization(accepted, None, None, None, &[], &[], &[], Some((reference.digest(), &stored)))
     }
 
     fn commit_action_references(
@@ -1609,6 +1633,7 @@ where
             &[],
             proof.reference_reads(),
             proof.property_reads(),
+            None,
         )
     }
 
@@ -1626,7 +1651,7 @@ where
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, Some(proof), None, &[], &[], &[])
+        self.commit_with_authorization(commit, None, Some(proof), None, &[], &[], &[], None)
     }
 
     fn commit_observed(
@@ -1650,6 +1675,7 @@ where
             &[],
             &references,
             &[],
+            None,
         )
     }
 

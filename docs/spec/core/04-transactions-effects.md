@@ -72,3 +72,5 @@ fail-closed until the receipt's single-use consumption and all action effects ca
 be fenced in one transaction, with no partial persistence on refusal.
 
 RECEIPT-STORE-1: only authenticated reconciliation of the cell’s recorded performer result may populate its scoped, persisted receipt store. Intake records source receipt and knowledge time; it grants no action/publication authority. Unknown, forged, wrong-scope or differently recorded results refuse without a write. Predicate and collection freshness adapters are currently unavailable and refuse closed. Generic event export does not restore private receipt authority.
+
+RECEIPT-ONCE-1: SqliteCell resolves references only from its authenticated scoped store. The accepting transaction checks the intake frontier, claims one unconsumed reference, consumes its performer delivery and writes the accepted command state with the action effects. Any refusal rolls back the claim and effects; replay, unknown, stale or mismatched manifest references refuse. Unsupported hosts refuse. This host boundary alone does not open acceptReceipt action execution or publication.
