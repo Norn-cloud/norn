@@ -1,4 +1,4 @@
-//! Correspondence boundary for field_authority.ruleAuthorityIsKernelSealed.
+//! Correspondence boundary for `field_authority.ruleAuthorityIsKernelSealed`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -108,8 +108,8 @@ pub fn evaluate_rule(
 ///
 /// # Errors
 /// `decision.invalid_output` for absent or changed rule authority, otherwise
-/// the shared decision admission refusal. Caller-supplied DecisionOutput
-/// continues through prepare_decision without rule authority.
+/// the shared decision admission refusal. Caller-supplied `DecisionOutput`
+/// continues through `prepare_decision` without rule authority.
 pub fn prepare_rule_decision<X>(
     catalog: &TypeCatalog<'_>,
     slice: &FactSlice,
@@ -117,10 +117,10 @@ pub fn prepare_rule_decision<X>(
     decision: &RuleDecision,
     source_owned_targets: &BTreeSet<FactKey>,
 ) -> Result<PreparedDecision, DecisionRefusal<X>> {
-    if !catalog
+    if catalog
         .rules
         .get(decision.rule_id.as_str())
-        .is_some_and(|rule| rule.pin == decision.pin)
+        .is_none_or(|rule| rule.pin != decision.pin)
     {
         return Err(DecisionRefusal::InvalidOutput {
             reason: "rule result does not match the admitted rule identity and definition pin"

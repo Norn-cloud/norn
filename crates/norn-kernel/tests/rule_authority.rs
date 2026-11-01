@@ -5,7 +5,7 @@
     reason = "integration-test fixture setup and assertions"
 )]
 
-//! Correspondence for field_authority.exactRuleBindingTest and forgedOriginRefusedTest.
+//! Correspondence for `field_authority.exactRuleBindingTest` and `forgedOriginRefusedTest`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
