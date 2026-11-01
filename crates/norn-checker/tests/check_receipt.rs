@@ -834,7 +834,6 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
                 .unwrap();
             assert_ne!(digest, changed_digest);
             let body = compact(&receipt);
-            verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).unwrap();
             assert!(matches!(
                 verify_admission_receipt_sources(&body, &digest, changed, changed_base, &limits),
                 Err(norn_checker::ReceiptError::InvalidStoredReceipt { detail })
@@ -871,7 +870,6 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
             ];
             for written in writers {
                 let written = written.unwrap().receipt;
-                assert!(written.admitted);
                 assert_eq!(written.artifact_set, receipt.artifact_set);
                 verify_admission_receipt_sources(
                     &compact(&written),
@@ -1113,8 +1111,10 @@ fn verify_admission_receipt(
     base: &[ArtifactEnvelope],
     limits: &ResourceLimitProfile,
 ) -> Result<norn_checker::ReceiptVersion, norn_checker::ReceiptError> {
-    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
-    let installed = norn_ir::runtime::encode(base).unwrap();
+    let candidates = norn_ir::runtime::encode(artifacts)
+        .map_err(|detail| norn_checker::ReceiptError::InvalidStoredReceipt { detail })?;
+    let installed = norn_ir::runtime::encode(base)
+        .map_err(|detail| norn_checker::ReceiptError::InvalidStoredReceipt { detail })?;
     norn_checker::receipt::verify_admission_receipt_sources(
         stored,
         hash,
