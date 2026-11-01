@@ -119,11 +119,14 @@ fn raw_observation_cursor_is_recorded_verbatim() {
     assert_eq!(
         observation.cursor,
         Some(json!({
+            "feed": "documents",
             "doctype": "Sales Order",
             "modified": "2026-10-01 09:30:00.100000",
             "name": "SO-0001"
         }))
     );
+    let _: norn_dataplane::SweepCursor =
+        serde_json::from_value(observation.cursor.clone().unwrap()).unwrap();
     assert_eq!(
         observation.pipeline_version,
         "norn-dataplane.frappe-sweep/1"
