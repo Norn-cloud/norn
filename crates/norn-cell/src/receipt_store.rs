@@ -40,10 +40,11 @@ struct ReceiptView<'a, 'b, S: SqlEngine>(&'a StoreReader<'b, S>);
 impl<S: SqlEngine> StateView for ReceiptView<'_, '_, S> {
     type Error = CellError;
     fn fact_version(&self, key: &FactKey) -> Result<FactVersion, CellError> {
-        Ok(FactVersion(
-            self.0
-                .version(MAIN_WORLD, key.object_type.as_str(), &key.key)?,
-        ))
+        Ok(FactVersion(self.0.version(
+            MAIN_WORLD,
+            key.object_type.as_str(),
+            &key.key,
+        )?))
     }
     fn predicate_members(&self, _: &PredicatePin) -> Result<Vec<MemberPin>, CellError> {
         Err(refused("predicate_adapter_unavailable"))
