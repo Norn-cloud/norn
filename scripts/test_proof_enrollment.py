@@ -144,7 +144,9 @@ class CoverageLayoutTests(unittest.TestCase):
                             other.write_text("{}")
                         else:
                             other.mkdir()
-                    with self.assertRaises(coverage_manifest.InvalidCoverageLayout):
+                            (other / "index.json").write_text("{}")
+                    expected = {"stray": "unknown coverage entries", "duplicate-key": "duplicate JSON key", "symlink": "not a regular file", "duplicate-id": "duplicate subsystem"}[mutation]
+                    with self.assertRaisesRegex(coverage_manifest.InvalidCoverageLayout, expected):
                         coverage_manifest.load(target)
 
     def test_entry_identity_and_envelope_refusals(self):
