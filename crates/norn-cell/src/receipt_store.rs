@@ -627,11 +627,21 @@ mod tests {
         );
         assert_receipt_retries(&mut cell, &catalog, &mut request);
     }
-    fn assert_receipt_retries(cell: &mut Cell, catalog: &norn_kernel::TypeCatalog<'_>, request: &mut norn_kernel::ActionCall<'_>) {
-        use norn_kernel::{commit_action, ActionOutcome};
+    fn assert_receipt_retries(
+        cell: &mut Cell,
+        catalog: &norn_kernel::TypeCatalog<'_>,
+        request: &mut norn_kernel::ActionCall<'_>,
+    ) {
+        use norn_kernel::{ActionOutcome, commit_action};
         let published = cell.store().verified_head().expect("head");
-        for world in [norn_kernel::World::Fork { id: norn_kernel::WorldId("scenario".into()) },
-            norn_kernel::World::Historical { commit: norn_kernel::CommitId("history".into()) }] {
+        for world in [
+            norn_kernel::World::Fork {
+                id: norn_kernel::WorldId("scenario".into()),
+            },
+            norn_kernel::World::Historical {
+                commit: norn_kernel::CommitId("history".into()),
+            },
+        ] {
             request.turn.world = world;
             assert!(norn_kernel::commit_action(cell, catalog, request, &ActionAllow).is_err());
             assert_eq!(cell.store().verified_head().expect("head"), published);
