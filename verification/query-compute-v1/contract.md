@@ -59,7 +59,8 @@ publication; budget exhaustion refuses rather than returning a partial total.
 Effective model contracts and tenant scope must match. The trusted host supplies
 visibility, source progress and Core 07 exclusions; this adds no quality law or
 permission authority. Required source partitions retain opaque cursor vectors;
-missing coverage/quarantine is incomplete, aged heartbeats are stale.
+missing coverage/quarantine is incomplete; heartbeat lag above the declared
+maximum, or a future heartbeat, is stale. Bound tenant scope is checked before scanning even an empty population.
 The envelope binds actual ledger/knowledge revision, model/declarations, window,
 mapping/population/epoch, contributions and frontier. Historical knowledge
 selection refuses; retained old results are not a historical-query API.
