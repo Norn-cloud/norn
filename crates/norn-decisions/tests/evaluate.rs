@@ -877,13 +877,12 @@ fn folded(
     Ok(result.output.commands[0]["state"].clone())
 }
 
-#[test]
-fn declared_capacity_allocation_uses_order_and_preserves_residuals() {
+fn capacity_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
     let item = closed(&json!({"id":{"type":"string"},"capacity":{"type":"integer"}}));
     let state = closed(
         &json!({"demand":{"type":"integer"},"residual":{"type":"integer"},"allocated":{"type":"array","items":{"type":"integer"}}}),
     );
-    let rules = fold_rules(
+    fold_rules(
         &item,
         &state,
         &[
@@ -897,7 +896,12 @@ fn declared_capacity_allocation_uses_order_and_preserves_residuals() {
                 ("allocated", "flatten([accumulator.allocated, [taken]])"),
             ],
         ],
-    );
+    )
+}
+
+#[test]
+fn declared_capacity_allocation_uses_order_and_preserves_residuals() {
+    let rules = capacity_fold();
     let initial = json!({"demand":7,"residual":0,"allocated":[]});
     let expected = value(&json!({"demand":0,"residual":3,"allocated":[5,2]}));
     for items in [
