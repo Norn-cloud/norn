@@ -163,6 +163,8 @@ fn checked_scrap_yield_submission_is_mapped_then_quarantined_by_the_cell() {
             if artifact.artifact_id.starts_with("demo.") || ["core.value_types.entity", "std.value_types.entity", "core.Agent.interface", "core.AgentRole.interface", "core.Resource.interface", "core.EconomicEvent.interface", "core.Commitment.interface", "core.Hold.interface", "core.LedgerEffect.interface", "core.Claim.interface"].contains(&artifact.artifact_id.as_str()) {artifacts.push(artifact);}
         }
     }
+    let diagnostics = norn_checker::check_artifact_set(&artifacts, &norn_checker::EntityArtifactSetContext {registry:&std::collections::BTreeSet::new(),base:&[],tenant:None});
+    assert!(!diagnostics.iter().any(norn_checker::Diagnostic::is_error), "{diagnostics:#?}");
     let sources: Vec<_> = artifacts.iter().map(|artifact| norn_ir::runtime::encode(artifact).expect("source")).collect();
     let definitions = String::from_utf8(RuntimeValue::Array(sources).canonical_json().expect("canonical definitions")).expect("UTF8");
     let mut objects = Vec::new(); let mut interfaces = Vec::new(); let mut properties = Vec::new();
