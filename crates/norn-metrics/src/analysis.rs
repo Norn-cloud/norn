@@ -267,8 +267,12 @@ fn fit(pairs: &[(f64, f64)], alpha: f64) -> Result<OlsReport, AnalysisError> {
             )
         })
         .collect();
+    let syy = pairs
+        .iter()
+        .map(|p| ((p.1 - origin_y) - centered_y).powi(2))
+        .sum::<f64>();
     let sse = residuals.iter().map(|p| p.1.powi(2)).sum::<f64>();
-    if !sse.is_finite() || sse <= 0.0 {
+    if !sse.is_finite() || !syy.is_finite() || sse <= syy * (16.0 * f64::EPSILON).powi(2) {
         return Err(AnalysisError::Data("zero or unstable residual variance"));
     }
     let variance = sse / (n - 2.0);
