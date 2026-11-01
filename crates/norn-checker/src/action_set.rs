@@ -1861,13 +1861,15 @@ impl<'a> Admission<'a> {
     }
 
     /// The definition an entity artifact id declares (mapping targets).
-    pub(crate) fn declared_by(&self, artifact_id: &str) -> Option<AdmittedType<'_, 'a>> {
-        let mut definitions = self
-            .model
-            .by_name
-            .values()
-            .flatten()
-            .filter(|defined| defined.artifact.artifact_id == artifact_id);
+    pub(crate) fn declared_by(
+        &self,
+        artifact_id: &str,
+        version: Option<&str>,
+    ) -> Option<AdmittedType<'_, 'a>> {
+        let mut definitions = self.model.by_name.values().flatten().filter(|defined| {
+            defined.artifact.artifact_id == artifact_id
+                && version.is_none_or(|version| defined.artifact.version == version)
+        });
         let defined = definitions.next()?;
         definitions
             .next()
