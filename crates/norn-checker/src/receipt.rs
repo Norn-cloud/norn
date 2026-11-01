@@ -298,7 +298,6 @@ impl From<CanonicalJsonError> for ReceiptError {
 }
 
 /// Retained exact candidate and base sources, prepared together for receipt issuance.
-/// There is deliberately no constructor from `ArtifactEnvelope` projections.
 #[derive(Debug, Clone)]
 pub struct ReceiptSources {
     artifacts: Vec<ArtifactEnvelope>,
