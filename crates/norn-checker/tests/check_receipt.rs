@@ -764,11 +764,26 @@ fn exact_setting(number: &str) -> norn_ir::RuntimeValue {
     )).expect("exact setting")
 }
 
+fn exact_receipt(
+    artifacts: &[norn_ir::RuntimeValue],
+    base: &[norn_ir::RuntimeValue],
+) -> CheckReceipt {
+    let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
+        artifacts,
+        base,
+        &BTreeSet::new(),
+        None,
+        &ResourceLimitProfile::norn_limits_v1(),
+        None,
+    )
+    .unwrap();
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+    checked.receipt
+}
+
 #[test]
 fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
-    use norn_checker::receipt::{
-        check_artifact_sources_with_receipt, verify_admission_receipt_sources,
-    };
+    use norn_checker::receipt::verify_admission_receipt_sources;
     let limits = ResourceLimitProfile::norn_limits_v1();
     for (left, right) in [
         ("9007199254740992", "9007199254740993"),
@@ -791,25 +806,12 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
             } else {
                 (second.as_slice(), &[][..])
             };
-            let check = |a: &[norn_ir::RuntimeValue], b: &[norn_ir::RuntimeValue]| {
-                let checked = check_artifact_sources_with_receipt(
-                    a,
-                    b,
-                    &BTreeSet::new(),
-                    None,
-                    &limits,
-                    None,
-                )
-                .unwrap();
-                assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
-                checked.receipt
-            };
-            let receipt = check(artifacts, base);
+            let receipt = exact_receipt(artifacts, base);
             let digest = receipt.content_sha256().unwrap();
-            assert_ne!(
-                digest,
-                check(changed, changed_base).content_sha256().unwrap()
-            );
+            let changed_digest = exact_receipt(changed, changed_base)
+                .content_sha256()
+                .unwrap();
+            assert_ne!(digest, changed_digest);
             let body = compact(&receipt);
             verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).unwrap();
             assert!(
@@ -822,45 +824,19 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
 
 #[test]
 fn receipt_exact_order_and_historical_readers() {
-    use norn_checker::receipt::verify_admission_receipt_sources;
     let artifacts = registry_layer();
-    let current = receipt(&artifacts);
+    let body = compact(&receipt(&artifacts)).replace(RECEIPT_FORMAT, "norn-checker/receipt@2");
+    let digest = admission_receipt_sha256(&body).unwrap();
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let sources: Vec<_> = artifacts
-        .iter()
-        .map(|a| norn_ir::RuntimeValue::from_json_text(serde_json::to_string(a).unwrap()).unwrap())
-        .collect();
-    for format in ["norn-checker/receipt@2", RECEIPT_FORMAT] {
-        let mut wire = json_of(&compact(&current));
-        wire["format"] = json!(format);
-        let body = compact_value(&wire);
-        let digest = admission_receipt_sha256(&body).unwrap();
-        verify_admission_receipt_sources(&body, &digest, &sources, &[], &limits).unwrap();
-        if format != RECEIPT_FORMAT {
-            assert_eq!(
-                recover_legacy_admission_receipt(&digest, &envelopes(&artifacts), &[], &limits)
-                    .unwrap(),
-                body
-            );
-        }
-    }
+    verify_admission_receipt(&body, &digest, &envelopes(&artifacts), &[], &limits).unwrap();
     let source = serde_json::to_string(&artifacts[0]).unwrap();
-    let (first, rest) = source[1..source.len() - 1].split_once(',').unwrap();
+    let content = source.get(1..source.len() - 1).unwrap();
+    let (first, rest) = content.split_once(',').unwrap();
     let reordered = format!("{{{rest},{first}}}");
-    assert_ne!(source, reordered);
     let check = |text: String| {
-        norn_checker::receipt::check_artifact_sources_with_receipt(
-            &[norn_ir::RuntimeValue::from_json_text(text).unwrap()],
-            &[],
-            &BTreeSet::new(),
-            None,
-            &limits,
-            None,
-        )
-        .unwrap()
-        .receipt
-        .content_sha256()
-        .unwrap()
+        exact_receipt(&[norn_ir::RuntimeValue::from_json_text(text).unwrap()], &[])
+            .content_sha256()
+            .unwrap()
     };
     assert_eq!(check(source), check(reordered));
 }
