@@ -137,6 +137,11 @@ const fn warning_introduced(
 /// Every diagnostic code the checker can emit, sorted by code.
 pub static REGISTRY: &[CodeEntry] = &[
     entry(
+        "definition.text.not_nfc",
+        Tier::T0,
+        "definition text at {path} must already be Unicode NFC",
+    ),
+    entry(
         "action.validation.command_environment_underivable",
         Tier::T2,
         "outbound command expressions require an object input schema with a derivable expression environment",
