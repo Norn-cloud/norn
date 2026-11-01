@@ -1,9 +1,21 @@
 {
   "obligations": [
-    "INV-VER-DIFFERENTIAL-REFINEMENT",
-    "INV-VER-NO-PROOF-HOLES"
+    "INV-VER-NO-PROOF-HOLES",
+    "INV-VER-DIFFERENTIAL-REFINEMENT"
   ],
   "obligationClaims": [
+    {
+      "id": "INV-VER-NO-PROOF-HOLES",
+      "runtime": "missing",
+      "model": "deferred",
+      "proof": "missing",
+      "residual": "The mandatory static gate inventories every promoted handwritten Lean and F* source, requires exact Lean warning-as-error commands, rejects Lean sorry/admit/axiom/local warning disablement and F* source or command admission flags, requires an explicit trusted-assumption manifest, and scans every declared hax-generated Norn_ir.fst evidence artifact after extraction. A post-run gate also binds every cited test selector to an exact observed passing Rust or Bun test name in the owning command log. These are finite source/governance and execution-attestation checks, not proofs of the Lean/F*/SMT/toolchain implementation, translator, operating system, hardware, or host. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "evidence": {
+        "runtime": [],
+        "model": [],
+        "proof": []
+      }
+    },
     {
       "id": "INV-VER-DIFFERENTIAL-REFINEMENT",
       "runtime": "partial",
@@ -31,46 +43,34 @@
         ],
         "proof": []
       }
-    },
-    {
-      "id": "INV-VER-NO-PROOF-HOLES",
-      "runtime": "missing",
-      "model": "deferred",
-      "proof": "missing",
-      "residual": "The mandatory static gate inventories every promoted handwritten Lean and F* source, requires exact Lean warning-as-error commands, rejects Lean sorry/admit/axiom/local warning disablement and F* source or command admission flags, requires an explicit trusted-assumption manifest, and scans every declared hax-generated Norn_ir.fst evidence artifact after extraction. A post-run gate also binds every cited test selector to an exact observed passing Rust or Bun test name in the owning command log. These are finite source/governance and execution-attestation checks, not proofs of the Lean/F*/SMT/toolchain implementation, translator, operating system, hardware, or host. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
-      "evidence": {
-        "runtime": [],
-        "model": [],
-        "proof": []
-      }
     }
   ],
   "runtime": {
     "status": "partial",
     "artifacts": [
-      "crates/norn-checker/tests/quantity_ledger.rs",
-      "crates/norn-checker/tests/quantity_ledger_properties.rs",
       "scripts/check-proof-holes.py",
-      "scripts/check-rust-extraction-tools.sh",
-      "scripts/check-verification-tools.sh",
-      "scripts/proof_enrollment.py",
-      "scripts/test_proof_enrollment.py",
       "scripts/validate-executed-test-selectors.py",
       "verification/coverage-v1/negative_canaries.py",
       "verification/coverage-v1/trusted-assumptions.json",
+      "crates/norn-checker/tests/quantity_ledger_properties.rs",
+      "scripts/check-rust-extraction-tools.sh",
+      "crates/norn-checker/tests/quantity_ledger.rs",
+      "scripts/check-verification-tools.sh",
+      "verification/stripmine-2026-08-22/scripts/validate.sh",
       "verification/coverage-v1/validate.py",
-      "verification/stripmine-2026-08-22/scripts/validate.sh"
+      "scripts/proof_enrollment.py",
+      "scripts/test_proof_enrollment.py"
     ],
     "commands": [
-      "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
-      "python3 scripts/check-proof-holes.py",
-      "python3 scripts/test_proof_enrollment.py",
-      "python3 scripts/validate-executed-test-selectors.py --profile fast",
-      "python3 scripts/validate-executed-test-selectors.py",
-      "python3 verification/coverage-v1/negative_canaries.py",
-      "python3 verification/coverage-v1/validate.py",
+      "scripts/check-verification-tools.sh",
       "scripts/check-rust-extraction-tools.sh",
-      "scripts/check-verification-tools.sh"
+      "python3 scripts/test_proof_enrollment.py",
+      "python3 verification/coverage-v1/validate.py",
+      "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+      "python3 scripts/validate-executed-test-selectors.py",
+      "python3 scripts/validate-executed-test-selectors.py --profile fast",
+      "python3 scripts/check-proof-holes.py",
+      "python3 verification/coverage-v1/negative_canaries.py"
     ],
     "generatedArtifacts": [],
     "resultArtifacts": []
@@ -79,9 +79,9 @@
     "status": "partial",
     "bound": "finite promoted proof inventory plus the currently declared generic quantity and rules differential corpora; other proof-bearing components remain outside a uniform generated differential harness",
     "artifacts": [
-      "verification/archive/rules-dmn-v1/fixtures/conformance.json",
       "verification/coverage-v1/trusted-assumptions.json",
-      "verification/stripmine-2026-08-22/fixtures/quantity-ledger.json"
+      "verification/stripmine-2026-08-22/fixtures/quantity-ledger.json",
+      "verification/archive/rules-dmn-v1/fixtures/conformance.json"
     ],
     "commands": [
       "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary"
@@ -97,9 +97,9 @@
     "resultArtifacts": []
   },
   "limitations": [
-    "Differential refinement is uneven: rules and accounting have finite/reference comparisons and two predicates are extracted, while most retained Rust state machines still have independent formal references rather than machine-checked implementation correspondence.",
+    "Warning-as-error plus lexical scanning excludes admitted source holes in the promoted finite corpus, but it does not establish compiler, kernel, solver, translator, operating-system, hardware, or dependency soundness.",
     "The trusted-assumption manifest records the current external boundary; independent toolchain reproduction and negative canary proofs are still needed for stronger supply-chain assurance.",
-    "Warning-as-error plus lexical scanning excludes admitted source holes in the promoted finite corpus, but it does not establish compiler, kernel, solver, translator, operating-system, hardware, or dependency soundness."
+    "Differential refinement is uneven: rules and accounting have finite/reference comparisons and two predicates are extracted, while most retained Rust state machines still have independent formal references rather than machine-checked implementation correspondence."
   ],
   "sourceFiles": [
     "crates/norn-authz/tests/compile.rs",
@@ -139,7 +139,6 @@
     "crates/norn-checker/src/action_set.rs",
     "crates/norn-checker/src/codes.rs",
     "crates/norn-checker/src/connector_path.rs",
-    "crates/norn-checker/src/controls.rs",
     "crates/norn-checker/src/definitions_diff.rs",
     "crates/norn-checker/src/deontic.rs",
     "crates/norn-checker/src/diagnostic.rs",
@@ -172,12 +171,12 @@
     "crates/norn-checker/src/lint/smells.rs",
     "crates/norn-checker/src/markings.rs",
     "crates/norn-checker/src/metric.rs",
+    "crates/norn-checker/src/metric/compute.rs",
     "crates/norn-checker/src/metric_interchange.rs",
     "crates/norn-checker/src/naming_series.rs",
     "crates/norn-checker/src/norm_precedence.rs",
     "crates/norn-checker/src/object_types.rs",
     "crates/norn-checker/src/obligations.rs",
-    "crates/norn-checker/src/obligations/induction.rs",
     "crates/norn-checker/src/property_codec.rs",
     "crates/norn-checker/src/property_types.rs",
     "crates/norn-checker/src/receipt.rs",
@@ -260,10 +259,8 @@
     "crates/norn-expr/tests/support/mod.rs",
     "crates/norn-expr/tests/type_env.rs",
     "crates/norn-graph/tests/algorithms.rs",
-    "crates/norn-ir/src/entity_v2/controls.rs",
     "crates/norn-ir/tests/access_literals.rs",
     "crates/norn-ir/tests/artifact_governance.rs",
-    "crates/norn-ir/tests/controls.rs",
     "crates/norn-ir/tests/data_quality_finding.rs",
     "crates/norn-ir/tests/entitlement.rs",
     "crates/norn-ir/tests/entity_v2_inheritance.rs",
@@ -358,7 +355,6 @@
     "scripts/verify-kernel-l1-version-body.py",
     "scripts/verify-promoted-subsystems.sh",
     "scripts/write-verification-result.py",
-    "tools/norn-ts/fixtures/stock/stock.source.ts",
     "tools/norn-ts/fixtures/translation-validation/markings.source.ts",
     "tools/norn-ts/src/builder/access.ts",
     "tools/norn-ts/src/builder/action.ts",
@@ -408,7 +404,6 @@
     "tools/norn-ts/test/law.test.ts",
     "tools/norn-ts/test/profile-corpus.test.ts",
     "tools/norn-ts/test/schema-lowering.test.ts",
-    "tools/norn-ts/test/stock-definitions.test.ts",
     "tools/norn-ts/test/temporal-enum.test.ts",
     "tools/norn-ts/test/translation-validation.test.ts",
     "tools/norn-ts/test/vertical-fixture.test.ts",
@@ -455,6 +450,12 @@
     "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
-    "verification/stripmine-2026-08-22/scripts/validate.sh"
+    "verification/stripmine-2026-08-22/scripts/validate.sh",
+    "tools/norn-ts/fixtures/stock/stock.source.ts",
+    "tools/norn-ts/test/stock-definitions.test.ts",
+    "crates/norn-checker/src/obligations/induction.rs",
+    "crates/norn-checker/src/controls.rs",
+    "crates/norn-ir/src/entity_v2/controls.rs",
+    "crates/norn-ir/tests/controls.rs"
   ]
 }
