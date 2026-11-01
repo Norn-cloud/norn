@@ -413,6 +413,13 @@ pub(crate) fn check_property_shape(
             span_at(pointer, &["id"]),
         ));
     }
+    if property.property_type.contains_decimal_binding() {
+        out.push(error(
+            crate::property_types::codes::UNIT_BINDING_REQUIRED,
+            "stored properties require concrete Decimal units and scales".to_owned(),
+            span_at(pointer, &["type"]),
+        ));
+    }
     check_type_members(pointer, &property.property_type, out);
     property_types::check_record_refs(pointer, &property.property_type, catalog, registry, out);
     let resolved = resolve_type(&property.property_type, catalog, registry);

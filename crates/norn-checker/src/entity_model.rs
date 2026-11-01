@@ -1752,6 +1752,7 @@ impl<'a> Checker<'a, '_> {
             .flat_map(|interface| interface.links.iter().map(|link| link.id.as_str()))
             .collect();
 
+        let mut decimal_bindings = BTreeMap::new();
         for (position, requirement) in &all {
             let Some(position) = position else { continue };
             let id = &requirement.property.id;
@@ -1762,7 +1763,7 @@ impl<'a> Checker<'a, '_> {
             let interface = requirement.interface.as_str();
             let Some(member) = table.get(id) else {
                 self.out.push(error(
-                    codes::MISSING_INTERFACE_PROPERTY,
+                    if matches!(requirement.property.property_type, PropertyType::DecimalBinding { .. }) { crate::property_types::codes::UNIT_BINDING_REQUIRED } else { codes::MISSING_INTERFACE_PROPERTY },
                     format!(
                         "interface {interface:?} requires property {:?}, which the type neither declares nor inherits",
                         id.as_str()
@@ -1771,6 +1772,34 @@ impl<'a> Checker<'a, '_> {
                 ));
                 continue;
             };
+            if let PropertyType::DecimalBinding { group } = &requirement.property.property_type {
+                let TypeResolution::Base(PropertyType::Decimal {
+                    scale,
+                    unit: Some(unit),
+                    ..
+                }) = member.ty.resolution
+                else {
+                    self.out.push(error(
+                        crate::property_types::codes::UNIT_BINDING_REQUIRED,
+                        "interface Decimal requires an explicit concrete unit and scale".to_owned(),
+                        at,
+                    ));
+                    continue;
+                };
+                let key = (requirement.interface, group);
+                let binding = (scale.0, unit.clone());
+                if decimal_bindings
+                    .get(&key)
+                    .is_some_and(|previous| previous != &binding)
+                {
+                    self.out.push(error(
+                        crate::property_types::codes::UNIT_MISMATCH,
+                        "interface Decimal group requires the same unit and scale".to_owned(),
+                        at.clone(),
+                    ));
+                }
+                decimal_bindings.insert(key, binding);
+            }
             match narrowing(&member.shape(), &requirement.shape()) {
                 Narrowing::TypeMismatch => self.out.push(error(
                     codes::INTERFACE_PROPERTY_TYPE_MISMATCH,
@@ -2228,6 +2257,10 @@ fn type_narrows(sub: &Shape<'_, '_>, sup: &Shape<'_, '_>) -> Option<bool> {
 
 fn base_narrows(narrow: &PropertyType, wide: &PropertyType) -> bool {
     match (narrow, wide) {
+        (
+            PropertyType::Decimal { unit: Some(_), .. } | PropertyType::DecimalBinding { .. },
+            PropertyType::DecimalBinding { .. },
+        ) => true,
         (PropertyType::Text { format: narrow }, PropertyType::Text { format: wide }) => {
             wide.is_none() || narrow == wide
         }
