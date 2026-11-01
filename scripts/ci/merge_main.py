@@ -73,14 +73,20 @@ def manifest(base, ours, theirs):
 
 def provenance(path, base, ours, theirs, unresolved):
     metadata = [{k: v for k, v in value.items() if k != 'sha256'} for value in (base, ours, theirs)]
-    if metadata[0] != metadata[1] or metadata[1] != metadata[2]:
-        raise ValueError('provenance metadata changed')
+    if any(value.keys() != metadata[0].keys() for value in metadata):
+        raise ValueError('provenance schema changed')
+    merged = {}
+    for key, original in metadata[0].items():
+        left, right = metadata[1][key], metadata[2][key]
+        if left != right and left != original and right != original:
+            raise ValueError(f'provenance metadata conflict: {key}')
+        merged[key] = right if left == original else left
     source = Path(path[len(PROVENANCE):-5])
     if source.as_posix() in unresolved or source.is_symlink() or not source.is_file():
         raise ValueError(f'source unresolved or not regular: {source}')
     if b'<<<<<<<' in source.read_bytes():
         raise ValueError(f'source contains conflict markers: {source}')
-    return {**ours, 'sha256': hashlib.sha256(source.read_bytes()).hexdigest()}
+    return {'sha256': hashlib.sha256(source.read_bytes()).hexdigest(), **merged}
 
 
 def write(path, value):
