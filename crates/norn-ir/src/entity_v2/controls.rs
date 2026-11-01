@@ -61,6 +61,7 @@ pub enum Reachability {
 /// One deterministic controls verdict carried beside ordinary diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(try_from = "ControlVerdictWire")]
 pub struct ControlVerdict {
     /// Effective object type being checked.
     pub object_type: ObjectTypeName,
@@ -74,4 +75,32 @@ pub struct ControlVerdict {
     pub trace: Vec<String>,
     /// Evidence scope or reason the check remains unresolved.
     pub explanation: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ControlVerdictWire {
+    object_type: ObjectTypeName,
+    actions: Vec<String>,
+    verdict: ControlStatus,
+    reachability: Reachability,
+    trace: Vec<String>,
+    explanation: String,
+}
+
+impl TryFrom<ControlVerdictWire> for ControlVerdict {
+    type Error = &'static str;
+    fn try_from(value: ControlVerdictWire) -> Result<Self, Self::Error> {
+        if value.reachability == Reachability::Witnessed && value.trace.is_empty() {
+            return Err("witnessed controls require a nonempty concrete trace");
+        }
+        Ok(Self {
+            object_type: value.object_type,
+            actions: value.actions,
+            verdict: value.verdict,
+            reachability: value.reachability,
+            trace: value.trace,
+            explanation: value.explanation,
+        })
+    }
 }

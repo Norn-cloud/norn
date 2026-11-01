@@ -38,8 +38,12 @@ fn verdict_wire_preserves_both_evidence_axes() -> Result<(), serde_json::Error> 
                 object_type: norn_ir::ObjectTypeName("demo.Order".into()),
                 actions: vec!["demo.approve".into()],
                 verdict: verdict.clone(),
+                trace: if reachability == Reachability::Witnessed {
+                    vec!["reviewer:demo.approve".into()]
+                } else {
+                    vec![]
+                },
                 reachability,
-                trace: vec![],
                 explanation: "finite model".into(),
             };
             assert_eq!(
@@ -49,4 +53,15 @@ fn verdict_wire_preserves_both_evidence_axes() -> Result<(), serde_json::Error> 
         }
     }
     Ok(())
+}
+
+#[test]
+fn witnessed_verdict_requires_trace_on_decode() {
+    assert!(
+        serde_json::from_value::<ControlVerdict>(json!({
+            "objectType":"demo.Order", "actions":["demo.approve"], "verdict":"unknown",
+            "reachability":"witnessed", "trace":[], "explanation":"finite model"
+        }))
+        .is_err()
+    );
 }
