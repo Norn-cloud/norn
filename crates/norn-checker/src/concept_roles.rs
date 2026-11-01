@@ -10,23 +10,31 @@ pub(crate) fn resolve(
     let mut nodes = BTreeMap::new();
     for layer in [base, model] {
         for def in layer.interfaces {
-            nodes.entry(def.name.as_str().to_owned()).or_insert((
-                def.role,
-                def.extends
-                    .iter()
-                    .map(|n| n.as_str().to_owned())
-                    .collect::<Vec<_>>(),
-            ));
+            nodes
+                .entry(def.name.as_str().to_owned())
+                .or_insert_with(|| {
+                    (
+                        def.role,
+                        def.extends
+                            .iter()
+                            .map(|n| n.as_str().to_owned())
+                            .collect::<Vec<_>>(),
+                    )
+                });
         }
         for def in layer.object_types {
-            nodes.entry(def.name.as_str().to_owned()).or_insert((
-                def.role,
-                def.extends
-                    .iter()
-                    .map(|n| n.as_str().to_owned())
-                    .chain(def.implements.iter().map(|n| n.as_str().to_owned()))
-                    .collect(),
-            ));
+            nodes
+                .entry(def.name.as_str().to_owned())
+                .or_insert_with(|| {
+                    (
+                        def.role,
+                        def.extends
+                            .iter()
+                            .map(|n| n.as_str().to_owned())
+                            .chain(def.implements.iter().map(|n| n.as_str().to_owned()))
+                            .collect(),
+                    )
+                });
         }
     }
     let mut roles: BTreeMap<String, Result<ConceptRole, RoleConflict>> = BTreeMap::new();
