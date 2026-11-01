@@ -143,8 +143,7 @@ fn layer_members(
     pin: &norn_ir::mapping::InterpretationEndpoint,
     base: &[ArtifactEnvelope],
 ) -> Option<BTreeSet<norn_ir::definition_catalog::MemberRef>> {
-    use norn_ir::definition_catalog::{Member, MemberRef};
-    use norn_ir::{BusinessPackRoot, EntityRoot, PackArtifactKind};
+    use norn_ir::{BusinessPackRoot, PackArtifactKind};
     let layers: Vec<_> = base
         .iter()
         .filter(|a| a.artifact_id == pin.artifact_id && a.version == pin.version)
@@ -184,81 +183,93 @@ fn layer_members(
         else {
             return None;
         };
-        let mut add = |member| {
-            members.insert(MemberRef {
-                artifact_id: reference.artifact_id.clone(),
-                version: reference.version.clone(),
-                member,
-            });
-        };
-        let (name, properties, links) = match *root {
-            EntityRoot::V2(_) => {
-                let effective = catalog.object_type(&reference.artifact_id)?.ok()?;
-                let name = effective.name.as_str().to_owned();
-                for machine in &effective.lifecycles {
-                    let lifecycle = machine.lifecycle.property.as_str().to_owned();
-                    for state in &machine.states {
-                        add(Member::State {
-                            type_name: name.clone(),
-                            lifecycle: lifecycle.clone(),
-                            state: state.clone(),
-                        });
-                    }
-                    for transition in &machine.lifecycle.transitions {
-                        add(Member::Transition {
-                            type_name: name.clone(),
-                            lifecycle: lifecycle.clone(),
-                            transition: transition.id.as_str().to_owned(),
-                        });
-                    }
+        members.extend(definition_members(&reference, &root, &catalog)?);
+    }
+    (!members.is_empty()).then_some(members)
+}
+
+fn definition_members(
+    reference: &norn_ir::PackArtifactRef,
+    root: &norn_ir::EntityRoot,
+    catalog: &crate::entity_instance::EffectiveCatalog,
+) -> Option<BTreeSet<norn_ir::definition_catalog::MemberRef>> {
+    use norn_ir::EntityRoot;
+    use norn_ir::definition_catalog::{Member, MemberRef};
+    let mut members = BTreeSet::new();
+    let mut add = |member| {
+        members.insert(MemberRef {
+            artifact_id: reference.artifact_id.clone(),
+            version: reference.version.clone(),
+            member,
+        });
+    };
+    let (name, properties, links) = match root {
+        EntityRoot::V2(_) => {
+            let effective = catalog.object_type(&reference.artifact_id)?.ok()?;
+            let name = effective.name.as_str().to_owned();
+            for machine in &effective.lifecycles {
+                let lifecycle = machine.lifecycle.property.as_str().to_owned();
+                for state in &machine.states {
+                    add(Member::State {
+                        type_name: name.clone(),
+                        lifecycle: lifecycle.clone(),
+                        state: state.clone(),
+                    });
                 }
-                (
-                    name,
-                    effective
-                        .properties
-                        .iter()
-                        .map(|p| p.id.as_str().to_owned())
-                        .collect::<Vec<_>>(),
-                    catalog
-                        .links_for_object_type(effective.name.as_str())?
-                        .iter()
-                        .map(|l| l.id.as_str().to_owned())
-                        .collect::<Vec<_>>(),
-                )
+                for transition in &machine.lifecycle.transitions {
+                    add(Member::Transition {
+                        type_name: name.clone(),
+                        lifecycle: lifecycle.clone(),
+                        transition: transition.id.as_str().to_owned(),
+                    });
+                }
             }
-            EntityRoot::V2Interface(root) if root.interface.extends.is_empty() => (
-                root.interface.name.as_str().to_owned(),
-                root.interface
+            (
+                name,
+                effective
                     .properties
                     .iter()
                     .map(|p| p.id.as_str().to_owned())
-                    .collect(),
-                root.interface
-                    .links
+                    .collect::<Vec<_>>(),
+                catalog
+                    .links_for_object_type(effective.name.as_str())?
                     .iter()
                     .map(|l| l.id.as_str().to_owned())
-                    .collect(),
-            ),
-            EntityRoot::V2PropertyTypes(_) | EntityRoot::V2Markings(_) => continue,
-            _ => return None,
-        };
-        add(Member::Type {
+                    .collect::<Vec<_>>(),
+            )
+        }
+        EntityRoot::V2Interface(root) if root.interface.extends.is_empty() => (
+            root.interface.name.as_str().to_owned(),
+            root.interface
+                .properties
+                .iter()
+                .map(|p| p.id.as_str().to_owned())
+                .collect(),
+            root.interface
+                .links
+                .iter()
+                .map(|l| l.id.as_str().to_owned())
+                .collect(),
+        ),
+        EntityRoot::V2PropertyTypes(_) | EntityRoot::V2Markings(_) => return Some(members),
+        EntityRoot::V1(_) | EntityRoot::V2Extension(_) | EntityRoot::V2Interface(_) => return None,
+    };
+    add(Member::Type {
+        type_name: name.clone(),
+    });
+    for property in properties {
+        add(Member::Property {
             type_name: name.clone(),
+            property,
         });
-        for property in properties {
-            add(Member::Property {
-                type_name: name.clone(),
-                property,
-            });
-        }
-        for link in links {
-            add(Member::Link {
-                type_name: name.clone(),
-                link,
-            });
-        }
     }
-    (!members.is_empty()).then_some(members)
+    for link in links {
+        add(Member::Link {
+            type_name: name.clone(),
+            link,
+        });
+    }
+    Some(members)
 }
 
 fn interpretation_endpoints(

@@ -263,7 +263,7 @@ proptest::proptest! {
         let (mut document, base) = complete_member_interpretation();
         document.members.rotate_left(index);
         proptest::prop_assert!(member_findings(&document, &base).iter().all(|f| f.code != "core.composition.mapping_gap"));
-        document.members.pop();
+        proptest::prop_assert!(document.members.pop().is_some());
         proptest::prop_assert!(member_findings(&document, &base).iter().any(|f| f.code == "core.composition.mapping_gap"));
     }
 }
