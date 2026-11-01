@@ -19,6 +19,96 @@ fn entities() -> Vec<ArtifactEnvelope> {
 fn laws() -> Vec<Value> {
     serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("laws")
 }
+
+fn interface_case(
+    implemented: bool,
+    expression: &str,
+) -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
+    let mut base: Vec<ArtifactEnvelope> = [
+        include_str!("fixtures/mapping/model/core.order.interface.json"),
+        include_str!("fixtures/mapping/model/core.party.interface.json"),
+        include_str!("fixtures/mapping/model/core.item.interface.json"),
+    ]
+    .into_iter()
+    .map(|s| serde_json::from_str(s).expect("interface"))
+    .collect();
+    if implemented {
+        base.extend(
+            [
+                include_str!("fixtures/mapping/model/commerce.sales-order.entity.json"),
+                include_str!("fixtures/mapping/model/party.customer.entity.json"),
+                include_str!("fixtures/mapping/model/fashion.style.entity.json"),
+            ]
+            .into_iter()
+            .map(|s| serde_json::from_str::<ArtifactEnvelope>(s).expect("object")),
+        );
+    }
+    let mut artifact: ArtifactEnvelope = serde_json::from_value(laws()[0].clone()).expect("law");
+    let mut law: norn_ir::LawIR = serde_json::from_value(
+        serde_json::to_value(artifact.payload.to_json_value()).expect("wire"),
+    )
+    .expect("law");
+    law.subject = "core.Order".to_owned();
+    law.scope.root = norn_ir::LawRoot::Company("org_demo".to_owned());
+    law.scope.object_types = vec![law.subject.clone()];
+    law.condition = None;
+    law.modality = norn_ir::LawModality::Always {};
+    law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression(expression.to_owned()),
+    };
+    artifact.dependencies = vec![norn_ir::ArtifactDependency {
+        artifact_id: "core.Order.interface".to_owned(),
+        kind: norn_ir::ArtifactKind::Entity,
+        version: Some("0.1.0".to_owned()),
+        required: true,
+    }];
+    artifact.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Law,
+        serde_json::from_value(serde_json::to_value(law).expect("wire")).expect("tree"),
+    )
+    .expect("root");
+    (artifact, base)
+}
+
+#[test]
+fn law_interface_and_empty_validate_the_declared_contract_without_vacuous_evidence() {
+    for implemented in [false, true] {
+        let (artifact, base) = interface_case(implemented, "self.total_amount >= 0");
+        let wire = serde_json::to_value(&artifact).expect("wire");
+        assert!(run(vec![wire.clone()], &base).is_empty());
+        assert_eq!(serde_json::to_value(&artifact).expect("original law"), wire);
+        let (invalid, base) = interface_case(implemented, "self.implementation_only >= 0");
+        assert!(
+            run(vec![serde_json::to_value(invalid).expect("wire")], &base)
+                .contains(&codes::PREDICATE_TYPE.to_owned())
+        );
+    }
+}
+
+#[test]
+fn law_interface_missing_subject_and_unpinned_contract_refuse() {
+    let (mut artifact, _) = interface_case(false, "self.total_amount >= 0");
+    assert!(
+        run(vec![serde_json::to_value(&artifact).expect("wire")], &[])
+            .contains(&codes::UNKNOWN_BINDING.to_owned())
+    );
+    let (_, base) = interface_case(false, "self.total_amount >= 0");
+    artifact.dependencies.clear();
+    assert!(
+        run(vec![serde_json::to_value(artifact).expect("wire")], &base)
+            .contains(&codes::UNKNOWN_BINDING.to_owned())
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn law_empty_generated_undeclared_members_cannot_escape_declaration_check(name in "[a-z]{1,12}") {
+        let expression = format!("self.{name}_missing >= 0");
+        let (artifact, base) = interface_case(false, &expression);
+        proptest::prop_assert!(run(vec![serde_json::to_value(artifact).expect("wire")], &base).contains(&codes::PREDICATE_TYPE.to_owned()));
+    }
+}
 fn run(values: Vec<Value>, base: &[ArtifactEnvelope]) -> Vec<String> {
     let pool: Vec<ArtifactEnvelope> = values
         .into_iter()

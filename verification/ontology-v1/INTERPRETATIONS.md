@@ -85,6 +85,17 @@ The LAW-CONTAINED refusal tests enforce that intermediate boundary. Kani is
 inapplicable to this serializer/schema contract over allocated member trees;
 there is no new bounded pure algorithm. LAW-* admission semantics follow.
 
+LAW-COMPLETE-1 checks an interface law against its required-member environment
+even with no implementors, then checks every concrete subject selected by
+`EffectiveCatalog::target_types`; the original LawIR remains unchanged.
+LAW-INTERFACE/EMPTY positives and unknown/unpinned/member refusals exercise
+ordinary admission, including generated missing members with zero implementors.
+Empty implementation sets establish no non-vacuity or proof evidence. Interface
+deadlines/state selectors, undeclared transition contracts and app/pack roots
+without retained instance resolution refuse in this intermediate profile.
+Kani is infeasible for the dynamic effective catalog and expression compiler;
+the generated refusal property checks their production admission boundary.
+
 Remaining B1 conformance scenarios: MAP-MEMBERS (source-derived
 totality), MAP-UNITS (dimension/unit/scale), EVENT-MULTI (event identity and
 distinct object links). Missing required members, unsupported transforms or
