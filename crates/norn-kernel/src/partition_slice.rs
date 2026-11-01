@@ -24,7 +24,7 @@ impl PartitionSlice {
         &self.facts
     }
 
-    /// Resolve ordinary RuleIR outputs, retaining every captured membership
+    /// Resolve ordinary `RuleIR` outputs, retaining every captured membership
     /// expectation in the same commit as its facts and effects.
     ///
     /// # Errors
@@ -99,7 +99,7 @@ pub fn load_partition_slice<H: CellHost + ?Sized>(
             if !slice
                 .facts
                 .get(&target.key.target)
-                .is_some_and(|state| state.exists())
+                .is_some_and(crate::FactState::exists)
             {
                 return Err(unavailable("partition member is absent"));
             }
