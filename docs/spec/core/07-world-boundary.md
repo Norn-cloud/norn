@@ -64,3 +64,9 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 4. Complete B1 mapping/role preservation with 06; EVENT-MULTI and source echo tests.
 5. Add uncertainty/reconciliation state contract, then dispatch/lookup tests, then compensation races with 04; each supported provider declares its assumptions.
 6. Qualify manifest-projected WASM/worker execution, secrets, bounds and replay; unsupported profiles stay refused.
+
+## Host Function execution
+
+FUNCTION-HOST-1: `implementation.format: host` declares host-provided native code. `runtime.id` and `runtime.version` pin the implementing crate name and version; `implementation.digest` pins its source tree, with the dependency closure and runtime build/configuration digest retained separately. The locator is exactly `<crate>/<version>@<implementation digest>` and is informational, never permission to load arbitrary code. The host must resolve its configured implementation by these exact pins or refuse.
+
+Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
