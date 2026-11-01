@@ -27,6 +27,7 @@ fn data_lineage_reconciles_294_over_300_with_exact_fact_versions_and_restricted_
         )
         .expect("trace");
     assert_eq!(trace.result, result);
+    assert_eq!(trace.source_edge_gap, "source edge: not yet (#401)");
     assert_eq!(trace.contributions.len(), 4);
     assert_eq!(trace.result.rows[WEEK].totals[0].canonical(), "294");
     assert_eq!(trace.result.rows[WEEK].totals[1].canonical(), "300");

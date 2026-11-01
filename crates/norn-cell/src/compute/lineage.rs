@@ -30,6 +30,8 @@ pub struct NumericContribution {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NumericTrace {
+    /// Source resolution stays closed until Core 07 supplies its authority-checked edge.
+    pub source_edge_gap: &'static str,
     /// Revalidated exact cell result and definition/time/scope/frontier pins.
     pub result: QueryResult,
     /// Canonical selected grouping key.
@@ -117,6 +119,7 @@ impl<E: SqlEngine> CellStore<E> {
                 return Err(incomplete());
             }
             Ok(NumericTrace {
+                source_edge_gap: "source edge: not yet (#401)",
                 result,
                 bucket: bucket.to_owned(),
                 contributions,
