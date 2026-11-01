@@ -92,7 +92,7 @@ pub fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
     .expect("predicate");
     question.time_window.start = norn_ir::UtcTimestamp("2026-07-06T00:00:00Z".into());
     question.time_window.end = norn_ir::UtcTimestamp("2026-10-26T00:00:00Z".into());
-    question.freshness = norn_ir::FreshnessPolicy::Live {
+    question.freshness = norn_ir::metric::FreshnessPolicy::Live {
         max_age_ms: norn_ir::WholeNumber(5_000),
     };
     let plan = admit(&[out, input, ratio], &question, &catalog, 100).expect("admitted question");
