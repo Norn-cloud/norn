@@ -1457,3 +1457,26 @@ fn helper_validation_memo_uses_artifact_identity_instead_of_payload_rule_id() {
         matches!(AdmittedDecision::admit(&rule(&root),&subs,binding()),Err(AdmissionError::InvalidSchema { reason,.. }) if reason.contains("unsupported nested step graph"))
     );
 }
+
+#[test]
+fn numeric_result_boundary_refuses_an_invalid_profile_without_numeric_inputs() {
+    use zen_engine::{
+        Isolate, Variable,
+        meter::Meter,
+        scaled::{Rounding, ScaledArithmetic},
+    };
+    let mut isolate = Isolate::with_environment(Variable::from_object(
+        [(Variable::key("x"), Variable::empty_array())]
+            .into_iter()
+            .collect(),
+    ));
+    assert_eq!(
+        isolate.run_standard("len(x)").unwrap(),
+        Variable::Number(0.into())
+    );
+    isolate.set_meter(Some(Meter::new(1000).with_arithmetic(ScaledArithmetic {
+        scale: 19,
+        rounding: Rounding::Refuse,
+    })));
+    assert!(isolate.run_standard("len(x)").is_err());
+}
