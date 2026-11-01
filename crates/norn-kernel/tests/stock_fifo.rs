@@ -1,3 +1,5 @@
+//! FIFO fold/replay correspondence with the independent valuation reference.
+
 use norn_kernel::stock_fifo::{
     FifoError, FifoLayer, FifoMovement, MAX_RECEIPT_QUANTITY, allocate_fifo, replay_fifo,
 };
