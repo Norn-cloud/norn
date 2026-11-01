@@ -3,9 +3,8 @@ use crate::entity_artifacts::{Decoded, decode_v2};
 use crate::entity_lowering::{EntityForm, entity_object_type};
 use crate::receipt::{ArtifactRef, ReceiptError};
 use norn_ir::definition_catalog::{
-    CatalogArtifact, CatalogFormat, DefinitionCatalog, DependsOnRow, LawRow, LifecycleStates,
-    LinkRow, MappingRow, Member, MemberRef, PropertyRow, TransitionRow, TypeKind, TypeRow,
-    WritesRow,
+    CatalogArtifact, CatalogFormat, DefinitionCatalog, LifecycleStates, LinkRow, Member, MemberRef,
+    PropertyRow, TransitionRow, TypeKind, TypeRow,
 };
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, EntityRoot, Lifecycle, ObjectTypeDef, Property,
@@ -21,9 +20,8 @@ pub enum CatalogError {
 
 impl std::fmt::Display for CatalogError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Hash(error) => write!(formatter, "artifact hash: {error}"),
-        }
+        let Self::Hash(error) = self;
+        write!(formatter, "artifact hash: {error}")
     }
 }
 
@@ -74,10 +72,6 @@ struct Rows {
     links: BTreeSet<LinkRow>,
     transitions: BTreeSet<TransitionRow>,
     states: BTreeSet<MemberRef>,
-    writes: BTreeSet<WritesRow>,
-    depends_on: BTreeSet<DependsOnRow>,
-    mappings: BTreeSet<MappingRow>,
-    laws: BTreeSet<LawRow>,
 }
 
 fn at(artifact: &ArtifactEnvelope, member: Member) -> MemberRef {
@@ -274,10 +268,10 @@ impl Rows {
             links: self.links.into_iter().collect(),
             transitions: self.transitions.into_iter().collect(),
             states: self.states.into_iter().collect(),
-            writes: self.writes.into_iter().collect(),
-            depends_on: self.depends_on.into_iter().collect(),
-            mappings: self.mappings.into_iter().collect(),
-            laws: self.laws.into_iter().collect(),
+            writes: Vec::new(),
+            depends_on: Vec::new(),
+            mappings: Vec::new(),
+            laws: Vec::new(),
         }
     }
 }
