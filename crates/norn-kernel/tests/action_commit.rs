@@ -4059,7 +4059,10 @@ fn controls_witnesses_correspond_to_kernel_admission_and_commit() {
         }).map(|mut action: ActionRoot| {
             match variant {
                 "effect_free" => action.effect_program = None,
-                "create_only" => if let Some(norn_ir::ActionEffectProgram::UpsertInputObject {write_mode, ..}) = &mut action.effect_program { *write_mode = norn_ir::UpsertWriteMode::CreateOnly; },
+                "create_only" => {
+                    if let Some(norn_ir::ActionEffectProgram::UpsertInputObject {write_mode, ..}) = &mut action.effect_program { *write_mode = norn_ir::UpsertWriteMode::CreateOnly; }
+                    action.writes.retain(|write| write.change == norn_ir::action::WriteChange::Created);
+                },
                 "guarded" => action.preconditions = vec![serde_json::from_value(json!("false")).unwrap()],
                 _ => {}
             }
@@ -4124,6 +4127,7 @@ fn controls_witnesses_correspond_to_kernel_admission_and_commit() {
             let mut invocation = call(action, "witness", &format!("witness-{index}"));
             invocation.actor = role.into();
             invocation.input = values.clone();
+            let before = cell.ledger().len();
             match commit_action(&mut cell, &catalog, &invocation, &Allow) {
                 Ok(outcome) => {
                     assert!(matches!(outcome, ActionOutcome::Committed { .. }));
@@ -4131,6 +4135,8 @@ fn controls_witnesses_correspond_to_kernel_admission_and_commit() {
                 }
                 Err(_) => {
                     refused = true;
+                    assert_eq!(cell.ledger().len(), before);
+                    assert_eq!(cell.load(&target).unwrap().values.as_ref(), Some(&values));
                     break;
                 }
             }
