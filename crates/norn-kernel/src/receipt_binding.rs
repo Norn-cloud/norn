@@ -171,7 +171,7 @@ pub fn bind_receipt<T: DeserializeOwned, S: AcceptedReceiptStore>(
         return Err(ReceiptBindingError::NotAccepted);
     };
     let result = norn_ir::runtime::decode(&RuntimeValue::Object(success.summary.clone()))
-        .map_err(|_| ReceiptBindingError::ResultType)?;
+        .map_err(|_invalid_summary| ReceiptBindingError::ResultType)?;
     Ok(ReceiptBinding {
         digest,
         result,
