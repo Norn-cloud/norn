@@ -196,7 +196,8 @@ fn canonical_law_artifacts(
         .collect();
     laws.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
     for artifact in &laws {
-        let _: LawIR = serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
+        let _: LawIR =
+            serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
     }
     if laws
         .windows(2)
@@ -497,7 +498,8 @@ impl Model {
         self.entry(object_type)?;
         let mut direct = Vec::new();
         for artifact in &self.law_artifacts {
-            let law: LawIR = serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
+            let law: LawIR =
+                serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
             let applicable = self.is_a(object_type, &law.subject)
                 || law
                     .scope
@@ -1084,7 +1086,7 @@ pub struct ModelDefinitionSnapshot {
     /// Older snapshots omit this because they had no binding property indexes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub binding_indexes: Vec<BindingIndexSpec>,
-    /// Exact governing LawIR artifacts; included in the model hash.
+    /// Exact governing `LawIR` artifacts; included in the model hash.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub law_artifacts: Vec<ArtifactEnvelope>,
 }
