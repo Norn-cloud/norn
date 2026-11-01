@@ -192,6 +192,22 @@ fn missing_pins_members_types_and_unbounded_or_impure_predicates_refuse() {
     assert!(!findings(&[qualified()], &[]).is_empty());
     let base = item();
     assert!(!findings(&[qualified()], &[base.clone(), base]).is_empty());
+    let mut pinned = serde_json::to_value(item()).expect("wire");
+    pinned["dependencies"] =
+        json!([{"artifactId":"test.amounts", "version":"1.0.0", "kind":"entity", "required":true}]);
+    pinned["payload"]["objectType"]["properties"][0]["type"] =
+        json!({"kind":"ref", "name":"test.amount"});
+    let mut catalog = pinned.clone();
+    catalog["artifactId"] = json!("test.amounts");
+    catalog["dependencies"] = json!([]);
+    catalog["payload"] = json!({"entityVersion":"2.0", "propertyTypes":[{"name":"test.amount", "type":{"kind":"integer"}}]});
+    let pinned = serde_json::from_value(pinned).expect("base");
+    let catalog: ArtifactEnvelope = serde_json::from_value(catalog).expect("catalog");
+    assert!(
+        findings(&[qualified()], &[pinned, catalog.clone(), catalog])
+            .iter()
+            .any(|d| d.code.as_str() == "core.graph.incomplete_classification")
+    );
 }
 proptest::proptest! {
     #[test]
@@ -206,8 +222,10 @@ proptest::proptest! {
             "/helper/max_guest_memory_bytes",
         ];
         let mut wire = serde_json::to_value(qualified()).expect("wire");
-        let field = wire["payload"]["bounds"].pointer_mut(paths[slot]).expect("profile field");
+        let mut bounds = serde_json::to_value(ResourceLimitProfile::norn_limits_v1()).expect("limits");
+        let field = bounds.pointer_mut(paths[slot]).expect("profile field");
         *field = json!(field.as_u64().expect("integer cap").saturating_add(extra));
+        wire["payload"]["bounds"] = bounds;
         let class = serde_json::from_value(wire).expect("wire remains typed");
         proptest::prop_assert!(findings(&[class], &[item()]).iter()
             .any(|d| d.code.as_str() == "core.graph.incomplete_classification"));

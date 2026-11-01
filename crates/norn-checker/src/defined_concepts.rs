@@ -168,6 +168,16 @@ fn entity_closure(
         let resolved = crate::resolve_artifact_set(std::slice::from_ref(&current), &others)
             .map_err(|_error| "the pinned base type closure must resolve")?;
         for dependency in resolved.base_dependencies {
+            if pool
+                .iter()
+                .filter(|a| {
+                    a.artifact_id == dependency.artifact_id && a.version == dependency.version
+                })
+                .count()
+                != 1
+            {
+                return Err("the pinned base closure contains an ambiguous identity");
+            }
             if !closure
                 .iter()
                 .any(|a| a.artifact_id == dependency.artifact_id && a.version == dependency.version)
