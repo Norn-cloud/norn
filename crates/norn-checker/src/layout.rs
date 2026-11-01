@@ -26,25 +26,20 @@ pub struct PreparedArtifact {
 /// Extract inline layout from exact source JSON and decode the semantic envelope.
 ///
 /// This is the raw admission preparation boundary. It consumes the source and
-/// returns its normalized exact value beside the decoded envelope and layout.
+/// returns its exact semantic value beside the decoded envelope and layout.
 ///
 /// # Errors
 /// Returns extraction or envelope decode diagnostics.
 pub fn prepare_artifact_source(source: RuntimeValue) -> Result<PreparedArtifact, Vec<Diagnostic>> {
     let mut semantic_source = source;
     let layout = extract_inline_layout(&mut semantic_source)?;
-    let bytes = semantic_source.canonical_json().map_err(|error| {
-        vec![invalid_source_diagnostic(
-            None,
-            &format!("normalized artifact source cannot be canonicalized: {error}"),
-        )]
-    })?;
-    let document = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| {
-        vec![invalid_source_diagnostic(
-            None,
-            &format!("normalized artifact source cannot be decoded: {error}"),
-        )]
-    })?;
+    let document: serde_json::Value =
+        norn_ir::runtime::decode(&semantic_source).map_err(|error| {
+            vec![invalid_source_diagnostic(
+                None,
+                &format!("artifact source cannot be decoded: {error}"),
+            )]
+        })?;
     let artifact = crate::decode_artifact_json(&document).map_err(|legacy| {
         legacy
             .into_iter()
