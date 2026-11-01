@@ -509,8 +509,10 @@ pub struct OrderedFold {
     pub accumulator_schema: crate::rule::JsonObject,
     /// Exact expression evaluated once against the node input.
     pub initial: crate::ZenExpression,
+    #[serde(deserialize_with = "crate::members::deserialize_u32")]
     pub max_items: u32,
     /// Canonical encoded byte bound, checked initially and after every step.
+    #[serde(deserialize_with = "crate::members::deserialize_u32")]
     pub max_accumulator_bytes: u32,
     pub arithmetic: FoldArithmetic,
 }
@@ -537,7 +539,8 @@ pub enum FoldOrderKind {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FoldArithmetic {
     /// Quantity-ledger-compatible exact scaled integers; at most 18 places.
-    pub scale: u8,
+    #[serde(deserialize_with = "crate::members::deserialize_u32")]
+    pub scale: u32,
     pub rounding: FoldRounding,
 }
 
