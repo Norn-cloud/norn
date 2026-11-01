@@ -1,0 +1,20 @@
+{
+  "sha256": "e0309e8aecf3c98486c48a1d42ea4b0861b8a113d770051a6604235f0188155b",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/norn-ts/corpus/reject/while-loop.ts",
+    "tools/norn-ts/test/profile-corpus.test.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

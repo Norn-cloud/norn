@@ -1,5 +1,7 @@
 {
   "required": [
+    "`@norn/authoring#Norn.parseDate`",
+    "`@norn/authoring#Norn.parseTimestamp`",
     "`@norn/authoring#Norn.dateBefore`",
     "`@norn/authoring#Norn.byteLength`",
     "`@norn/authoring#Norn.evaluate`",
@@ -14,6 +16,8 @@
     "`@norn/authoring#Norn.access`",
     "`@norn/authoring#Norn.decision`",
     "`@norn/authoring#Norn.sourceSchema`",
+    "`@norn/authoring#Norn.ontologyPack`",
+    "`@norn/authoring#Norn.packLink`",
     "`@norn/authoring#Norn.markings`",
     "`@norn/authoring#Norn.connector`",
     "`@norn/authoring#Norn.mapping`",
