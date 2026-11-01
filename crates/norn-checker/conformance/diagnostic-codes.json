@@ -457,6 +457,27 @@
       "tier": "T3"
     },
     {
+      "code": "controls.validation.invalid_path",
+      "message": "Invalid sensitive path declaration",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "controls.validation.refuted",
+      "message": "Concrete duty separation counterexample",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "controls.validation.witness_required",
+      "message": "Concrete availability witness required",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",
