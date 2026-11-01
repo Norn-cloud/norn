@@ -2933,6 +2933,7 @@ fn caller_cannot_choose_an_owned_child_lifecycle_initial_state() {
 }
 
 mod cp1_stock {
+    #![allow(clippy::too_many_lines, reason = "stock conformance fixture")]
     use super::*;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, Model, StoreOptions};
     use norn_ir::quantity_ledger::{QUANTITY_CELL_VERSION, QuantityOperation, QuantityRequest};
@@ -2989,12 +2990,14 @@ mod cp1_stock {
         }
         let mut definitions: Vec<ObjectTypeDef> = artifacts
             .iter()
-            .filter_map(|a| match &a.payload {
-                ArtifactPayload::Entity(p) => p.object_type.as_value().map(|v| {
+            .filter_map(|a| {
+                let ArtifactPayload::Entity(p) = &a.payload else {
+                    return None;
+                };
+                p.object_type.as_value().map(|v| {
                     serde_json::from_str(&serde_json::to_string(v).expect("exact type"))
                         .expect("type")
-                }),
-                _ => None,
+                })
             })
             .collect();
         definitions.extend(types().into_iter().skip(2));
@@ -3223,15 +3226,11 @@ mod cp1_stock {
         check_gl(&cell, &delivered, [("cogs", "6000"), ("stock", "-6000")]);
         assert_eq!(
             object(&cell, "stock.Partition", &partition.key).get("quantity"),
-            Some(&JsonValue::Number(
-                norn_ir::Decimal::parse("1").expect("one")
-            ))
+            Some(&JsonValue::from_json(json!(1)).expect("one"))
         );
         assert_eq!(
             object(&cell, "stock.Partition", &partition.key).get("value"),
-            Some(&JsonValue::Number(
-                norn_ir::Decimal::parse("20").expect("twenty")
-            ))
+            Some(&JsonValue::from_json(json!(20)).expect("twenty"))
         );
         let balance = cell
             .store()
