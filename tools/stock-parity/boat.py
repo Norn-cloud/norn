@@ -22,7 +22,7 @@ def main():
     limits = json.loads(boat('limits', '--json'))
     if not limits['canStart'] or limits['starts']['day']['remaining'] < 1:
         raise SystemExit('Boat start budget unavailable')
-    vm, completed = None, False
+    vm, completed, dump_expected = None, False, False
     try:
         # Stream creation events so cleanup also covers a failure after allocation.
         with subprocess.Popen(['boat', 'new', '--json', '--from', args.snapshot, '--type', 'default',
@@ -61,6 +61,7 @@ python3 CHECKER /home/user/results.json
 '''.replace('DIGEST', digest).replace('CHECKER', {'smoke': 'check_smoke.py',
             'lifecycle': 'lifecycle.py'}[args.acceptance])
         seconds = 1800 if args.acceptance == 'lifecycle' else 600
+        dump_expected = True
         result = json.loads(boat('exec', vm, '--json', '--timeout', str(seconds), '--', 'bash', '-lc', command,
                                  timeout=seconds + 60))
         completed = bool(result.get('success'))
@@ -69,11 +70,12 @@ python3 CHECKER /home/user/results.json
     finally:
         if vm:
             try:
-                try:
-                    boat('scp', f'{vm}:/home/user/results.json', str(args.output))
-                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                    if completed:
-                        raise
+                if dump_expected:
+                    try:
+                        boat('scp', f'{vm}:/home/user/results.json', str(args.output), timeout=60)
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                        if completed:
+                            raise
             finally:
                 boat('delete', vm, '--yes')
                 check = subprocess.run(['boat', 'info', vm, '--json'], capture_output=True, text=True, timeout=60)

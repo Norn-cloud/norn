@@ -37,6 +37,7 @@ elif sys.argv[1] == 'info':
                 with self.assertRaisesRegex(RuntimeError, 'timed out'):
                     boat.main()
             calls = (root/'calls').read_text().splitlines()
+            self.assertFalse(any(c.startswith('scp ') for c in calls))
             self.assertIn('delete test-vm --yes', calls)
             self.assertEqual(calls[-1], 'info test-vm --json')
 

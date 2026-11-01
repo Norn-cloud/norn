@@ -158,4 +158,6 @@ unit must qualify a fresh fork with the final configuration and lifecycle budget
   native replay or acceptance exits nonzero. Preserve the failure exit; download
   never makes an unsupported case pass. Download failure on an otherwise
   successful run fails too, and owned-VM deletion runs in either case.
+  Retrieval is bounded to 60 seconds and skipped when creation never reached
+  execution, so an allocated creation stall still starts cleanup immediately.
   `test_failed_acceptance_keeps_dump_before_deletion` is its correspondence.
