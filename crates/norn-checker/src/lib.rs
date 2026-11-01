@@ -31,6 +31,7 @@ pub mod consistency;
 pub mod definitions_diff;
 pub mod deontic;
 mod diagnostic;
+pub mod duties;
 pub mod entity_artifacts;
 pub mod entity_instance;
 pub mod entity_lowering;
@@ -81,6 +82,7 @@ pub mod posting;
 pub mod table_analysis;
 pub use metric::check_metrics_and_questions;
 pub mod naming_series;
+pub mod norm_precedence;
 pub mod object_types;
 pub mod obligations;
 #[allow(
