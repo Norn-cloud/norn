@@ -62,6 +62,7 @@
 //! DP-OBS-1: sealing hashes the redacted payload; checked decoding verifies it.
 //! DP-OBS-2: received draft/observation bytes cannot round numeric evidence or
 //! collapse duplicate keys. Public types have no unchecked Deserialize path.
+//! DP-OBS-3: slash-bearing identities cannot collide; submissions revalidate evidence.
 //! Sampled correspondence evidence: `observation_sealing_conforms`.
 
 use std::collections::BTreeSet;
@@ -413,20 +414,27 @@ impl RawObservation {
         Ok(observation)
     }
 
-    /// The observation's identity: `{source}/{source_id}/{event_id}`. This is
+    /// The identity is `{source}/{source_id}/{escaped_event_id}`. Percent and
+    /// slash in the event component are encoded as `%25` and `%2F`. This is
     /// the id the cell's observe inbox dedups on (norn-api
     /// `POST /v1/observations/{source}` with `eventId`).
     #[must_use]
     pub fn observation_id(&self) -> String {
-        format!("{}/{}/{}", self.source, self.source_id, self.event_id)
+        format!(
+            "{}/{}/{}",
+            self.source,
+            self.source_id,
+            self.event_id.replace('%', "%25").replace('/', "%2F")
+        )
     }
 
     /// The submission for the cell's observe inbox.
     ///
     /// # Errors
     ///
-    /// [`ObservationError::Json`] if the observation cannot be encoded.
+    /// A failed [`Self::validate`], or JSON encoding failure.
     pub fn submission(&self) -> Result<ObservationSubmission, ObservationError> {
+        self.validate()?;
         Ok(ObservationSubmission {
             source: self.source.clone(),
             source_id: self.source_id.clone(),
@@ -641,8 +649,19 @@ mod tests {
             RawObservation::from_json_slice(stored.as_bytes()).expect("replay"),
             observation
         );
+        let mut first = observation.clone();
+        first.source_id = "a/b".into();
+        first.event_id = "c".into();
+        let mut second = first.clone();
+        second.source_id = "a".into();
+        second.event_id = "b/c".into();
+        assert_ne!(first.observation_id(), second.observation_id());
+        let escaped = second.observation_id();
+        second.event_id = "b%2Fc".into();
+        assert_ne!(escaped, second.observation_id());
         let mut tampered = observation.clone();
         tampered.payload = json!({"secret":REDACTED,"amount":43});
+        assert!(tampered.submission().is_err());
         assert!(matches!(
             RawObservation::from_json_slice(
                 serde_json::to_string(&tampered).expect("encode").as_bytes()
