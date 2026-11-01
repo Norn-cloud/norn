@@ -1151,3 +1151,64 @@ fn installed_context_base_must_be_nfc_before_source_rebinding() {
     let error = check_artifact_set_with_receipt(&sources, &context, &limits).unwrap_err();
     assert!(error.to_string().contains("definition.text.not_nfc"));
 }
+
+#[test]
+fn typed_historical_verification_cannot_authorize_lossy_rechecks() {
+    use norn_checker::receipt::verify_admission_receipt_sources;
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let raw = [exact_setting("0.1234567890123456789012345678")];
+    let typed: Vec<ArtifactEnvelope> = raw
+        .iter()
+        .map(|v| norn_ir::runtime::decode(v).unwrap())
+        .collect();
+    for in_base in [false, true] {
+        let (candidate, base) = if in_base {
+            (&[][..], &raw[..])
+        } else {
+            (&raw[..], &[][..])
+        };
+        let (artifacts, installed) = if in_base {
+            (&[][..], &typed[..])
+        } else {
+            (&typed[..], &[][..])
+        };
+        let mut historical = exact_receipt(candidate, base);
+        historical.artifact_set = ArtifactSetRef::of(artifacts, installed).unwrap();
+        historical.identifier_profile = "norn-identifiers/legacy".to_owned();
+        let mut value: Value = serde_json::from_str(&compact(&historical)).unwrap();
+        value["format"] = json!("norn-checker/receipt@2");
+        let body = compact_value(&value);
+        let digest = admission_receipt_sha256(&body).unwrap();
+        let () =
+            norn_checker::verify_admission_receipt(&body, &digest, artifacts, installed, &limits)
+                .unwrap();
+        let version =
+            verify_admission_receipt_sources(&body, &digest, candidate, base, &limits).unwrap();
+        let sources = norn_checker::ReceiptSources::new(candidate, base).unwrap();
+        let context = EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: installed,
+            tenant: None,
+        };
+        let checked = norn_checker::check_artifact_set_with_verified_receipt(
+            &sources, &context, &limits, &version,
+        )
+        .unwrap();
+        assert!(checked.receipt.admitted);
+        assert_eq!(
+            checked.receipt.identifier_profile,
+            "norn-identifiers/legacy"
+        );
+        let installed = norn_checker::check_artifact_set_for_install(
+            &sources,
+            &context,
+            &limits,
+            Some(&version),
+        )
+        .unwrap();
+        assert_eq!(
+            installed.receipt.identifier_profile,
+            "norn-identifiers/legacy"
+        );
+    }
+}
