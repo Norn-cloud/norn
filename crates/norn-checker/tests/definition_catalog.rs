@@ -235,13 +235,6 @@ fn laws_bind_their_subject_and_response() {
     );
 }
 
-fn entity(id: &str, payload: &Value) -> ArtifactEnvelope {
-    envelope(json!({
-        "irVersion": "0.1", "artifactId": id, "kind": "entity", "namespace": "shop",
-        "name": id, "version": "1.0.0", "lifecycle": "draft", "scope": {},
-        "dependencies": [], "provenance": { "source": "system" }, "payload": payload
-    }))
-}
 #[test]
 fn entity_projection_preserves_identity_declarations_and_order() {
     let artifact: ArtifactEnvelope = serde_json::from_str(include_str!(
