@@ -338,7 +338,9 @@ impl Schema {
                     .unwrap_or("")
                     .split_once('.')
                     .map_or(0, |(_, fraction)| fraction.len());
-                if literal_scale > *scale as usize || decimal.scale() > *scale {
+                if !u32::try_from(literal_scale).is_ok_and(|literal| literal <= *scale)
+                    || decimal.scale() > *scale
+                {
                     return Err(Violation::new(path, "decimal exceeds declared scale"));
                 }
                 Ok(RuntimeValue::Number(decimal))
