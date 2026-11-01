@@ -171,7 +171,18 @@ fn project(
                 object_id_field, object_kind, write_mode: norn_ir::UpsertWriteMode::Upsert, ..
             }) if object_id_field == "id" && object_kind == object.name.as_str())
             && action.scope_required == ["orgId"]
-            && action.writes.is_empty()
+            && action.writes.iter().all(|write| {
+                write.entity_kind == object.name.as_str()
+                    && matches!(
+                        write.change,
+                        norn_ir::action::WriteChange::Created
+                            | norn_ir::action::WriteChange::Modified
+                    )
+            })
+            && action
+                .writes
+                .iter()
+                .any(|write| write.change == norn_ir::action::WriteChange::Created)
             && action.preconditions.is_empty()
             && action.slice.is_empty()
             && action.derive.is_empty()
@@ -180,7 +191,7 @@ fn project(
             && action.create_links.is_empty()
             && serde_json::to_value(&action.input_schema).ok()
                 == Some(
-                    serde_json::json!({"type":"object", "properties":{"id":{"type":"string", "enum":["witness"]}}, "required":["id"], "additionalProperties":false}),
+                    serde_json::json!({"type":"object", "properties":{"id":{"type":"string"}}, "required":["id"], "additionalProperties":false}),
                 )
             && empty_schema(&action.output_schema);
     }

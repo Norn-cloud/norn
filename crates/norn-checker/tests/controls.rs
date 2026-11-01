@@ -40,7 +40,7 @@ fn fixture(same_role: bool, guarded: bool, witness: bool) -> Vec<ArtifactEnvelop
             action,
             json!({
                 "actionId":action, "scopeRequired":["orgId"], "idempotent":true,
-                "ledgered":false, "inputSchema":{"type":"object", "properties":{"id":{"type":"string", "enum":["witness"]}}, "required":["id"], "additionalProperties":false}, "outputSchema":schema,
+                "ledgered":false, "writes":[{"entityKind":"demo.Order", "change":"created"}, {"entityKind":"demo.Order", "change":"modified"}], "inputSchema":{"type":"object", "properties":{"id":{"type":"string"}}, "required":["id"], "additionalProperties":false}, "outputSchema":schema,
                 "effectProgram":{"kind":"upsert_input_object", "objectIdField":"id", "objectKind":"demo.Order", "entityArtifactId":"demo.Order", "entityArtifactVersion":"0.1.0"},
                 "preconditions": if guarded {vec!["false"]} else {vec![]}
             }),
