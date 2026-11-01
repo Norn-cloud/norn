@@ -8,7 +8,7 @@ Reuse `PropertyType`, `PropertyConstraints`, `DecimalLiteral`, `UnitRef`, `Runti
 
 | Target semantic record | Required fields and constraints |
 |---|---|
-| Value contract | `type: PropertyType`, `constraints: PropertyConstraints`, unit and scale derived solely from `type` (`PropertyType::Decimal` requires scale), `rounding?: enum(exact, midpoint_away_from_zero, half_even)`; arithmetic declares a rounding site, never ambient locale. |
+| Value contract | `type: PropertyType`, `constraints: PropertyConstraints`, unit and scale derived solely from `type` (`PropertyType::Decimal` requires scale), `rounding` derived solely from the optional shared `PropertyType::Decimal.rounding` (`Rounding`, default `refuse`); arithmetic declares a rounding site, never ambient locale. |
 | Object identity | `scope: Scope`, `id: opaque stable ID`, `created_under: Pin`; independent of mutable business keys and concrete subtype labels. |
 | Key binding | `object_id`, `key: KeySpec`, `canonical_components: [RuntimeValue]`, `valid_from`, `valid_to?`, `recorded_at`, `source_aliases: [Alias]`; uniqueness domain is explicit root type + scope + key name. |
 | Alias | `connector_instance`, `source_type`, `source_key`, `object_id`, valid/recorded intervals; source IDs cannot become native authority. |
@@ -18,6 +18,8 @@ Reuse `PropertyType`, `PropertyConstraints`, `DecimalLiteral`, `UnitRef`, `Runti
 Definition identity is exact artifact/version/digest plus stable member ID. Renaming a label changes presentation only. A same-version edit changes digest and invalidates admission/evidence; it cannot replace an immutable published release.
 
 The Decimal wire declaration accepts optional `rounding` using the shared `Rounding` modes (`refuse`, `toward_zero`, `half_even`, `half_away_from_zero`); omission means exact/refuse. The declared scale is the sole scale authority. The Norn-owned rescale adapter delegates to `ScaledArithmetic` at scales 0–18; the existing exact storage/transport range remains 0–28. Until expression/store binding is qualified, artifact admission refuses non-refuse declarations as `core.values.inexact`: wire decoding alone does not activate a rounding policy.
+
+The declaration adapter is checked against generated signed-integer references. A small production-core Kani harness covers signed 8-bit coefficients rescaled from scale 1 to 0 under all four modes; this bounded arithmetic scope does not cover IR decoding, adapter parsing or the remaining expression/store binding.
 
 ## Evaluation and enforcement
 
