@@ -11,8 +11,8 @@
 //! with the same [`BudgetExhausted`] value, even if an intermediate caller swallowed
 //! the first error.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
 use crate::variable::Variable;
@@ -29,7 +29,7 @@ pub struct BudgetExhausted {
 
 /// Shared, cloneable operation budget. Clones charge the same counter.
 #[derive(Debug, Clone)]
-pub struct Meter(Arc<Inner>);
+pub struct Meter(Arc<Inner>, Option<crate::scaled::ScaledArithmetic>);
 
 #[derive(Debug)]
 struct Inner {
@@ -43,12 +43,24 @@ struct Inner {
 
 impl Meter {
     pub fn new(limit: u64) -> Self {
-        Self(Arc::new(Inner {
-            limit,
-            used: AtomicU64::new(0),
-            exhausted_at: AtomicU64::new(0),
-            scan_steps: AtomicU64::new(0),
-        }))
+        Self(
+            Arc::new(Inner {
+                limit,
+                used: AtomicU64::new(0),
+                exhausted_at: AtomicU64::new(0),
+                scan_steps: AtomicU64::new(0),
+            }),
+            None,
+        )
+    }
+
+    /// Uses a local numeric policy while retaining the caller's shared fuel.
+    pub fn with_arithmetic(&self, arithmetic: crate::scaled::ScaledArithmetic) -> Self {
+        Self(self.0.clone(), Some(arithmetic))
+    }
+
+    pub fn arithmetic(&self) -> Option<crate::scaled::ScaledArithmetic> {
+        self.1
     }
 
     pub fn limit(&self) -> u64 {

@@ -67,3 +67,24 @@ structural defect, and `rule.validation.ordered_fold_unsupported` for unavailabl
 execution. Both are errors. The evaluator independently refuses `orderedFold`
 before constructing a normal sub-decision, even if the checker was skipped.
 No solver evidence or executable application capability is claimed by this cut.
+
+## Scaled VM correspondence (A2 arithmetic cut)
+
+FOLD-SCALED: every numeric operand must be exactly representable at the declared
+scale. Coefficients and all intermediate products use checked signed i128;
+results must also fit the core exact 96-bit decimal coefficient. An intermediate
+overflow refuses even if algebraic cancellation could fit the final result.
+Add/subtract operate on aligned coefficients. Multiply divides their product by
+10^scale; divide multiplies the numerator by 10^scale before division. Each
+quotient uses the declared rounding and exact remainder, never decimal division.
+`half_even` tests coefficient parity, including negative values. Scale is 0..18.
+
+FOLD-NUMERIC-CLOSURE: the scaled VM permits the four arithmetic operators,
+negation, comparisons, conditional/list/record construction and the non-arithmetic
+`len`/`flatten` functions. Other numeric functions, methods, modulo and power
+refuse rather than escape the declared arithmetic. This policy shares the caller's
+fuel counter; it never changes another clone's arithmetic policy. The evaluator
+must validate numeric input/output leaves as well as numeric literal operands.
+`scaled` unit correspondence covers exact results, both midpoint signs,
+negative divisors, inexact refusal, zero division, scale and overflow boundaries,
+and VM dispatch with shared fuel. Fold admission remains refused in this cut.

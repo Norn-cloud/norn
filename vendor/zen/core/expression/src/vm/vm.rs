@@ -1,7 +1,7 @@
 use crate::compiler::{Compare, FetchFastTarget, Jump, Opcode};
 use crate::functions::arguments::Arguments;
 use crate::functions::registry::FunctionRegistry;
-use crate::functions::{internal, MethodRegistry};
+use crate::functions::{MethodRegistry, internal};
 use crate::scope::Scope;
 use crate::variable::Variable;
 use crate::variable::Variable::*;
@@ -120,6 +120,45 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             self.ip += 1;
 
             self.charge(op)?;
+            if let Some(profile) = self.meter.and_then(|meter| meter.arithmetic()) {
+                let failure = |message: &str| OpcodeErr {
+                    opcode: "ScaledArithmetic".into(),
+                    message: message.into(),
+                };
+                match op {
+                    Opcode::Add | Opcode::Subtract | Opcode::Multiply | Opcode::Divide => {
+                        let (Number(b), Number(a)) = (self.pop()?, self.pop()?) else {
+                            return Err(failure("scaled arithmetic requires numbers"));
+                        };
+                        let name = match op {
+                            Opcode::Add => "Add",
+                            Opcode::Subtract => "Subtract",
+                            Opcode::Multiply => "Multiply",
+                            _ => "Divide",
+                        };
+                        self.push(Number(profile.binary(name, a, b).map_err(failure)?));
+                        continue;
+                    }
+                    Opcode::PushNumber(n) => {
+                        profile.coefficient(*n).map_err(failure)?;
+                    }
+                    Opcode::Modulo | Opcode::Exponent | Opcode::CallMethod { .. } => {
+                        return Err(failure("operation outside the scaled arithmetic profile"));
+                    }
+                    Opcode::CallFunction { kind, .. }
+                        if !matches!(
+                            kind,
+                            crate::functions::FunctionKind::Internal(
+                                crate::functions::InternalFunction::Len
+                                    | crate::functions::InternalFunction::Flatten
+                            )
+                        ) =>
+                    {
+                        return Err(failure("function outside the scaled arithmetic profile"));
+                    }
+                    _ => {}
+                }
+            }
 
             match op {
                 Opcode::PushNull => self.push(Null),
@@ -1109,7 +1148,7 @@ impl VMInner<'_, '_> {
     /// result above it exhausts the meter regardless of the exact value.
     fn data_cost(&self, op: &Opcode, cap: u64, steps: &mut u64) -> u64 {
         use crate::functions::{FunctionKind, InternalFunction as F};
-        use crate::meter::cost::{deep_size_capped, nested_size_capped, size, REGEX_COMPILE};
+        use crate::meter::cost::{REGEX_COMPILE, deep_size_capped, nested_size_capped, size};
         use std::cell::Cell;
 
         let size_of = |n: usize| self.peek(n).map(size).unwrap_or(0);

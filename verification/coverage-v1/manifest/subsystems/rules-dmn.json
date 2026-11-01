@@ -221,6 +221,7 @@
     "vendor/zen/core/expression/src/parser/result.rs",
     "vendor/zen/core/expression/src/parser/standard.rs",
     "vendor/zen/core/expression/src/parser/unary.rs",
+    "vendor/zen/core/expression/src/scaled.rs",
     "vendor/zen/core/expression/src/scope.rs",
     "vendor/zen/core/expression/src/temporal.rs",
     "vendor/zen/core/expression/src/validate.rs",
