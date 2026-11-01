@@ -2323,7 +2323,11 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
         assert_eq!(reads[0].source, keys[0]);
         assert_eq!(reads[0].link, "members");
         let members: Vec<_> = reads[0].targets.iter().map(|t| &t.key.target).collect();
-        let expected = if initial_member { vec![&keys[1]] } else { vec![] };
+        let expected = if initial_member {
+            vec![&keys[1]]
+        } else {
+            vec![]
+        };
         assert_eq!(members, expected);
         assert!(members.iter().all(|key| slice.facts().contains_key(*key)));
         // Same-type point and source facts are captured but are not members.
