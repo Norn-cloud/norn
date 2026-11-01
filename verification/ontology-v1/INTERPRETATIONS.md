@@ -149,3 +149,16 @@ with `core.laws.unresolved_scope`; no partial membership is returned. Named
 LAW-CONTAINED refusals and generated graph orderings check this pure resolver.
 Kani cannot execute the dynamic serde/semantic-hash pipeline; evidence is
 sampled conformance. This query grants no proof or activation authority.
+
+LAW-CONTAINED-INSTANCE-1 filters effective subjects by exact retained instance
+membership and retains separate applications for different governed instances.
+A diamond keeps all paths to the same instance. The original law and type
+substitution stay unchanged. Interface declarations still validate when their
+scoped implementation set is empty; emptiness never proves non-vacuity.
+Missing scoped subjects refuse, and candidate definitions cannot repair the
+retained membership graph. LAW-TIGHTEN accepts a new conjunctive identity;
+LAW-WEAKEN refuses replacement, conditions on an inherited identity, stale
+containment pins and removal of a required member. Kani is infeasible for
+this full catalog/serde/admission pipeline; generated ordering tests exercise
+the production projection. Ordinary source validation remains structural;
+resolved application/protected-law admission requires this complete projection.

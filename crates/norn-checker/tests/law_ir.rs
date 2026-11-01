@@ -338,6 +338,105 @@ proptest::proptest! {
     }
 }
 
+#[test]
+fn law_contained_instances_keep_origins_and_import_diamonds() {
+    let (law, base) = membership_case();
+    let instances = projected(&law, &base);
+    assert_eq!(instances.len(), 1);
+    assert_eq!(instances[0].instance_paths.len(), 2);
+    assert_eq!(instances[0].origin.artifact_id, "core.Order.interface");
+    assert_eq!(
+        instances[0].subject.artifact_id,
+        "commerce.SalesOrder.entity"
+    );
+    assert!(
+        instances[0]
+            .instance_paths
+            .iter()
+            .all(|p| p.last().expect("leaf").instance_id == "leaf")
+    );
+}
+
+#[test]
+fn law_tighten_is_conjunctive_and_weakening_or_stale_containment_refuses() {
+    let (law, mut base) = membership_case();
+    base.push(law.clone());
+    let mut tighter = law.clone();
+    tighter.artifact_id = "toy.extra_bound.law".to_owned();
+    let mut declaration: norn_ir::LawIR =
+        serde_json::from_value(serde_json::to_value(law.payload.to_json_value()).expect("wire"))
+            .expect("law");
+    declaration.id = "toy.extra_bound".to_owned();
+    declaration.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("self.total_amount >= 1".to_owned()),
+    };
+    tighter.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Law,
+        serde_json::from_value(serde_json::to_value(declaration.clone()).expect("law"))
+            .expect("tree"),
+    )
+    .expect("payload");
+    let all = projected(&tighter, &base);
+    assert_eq!(all.len(), 2);
+    assert!(
+        all.iter()
+            .any(|instance| instance.law.artifact_id == law.artifact_id)
+    );
+    declaration.id = serde_json::from_value::<norn_ir::LawIR>(
+        serde_json::to_value(law.payload.to_json_value()).expect("wire"),
+    )
+    .expect("law")
+    .id;
+    declaration.condition = Some(norn_ir::ZenExpression("self.total_amount >= 2".to_owned()));
+    tighter.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Law,
+        serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
+    )
+    .expect("payload");
+    let errors = check_artifact_set(
+        &[tighter],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &base,
+            tenant: None,
+        },
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|d| d.code.as_str() == codes::WEAKENS_INHERITED)
+    );
+    base.retain(|a| a.artifact_id != "commerce.SalesOrder.entity");
+    assert!(
+        norn_checker::verification::effective_law_instances(
+            &[law],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None
+            },
+            RETAINED_TEST_BUDGET
+        )
+        .is_err()
+    );
+}
+
+const RETAINED_TEST_BUDGET: Budget = Budget {
+    max_nodes: 128,
+    max_edges: 1024,
+    max_steps: 4096,
+};
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn law_contained_generated_orderings_preserve_effective_instances(reverse in proptest::bool::ANY, rotation in 0usize..12) {
+        let (law, mut base) = membership_case(); let expected = projected(&law, &base);
+        if reverse {base.reverse();} let count = rotation.checked_rem(base.len()).expect("nonempty"); base.rotate_left(count);
+        proptest::prop_assert_eq!(projected(&law, &base), expected);
+    }
+}
+
 fn entities() -> Vec<ArtifactEnvelope> {
     serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).expect("entities")
 }

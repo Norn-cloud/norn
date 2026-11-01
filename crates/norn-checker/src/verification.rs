@@ -12,6 +12,12 @@ use norn_ir::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+const RETAINED_SCOPE_BUDGET: Budget = Budget {
+    max_nodes: 16_384,
+    max_edges: 131_072,
+    max_steps: 1_048_576,
+};
+
 /// Stable law diagnostic codes.
 pub mod codes {
     /// A retained pack/app root or its complete membership is unavailable.
@@ -75,14 +81,6 @@ fn local(law: &LawIR, artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
         | LawRoot::Cell(id)
         | LawRoot::Entity(id) => id,
     };
-    if matches!(law.scope.root, LawRoot::Pack(_)) {
-        out.push(finding(
-            codes::UNKNOWN_BINDING,
-            artifact,
-            "/payload/scope/root",
-            "pack-scoped laws require retained membership resolution",
-        ));
-    }
     if [&law.id, &law.owner, &law.rationale, &law.subject, root]
         .iter()
         .any(|v| v.trim().is_empty())
@@ -172,6 +170,7 @@ pub fn check_law_set(
         EnvOptions::from_limit_profile(&limits),
     );
     let context = LawContext {
+        base,
         pool: &pool,
         catalog: &catalog,
         layer: &layer,
@@ -228,6 +227,7 @@ pub fn check_law_set(
 }
 
 struct LawContext<'a> {
+    base: &'a [ArtifactEnvelope],
     pool: &'a [ArtifactEnvelope],
     catalog: &'a EffectiveCatalog,
     layer: &'a Layer,
@@ -475,16 +475,27 @@ pub fn effective_law_instances(
                 detail,
             )]
         })?;
-        if matches!(law.scope.root, LawRoot::App(_) | LawRoot::Pack(_)) {
-            return Err(vec![finding(
-                codes::UNKNOWN_BINDING,
-                artifact,
-                "/payload/scope/root",
-                "effective app laws require the exact retained root composition instance",
-            )]);
-        }
+        let membership = matches!(law.scope.root, LawRoot::App(_) | LawRoot::Pack(_))
+            .then(|| retained_law_membership(artifact, context.base, budget))
+            .transpose()?;
         let origin = owners.get(&law.subject).ok_or_else(refused)?;
         let targets = catalog.target_types(&law.subject).ok_or_else(refused)?;
+        if let Some(membership) = &membership {
+            let scoped = |at: &norn_ir::definition_catalog::MemberRef| {
+                membership.contains_key(&norn_ir::definition_catalog::ArtifactKey {
+                    artifact_id: at.artifact_id.clone(),
+                    version: at.version.clone(),
+                })
+            };
+            if !scoped(origin)
+                && !targets
+                    .iter()
+                    .filter_map(|name| owners.get(name))
+                    .any(scoped)
+            {
+                return Err(refused());
+            }
+        }
         for target in targets {
             let subject = owners.get(&target).ok_or_else(refused)?;
             let paths = law_paths(
@@ -496,21 +507,58 @@ pub fn effective_law_instances(
                 &mut path_work,
             )
             .ok_or_else(refused)?;
-            let instance = law_instance(artifact, &law, subject, origin, paths, &digests)
+            let mut instance = law_instance(artifact, &law, subject, origin, paths, &digests)
                 .ok_or_else(refused)?;
-            bytes = bytes.saturating_add(
-                serde_json::to_vec(&instance)
-                    .map_err(|_error| refused())?
-                    .len(),
-            );
-            if bytes > 8_388_608 || out.len() >= budget.max_nodes {
-                return Err(refused());
+            let groups = contained_paths(membership.as_ref(), subject);
+            for instance_paths in groups {
+                instance.instance_paths = instance_paths;
+                bytes = bytes.saturating_add(
+                    serde_json::to_vec(&instance)
+                        .map_err(|_error| refused())?
+                        .len(),
+                );
+                if bytes > 8_388_608 || out.len() >= budget.max_nodes {
+                    return Err(refused());
+                }
+                out.push(instance.clone());
             }
-            out.push(instance);
         }
     }
-    out.sort_by(|a, b| (&a.law, &a.subject, &a.bindings).cmp(&(&b.law, &b.subject, &b.bindings)));
+    out.sort_by_cached_key(|a| {
+        (
+            a.law.clone(),
+            a.subject.clone(),
+            a.bindings.clone(),
+            a.instance_paths
+                .first()
+                .and_then(|p| p.last())
+                .map(|p| p.instance_id.clone()),
+        )
+    });
     Ok(out)
+}
+
+fn contained_paths(
+    membership: Option<&RetainedLawMembership>,
+    subject: &norn_ir::definition_catalog::MemberRef,
+) -> Vec<Vec<Vec<norn_ir::PackInstanceRef>>> {
+    let Some(membership) = membership else {
+        return vec![Vec::new()];
+    };
+    let key = norn_ir::definition_catalog::ArtifactKey {
+        artifact_id: subject.artifact_id.clone(),
+        version: subject.version.clone(),
+    };
+    let mut grouped: BTreeMap<String, Vec<Vec<norn_ir::PackInstanceRef>>> = BTreeMap::new();
+    for path in membership.get(&key).into_iter().flatten() {
+        if let Some(last) = path.last() {
+            grouped
+                .entry(last.instance_id.clone())
+                .or_default()
+                .push(path.clone());
+        }
+    }
+    grouped.into_values().collect()
 }
 
 type LawDigests<'a> = BTreeMap<(&'a str, &'a str), String>;
@@ -674,6 +722,14 @@ impl LawContext<'_> {
             ));
             return;
         };
+        if matches!(law.scope.root, LawRoot::Pack(_)) {
+            if let Err(findings) =
+                retained_law_membership(artifact, self.base, RETAINED_SCOPE_BUDGET)
+            {
+                out.extend(findings);
+                return;
+            }
+        }
         if let Some(interface) = self
             .layer
             .interfaces
@@ -822,12 +878,11 @@ impl LawContext<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         if matches!(law.scope.root, LawRoot::App(_) | LawRoot::Pack(_)) {
-            out.push(finding(
-                codes::UNKNOWN_BINDING,
-                artifact,
-                "/payload/scope/root",
-                "interface app/pack laws require a retained root composition instance",
-            ));
+            if let Err(findings) =
+                retained_law_membership(artifact, self.base, RETAINED_SCOPE_BUDGET)
+            {
+                out.extend(findings);
+            }
         }
         self.check_scope_bindings(law, artifact, out);
         let owners = interface
