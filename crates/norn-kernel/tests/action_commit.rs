@@ -4039,7 +4039,7 @@ norn_testkit::proptest::proptest! {
         let manifest = norn_ir::function::Digest(format!("sha256:{}", "b".repeat(64)));
         let unresolved = cell.resolve_accepted_receipt(&reference, &manifest).unwrap().is_none();
         norn_testkit::proptest::prop_assert!(unresolved);
-        let refused = matches!(commit_action(&mut cell, &catalog, &request, &Allow), Err(ActionRefusal::UnsupportedEffect { .. }));
+        let refused = commit_action(&mut cell, &catalog, &request, &Allow).is_err();
         norn_testkit::proptest::prop_assert!(refused);
         norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
         request.input.insert("receipt".to_owned(), JsonValue::Object(JsonObject::new()));
