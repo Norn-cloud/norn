@@ -9,7 +9,7 @@ use norn_cell::{CommitBatch, compute::Freshness};
 use query_support::*;
 
 #[test]
-fn data_ingest_asof_vectors_use_the_real_cell_evaluator_and_result_frontier() {
+fn scrap_yield_live_revisions_use_the_real_cell_evaluator_and_result_frontier() {
     let (mut store, plan, mut context) = fixture();
     load(&mut store);
     let first = store
@@ -131,4 +131,15 @@ fn query_zero_input_is_unavailable_and_scope_refusal_writes_nothing() {
             .is_err()
     );
     assert_eq!(head, store.verified_head().expect("same head"));
+}
+
+proptest::proptest! {
+    #[test]
+    fn query_staleness_follows_the_required_source_heartbeat(lag in 0u64..10_000) {
+        let (store, plan, mut context) = fixture();
+        context.now_ms = CLOCK.checked_add(lag).expect("bounded clock");
+        let result = store.evaluate_question(&plan, context, |_| Ok(true)).expect("query");
+        proptest::prop_assert_eq!(result.freshness,
+            if lag <= 5_000 { Freshness::Exact } else { Freshness::Stale });
+    }
 }

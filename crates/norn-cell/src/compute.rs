@@ -189,7 +189,17 @@ impl<E: SqlEngine> CellStore<E> {
                     contributions.insert(id, (record.version, value));
                 }
             }
+            let definition_pin = match reader.active_definitions_version()? {
+                Some(version) => {
+                    reader
+                        .installed_definitions(version)?
+                        .ok_or_else(|| refused("core.compute.stale_input"))?
+                        .receipt_sha256
+                }
+                None => self.model().model_hash().to_owned(),
+            };
             let query_pin = crate::codec::hash_json(&(
+                &definition_pin,
                 self.model().model_hash(),
                 plan.question(),
                 plan.definitions(),
@@ -201,7 +211,7 @@ impl<E: SqlEngine> CellStore<E> {
                 context,
                 revision,
                 query_pin,
-                self.model().model_hash().to_owned(),
+                definition_pin,
                 &contributions,
             )
         })
