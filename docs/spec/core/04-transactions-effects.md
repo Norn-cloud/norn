@@ -70,3 +70,5 @@ Only the cell host may resolve authenticated, scoped evidence. An unsupported ho
 refuses. Declaration admission does not grant completed acceptance: execution is
 fail-closed until the receipt's single-use consumption and all action effects can
 be fenced in one transaction, with no partial persistence on refusal.
+
+RECEIPT-STORE-1: only authenticated reconciliation of the cell’s recorded performer result may populate its scoped, persisted receipt store. Intake records source receipt and knowledge time; it grants no action/publication authority. Unknown, forged, wrong-scope or differently recorded results refuse without a write. Predicate and collection freshness adapters are currently unavailable and refuse closed. Generic event export does not restore private receipt authority.

@@ -276,6 +276,7 @@
     "crates/norn-cell/src/reactive.rs",
     "crates/norn-cell/src/reactive_read.rs",
     "crates/norn-cell/src/read.rs",
+    "crates/norn-cell/src/receipt_store.rs",
     "crates/norn-cell/src/restore.rs",
     "crates/norn-cell/src/store.rs",
     "crates/norn-cell/src/system.rs",

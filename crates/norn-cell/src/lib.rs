@@ -42,6 +42,7 @@ mod payload_storage;
 pub mod quantity;
 pub mod reactive;
 mod reactive_read;
+mod receipt_store;
 pub mod read;
 #[cfg(feature = "native")]
 pub mod restore;
