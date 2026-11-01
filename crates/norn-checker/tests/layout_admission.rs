@@ -156,8 +156,8 @@ fn fixture_sources(
     artifacts: &[norn_ir::ArtifactEnvelope],
     base: &[norn_ir::ArtifactEnvelope],
 ) -> norn_checker::receipt::ReceiptSources {
-    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
-    let base = norn_ir::runtime::encode(base).unwrap();
-    norn_checker::ReceiptSources::new(candidates.as_array().unwrap(), base.as_array().unwrap())
-        .unwrap()
+    let candidates = norn_ir::runtime::encode(artifacts).expect("receipt fixture");
+    let base = norn_ir::runtime::encode(base).expect("receipt fixture");
+    norn_checker::ReceiptSources::new(candidates.as_array().expect("receipt fixture"), base.as_array().expect("receipt fixture"))
+        .expect("receipt fixture")
 }

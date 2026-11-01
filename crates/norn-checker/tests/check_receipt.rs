@@ -941,10 +941,10 @@ fn fixture_sources(
     artifacts: &[norn_ir::ArtifactEnvelope],
     base: &[norn_ir::ArtifactEnvelope],
 ) -> norn_checker::receipt::ReceiptSources {
-    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
-    let base = norn_ir::runtime::encode(base).unwrap();
-    norn_checker::ReceiptSources::new(candidates.as_array().unwrap(), base.as_array().unwrap())
-        .unwrap()
+    let candidates = norn_ir::runtime::encode(artifacts).expect("receipt fixture");
+    let base = norn_ir::runtime::encode(base).expect("receipt fixture");
+    norn_checker::ReceiptSources::new(candidates.as_array().expect("receipt fixture"), base.as_array().expect("receipt fixture"))
+        .expect("receipt fixture")
 }
 
 fn verify_admission_receipt(
@@ -961,8 +961,8 @@ fn verify_admission_receipt(
     norn_checker::receipt::verify_admission_receipt_sources(
         stored,
         hash,
-        candidates.as_array().unwrap(),
-        installed.as_array().unwrap(),
+        candidates.as_array().expect("receipt fixture"),
+        installed.as_array().expect("receipt fixture"),
         limits,
     )
 }
@@ -977,11 +977,11 @@ fn exact_receipt(
     artifacts: &[norn_ir::RuntimeValue],
     base: &[norn_ir::RuntimeValue],
 ) -> CheckReceipt {
-    let sources = norn_checker::ReceiptSources::new(artifacts, base).unwrap();
-    let installed = base.iter().map(|source| norn_ir::runtime::decode(source).unwrap()).collect::<Vec<ArtifactEnvelope>>();
+    let sources = norn_checker::ReceiptSources::new(artifacts, base).expect("receipt fixture");
+    let installed = base.iter().map(|source| norn_ir::runtime::decode(source).expect("receipt fixture")).collect::<Vec<ArtifactEnvelope>>();
     let context = EntityArtifactSetContext { registry: &BTreeSet::new(), base: &installed, tenant: None };
     let checked = check_artifact_set_with_receipt(&sources, &context, &ResourceLimitProfile::norn_limits_v1())
-    .unwrap();
+    .expect("receipt fixture");
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     checked.receipt
 }
@@ -1012,13 +1012,13 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
                 (second.as_slice(), &[][..])
             };
             let receipt = exact_receipt(artifacts, base);
-            let digest = receipt.content_sha256().unwrap();
+            let digest = receipt.content_sha256().expect("receipt fixture");
             let changed_digest = exact_receipt(changed, changed_base)
                 .content_sha256()
-                .unwrap();
+                .expect("receipt fixture");
             assert_ne!(digest, changed_digest);
             let body = compact(&receipt);
-            verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).unwrap();
+            verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).expect("receipt fixture");
             assert!(
                 verify_admission_receipt_sources(&body, &digest, changed, changed_base, &limits)
                     .is_err()
