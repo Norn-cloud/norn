@@ -67,7 +67,7 @@ pub struct ForecastSummary {
     pub remedy_digest: Digest,
     /// Split boundary in the cell receipt clock’s milliseconds.
     pub split_at_ms: i64,
-    /// Latest actual training knowledge time in milliseconds (rounded up).
+    /// Latest actual training knowledge time in cell milliseconds.
     pub latest_training_label_ms: i64,
     /// Non-forward outcomes, retained as refusal evidence.
     pub non_forward_outcome_count: u32,
@@ -141,7 +141,7 @@ pub fn manifest() -> Result<FunctionManifest, CanonicalJsonError> {
         output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary", 2)?,
         error_schema: schema::<ForecastFailure>("core.analytics.ForecastFailure", 1)?,
         implementation: Implementation { format: ImplementationFormat::Host, digest: implementation.clone(),
-            entry_point: "norn_metrics::producer::perform_forecast".into(),
+            entry_point: "norn_metrics::producer::prepare_forecast".into(),
             locator: Some(format!("{}/{}@{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"), implementation)) },
         dependency_closure: Some(closure),
         runtime: RuntimeIdentity { id: env!("CARGO_PKG_NAME").into(), version: env!("CARGO_PKG_VERSION").into(), digest: implementation },

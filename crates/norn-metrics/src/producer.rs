@@ -1,11 +1,9 @@
-//! ANALYTICS-FUNCTION-2: actual library execution produces a measured receipt.
+//! ANALYTICS-FUNCTION-INPUT-1: bind actual library reports to exact exports.
 
-use norn_ir::{RuntimeValue, function::{BlobRef, CacheOrigin, Digest, ExecutionProvenance,
-    FailureOutcome, FunctionInvocation, FunctionOutcome, FunctionReceipt, ResourceUse,
-    SuccessOutcome, output_manifest_digest}};
+use norn_ir::function::{BlobRef, Digest};
 use crate::{host::{ForecastFailure, ForecastInput, ForecastSummary}, temporal::{TemporalPlan, TemporalRow}};
 
-fn failure(message: impl std::fmt::Debug) -> ForecastFailure {
+pub(crate) fn failure(message: impl std::fmt::Debug) -> ForecastFailure {
     ForecastFailure { code: "core.analytics.function".into(), message: format!("{message:?}") }
 }
 
@@ -80,8 +78,7 @@ fn assessment(export: &ForecastExport<'_>, input: &ForecastInput, implementation
         && (row.outcome.recorded_at >= input.split_boundary || row.outcome.valid_at >= input.split_boundary)).count();
     let latest = export.rows.iter().filter(|row| row.at < input.split_boundary)
         .map(|row| row.outcome.recorded_at).max().ok_or_else(|| failure("empty training partition"))?;
-    let latest_ms = latest.div_euclid(1000).checked_add(i64::from(latest.rem_euclid(1000) != 0))
-        .ok_or_else(|| failure("knowledge clock overflow"))?;
+    let latest_ms = latest.div_euclid(1000);
     let parameters = norn_ir::canonical::canonical_json_of(&("0.05", input.split_boundary,
         export.plan.object_type(), export.plan.max_age_micros(),
         export.plan.features().iter().map(|p| (&p.property, &p.unit)).collect::<Vec<_>>(),
@@ -109,9 +106,19 @@ fn assessment(export: &ForecastExport<'_>, input: &ForecastInput, implementation
     })
 }
 
-fn compute(export: &ForecastExport<'_>, input: &ForecastInput, implementation: Digest) -> Result<ForecastSummary, ForecastFailure> {
-    let mut summary = assessment(export, input, implementation)?;
-    if !summary.temporal_leakage && summary.non_forward_outcome_count == 0 {
+/// Bind exact export pins and prepare actual library evidence behind the host Function.
+/// ANALYTICS-FUNCTION-INPUT-1: invalid quality/time evidence keeps model scores absent.
+/// # Errors
+/// Mismatched export pins, unsupported clock/unit profile or actual library refusal.
+pub fn prepare_forecast(export: &ForecastExport<'_>, input: &ForecastInput) -> Result<ForecastSummary, ForecastFailure> {
+    if input != &export.input(input.split_boundary)?.0 || input.split_boundary.rem_euclid(1000) != 0
+        || export.rows.iter().flat_map(|r| r.features.iter().chain(std::iter::once(&r.outcome)))
+            .any(|v| v.recorded_at < 0 || v.recorded_at.rem_euclid(1000) != 0) {
+        return Err(failure("export pins or cell millisecond clock profile"));
+    }
+    let mut summary = assessment(export, input, crate::host::implementation_digest().map_err(failure)?)?;
+    if !summary.temporal_leakage && summary.non_forward_outcome_count == 0
+        && summary.complete && summary.quarantine_count == 0 && summary.fresh {
         let table = export.plan.materialize(export.as_of, export.source_head, export.rows.to_vec()).map_err(failure)?;
         let report = crate::analysis::forecast(&table, input.split_boundary).map_err(failure)?;
         summary.rmse_nanos = Some(nanos(report.rmse)?);
@@ -122,76 +129,8 @@ fn compute(export: &ForecastExport<'_>, input: &ForecastInput, implementation: D
     Ok(summary)
 }
 
-#[cfg(target_os = "linux")]
-fn measured(work: impl FnOnce() -> Result<ForecastSummary, ForecastFailure>)
-    -> Result<(Result<ForecastSummary, ForecastFailure>, ResourceUse), ForecastFailure> {
-    use nix::sys::{resource::{getrusage, UsageWho}, time::TimeValLike};
-    let before = getrusage(UsageWho::RUSAGE_THREAD).map_err(failure)?;
-    let start = std::time::Instant::now();
-    let result = work();
-    let wall_millis = u64::try_from(start.elapsed().as_millis()).map_err(failure)?;
-    let after = getrusage(UsageWho::RUSAGE_THREAD).map_err(failure)?;
-    let cpu = after.user_time().num_microseconds().checked_add(after.system_time().num_microseconds())
-        .and_then(|v| v.checked_sub(before.user_time().num_microseconds()))
-        .and_then(|v| v.checked_sub(before.system_time().num_microseconds())).ok_or_else(|| failure("CPU meter overflow"))?;
-    let peak = getrusage(UsageWho::RUSAGE_SELF).map_err(failure)?.max_rss();
-    Ok((result, ResourceUse { cpu_millis: u64::try_from(cpu).map_err(failure)? / 1000,
-        wall_millis, peak_memory_bytes: u64::try_from(peak).map_err(failure)?.checked_mul(1024)
-            .ok_or_else(|| failure("RSS meter overflow"))?, output_bytes: 0, fuel: None }))
-}
-
-#[cfg(not(target_os = "linux"))]
-fn measured(_: impl FnOnce() -> Result<ForecastSummary, ForecastFailure>)
-    -> Result<(Result<ForecastSummary, ForecastFailure>, ResourceUse), ForecastFailure> {
-    Err(failure("native resource meter unavailable"))
-}
-
-/// Execute the real forecast and return its bound receipt for CellHost::perform.
-/// ANALYTICS-FUNCTION-2: metadata comes from a host-resolved export, statistics
-/// only from norn-metrics, and accounting from the native meter. RSS is the
-/// conservative process peak (Linux KiB), rather than isolated model allocation.
-/// Late evidence returns an assessment with no fabricated model or score.
-/// # Errors
-/// Unavailable meter, invalid scope/dispatch/table pins, or receipt encoding.
-pub fn perform_forecast(invocation: &FunctionInvocation, export: &ForecastExport<'_>,
-    executor: &str, now_millis: u64) -> Result<FunctionReceipt, ForecastFailure> {
-    let admitted = norn_checker::function::admit_function_manifest(&crate::host::manifest().map_err(failure)?).map_err(failure)?;
-    if invocation.tenant != export.tenant || invocation.world != "main" || export.world != "main"
-        || invocation.deadline_millis < now_millis || executor.trim().is_empty()
-        || export.source_head > invocation.provenance_commit
-        || !norn_checker::function::check_function_invocation(invocation, &admitted).is_empty() {
-        return Err(failure("scope or dispatch"));
-    }
-    let input: ForecastInput = norn_ir::runtime::decode(&RuntimeValue::Object(invocation.inputs.clone())).map_err(failure)?;
-    if input.split_boundary.rem_euclid(1000) != 0 { return Err(failure("cell clock split must align to milliseconds")); }
-    let (expected, blob) = export.input(input.split_boundary)?;
-    if input != expected || invocation.blobs.len() != 1 || invocation.blobs.get("table") != Some(&blob) {
-        return Err(failure("table version/digest or split pin"));
-    }
-    let (result, mut resources) = measured(|| compute(export, &input, admitted.manifest.implementation.digest.clone()))?;
-    let outcome = match result {
-        Ok(summary) => {
-            let summary = norn_ir::runtime::encode(&summary).map_err(failure)?.as_object().cloned().ok_or_else(|| failure("summary object"))?;
-            resources.output_bytes = u64::try_from(norn_ir::canonical::canonical_json_of(&summary).map_err(failure)?.len()).map_err(failure)?;
-            FunctionOutcome::Success(SuccessOutcome { output_manifest: output_manifest_digest(&[], &summary).map_err(failure)?, outputs: vec![], summary })
-        }
-        Err(error) => {
-            let detail = norn_ir::runtime::encode(&error).map_err(failure)?.as_object().cloned().ok_or_else(|| failure("error object"))?;
-            resources.output_bytes = u64::try_from(norn_ir::canonical::canonical_json_of(&detail).map_err(failure)?.len()).map_err(failure)?;
-            FunctionOutcome::Failure(FailureOutcome { code: error.code, detail })
-        }
-    };
-    let receipt = FunctionReceipt { command_id: invocation.command_id.clone(), run: invocation.run.clone(), attempt: 1,
-        dispatch: invocation.content_digest().map_err(failure)?, manifest: admitted.digest,
-        execution_profile: admitted.execution_profile, input_identity: invocation.input_identity().map_err(failure)?,
-        dependency_token: invocation.dependency.digest().map_err(failure)?, outcome,
-        provenance: ExecutionProvenance { executor: executor.into(), placement: "native-host".into(), runtime: admitted.manifest.runtime.digest },
-        resources, cache: CacheOrigin::Miss {} };
-    Ok(receipt)
-}
-
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::cast_precision_loss, clippy::arithmetic_side_effects, reason = "bounded report-unit property")]
+#[allow(clippy::expect_used, clippy::arithmetic_side_effects, reason = "bounded report-unit property")]
 mod tests {
     use super::*;
     use proptest::prelude::*;
