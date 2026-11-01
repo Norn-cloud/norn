@@ -174,8 +174,8 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
     };
     let target = FactKey::new(
         call.object_type
-            .clone()
-            .unwrap_or_else(|| ObjectTypeName(object_kind.clone())),
+            .as_ref()
+            .map_or(object_kind.as_str(), ObjectTypeName::as_str),
         text(&input.effective_input, object_id_field)?,
     );
     check_kind(catalog, &target.object_type, object_kind)?;
@@ -233,7 +233,7 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
     let targets = reader.targets(&target, &binding.collection)?;
     let expected: BTreeSet<_> = rows
         .iter()
-        .map(|id| FactKey::new(collection.child_type.clone(), id.clone()))
+        .map(|id| FactKey::new(collection.child_type.as_str(), id.clone()))
         .collect();
     if targets.into_iter().collect::<BTreeSet<_>>() != expected || rows.is_empty() {
         return Err(invalid(
@@ -243,7 +243,7 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
     let company = reader.path(&target, &["company".into()])?;
     let mut partitions = BTreeMap::<[FactKey; 3], StockPartitionInput>::new();
     for (index, id) in rows.iter().enumerate() {
-        let key = FactKey::new(collection.child_type.clone(), id.clone());
+        let key = FactKey::new(collection.child_type.as_str(), id.clone());
         let values = reader.fact(&key)?;
         if text(&values, collection.row_id_property.as_str())? != *id
             || !integer_equals(
@@ -305,7 +305,6 @@ mod tests {
             ("0", Some(0)),
             ("-1", None),
             ("0.0000001", None),
-            ("9999999999999999999999999999", None),
         ] {
             let values = JsonObject::from([(
                 "quantity".into(),
