@@ -1,6 +1,6 @@
+use crate::decision_commit::DataQualityRuleClassification;
 //! Direct governing-law resolution and evaluation on the shared metered expression engine.
 use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
-use crate::decision_commit::DataQualityRuleClassification;
 use norn_expr::{EvaluationBudget, Expression, Value};
 use norn_ir::{
     ArtifactEnvelope, DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, LawIR,
@@ -187,7 +187,7 @@ pub fn evaluate(
                     LawSeverity::Error => DataQualitySeverity::Error,
                     LawSeverity::Warning => DataQualitySeverity::Warning,
                 },
-                message: law.rationale,
+                message: format!("{}: {}", law.id, law.rationale),
                 outcome,
             });
         }
@@ -222,7 +222,7 @@ fn boolean(
         }),
         Ok(result) => match result.value() {
             Value::Bool(value) => Ok(*value),
-            other => Err(DataQualityOutcome::NonBoolean {
+            other @ (Value::Null | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => Err(DataQualityOutcome::NonBoolean {
                 actual: format!("{other:?}"),
             }),
         },
