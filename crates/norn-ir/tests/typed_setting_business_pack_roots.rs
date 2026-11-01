@@ -100,7 +100,7 @@ fn new_envelope_fixtures_roundtrip_with_pinned_hashes() {
             "fixtures/ir/retail-reorder-threshold.setting.json",
             SETTING_FIXTURE,
             ArtifactKind::Setting,
-            "075143521b3c6891339b498040b5291853014513c9dca5db58c02aa8d3bca5d9",
+            "bd9a9061d0190a4048aa702ff8ecb60c110395d1470f24caee4f83d33f0953bc",
         ),
         (
             "fixtures/ir/retail-core.business_pack.json",
@@ -161,8 +161,8 @@ fn setting_fixture_decodes_into_the_typed_root() {
     for (value_type, value, expected) in [
         ("text", json!("reorder"), true),
         ("text", json!(5), false),
-        ("number", json!(5.5), true),
-        ("number", json!("5"), false),
+        ("number", json!("5.5"), true),
+        ("number", json!(5), false),
         ("boolean", json!(true), true),
         ("boolean", Value::Null, false),
         ("json", json!({ "a": [1, null] }), true),
@@ -416,5 +416,41 @@ fn null_extensions_are_rejected_by_the_typed_roots() {
         assert!(decode(payload.clone()));
         payload["extensions"] = Value::Null;
         assert!(!decode(payload), "extensions: null must be rejected");
+    }
+}
+
+#[test]
+fn parameter_exact_1_decimal_literals_survive_envelope_and_runtime() {
+    for literal in ["9007199254740993", "0.10", "0.1000000000000000000000000001"] {
+        let mut wire: Value = serde_json::from_str(SETTING_FIXTURE).expect("fixture");
+        wire["payload"]["value"] = json!(literal);
+        let source = serde_json::to_string(&wire).expect("source");
+        let envelope: ArtifactEnvelope = serde_json::from_str(&source).expect("envelope");
+        let encoded = serde_json::to_string(&envelope).expect("encode");
+        assert_eq!(
+            canonical_hash(source.as_bytes()),
+            canonical_hash(encoded.as_bytes())
+        );
+        let setting: SettingRoot = assert_typed_roundtrip("exact parameter", &wire["payload"]);
+        assert_eq!(
+            setting.value.to_json_value(),
+            norn_ir::JsonValue::String(literal.into())
+        );
+        assert_eq!(
+            setting.value.runtime_value().expect("runtime"),
+            norn_ir::RuntimeValue::from_json_text(literal).expect("exact number")
+        );
+    }
+    for value in [
+        json!(9007199254740993_u64),
+        json!("1e-29"),
+        json!("0.00000000000000000000000000001"),
+        json!("79228162514264337593543950336"),
+        json!("NaN"),
+        json!(" 1 "),
+    ] {
+        let mut payload = payload_json(SETTING_FIXTURE);
+        payload["value"] = value.clone();
+        assert!(!decodes::<SettingRoot>(payload), "{value}");
     }
 }
