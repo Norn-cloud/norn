@@ -9,7 +9,7 @@ measure values. Ratio operands retain their individual filters, effective
 property types/units and numerator/denominator order. ISO-UTC weekly grouping
 and the existing freshness declaration survive lowering unchanged.
 
-The plan is immutable, carries a positive full-population bound, and grants
+The plan is immutable, carries a positive full-population bound within `norn.limits/1`, and grants
 no read or mutation authority. Link traversal, inline calculations, nested
 ratios, multiple outputs, nullable/computed measures, FX, metric-level freshness
 or disclosure policies, roll-ups and comparisons remain refused by this

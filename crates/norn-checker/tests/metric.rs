@@ -949,7 +949,7 @@ fn query_grain_refuses_expansion_implicit_keys_and_unsupported_semantics() {
 
 proptest::proptest! {
     #[test]
-    fn compute_deterministic_ratio_lowering_ignores_definition_order(reverse in proptest::bool::ANY, max_items in 1u32..=1000) {
+    fn compute_deterministic_ratio_lowering_ignores_definition_order(reverse in proptest::bool::ANY, rotation in 0usize..3, max_items in 1u32..=1000) {
         use norn_checker::metric::compute::admit;
         let (mut definitions, mut question, catalog) = keyed_compute_fixture();
         let mut denominator = definitions[0].clone();
@@ -960,6 +960,7 @@ proptest::proptest! {
         definitions.extend([denominator, ratio]);
         let expected = admit(&definitions, &question, &catalog, max_items).expect("ratio");
         if reverse { definitions.reverse(); }
+        definitions.rotate_left(rotation);
         let actual = admit(&definitions, &question, &catalog, max_items).expect("reordered ratio");
         proptest::prop_assert_eq!(actual.sums().iter().map(|s| &s.name).collect::<Vec<_>>(), expected.sums().iter().map(|s| &s.name).collect::<Vec<_>>());
         proptest::prop_assert_eq!(actual.grain(), expected.grain());
@@ -967,7 +968,7 @@ proptest::proptest! {
     }
 
     #[test]
-    fn query_freshness_shape_never_admits_a_zero_age(age in 0u64..=10000, delayed in proptest::bool::ANY) {
+    fn query_freshness_shape_never_admits_a_zero_age(age in proptest::prop_oneof![proptest::strategy::Just(0u64), 1u64..=10000], delayed in proptest::bool::ANY) {
         let (definitions, mut question, catalog) = keyed_compute_fixture();
         question.freshness = if delayed {
             norn_ir::metric::FreshnessPolicy::Delayed { max_age_ms: norn_ir::WholeNumber(age) }

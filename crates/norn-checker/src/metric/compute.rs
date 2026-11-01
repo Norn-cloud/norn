@@ -84,6 +84,10 @@ pub fn admit(
         return Err(refusal(AMBIGUOUS_GRAIN));
     };
     if max_items == 0
+        || max_items
+            > norn_ir::ResourceLimitProfile::norn_limits_v1()
+                .slice
+                .max_records
         || !question.search_around.is_empty()
         || question.comparison.is_some()
         || selection.inline.is_some()
@@ -128,55 +132,62 @@ pub fn admit(
                 .iter()
                 .find(|m| m.name == name)
                 .ok_or_else(refuse)?;
-            let metric = bind_metric(definition).map_err(|_| refuse())?;
-            let BoundMeasure::Property {
-                object_type,
-                aggregate: MeasureAggregate::Sum,
-                property: Some(property),
-            } = &metric.measure
-            else {
-                return Err(refuse());
-            };
-            if object_type != &question.object_set
-                || !metric.time_dimension.links.is_empty()
-                || metric.currency.is_some()
-                || definition.norn.freshness.is_some()
-                || definition.norn.authz.is_some()
-                || metric
-                    .default_filters
-                    .iter()
-                    .any(|f| !f.path.links.is_empty())
-            {
-                return Err(refuse());
-            }
-            let object = catalog
-                .object_type_named(object_type.as_str())
-                .and_then(Result::ok)
-                .ok_or_else(refuse)?;
-            let property = object.property(property.as_str()).ok_or_else(refuse)?;
-            if property.computed
-                || property.nullable
-                || !matches!(
-                    property.kind,
-                    EffectiveKind::Base(
-                        PropertyType::Decimal { .. } | PropertyType::Integer { .. }
-                    )
-                )
-            {
-                return Err(refuse());
-            }
-            Ok(KeyedSum {
-                name: metric.name,
-                property: property.clone(),
-                time_property: metric.time_dimension.property,
-                filters: metric.default_filters,
-            })
+            lower_sum(definition, question, catalog)
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(QuestionPlan {
         question: question.clone(),
         sums,
         max_items,
+    })
+}
+
+fn lower_sum(
+    definition: &MetricDefinition,
+    question: &QuestionIR,
+    catalog: &EffectiveCatalog,
+) -> Result<KeyedSum, Vec<Diagnostic>> {
+    let refuse = || refusal(UNSUPPORTED_ENGINE);
+    let metric = bind_metric(definition).map_err(|_| refuse())?;
+    let BoundMeasure::Property {
+        object_type,
+        aggregate: MeasureAggregate::Sum,
+        property: Some(property),
+    } = &metric.measure
+    else {
+        return Err(refuse());
+    };
+    if object_type != &question.object_set
+        || !metric.time_dimension.links.is_empty()
+        || metric.currency.is_some()
+        || definition.norn.freshness.is_some()
+        || definition.norn.authz.is_some()
+        || metric
+            .default_filters
+            .iter()
+            .any(|f| !f.path.links.is_empty())
+    {
+        return Err(refuse());
+    }
+    let object = catalog
+        .object_type_named(object_type.as_str())
+        .and_then(Result::ok)
+        .ok_or_else(refuse)?;
+    let property = object.property(property.as_str()).ok_or_else(refuse)?;
+    if property.computed
+        || property.nullable
+        || !matches!(
+            property.kind,
+            EffectiveKind::Base(PropertyType::Decimal { .. } | PropertyType::Integer { .. })
+        )
+    {
+        return Err(refuse());
+    }
+    Ok(KeyedSum {
+        name: metric.name,
+        property: property.clone(),
+        time_property: metric.time_dimension.property,
+        filters: metric.default_filters,
     })
 }
 
