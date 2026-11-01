@@ -5802,3 +5802,20 @@ mod reference_lineage_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "parameter receipt codec fixtures")]
+mod parameter_pin_tests {
+    use super::*;
+    proptest::proptest! {
+        #[test]
+        fn receipt_pins_preserve_every_u64_revision(version in proptest::num::u64::ANY) {
+            let record: ActionCallRecord = serde_json::from_value(serde_json::json!({
+                "actionId":"test.parameter", "object":{"objectType":"test.Probe","key":"probe"},
+                "input":{}, "actor":"reviewer", "turn":"turn", "transition":"", "from":"", "to":"",
+                "parameterReads":[{"key":{"objectType":"test.Setting","key":"rate"},"expected":version}]
+            })).expect("typed receipt");
+            proptest::prop_assert_eq!(ActionCallRecord::from_values(&record.to_values()), Some(record));
+        }
+    }
+}
