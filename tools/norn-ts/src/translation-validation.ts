@@ -38,7 +38,9 @@ function preflight(text: string): void {
     if (token >= ts.SyntaxKind.FirstTriviaToken && token <= ts.SyntaxKind.LastTriviaToken) continue
     if (++tokens > TRANSLATION_LIMITS.tokens) throw new Declined("unknown", "token budget exceeded")
     if ([ts.SyntaxKind.OpenBraceToken, ts.SyntaxKind.OpenBracketToken, ts.SyntaxKind.OpenParenToken].includes(token)) depth++
-    if ([ts.SyntaxKind.CloseBraceToken, ts.SyntaxKind.CloseBracketToken, ts.SyntaxKind.CloseParenToken].includes(token)) depth--
+    if ([ts.SyntaxKind.CloseBraceToken, ts.SyntaxKind.CloseBracketToken, ts.SyntaxKind.CloseParenToken].includes(token) && --depth < 0) {
+      throw new Declined("unsupported", "unbalanced brackets")
+    }
     if (depth > TRANSLATION_LIMITS.depth) throw new Declined("unknown", "nesting budget exceeded")
     requireFragment(token !== ts.SyntaxKind.NoSubstitutionTemplateLiteral && token !== ts.SyntaxKind.TemplateHead, "template syntax is outside this fragment")
   }

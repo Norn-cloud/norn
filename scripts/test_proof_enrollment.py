@@ -8,12 +8,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import coverage_manifest
 from proof_enrollment import ROOT, discover_sources, validate
 
 
 class EnrollmentTests(unittest.TestCase):
     def setUp(self):
-        self.coverage = json.loads((ROOT / "verification/coverage-v1/coverage.json").read_text())
+        self.coverage = coverage_manifest.load()
         self.gates = json.loads((ROOT / "verification/coverage-v1/promoted-gates.json").read_text())
 
     def test_actual_absent_domain_tree(self):
@@ -78,8 +79,8 @@ class EnrollmentTests(unittest.TestCase):
                 subsystem["obligations"].remove("INV-QL-CONSERVATION")
                 subsystem["obligationClaims"] = [c for c in subsystem["obligationClaims"] if c["id"] != "INV-QL-CONSERVATION"]
         with tempfile.TemporaryDirectory() as directory:
-            candidate = Path(directory) / "coverage.json"
-            candidate.write_text(json.dumps(self.coverage))
+            candidate = Path(directory) / "manifest"
+            coverage_manifest.write(self.coverage, candidate)
             with self.assertRaisesRegex(module.InvalidCoverage, "unreferenced P0 obligations.*INV-QL-CONSERVATION"):
                 module.validate(coverage_path=candidate)
 
