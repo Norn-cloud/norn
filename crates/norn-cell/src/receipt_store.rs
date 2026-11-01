@@ -158,14 +158,43 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Ok(Some(stored))
     }
 
-    pub(crate) fn receipt_for_acceptance(&self, reference: &Digest) -> Result<Option<StoredReceipt>, CellError> {
-        let Some(stored) = self.stored_function_receipt(reference)? else { return Ok(None); };
-        let pending = self.store.read().head_command()?.ok_or_else(|| refused("replayed"))?;
-        let payload = pending.command.command.get("payload").ok_or_else(|| refused("dispatch"))?;
-        if payload.get("type").and_then(RuntimeValue::as_str) != Some("norn.function/v1") { return Err(refused("dispatch")); }
-        let invocation: norn_ir::function::FunctionInvocation = norn_ir::runtime::decode(payload.get("invocation").ok_or_else(|| refused("dispatch"))?).map_err(|_invalid| refused("dispatch"))?;
-        if invocation.tenant != self.scope || invocation.world != MAIN_WORLD || invocation.content_digest().map_err(|_invalid| refused("dispatch"))? != stored.receipt.dispatch
-            || pending.command.command_id != stored.receipt.command_id || pending.command.generation != stored.receipt.run.generation { return Err(refused("dispatch")); }
+    pub(crate) fn receipt_for_acceptance(
+        &self,
+        reference: &Digest,
+    ) -> Result<Option<StoredReceipt>, CellError> {
+        let Some(stored) = self.stored_function_receipt(reference)? else {
+            return Ok(None);
+        };
+        let pending = self
+            .store
+            .read()
+            .head_command()?
+            .ok_or_else(|| refused("replayed"))?;
+        let payload = pending
+            .command
+            .command
+            .get("payload")
+            .ok_or_else(|| refused("dispatch"))?;
+        if payload.get("type").and_then(RuntimeValue::as_str) != Some("norn.function/v1") {
+            return Err(refused("dispatch"));
+        }
+        let invocation: norn_ir::function::FunctionInvocation = norn_ir::runtime::decode(
+            payload
+                .get("invocation")
+                .ok_or_else(|| refused("dispatch"))?,
+        )
+        .map_err(|_invalid| refused("dispatch"))?;
+        if invocation.tenant != self.scope
+            || invocation.world != MAIN_WORLD
+            || invocation
+                .content_digest()
+                .map_err(|_invalid| refused("dispatch"))?
+                != stored.receipt.dispatch
+            || pending.command.command_id != stored.receipt.command_id
+            || pending.command.generation != stored.receipt.run.generation
+        {
+            return Err(refused("dispatch"));
+        }
         Ok(Some(stored))
     }
 
