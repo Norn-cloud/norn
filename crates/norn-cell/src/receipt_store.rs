@@ -79,8 +79,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             scope: scope.clone(),
             logical_time: now.as_millis(),
             events: vec![
-                norn_ir::runtime_object! { "type" => EVENT, "reference" => reference.0.clone() }
-                    .into(),
+                norn_ir::runtime_object! { "type" => EVENT, "reference" => reference.0.clone() },
             ],
             ..CommitBatch::default()
         };
