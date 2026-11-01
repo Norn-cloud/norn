@@ -122,6 +122,20 @@ class CoverageLayoutTests(unittest.TestCase):
                 self.assertEqual(coverage_manifest.load(target), document)
                 self.assertTrue(coverage_manifest.digest(target))
 
+    def test_nested_evidence_additions_touch_independent_files(self):
+        original = {"subsystems": [{"id": "toy", "obligationClaims": [{"id": "INV-X", "evidence": {"runtime": [{"artifact": "a.rs", "selectors": ["test:a"]}]}}]}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "manifest"
+            coverage_manifest.write(original, target, split_entries=True)
+            before = {p.relative_to(target): p.read_bytes() for p in coverage_manifest.files(target)}
+            updated = copy.deepcopy(original)
+            updated["subsystems"][0]["obligationClaims"][0]["evidence"]["runtime"][0]["selectors"].append("test:b")
+            coverage_manifest.write(updated, target, split_entries=True)
+            after = {p.relative_to(target): p.read_bytes() for p in coverage_manifest.files(target)}
+            self.assertEqual([p for p in before if before[p] != after.get(p)], [])
+            self.assertEqual(len(after) - len(before), 1)
+            self.assertEqual(coverage_manifest.load(target), updated)
+
     def test_layout_refusals(self):
         document = {"subsystems": [{"id": "toy", "sourceFiles": ["a.rs", "b.rs"], "obligations": ["INV-X"]}]}
         for split in (False, True):

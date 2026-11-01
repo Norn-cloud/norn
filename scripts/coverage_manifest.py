@@ -77,38 +77,41 @@ def files(directory: Path = COVERAGE) -> list[Path]:
     return result
 
 
-def _entry_files(directory: Path) -> list[Path]:
-    metadata = _object(directory / INDEX)
-    fields = {}
-    def walk(value, parts):
+def _assemble(directory: Path) -> tuple[dict[str, Any], list[Path]]:
+    fields, result = set(), [directory / INDEX]
+    def restore(value, parts):
         if isinstance(value, dict):
-            if "$entries" in value:
-                field = ".".join(parts)
-                if value != {"$entries": field} or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*", field):
-                    raise InvalidCoverageLayout(f"invalid entry field {field}")
-                fields[field] = directory / field
-            else:
-                for key, item in value.items():
-                    walk(item, [*parts, key])
-        elif isinstance(value, list):
+            if "$entries" not in value:
+                return {key: restore(item, [*parts, key]) for key, item in value.items()}
+            field = ".".join(parts)
+            if value != {"$entries": field} or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*", field) or field in fields:
+                raise InvalidCoverageLayout(f"invalid or duplicate entry field {field}")
+            fields.add(field)
+            folder = directory / field
+            if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
+                raise InvalidCoverageLayout(f"{field}: not an entry directory")
+            entries = []
+            for path in sorted(folder.iterdir()) if folder.exists() else []:
+                entry = _object(path)
+                if set(entry) != {"order", "value"} or type(entry["order"]) is not int or entry["order"] < 0:
+                    raise InvalidCoverageLayout(f"{path}: invalid entry envelope")
+                item = restore(entry["value"], [*parts, "entry" + path.stem])
+                if path.name != entry_id(item) + ".json":
+                    raise InvalidCoverageLayout(f"{path}: mismatched entry identity")
+                result.append(path)
+                entries.append((entry["order"], path.name, item))
+            return [item for _, _, item in sorted(entries)]
+        if isinstance(value, list):
             raise InvalidCoverageLayout(f"{directory}: shared arrays must be entry files")
-    walk(metadata, [])
+        return value
+    body = restore(_object(directory / INDEX), [])
     if not {p.name for p in directory.iterdir()}.issubset({INDEX, *fields}):
-        raise InvalidCoverageLayout(f"{directory}: unknown or missing entry fields")
-    result = [directory / INDEX]
-    for field, folder in sorted(fields.items()):
-        if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
-            raise InvalidCoverageLayout(f"{field}: not an entry directory")
-        if not folder.exists():
-            continue
-        for path in sorted(folder.iterdir()):
-            entry = _object(path)
-            if set(entry) != {"order", "value"} or type(entry["order"]) is not int or entry["order"] < 0:
-                raise InvalidCoverageLayout(f"{path}: invalid entry envelope")
-            if path.name != entry_id(entry["value"]) + ".json":
-                raise InvalidCoverageLayout(f"{path}: mismatched entry identity")
-            result.append(path)
-    return result
+        raise InvalidCoverageLayout(f"{directory}: unknown entry fields")
+    return body, sorted(result)
+
+
+def _entry_files(directory: Path) -> list[Path]:
+    return _assemble(directory)[1]
 
 
 def entry_id(value: Any) -> str:
@@ -122,16 +125,7 @@ def entry_id(value: Any) -> str:
 
 
 def _subsystem(directory: Path) -> dict[str, Any]:
-    _entry_files(directory)
-    def restore(value):
-        if isinstance(value, dict):
-            if "$entries" in value:
-                folder = directory / value["$entries"]
-                entries = [(_object(path), path.name) for path in folder.iterdir()] if folder.exists() else []
-                return [entry["value"] for entry, _ in sorted(entries, key=lambda x: (x[0]["order"], x[1]))]
-            return {key: restore(item) for key, item in value.items()}
-        return value
-    return restore(_object(directory / INDEX))
+    return _assemble(directory)[0]
 
 
 def load(directory: Path = COVERAGE) -> dict[str, Any]:
@@ -181,7 +175,7 @@ def write(document: dict[str, Any], directory: Path, *, split_entries: bool = Fa
                     if name in seen:
                         raise InvalidCoverageLayout(f"{field}: duplicate entry identity")
                     seen.add(name)
-                    (folder / f"{name}.json").write_text(json.dumps({"order": order, "value": item}, indent=2) + "\n")
+                    (folder / f"{name}.json").write_text(json.dumps({"order": order, "value": split(item, [*parts, "entry" + name])}, indent=2) + "\n")
                 return {"$entries": field}
             if isinstance(value, dict):
                 return {key: split(item, [*parts, key]) for key, item in value.items()}
