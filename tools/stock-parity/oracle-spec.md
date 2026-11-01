@@ -197,3 +197,37 @@ only a real dump from the Norn driver qualifies cross-engine parity.
   or changing valuation semantics. Cancellation remains unsupported/incomplete,
   never an intentional difference or a demonstrated ERPNext valuation bug.
   See native [scheduler diagnostics](https://docs.frappe.io/framework/user/en/bench/guides/diagnosing-the-scheduler).
+
+## CP2 explicit dispatch qualification
+
+- **CP2-explicit-repost-dispatch:** when a checkpoint observes queued native
+  valuation work, invoke the supported `bench --site parity.localhost
+  trigger-scheduler-event` command for the observed `repost_entries` job once.
+  Keep the native worker running and automatic scheduler disabled; the harness neither computes valuations nor
+  edits repost status. The command has a 30-second subprocess bound inside the
+  existing 120-second settlement deadline. Command failure, failed repost or
+  deadline expiry yields unsupported, preserving the accepted attempt.
+  The [Bench scheduler commands](https://docs.frappe.io/framework/user/en/bench/frappe-commands#scheduler-commands)
+  document this explicit event trigger. A diagnostic fresh fork changed a
+  queued cancel-return repost to Completed after this command, with native
+  `last_execution` advancing; scheduler presence alone did not dispatch it.
+- **CP2-dispatch-once:** dispatch only if pending work is observed, once per
+  checkpoint; continue observing until native completion, never treating command
+  exit zero as settlement. Correspondence tests cover the no-work case,
+  successful drain, dispatch failure and persistent-queue timeout.
+
+The earlier fresh-scheduler scenario is retained as the failing baseline.
+Explicit dispatch qualifies the operational harness, not automatic scheduling.
+The lifecycle witness remains 20 checkpoints (including reverse cancellation),
+not a qualification of a replacement corrected receipt or of live Norn parity.
+
+- **CP2-single-dispatch-owner:** the explicit profile supersedes the earlier
+  automatic scheduler/cadence experiment: disable the site scheduler, never
+  launch `bench schedule`, and leave native scheduled-job frequencies unchanged.
+  The serial checkpoint owns the sole explicit valuation trigger. Do not run
+  manual valuation execution beside an automatic scheduler: their executions
+  might overlap. Qualification must observe the disabled scheduler and no
+  scheduler process, as well as all 20 settled native checkpoints. Queue workers
+  remain available for jobs the native operation delegates. This addresses the
+  review's concurrent-dispatch concern without introducing undocumented native
+  function calls or importing native source.

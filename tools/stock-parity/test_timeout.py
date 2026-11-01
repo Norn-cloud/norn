@@ -71,5 +71,50 @@ elif sys.argv[1] == 'info':
             self.assertLess(download, next(i for i, c in enumerate(calls) if c[0] == 'delete'))
 
 
+class RepostDispatch(unittest.TestCase):
+    def driver(self, pending):
+        api = MagicMock()
+        api.rows.side_effect = lambda doctype, filters, fields: (
+            next(pending) if doctype == 'Repost Item Valuation'
+            and filters['status'] != 'Failed' else [])
+        return SimpleNamespace(api=api, f=dict(company='synthetic', item='item',
+                               warehouses={}, accounts={}), docs={})
+
+    def test_native_completion_required_and_dispatch_once(self):
+        from extract import checkpoint
+        driver = self.driver(iter([[{'name': 'queued'}], [{'name': 'queued'}], [], []]))
+        with patch('extract.dispatch_reposts') as dispatch, patch('extract.time.sleep'):
+            self.assertEqual(checkpoint(driver, 0, [])['stock'], [])
+            dispatch.assert_called_once_with(30)
+
+    def test_no_work_needs_no_dispatch(self):
+        from extract import checkpoint
+        with patch('extract.dispatch_reposts') as dispatch:
+            checkpoint(self.driver(iter([[]])), 0, [])
+            dispatch.assert_not_called()
+
+    def test_trigger_failure_is_not_settlement(self):
+        from extract import checkpoint
+        with patch('extract.dispatch_reposts', side_effect=subprocess.TimeoutExpired('bench', 30)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                checkpoint(self.driver(iter([[{'name': 'queued'}]])), 0, [])
+
+    def test_completion_observed_after_deadline_is_unsupported(self):
+        from extract import checkpoint
+        with patch('extract.dispatch_reposts') as dispatch, patch('extract.time.sleep'), patch(
+                'extract.time.monotonic', side_effect=[0, 119, 119, 121]):
+            with self.assertRaises(TimeoutError):
+                checkpoint(self.driver(iter([[{'name': 'queued'}], []])), 0, [])
+            dispatch.assert_called_once_with(1)
+
+    def test_zero_exit_with_persistent_queue_times_out(self):
+        from extract import checkpoint
+        with patch('extract.dispatch_reposts') as dispatch, patch('extract.time.sleep'), patch(
+                'extract.time.monotonic', side_effect=[0, 0, 0, 121]):
+            with self.assertRaises(TimeoutError):
+                checkpoint(self.driver(iter([[{'name': 'queued'}], [{'name': 'queued'}]])), 0, [])
+            dispatch.assert_called_once_with(30)
+
+
 if __name__ == '__main__':
     unittest.main()
