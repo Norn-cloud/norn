@@ -8,10 +8,10 @@ Reuse `RuleRoot`, `RuleDecisionV1`, `JdmGraph`, `SliceDeclaration`, `ZenExpressi
 
 | Target record | Required fields |
 |---|---|
-| Query plan | `id: Pin`, typed input/output schemas, `source: typed set/history/link`, `operators`, `grain: [member identity]`, `units`, `time_basis: effective/recorded/both`, `bounds`, `freshness: FreshnessPolicy`. |
+| Query plan | `id: Pin`, typed input/output schemas, `source: typed set/history/link`, `operators`, `grain: [member identity]`, `units`, `time_basis: effective/recorded/both`, `bounds`, `freshness: FreshnessPolicy`, `required_sources: [connector partition]`, `on_unmet: refuse/label` (authoritative reads must refuse). |
 | Operators | closed variants: select/filter/project/link/group/aggregate/classify/ordered_fold/as_of; typed member/expression references; each records dependencies and input completeness. No arbitrary function node. |
 | Ordered fold | `item_schema`, `accumulator_schema`, `initial: Exact record`, `order: [typed key + direction]` ending in stable ID, `step: pinned RuleIR`, `result: Expr`, `max_items`, `max_steps`, `scale`, `rounding`, residual/allocation provenance fields. Follow #323's wire contract when landed. |
-| Freshness policy | `mode: exact/bounded_staleness/best_effort`, `max_lag_ms?` (required for bounded), `required_sources: [connector partition]`, `on_unmet: refuse/label` (exact must refuse); governed law reads always exact. |
+| Freshness policy | Reuse admitted `FreshnessPolicy::Live { max_age_ms }`, `Delayed { max_age_ms }`, `AsOf { at: UtcTimestamp }`; no replacement wire variants. Source completeness and unmet-policy handling are target query-plan fields, not changes to this enum; governed law reads always exact. |
 | Result envelope | `query_pin`, `engine: cell/ivm/olap`, `revision`, `effective_as_of`, `known_as_of`, `source_cursors: map(source,partition→cursor)`, `watermarks`, `freshness: exact/fresh/stale/incomplete`, `complete`, `grain`, `lineage_ref`, `rows`. |
 
 Derived concepts and questions share this algebra. Source cursors are opaque and compared only by their connector's declared ordering; never take a meaningless minimum across unrelated sources. Expose a vector frontier, not a fabricated global source sequence.
@@ -34,7 +34,7 @@ Derived concepts and questions share this algebra. Source cursors are opaque and
 | QUERY-FRESH-1: authoritative reads complete/exact; evaluation/commit | `core.compute.stale_input` |
 | QUERY-ENGINE-1: equal frontier gives equivalent engine results; qualification | `core.compute.unsupported_engine` |
 
-Evidence: structural typing, sampled three-engine differential tests, runtime bounds/read fences; generated fold induction and aggregate preservation goals. IVM tests are not a proof of incremental correctness; WellDB's current evidence ceiling stays explicit.
+Current evidence: structural typing and narrow induction substrate at the baseline below. Target evidence: sampled three-engine differential tests, runtime fold bounds/full read fences, and generated fold induction and aggregate preservation goals. IVM tests are not a proof of incremental correctness; WellDB's current evidence ceiling stays explicit.
 
 ## Named acceptance scenarios
 
@@ -53,7 +53,7 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 1. Land/adapt A1 #323 fold contract with fail-closed unsupported execution; complete accumulator/step typing.
 2. A2 exact arithmetic evaluator, then bounded interpreter, then FOLD-ALLOCATE/CAPACITY correspondence as separate cuts; remove refusal only for supported semantics.
 3. A3 #324 capture full partition reads; retain them through 04 preparation/commit.
-4. **Demo priority:** add grain/freshness/cursor result contract; QUERY-FANOUT/STALE admission tests.
+4. **Demo priority:** add grain/freshness/cursor result contract; QUERY-FANOUT and freshness-policy shape admission tests, plus QUERY-STALE evaluation/commit tests for stale labels, stale-result refusal and commit-law refusal.
 5. **Demo priority:** lower the inventory-value question to exact reference evaluation, then IVM delta/retraction, then OLAP pinned-snapshot evaluation (three separate PRs); each unsupported engine remains refused until qualified.
 6. **Demo priority:** QUERY-THREE and beat-6 incremental/full-recompute tests; bind #69 temporal tables/metrics analysis inputs to the same provenance and frontier.
 7. Generate fold/aggregate obligations after 05 semantics; add shared classified/derived concept dependency invalidation with 02/08.
