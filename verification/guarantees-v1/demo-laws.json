@@ -1,6 +1,9 @@
 {
-  "coreRegistry": "verification/core-physics-v1/obligations.json",
+  "statementRegistries": ["verification/stripmine-2026-08-22/obligations.json", "verification/core-physics-v1/obligations.json"],
   "laws": [
+    {"id":"KERNEL-V2-COMMIT","lawLayer":"core primitives","statement":"Commit admission preserves atomicity, single receipts, refusal transparency and compare-and-swap safety."},
+    {"id":"KERNEL-V2-QUANTITY","lawLayer":"core primitives","statement":"Quantity operations conserve funded balances and reservation remainders, preserve state on refusal and reject expired posting."},
+    {"id":"KERNEL-V2-PROJECTION","lawLayer":"core primitives","statement":"Projection observations correspond to committed authority state under the declared kernel model bounds."},
     {"id":"POST-ATOMIC","lawLayer":"accounting/inventory","statement":"Refusal or a pre-COMMIT fault preserves stock, GL, history, outbox and receipt state."},
     {"id":"POST-VALUE","lawLayer":"accounting/inventory","statement":"Quantity, StockEvents and fold deltas agree; signed stock GL equals the rounded partition value delta and every journal balances."},
     {"id":"POST-IDENTITY","lawLayer":"accounting/inventory","statement":"Identical intent replays once; conflicting payload or pins refuse unchanged; lost acknowledgement cannot duplicate publication."},

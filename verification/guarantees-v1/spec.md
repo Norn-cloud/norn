@@ -3,7 +3,9 @@
 This is public evidence data for inclusion in an authorized server document.
 The host owns authorization and document delivery; this unit adds no endpoint.
 Law order is core primitives, accounting/inventory, jewelry, then workflow.
-The demo law catalog supplies statements and stable IDs; coverage claims join
+Every coverage law is included, using statements from obligation registries or
+the demo catalog. A missing statement fails generation. Kernel/verification laws
+use the core primitives layer; demo laws declare their layer. Coverage claims join
 only by exact ID. Core statements come from the core obligation registry.
 
 - `GUAR-IDENTITY`: duplicate law or coverage IDs refuse generation.

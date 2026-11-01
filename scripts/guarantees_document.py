@@ -63,12 +63,21 @@ def project(coverage: dict, laws: list[dict]) -> dict:
 
 def render(root: Path) -> str:
     catalog = read(root, f"{DIRECTORY}/demo-laws.json")
-    laws = [{"id": item["id"], "statement": item["statement"], "lawLayer": LAYERS[0],
-             "law": item.get("law"), "assumptions": item.get("assumptions", [])}
-            for item in read(root, catalog["coreRegistry"])["obligations"]]
+    statements = unique([item for source in catalog["statementRegistries"]
+                         for item in read(root, source)["obligations"]])
     coverage = read(root, "verification/coverage-v1/coverage.json")
-    document = project(coverage, laws + catalog["laws"])
-    inputs = {"coverage": coverage, "laws": laws + catalog["laws"]}
+    laws = unique(catalog["laws"])
+    for system in coverage["subsystems"]:
+        for claim in system["obligationClaims"]:
+            if claim["id"] not in laws:
+                item = statements[claim["id"]]
+                laws[item["id"]] = {"id": item["id"], "statement": item["statement"],
+                                    "lawLayer": "core primitives",
+                                    "law": item.get("law"),
+                                    "assumptions": item.get("assumptions", [])}
+    laws = list(laws.values())
+    document = project(coverage, laws)
+    inputs = {"coverage": coverage, "laws": laws}
     document["sourceDigest"] = hashlib.sha256(
         json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
