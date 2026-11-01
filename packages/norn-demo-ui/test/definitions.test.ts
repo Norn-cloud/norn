@@ -94,3 +94,10 @@ test("D8: rule target, derivation and outputs are declared; structured text is e
   for (const value of ["Applies to", "demo.Parcel", "Derives / checks", "Declared outputs", "total", "&lt;script&gt;amount&lt;/script&gt;"]) expect(html).toContain(value)
   expect(html).not.toContain('<script>')
 })
+
+test("D6: transition labels never cross definition versions", () => {
+  const html = renderDefinitionsDocument({ entries: [action, { ...entity, metadata: { ...entity.metadata, version: "0.2.0" } }] })
+  expect(html).toContain("No action supplied")
+  expect(html).not.toContain("Send parcel<br>— send →")
+  expect(html).not.toContain("positive: self.mass")
+})
