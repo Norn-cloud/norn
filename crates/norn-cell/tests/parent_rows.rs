@@ -2967,7 +2967,7 @@ mod cp1_stock {
         for ty in stock_output_types() {
             let mut artifact = artifacts
                 .iter()
-                .find(|a| a.kind == norn_ir::ArtifactKind::Entity)
+                .find(|a| a.kind() == norn_ir::ArtifactKind::Entity)
                 .expect("entity envelope")
                 .clone();
             artifact.artifact_id = format!("{}.entity", ty.name.as_str());
@@ -3178,7 +3178,7 @@ mod cp1_stock {
             CellStore::open(&path, model.clone(), StoreOptions::default()).expect("durable cell");
         seed(&mut store);
         let mut cell: NativeCell =
-            SqliteCell::new(store, "org_demo/dev", |c| c.payload.clone()).expect("host");
+            NativeCell::new(store, "org_demo/dev", |c| c.payload.clone()).expect("host");
         let receipt = invoke(&catalog, "stock.receipt.submit", "pr", "receive");
         let snapshot =
             prepare_stock_snapshot(&cell, &catalog, &receipt, &Reads).expect("authoritative setup");
@@ -3297,7 +3297,7 @@ mod cp1_stock {
             reopened.read().verify_ledger().expect("verify reopen")
         );
         let mut cell: NativeCell =
-            SqliteCell::new(reopened, "org_demo/dev", |c| c.payload.clone()).expect("host");
+            NativeCell::new(reopened, "org_demo/dev", |c| c.payload.clone()).expect("host");
         assert!(matches!(
             commit_action(&mut cell, &catalog, &delivery, &Reads).expect("reopen retry"),
             ActionOutcome::Replayed { .. }
