@@ -364,7 +364,7 @@ mod defs_read {
         let empty = get_defs(&host, &query, Some("reader")).expect("empty");
         let json = serde_json::to_string(&empty).expect("wire");
         let golden = format!(
-            r#"{{"admitted":true,"version":1,"layoutRevision":0,"layout":{{"layoutVersion":"0.1","artifacts":{{}}}},"layoutDiagnostics":{},"receipt":{},"receiptSha256":"{}","diagnostics":{},"registry":[],"baseArtifactIds":[],"artifacts":[]}}"#,
+            r#"{{"admitted":true,"version":1,"layoutRevision":1,"layout":{{"layoutVersion":"0.1","artifacts":{{}}}},"layoutDiagnostics":{},"receipt":{},"receiptSha256":"{}","diagnostics":{},"registry":[],"baseArtifactIds":[],"artifacts":[]}}"#,
             empty.layout_diagnostics,
             empty.receipt.get(),
             empty.receipt_sha256,
