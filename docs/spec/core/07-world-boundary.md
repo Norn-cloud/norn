@@ -46,10 +46,11 @@ receipt pins the definition version for historical re-evaluation; current laws
 cannot substitute for that snapshot. A law pin is classified as `Integrity` or `Quality` only
 when it resolves to the supported direct-law contract.
 
-For CP2 the trusted public DevHost adapter checks dataplane submissions, delivers
-them only through the Observed inbox, and leaves source mapping to norn-cell;
-there is no norn-cell dependency on norn-dataplane, and the inbox key binds
-trusted connector instance, partition and source event identity as a canonical tuple.
+For CP2 the public `norn-api` DevHost runs the checked dataplane adapter and
+delivers submissions only through the existing Observed inbox; `norn-cell`
+applies admitted source mappings without depending on `norn-dataplane`, and
+the inbox key binds trusted connector instance, partition and source event
+identity as a canonical tuple.
 
 ## Ingestion versus governed action
 
@@ -62,8 +63,10 @@ Canonical promotion/write-back is a separate governed action under 04/05. Its la
 CP2 declares error-severity direct safety laws as quarantine constraints and
 uses revalidation for recovery: an appended corrected observation is eligible
 only when every such law passes. `authoritative_object` excludes quarantined
-records; raw reads retain source truth. The quality-review projection marks
-resolved findings after a passing correction without rewriting the original.
+records; raw reads retain source truth. Finding status is per law: a correction that passes law A resolves finding A
+without rewriting the original, even if law B still has an open finding.
+Object quarantine remains while any finding under the declared quarantine
+constraints is open; recovery requires every such finding to be resolved.
 Capture atomically suppresses an already proven finding ID, including after
 redelivery/restart; retry normalization uses the original commit cutoff.
 
