@@ -253,6 +253,13 @@ describe("opt-in literal marking translation validation", () => {
     ]) expect(validateMarkingsTranslation(source, changed, context).status).toBe("unsupported")
   }, 30_000)
 
+  test("unmatched closers cannot offset the nesting budget", () => {
+    const malformed = "}".repeat(2_000) + "[".repeat(2_000)
+    const result = validateMarkingsTranslation(malformed, candidate(), context)
+    expect(result.status).toBe("unsupported")
+    expect(result.reason).toBe("unbalanced brackets")
+  })
+
   test("budget exhaustion never becomes checked", () => {
     expect(validateMarkingsTranslation(" ".repeat(TRANSLATION_LIMITS.textUnits + 1), "[]", context).status).toBe("unknown")
     expect(validateMarkingsTranslation(source, " ".repeat(TRANSLATION_LIMITS.textUnits + 1), context).status).toBe("unknown")
