@@ -457,6 +457,9 @@
     "scripts/demo/run.sh",
     "scripts/demo/jewelry.source.ts",
     "crates/norn-checker/examples/jewelry_demo.rs",
+    "scripts/demo/drop-01-authored-laws.sh",
+    "scripts/demo/drop-02-exact-values-units.sh",
+    "scripts/demo/drop-common.sh",
     "verification/coverage-v1/test_welldb_enrollment.py"
   ]
 }
