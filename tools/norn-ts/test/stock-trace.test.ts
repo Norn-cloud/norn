@@ -43,3 +43,14 @@ test("retains conflicting retries and unordered contenders rather than normalizi
   expect(barrier?.kind).toBe("concurrent")
   if (barrier?.kind === "concurrent") expect(barrier.commands.map(value => value.requestId)).toEqual(["sell-a", "sell-b"])
 })
+
+
+test("barrier references accept either possible winner without replacing earlier ownership", () => {
+  const delivery = { ...command, operation: { kind: "delivery", warehouse: "a", quantity: "1" } }
+  const returned = { ...serial, command: { ...command, requestId: "returned", operation: { kind: "return", delivery: "receipt", quantity: "1" } } }
+  for (const commands of [[command, delivery], [delivery, command]]) {
+    const barrier = { kind: "concurrent", commands, expected: "one-winner" }
+    expect(() => parseStockTrace({ ...header, steps: [barrier, returned] })).not.toThrow()
+    expect(() => parseStockTrace({ ...header, steps: [serial, barrier, returned] })).toThrow("prior delivery")
+  }
+})

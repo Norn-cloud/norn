@@ -45,7 +45,7 @@ export type StockTrace = typeof StockTrace.Type
  * oracle refusals/differences must be retained and triaged, never filtered out. */
 export function parseStockTrace(input: unknown): StockTrace {
   const trace = Schema.decodeUnknownSync(StockTrace)(input, { onExcessProperty: "error" })
-  const prior = new Map<string, StockOperation>()
+  const prior = new Map<string, Set<StockOperation["kind"]>>()
   for (const step of trace.steps) {
     const commands = step.kind === "serial" ? [step.command] : step.commands
     for (const command of commands) {
@@ -55,14 +55,20 @@ export function parseStockTrace(input: unknown): StockTrace {
       }
       const op = command.operation
       if (op.kind === "transfer" && op.from === op.to) throw new Error("Transfer needs distinct warehouses")
-      if (op.kind === "return" && prior.get(op.delivery)?.kind !== "delivery") throw new Error("Return needs a prior delivery")
-      if (op.kind === "cancel" && (!prior.has(op.target) || prior.get(op.target)?.kind === "cancel")) {
+      if (op.kind === "return" && !prior.get(op.delivery)?.has("delivery")) throw new Error("Return needs a prior delivery")
+      const targetKinds = op.kind === "cancel" ? prior.get(op.target) : undefined
+      if (op.kind === "cancel" && (!targetKinds || ![...targetKinds].some(kind => kind !== "cancel"))) {
         throw new Error("Cancellation needs a prior non-cancel request")
       }
     }
-    // Barrier members cannot reference each other. First payload owns an ID;
-    // conflicting later payloads remain inputs for the idempotency-refusal case.
-    for (const command of commands) if (!prior.has(command.requestId)) prior.set(command.requestId, command.operation)
+    const introduced = new Map<string, Set<StockOperation["kind"]>>()
+    for (const command of commands) {
+      if (prior.has(command.requestId)) continue
+      const kinds = introduced.get(command.requestId) ?? new Set<StockOperation["kind"]>()
+      kinds.add(command.operation.kind)
+      introduced.set(command.requestId, kinds)
+    }
+    for (const [id, kinds] of introduced) prior.set(id, kinds)
   }
   return trace
 }
