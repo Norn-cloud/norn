@@ -1,12 +1,16 @@
+import { parseTree, findNodeAtLocation, type ParseError } from "jsonc-parser"
 import type { Schemas } from "../../norn-sdk/src/index.ts"
 
 type Artifact = Schemas["NornArtifactEnvelope"]
+type Definition = { [K in Artifact["kind"]]: Pick<Extract<Artifact, { kind: K }>, "kind" | "payload" | "dependencies"> }[Artifact["kind"]]
 type Metadata = Pick<Artifact, "artifactId" | "kind" | "name" | "version">
 
 /** Metadata and exact JSON text from an already-authorized definition read. */
 export interface DefinitionEntry {
   readonly metadata: Metadata
   readonly source: string
+  /** The admitted payload from the same authorized read; never reconstructed from source text. */
+  readonly definition?: Definition
 }
 
 const escape = (value: string): string => value.replace(/[&<>"'\r]/g, (character) => {
@@ -43,6 +47,23 @@ summary { cursor: pointer; padding: 1.25rem; line-height: 1.6; overflow-wrap: an
 .meta { display: block; margin-left: 1rem; }
 code, pre { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; font-size: .85rem; }
 pre { margin: 0; padding: 1.25rem; border-top: 1px solid #e0e5de; background: #fafbf8; overflow: auto; max-height: 65vh; line-height: 1.6; tab-size: 2; }
+h2 { font-size: 1.2rem; font-weight: 500; margin-top: 2rem; }
+small { color: #52635b; margin-left: .5rem; }
+h3 { font-size: .9rem; margin-top: 1.5rem; }
+.structure { padding: 0 1.25rem 1.25rem; line-height: 1.6; overflow-wrap: anywhere; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #e0e5de; }
+th { color: #52635b; font-weight: 500; }
+.states, .transitions { display: flex; flex-wrap: wrap; gap: .6rem; padding: 0; list-style: none; }
+.states li, .transitions li { padding: .5rem .75rem; border: 1px solid #d5dcd4; border-radius: 4px; }
+.states .initial { border-left: 3px solid #23664c; }
+.states .terminal { border-style: double; border-width: 3px; }
+.transitions { display: grid; }
+.transitions li { display: grid; grid-template-columns: minmax(5rem, 1fr) minmax(10rem, 2fr) minmax(5rem, 1fr); gap: .75rem; align-items: center; background: #fafbf8; }
+.transitions li > h3, .transitions li > ul { grid-column: 1 / -1; margin: 0; }
+.badge { display: inline-block; margin-left: .5rem; padding: .05rem .4rem; border: 1px solid #d5dcd4; border-radius: 3px; color: #52635b; font-size: .75rem; font-weight: 400; }
+.edge { color: #52635b; text-align: center; font-size: .8rem; }
+.source { border-top: 1px solid #e0e5de; }
 .empty { padding: 2rem; border: 1px dashed #a4b1a7; line-height: 1.6; }
 @media (max-width: 600px) { main { padding-top: 2rem; } summary { padding: 1rem; } }
 @media print { body { background: white; } pre { max-height: none; white-space: pre-wrap; overflow-wrap: anywhere; } }
@@ -50,22 +71,31 @@ pre { margin: 0; padding: 1.25rem; border-top: 1px solid #e0e5de; background: #f
 
 /**
  * A read-only inspector. Authorization and admission happen before calling it.
- * Sources remain opaque text: numeric literals and definitions are never rewritten.
+ * Exact source is never parsed or rewritten; structured data is the admitted server payload.
  */
 export function renderDefinitionsDocument({ entries, title = "Definitions" }: {
   readonly entries: readonly DefinitionEntry[]
   readonly title?: string
 }): string {
-  const cards = entries.map(({ metadata, source }, index) => `
-<article aria-labelledby="definition-${index}">
-  <details>
-    <summary id="definition-${index}">
-      <span class="name">${escape(metadata.name)}</span>
-      <span class="meta"><code>${escape(metadata.artifactId)}</code> · ${escape(metadata.kind)} · ${escape(metadata.version)}</span>
-    </summary>
-    <pre tabindex="0" aria-label="Definition source"><code>${escape(source)}</code></pre>
-  </details>
-</article>`).join("")
+  const groups = [
+    ["Entities", ["entity", "relation"]], ["Actions", ["action"]],
+    ["Rules", ["rule", "derived", "law"]], ["Policies", ["policy"]],
+    ["Other definitions", []],
+  ] satisfies [string, string[]][]
+  const namedKinds = groups.flatMap(([, kinds]) => kinds)
+  const cards = groups.map(([label, kinds]) => {
+    const members = entries.filter(({ metadata }) => kinds.length ? kinds.includes(metadata.kind) : !namedKinds.includes(metadata.kind))
+    if (!members.length) return ""
+    return `<section><h2>${label} <small>${members.length}</small></h2>${members.map((entry) => {
+      const index = entries.indexOf(entry)
+      return `<article aria-labelledby="definition-${index}">
+        <details><summary id="definition-${index}"><span class="name">${escape(entry.metadata.name)}</span>
+          <span class="meta"><code>${escape(entry.metadata.artifactId)}</code> · ${escape(entry.metadata.kind)} · ${escape(entry.metadata.version)}</span></summary>
+          <div class="structure">${describe(entry, entries)}</div>
+          <details class="source"><summary>Source</summary><pre tabindex="0" aria-label="Definition source"><code>${escape(entry.source)}</code></pre></details>
+        </details></article>`
+    }).join("")}</section>`
+  }).join("")
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -81,10 +111,155 @@ export function renderDefinitionsDocument({ entries, title = "Definitions" }: {
   <main id="content">
     <div class="eyebrow">What built this application</div>
     <h1>${escape(title)}</h1>
-    <p class="intro">Entities, relationships, actions, lifecycle and rules, as returned by the server. Open a definition to inspect its source.</p>
+    <p class="intro">Entities, relationships, actions, lifecycle and rules, as returned by the server. Open a definition to see the structure and constraints that drive the application.</p>
     <p class="count">${entries.length} ${entries.length === 1 ? "definition" : "definitions"}</p>
     ${entries.length ? cards : '<p class="empty">This document contains no definitions.</p>'}
   </main>
 </body>
 </html>\n`
+}
+
+const list = (title: string, items: readonly string[]): string => items.length
+  ? `<h3>${escape(title)}</h3><ul>${items.map((item) => `<li>${item}</li>`).join("")}</ul>` : ""
+const text = (value: string): string => `<code>${escape(value)}</code>`
+
+function typeLabel(type: Schemas["NornIrPropertyType"]): string {
+  switch (type.kind) {
+    case "decimal": return `decimal(${type.scale})${type.unit ? ` · ${type.unit.system}:${type.unit.code}` : ""}`
+    case "ref": return type.name
+    case "enum": return type.values.map((value) => value.value).join(" | ")
+    default: return type.kind
+  }
+}
+
+function tree(value: unknown): string {
+  if (value === null) return text("null")
+  if (Array.isArray(value)) return `<ul>${value.map((item: unknown) => `<li>${tree(item)}</li>`).join("")}</ul>`
+  if (typeof value === "object") return `<dl>${Object.entries(value).map(([key, child]) => `<dt>${escape(key)}</dt><dd>${tree(child)}</dd>`).join("")}</dl>`
+  return text(String(value))
+}
+
+function transitionActions(entries: readonly DefinitionEntry[], entity: Metadata, property: string, transition: string): string[] {
+  return entries.flatMap(({ metadata, definition }) => {
+    if (definition?.kind !== "action") return []
+    const effect = definition.payload.effectProgram
+    return effect?.kind === "fire_transition" && effect.entityArtifactId === entity.artifactId && effect.entityArtifactVersion === entity.version && effect.lifecycle === property && effect.transition === transition
+      ? [metadata.name] : []
+  })
+}
+
+function lifecycleView(object: Schemas["NornIrObjectTypeDef"], entity: Metadata, entries: readonly DefinitionEntry[]): string {
+  return (object.lifecycles ?? []).map((cycle) => {
+    const property = object.properties?.find((item) => item.id === cycle.property)
+    const states = property?.type.kind === "enum" ? property.type.values.map((value) => value.value) : []
+    return `<h3>Lifecycle · ${escape(cycle.property)}</h3>
+      <ul class="states" aria-label="Lifecycle states">${states.map((state) => {
+        const initial = cycle.initial.includes(state)
+        const terminal = cycle.terminal?.includes(state)
+        return `<li class="${initial ? "initial" : ""} ${terminal ? "terminal" : ""}">${escape(state)}${initial ? " · initial" : ""}${terminal ? " · terminal" : ""}${cycle.immutable?.includes(state) ? " · immutable" : ""}</li>`
+      }).join("")}</ul>
+      <ul class="transitions" aria-label="Lifecycle transitions">${(cycle.transitions ?? []).flatMap((transition) => transition.from.map((from) => {
+        const actions = transitionActions(entries, entity, cycle.property, transition.id)
+        return `<li><span>${escape(from)}</span><span class="edge">${escape(actions.join(", ") || "No action supplied")}<br>— ${escape(transition.id)} →</span><span>${escape(transition.to)}</span>${list("Guards", (transition.guards ?? []).map(text))}</li>`
+      })).join("")}</ul>`
+  }).join("")
+}
+
+function describe({ metadata, definition }: DefinitionEntry, entries: readonly DefinitionEntry[]): string {
+  if (!definition) return '<p class="meta">Structured definition not supplied. Exact source is available below.</p>'
+  const dependencies = list("Referenced definitions", definition.dependencies.map((item) => text(`${item.artifactId} · ${item.kind}${item.version ? ` · ${item.version}` : ""}`)))
+  switch (definition.kind) {
+    case "entity": {
+      const payload = definition.payload
+      if (!("objectType" in payload)) return tree(payload) + dependencies
+      const object = payload.objectType
+      return `${object.description ? `<p>${escape(object.description)}</p>` : ""}
+        ${object.extends ? `<p>Extends ${text(object.extends)}</p>` : ""}
+        <h3>Properties</h3><table><thead><tr><th>Name</th><th>Type / unit</th><th>Derivation</th></tr></thead><tbody>${(object.properties ?? []).map((property) => `<tr><td>${escape(property.id)}${property.computed ? '<span class="badge">Derived</span>' : ""}${"protected" in property && property.protected === true ? '<span class="badge">Rule-owned</span>' : ""}</td><td>${escape(typeLabel(property.type))}</td><td>${property.computed ? text(property.computed) : ""}</td></tr>`).join("")}</tbody></table>
+        ${list("Relationships", (object.links ?? []).map((link) => `${text(link.id)} → ${text(link.target)} · ${escape(link.cardinality.from)}:${escape(link.cardinality.to)}${link.cardinality.required ? " · required" : ""}`))}
+        ${lifecycleView(object, metadata, entries)}
+        ${list("Invariants", (object.invariants ?? []).map((law) => `${text(law.id)} · ${escape(law.message)} — ${text(law.expression)}`))}${dependencies}`
+    }
+    case "action": {
+      const action = definition.payload
+      const effect = action.effectProgram
+      const constraints: string[] = []
+      const transitions = effect?.kind === "fire_transition" ? entries.flatMap(({ metadata: target, definition: entity }) => {
+        if (entity?.kind !== "entity" || !("objectType" in entity.payload) || target.artifactId !== effect.entityArtifactId || target.version !== effect.entityArtifactVersion) return []
+        constraints.push(...(entity.payload.objectType.invariants ?? []).filter((law) => law.classification !== "quality").map((law) => `${law.id}: ${law.expression}`))
+        return (entity.payload.objectType.lifecycles ?? []).filter((cycle) => cycle.property === effect.lifecycle).flatMap((cycle) =>
+          (cycle.transitions ?? []).filter((transition) => transition.id === effect.transition).map((transition) => {
+            constraints.push(...(transition.guards ?? []))
+            return `${transition.from.join(", ")} → ${transition.to}`
+          }))
+      }) : []
+      return `${action.description ? `<p>${escape(action.description)}</p>` : ""}
+        ${effect?.kind === "fire_transition" ? `<h3>Performs transition</h3><p>${text(effect.objectKind)} · ${text(effect.lifecycle)} · ${text(effect.transition)}</p>${list("State change", transitions.map(text))}` : ""}
+        ${"stockPost" in action && action.stockPost != null ? `<h3>Declared stock posting</h3>${tree(action.stockPost)}` : ""}
+        <h3>Inputs</h3>${tree(action.inputSchema)}
+        ${list("Must satisfy", [...(action.preconditions ?? []), ...constraints].map(text))}
+        ${action.access ? `<h3>Access policy</h3><p>${text(action.access.artifactId)}</p>` : ""}${dependencies}`
+    }
+    case "rule": {
+      const rule = definition.payload
+      return `${rule.appliesTo ? `<h3>Applies to</h3><p>${text(rule.appliesTo)}</p>` : ""}
+        ${rule.expression ? `<h3>Derives / checks</h3><p>${text(rule.expression)}</p>` : ""}
+        ${rule.triggers?.length ? `<h3>Runs on</h3>${tree(rule.triggers)}` : ""}
+        ${rule.outputSchema ? `<h3>Declared outputs</h3>${tree(rule.outputSchema)}` : ""}
+        ${rule.decision || rule.graph ? `<h3>Decision</h3>${tree(rule.decision ?? rule.graph)}` : ""}${dependencies}`
+    }
+    case "law": return `<p>${escape(definition.payload.rationale)}</p><h3>Protects</h3>${tree(definition.payload.response)}${dependencies}`
+    case "derived": return `<h3>Derives</h3>${tree(definition.payload.calc)}<h3>Outputs</h3>${tree(definition.payload.outputSchema)}${dependencies}`
+    default: return tree(definition.payload) + dependencies
+  }
+}
+
+
+const artifactKinds = {
+  entity: true, relation: true, action: true, rule: true, derived: true, law: true, policy: true,
+  mapping: true, business_pack: true, connector: true, customization: true, widget: true,
+  setting: true, source_schema: true,
+} satisfies Record<Artifact["kind"], true>
+
+/** Read only the configured host document; refusals never become fixture data. */
+export async function readDefinitions(endpoint: string, token: string): Promise<DefinitionEntry[]> {
+  const response = await fetch(endpoint, {
+    headers: { Authorization: `Bearer ${token}` }, redirect: "error", signal: AbortSignal.timeout(10000),
+  })
+  if (!response.ok) throw new Error(`Definitions read refused (HTTP ${response.status})`)
+  const source = await response.text()
+  const errors: ParseError[] = []
+  const root = parseTree(source, errors, { disallowComments: true, allowTrailingComma: false })
+  const admitted = root && findNodeAtLocation(root, ["admitted"])
+  const artifacts = root && findNodeAtLocation(root, ["artifacts"])
+  if (errors.length || admitted?.value !== true || artifacts?.type !== "array") throw new Error("Invalid admitted definitions document")
+  return (artifacts.children ?? []).map((node) => {
+    const raw = source.slice(node.offset, node.offset + node.length)
+    const value: unknown = JSON.parse(raw)
+    if (typeof value !== "object" || value === null || !("artifactId" in value) || typeof value.artifactId !== "string"
+      || !("name" in value) || typeof value.name !== "string" || !("version" in value) || typeof value.version !== "string"
+      || !("kind" in value) || typeof value.kind !== "string" || !Object.hasOwn(artifactKinds, value.kind) || !("payload" in value) || typeof value.payload !== "object" || value.payload === null
+      || !("dependencies" in value) || !Array.isArray(value.dependencies)) throw new Error("Invalid admitted artifact envelope")
+    // Payload conformance belongs to server admission; this boundary checks the transport envelope.
+    const artifact = value as Artifact
+    return { metadata: artifact, definition: artifact, source: raw }
+  })
+}
+
+if (import.meta.main) {
+  const endpoint = process.env.NORN_DEFS_URL ?? "http://127.0.0.1:4174/v1/defs?orgId=org_demo&environmentId=dev"
+  const token = process.env.NORN_DEMO_TOKEN
+  if (!token) throw new Error("NORN_DEMO_TOKEN is required")
+  Bun.serve({ hostname: "127.0.0.1", port: 4175, async fetch(request) {
+    if (new URL(request.url).pathname !== "/") return new Response("Not found", { status: 404 })
+    try {
+      return new Response(renderDefinitionsDocument({ entries: await readDefinitions(endpoint, token) }), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+      })
+    } catch {
+      return new Response("Definitions unavailable. The server read failed; reload to retry.", {
+        status: 502, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+      })
+    }
+  } })
 }
