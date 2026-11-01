@@ -283,6 +283,68 @@ fn default_members_are_all_members_except_native_heavy_crates() {
     );
 }
 
+fn engine_metadata(dependency: &str, kind: Option<&str>) -> Metadata {
+    let base = with_dep_as("norn-cli", dependency, kind, None);
+    let mut value = serde_json::to_value(base).expect("metadata JSON");
+    let mut engine = value["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .find(|pkg| pkg["name"] == "norn-cli")
+        .cloned()
+        .expect("CLI metadata template");
+    engine["name"] = json!("norn-engine");
+    engine["id"] = json!("path+file:///policy-fixture/norn-engine#0.1.0");
+    let dependency = engine["dependencies"]
+        .as_array()
+        .expect("dependencies")
+        .last()
+        .cloned()
+        .expect("injected dependency");
+    engine["dependencies"] = json!([dependency]);
+    value["workspace_members"]
+        .as_array_mut()
+        .expect("members")
+        .push(engine["id"].clone());
+    value["packages"]
+        .as_array_mut()
+        .expect("packages")
+        .push(engine);
+    serde_json::from_value(value).expect("engine metadata")
+}
+
+#[test]
+fn engine_declared_edges_conform_for_every_dependency_kind() {
+    for kind in [None, Some("dev"), Some("build")] {
+        for target in [
+            "norn-kernel",
+            "norn-checker",
+            "norn-projections",
+            "norn-cell",
+            "norn-ir",
+        ] {
+            let v = check_dependencies(&engine_metadata(target, kind));
+            assert!(v.is_empty(), "{target} {kind:?}: {}", render(&v));
+        }
+        for target in ["norn-api", "norn-cli", "norn-authz", "norn-graph"] {
+            let v = check_dependencies(&engine_metadata(target, kind));
+            assert_eq!(rules_of(&v), ["norn-edge"], "{}", render(&v));
+        }
+        let v = check_dependencies(&with_dep_as("norn-ir", "norn-engine", kind, None));
+        assert_eq!(rules_of(&v), ["norn-edge"], "{}", render(&v));
+        let v = check_dependencies(&with_dep_as("norn-ir", "tokio", kind, None));
+        assert!(rules_of(&v).contains(&"ring0-host"), "{}", render(&v));
+    }
+}
+
+#[test]
+fn engine_predeclaration_does_not_require_a_placeholder() {
+    assert!(check_dependencies(&metadata()).is_empty());
+    let engine = norn_skeleton_guard::crate_rule("norn-engine").expect("declared engine");
+    assert_eq!(engine.ring, Ring::One);
+    assert!(!CRATES.iter().any(|rule| rule.name == engine.name));
+}
+
 #[test]
 fn guard_detects_ring_inversion() {
     let v = check_dependencies(&with_dep("norn-kernel", "norn-cell"));
@@ -1561,7 +1623,17 @@ fn graph_library_edges_follow_the_pure_boundary() {
 /// Public boundary data must retain the executable dependency policy exactly.
 #[test]
 fn machine_boundaries_match_dependency_policy() {
-    for rule in norn_skeleton_guard::CRATES {
+    for rule in norn_skeleton_guard::CRATES
+        .iter()
+        .chain(norn_skeleton_guard::PREDECLARED_CRATES)
+    {
+        if !metadata()
+            .workspace_packages()
+            .iter()
+            .any(|pkg| pkg.name == rule.name)
+        {
+            continue;
+        }
         if rule.ring == norn_skeleton_guard::Ring::Vendored {
             continue;
         }
