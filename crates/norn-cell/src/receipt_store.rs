@@ -42,8 +42,7 @@ impl<S: SqlEngine> StateView for ReceiptView<'_, '_, S> {
     fn fact_version(&self, key: &FactKey) -> Result<FactVersion, CellError> {
         Ok(FactVersion(
             self.0
-                .object(MAIN_WORLD, key.object_type.as_str(), &key.key)?
-                .map_or(0, |row| row.version),
+                .version(MAIN_WORLD, key.object_type.as_str(), &key.key)?,
         ))
     }
     fn predicate_members(&self, _: &PredicatePin) -> Result<Vec<MemberPin>, CellError> {
