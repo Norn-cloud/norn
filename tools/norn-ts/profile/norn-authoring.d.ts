@@ -94,6 +94,7 @@ declare module "@norn/authoring" {
         readonly description?: string
         readonly initial: ReadonlyArray<Extract<T[P], string>>
         readonly terminal?: ReadonlyArray<Extract<T[P], string>>
+        readonly immutable?: ReadonlyArray<Extract<T[P], string>>
         readonly transitions: ReadonlyArray<TransitionSpec<Extract<T[P], string>>>
       }
     }[keyof T & string]
