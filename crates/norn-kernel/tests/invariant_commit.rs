@@ -3116,9 +3116,10 @@ fn obs_evidence_direct_law_violation_persists_its_governing_pin() {
     let findings: Vec<_> = observed
         .ledger()
         .iter()
-        .filter_map(|entry| match &entry.event {
+        .flat_map(|entry| &entry.events)
+        .filter_map(|event| match event {
             ObservationEvent::DataQualityFinding { fact } => Some(fact),
-            _ => None,
+            ObservationEvent::ObservedFact { .. } | ObservationEvent::ObservedTransition { .. } | ObservationEvent::ObservedDeleted { .. } | ObservationEvent::ObservedRecreated { .. } => None,
         })
         .collect();
     assert_eq!(findings.len(), 1);
@@ -3144,7 +3145,7 @@ norn_testkit::proptest::proptest! {
         let finding = |id: &str| {
             let (mut commit, authority) = prepare_observed_snapshot(&catalog, &slice, &turn(id), ObservedSnapshot {key:&key, values:&values, lifecycles:&[], provenance:&provenance}).expect("prepare").into_parts();
             authority.append_findings(&mut commit);
-            commit.events.into_iter().find_map(|event| match event { ObservationEvent::DataQualityFinding {fact} => Some(fact), _ => None }).expect("law finding")
+            commit.events.into_iter().find_map(|event| match event { ObservationEvent::DataQualityFinding {fact} => Some(fact), ObservationEvent::ObservedFact { .. } | ObservationEvent::ObservedTransition { .. } | ObservationEvent::ObservedDeleted { .. } | ObservationEvent::ObservedRecreated { .. } => None }).expect("law finding")
         };
         let first = finding("first-delivery");
         let again = finding(&delivery);
