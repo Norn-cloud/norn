@@ -78,6 +78,7 @@ run_phase() {
       (cd packages/norn-sdk && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test --timeout 60000)
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
+      python3 scripts/test_guarantees_document.py
       cargo xtask ci policy
       cargo xtask ci provenance
       ;;
@@ -161,6 +162,7 @@ PY
       use_jsonschema
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
+      python3 scripts/test_guarantees_document.py
       cargo install --locked cargo-deny --version 0.19.0
       cargo deny --locked check
       cargo xtask ci policy

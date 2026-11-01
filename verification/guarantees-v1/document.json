@@ -1,0 +1,705 @@
+{
+  "guarantees": [
+    {
+      "assumptions": [
+        "The cell clock raises the deadline event for every open commitment once its due time is reached (timer fairness)."
+      ],
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "INV-CORE-COMMITMENT-COMPLETION",
+      "installation": "unknown",
+      "law": "core.law.commitment_completion",
+      "lawLayer": "core primitives",
+      "recordedCoverage": {
+        "evidence": {
+          "model": [],
+          "proof": [],
+          "runtime": []
+        },
+        "id": "INV-CORE-COMMITMENT-COMPLETION",
+        "limitations": [
+          "The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel.",
+          "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops.",
+          "Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack."
+        ],
+        "model": "missing",
+        "proof": "missing",
+        "residual": "Specified only; no runtime enforcement, model or proof yet.",
+        "runtime": "missing",
+        "subsystem": "core-physics"
+      },
+      "residual": "Specified only; no runtime enforcement, model or proof yet.",
+      "statement": "A commitment ends fulfilled, cancelled or breached and is never dropped: terminal states are absorbing, no operation removes a commitment, and once its due time passes the deadline event ends it."
+    },
+    {
+      "assumptions": [
+        "Every hold, release and consumption goes through the quantity ledger in one cell transaction."
+      ],
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "INV-CORE-ESCROW-NON-NEGATIVE",
+      "installation": "unknown",
+      "law": "core.law.escrow_non_negative",
+      "lawLayer": "core primitives",
+      "recordedCoverage": {
+        "evidence": {
+          "model": [],
+          "proof": [],
+          "runtime": []
+        },
+        "id": "INV-CORE-ESCROW-NON-NEGATIVE",
+        "limitations": [
+          "The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel.",
+          "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops.",
+          "Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack."
+        ],
+        "model": "missing",
+        "proof": "missing",
+        "residual": "Specified only; the kernel quantity ledger refuses spending held or absent quantity. Core-pack model and proof are pending.",
+        "runtime": "missing",
+        "subsystem": "core-physics"
+      },
+      "residual": "Specified only; the kernel quantity ledger refuses spending held or absent quantity. Core-pack model and proof are pending.",
+      "statement": "Holds (escrow, reservations, quota use) are never negative and never exceed the balance they are held against, so available quantity is never negative."
+    },
+    {
+      "assumptions": [
+        "A partial correction is a full reversal followed by a new posting."
+      ],
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "proved on the model",
+          "links": [
+            {
+              "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "selectors": [
+                "theorem:reverse_is_linked_exact",
+                "theorem:reversal_nets_account",
+                "theorem:reversal_nets_unit",
+                "theorem:run_reversed_at_most_once"
+              ]
+            }
+          ]
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "INV-CORE-LINKED-REVERSAL",
+      "installation": "unknown",
+      "law": "core.law.correction_is_linked_reversal",
+      "lawLayer": "core primitives",
+      "recordedCoverage": {
+        "evidence": {
+          "model": [
+            {
+              "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
+              "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+              "selectors": [
+                "invariant:reversalLinkedExact",
+                "invariant:reversedAtMostOnce"
+              ]
+            }
+          ],
+          "proof": [
+            {
+              "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "selectors": [
+                "theorem:reverse_is_linked_exact",
+                "theorem:reversal_nets_account",
+                "theorem:reversal_nets_unit",
+                "theorem:run_reversed_at_most_once"
+              ]
+            }
+          ],
+          "runtime": []
+        },
+        "id": "INV-CORE-LINKED-REVERSAL",
+        "limitations": [
+          "The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel.",
+          "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops.",
+          "Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack."
+        ],
+        "model": "bounded_model_checked",
+        "proof": "reference_proved",
+        "residual": "The public kernel has no linked journal reversal yet; quantity-ledger reversals are covered by INV-QL-APPEND-REVERSAL. The model and reference proof cover the pack law only.",
+        "runtime": "missing",
+        "subsystem": "core-physics"
+      },
+      "residual": "The public kernel has no linked journal reversal yet; quantity-ledger reversals are covered by INV-QL-APPEND-REVERSAL. The model and reference proof cover the pack law only.",
+      "statement": "A correction is a new entry linked to its posted original with exactly negated legs, so the pair nets to zero on every account and unit; an entry is reversed at most once and a reversal is never reversed."
+    },
+    {
+      "assumptions": [
+        "The ledger is the only writer of posted entries."
+      ],
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "proved on the model",
+          "links": [
+            {
+              "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "selectors": [
+                "theorem:step_append_only",
+                "theorem:run_append_only"
+              ]
+            }
+          ]
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "INV-CORE-POSTED-IMMUTABLE",
+      "installation": "unknown",
+      "law": "core.law.posted_immutable",
+      "lawLayer": "core primitives",
+      "recordedCoverage": {
+        "evidence": {
+          "model": [
+            {
+              "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
+              "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+              "selectors": [
+                "invariant:postedImmutable"
+              ]
+            }
+          ],
+          "proof": [
+            {
+              "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "selectors": [
+                "theorem:step_append_only",
+                "theorem:run_append_only"
+              ]
+            }
+          ],
+          "runtime": [
+            {
+              "artifact": "crates/norn-kernel/tests/accounting_commit.rs",
+              "command": "cargo test --locked -p norn-kernel --test accounting_commit",
+              "selectors": [
+                "test:committed_leg_records_are_create_only_and_cannot_be_deleted",
+                "test:deleting_a_posted_leg_through_its_unmarked_ancestor_is_refused_atomically",
+                "test:updating_a_posted_leg_through_its_unmarked_ancestor_is_refused_atomically"
+              ]
+            }
+          ]
+        },
+        "id": "INV-CORE-POSTED-IMMUTABLE",
+        "limitations": [
+          "The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel.",
+          "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops.",
+          "Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack."
+        ],
+        "model": "bounded_model_checked",
+        "proof": "reference_proved",
+        "residual": "The kernel refuses updates and deletes of committed accounting legs, including through an unmarked ancestor type (tested). The reference model has no edit or delete operation; the theorems show every admitted step only prepends. Types without an accounting-leg declaration are not covered.",
+        "runtime": "tested",
+        "subsystem": "core-physics"
+      },
+      "residual": "The kernel refuses updates and deletes of committed accounting legs, including through an unmarked ancestor type (tested). The reference model has no edit or delete operation; the theorems show every admitted step only prepends. Types without an accounting-leg declaration are not covered.",
+      "statement": "No admitted operation edits or removes a posted economic event or journal entry; each admitted operation only adds entries."
+    },
+    {
+      "assumptions": [
+        "Quantities are exact and in one unit per balance partition; conversions are separate balanced postings."
+      ],
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "INV-CORE-QUANTITY-CONSERVATION",
+      "installation": "unknown",
+      "law": "core.law.quantity_conservation",
+      "lawLayer": "core primitives",
+      "recordedCoverage": {
+        "evidence": {
+          "model": [],
+          "proof": [],
+          "runtime": []
+        },
+        "id": "INV-CORE-QUANTITY-CONSERVATION",
+        "limitations": [
+          "The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel.",
+          "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops.",
+          "Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack."
+        ],
+        "model": "missing",
+        "proof": "missing",
+        "residual": "Specified only; the kernel quantity ledger enforces partition conservation (INV-QL-CONSERVATION). Core-pack model and proof are pending.",
+        "runtime": "missing",
+        "subsystem": "core-physics"
+      },
+      "residual": "Specified only; the kernel quantity ledger enforces partition conservation (INV-QL-CONSERVATION). Core-pack model and proof are pending.",
+      "statement": "For one resource in one unit, stock received equals stock issued plus stock on hand; a transformation issues its inputs and receives its outputs, so the law holds per resource."
+    },
+    {
+      "assumptions": [
+        "Amounts are exact integers at one declared precision per unit.",
+        "Value moves only through types that declare an accounting leg; an undeclared type is a marked boundary where the inherited claim stops."
+      ],
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "proved on the model",
+          "links": [
+            {
+              "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "selectors": [
+                "theorem:checkBalanced_iff",
+                "theorem:balanced_append",
+                "theorem:run_balanced",
+                "theorem:run_trial_zero",
+                "theorem:unbalanced_post_refused"
+              ]
+            }
+          ]
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "INV-CORE-VALUE-CONSERVATION",
+      "installation": "unknown",
+      "law": "core.law.value_conservation",
+      "lawLayer": "core primitives",
+      "recordedCoverage": {
+        "evidence": {
+          "model": [
+            {
+              "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
+              "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+              "selectors": [
+                "invariant:allPostedBalanced"
+              ]
+            }
+          ],
+          "proof": [
+            {
+              "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+              "selectors": [
+                "theorem:checkBalanced_iff",
+                "theorem:balanced_append",
+                "theorem:run_balanced",
+                "theorem:run_trial_zero",
+                "theorem:unbalanced_post_refused"
+              ]
+            }
+          ],
+          "runtime": [
+            {
+              "artifact": "crates/norn-kernel/tests/accounting_commit.rs",
+              "command": "cargo test --locked -p norn-kernel --test accounting_commit",
+              "selectors": [
+                "test:balanced_exact_posting_group_commits_including_inherited_marker",
+                "test:unbalanced_group_refusal_has_no_fact_ledger_or_outbox_effects",
+                "test:multiple_currencies_balance_independently_and_cannot_cancel_across_units"
+              ]
+            }
+          ]
+        },
+        "id": "INV-CORE-VALUE-CONSERVATION",
+        "limitations": [
+          "The Lean and Quint artefacts are references for the norn.core pack laws, not refinement proofs of the Rust kernel.",
+          "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops.",
+          "Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack."
+        ],
+        "model": "bounded_model_checked",
+        "proof": "reference_proved",
+        "residual": "The kernel commit check refuses a posting group that does not net to zero in each unit, for every type that declares an accounting leg (tested; the cited tests use one balance layer, so cross-layer cancellation is enforced by the check but not separately tested). The Lean reference proves the admission check exact and the law inherited by every workflow of post and reverse steps; it is not a refinement proof of the Rust check, i128 arithmetic or storage.",
+        "runtime": "tested",
+        "subsystem": "core-physics"
+      },
+      "residual": "The kernel commit check refuses a posting group that does not net to zero in each unit, for every type that declares an accounting leg (tested; the cited tests use one balance layer, so cross-layer cancellation is enforced by the check but not separately tested). The Lean reference proves the admission check exact and the law inherited by every workflow of post and reverse steps; it is not a refinement proof of the Rust check, i128 arithmetic or storage.",
+      "statement": "Every admitted exchange or journal effect nets to zero in every unit, and so does every book built only through the core posting primitives."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "POST-ATOMIC",
+      "installation": "unknown",
+      "lawLayer": "accounting/inventory",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Refusal or a pre-COMMIT fault preserves stock, GL, history, outbox and receipt state."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "POST-AUTHORITY",
+      "installation": "unknown",
+      "lawLayer": "accounting/inventory",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Only the pinned declared rule produces protected outputs; specialization cannot weaken inherited laws or lifecycle obligations."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "POST-IDENTITY",
+      "installation": "unknown",
+      "lawLayer": "accounting/inventory",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Identical intent replays once; conflicting payload or pins refuse unchanged; lost acknowledgement cannot duplicate publication."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "POST-ORDER",
+      "installation": "unknown",
+      "lawLayer": "accounting/inventory",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Complete partition and manifest fences cover empty partitions and concurrent posting; immutable replay reproduces allocations and state."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "POST-VALUE",
+      "installation": "unknown",
+      "lawLayer": "accounting/inventory",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Quantity, StockEvents and fold deltas agree; signed stock GL equals the rounded partition value delta and every journal balances."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "STOCK-AVERAGE",
+      "installation": "unknown",
+      "lawLayer": "accounting/inventory",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Moving-average issues use exact half-up rounding at scale six; final depletion takes all remaining value."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "STOCK-FIFO",
+      "installation": "unknown",
+      "lawLayer": "accounting/inventory",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Issues consume oldest stock layers; final consumption takes the residual value."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "STOCK-RETURN",
+      "installation": "unknown",
+      "lawLayer": "accounting/inventory",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Returns use original issue cost, cap cumulative quantity and value, and take the residual on final return."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "STOCK-REVERSAL",
+      "installation": "unknown",
+      "lawLayer": "accounting/inventory",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Cancellation appends an exact inverse once, after live dependents have been reversed."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "INV-JEWELRY-CUSTODY",
+      "installation": "unknown",
+      "lawLayer": "jewelry",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Custody metal retains its owner and cannot be sold as company stock; custody operations have no company asset or ledger effect."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "INV-JEWELRY-FINE-CONSERVATION",
+      "installation": "unknown",
+      "lawLayer": "jewelry",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "For each metal and owner, fine input equals fine outputs plus explicitly recorded loss."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "INV-JEWELRY-REFUSAL-ATOMIC",
+      "installation": "unknown",
+      "lawLayer": "jewelry",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "A refused jewelry operation preserves all state."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "JEWELRY-PURITY",
+      "installation": "unknown",
+      "lawLayer": "jewelry",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Purity inputs map exactly to an integer numerator over 24000000; conflicting forms, excess precision and checked arithmetic overflow refuse."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "WORKFLOW-INHERITED-LAWS",
+      "installation": "unknown",
+      "lawLayer": "workflow",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Tenant workflows preserve named inherited core, stock and jewelry law obligations."
+    },
+    {
+      "evidence": {
+        "execution": {
+          "level": "unknown",
+          "links": []
+        },
+        "model": {
+          "level": "unknown",
+          "links": []
+        },
+        "parity": {
+          "level": "unknown",
+          "links": []
+        }
+      },
+      "id": "WORKFLOW-LAW-ORIGINS",
+      "installation": "unknown",
+      "lawLayer": "workflow",
+      "recordedCoverage": {},
+      "residual": "No coverage claim is enrolled for this law.",
+      "statement": "Consistency receipts retain the inherited law identity and origin rather than claiming a new proof."
+    }
+  ],
+  "kind": "guarantees",
+  "schemaVersion": "norn.guarantees.document.v1",
+  "sourceDigest": "ea91000b9f0b21a685abd244dab9257f7000e715cc9c6bb750e46e76760acb1d"
+}
