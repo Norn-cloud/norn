@@ -67,7 +67,10 @@ fn compiled() -> CompiledMapping {
 fn row(week: i64, batch: i64, role: &str, fine_milligrams: i64, purity: &str) -> SourceDocument {
     let metal = if batch == 4 { "silver" } else { "gold" };
     // July 6 through October 19 are consecutive Mondays in UTC.
-    let day = week.checked_mul(7).and_then(|offset| offset.checked_add(6)).expect("bounded week");
+    let day = week
+        .checked_mul(7)
+        .and_then(|offset| offset.checked_add(6))
+        .expect("bounded week");
     let (month, date) = if day <= 31 {
         (7, day)
     } else if day <= 62 {

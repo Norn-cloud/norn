@@ -167,7 +167,7 @@
     "observedAt": "2026-10-25T23:59:59Z",
     "rawMetadata": {
       "sha256": "91385b57e376c46d0b3b53db6f746a5f0ab7891a37d5046a6a568edf8234ddaa",
-      "uri": "https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558867021"
+      "uri": "evidence://demo-erpnext/contract-v1"
     },
     "source": {
       "instance": "demo",

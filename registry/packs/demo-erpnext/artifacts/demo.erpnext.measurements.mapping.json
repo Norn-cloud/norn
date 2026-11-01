@@ -99,7 +99,7 @@
     ],
     "source": {
       "schemaId": "demo.erpnext.measurements.source",
-      "sha256": "5fcb06b5dccda0b547fc854cb0056ef618d0ec68d6f312cfd1928026ad2e9fce",
+      "sha256": "4c178bb1e5b4862823ab2219ced970afccfc3a6efa564764dce0f9e2a8d947c3",
       "version": "0.1.0"
     }
   },
