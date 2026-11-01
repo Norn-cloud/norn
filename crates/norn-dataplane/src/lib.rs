@@ -19,3 +19,6 @@ pub use webhook::IngestError;
 
 pub mod shopify;
 pub use shopify::{ShopifyHeaders, ShopifySource, ingest_shopify_webhook};
+
+pub mod sweep;
+pub use sweep::{FrappeSweep, SweepCommand, SweepCursor, SweepDocumentCommand, SweepFeed, SweepPage};
