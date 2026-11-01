@@ -81,22 +81,12 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         completion: &Completion<'_>,
         checks: &ResultChecks<'_, A, R>,
     ) -> Result<Digest, CellError> {
-        let reference = completion
-            .receipt
-            .content_digest()
-            .map_err(|_invalid| refused("digest"))?;
+        let reference = completion.receipt.content_digest().map_err(|_invalid| refused("digest"))?;
         let scope = self.scope.clone();
         let now = self.now;
-        let batch = CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: scope.clone(),
-            logical_time: now.as_millis(),
-            events: vec![
-                norn_ir::runtime_object! { "type" => EVENT, "reference" => reference.0.clone() },
-            ],
-            ..CommitBatch::default()
-        };
-        self.store.commit_guarded(&batch, |reader| -> Result<(), CellError> {
+        self.store.verified_head()?;
+        let reader = self.store.read();
+        let source = reader.next_commit_seq()?;
             if dispatched.invocation.tenant != scope || dispatched.invocation.world != MAIN_WORLD { return Err(refused("scope")); }
             let pending = reader.head_command()?.ok_or_else(|| refused("unknown"))?;
             let invocation = norn_ir::runtime_object! { "type" => "norn.function/v1", "invocation" => norn_ir::runtime::encode(&dispatched.invocation).map_err(|_invalid| refused("dispatch"))? };
@@ -108,13 +98,27 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             let command = reader.object(MAIN_WORLD, "norn.FunctionCommand", &dispatched.invocation.command_id)?.ok_or_else(|| refused("state"))?;
             let state: CommandState = norn_ir::runtime::decode(command.values.get("state").ok_or_else(|| refused("state"))?).map_err(|_invalid| refused("state"))?;
             let context = ReconcileContext { tenant: &scope, world: MAIN_WORLD, now, policy: ReconcilePolicy::DEFAULT };
-            let Reconciliation::Accepted(mut acceptance) = reconcile(&context, dispatched, &state, completion, checks, &ReceiptView(reader)).map_err(|error| match error { norn_kernel::result_reconciliation::ReconcileError::View(view) => view, norn_kernel::result_reconciliation::ReconcileError::Canonical(_) => refused("reconciliation") })? else { return Err(refused("not_accepted")); };
+            let Reconciliation::Accepted(mut acceptance) = reconcile(&context, dispatched, &state, completion, checks, &ReceiptView(&reader)).map_err(|error| match error { norn_kernel::result_reconciliation::ReconcileError::View(view) => view, norn_kernel::result_reconciliation::ReconcileError::Canonical(_) => refused("reconciliation") })? else { return Err(refused("not_accepted")); };
             acceptance.reads.push(norn_kernel::FactExpectation { key: FactKey::new("norn.FunctionCommand", &dispatched.invocation.command_id), expected: FactVersion(command.version) });
-            let source = reader.next_commit_seq()?;
-            let frontier = source.checked_add(1).ok_or_else(|| refused("frontier"))?;
-            let stored = StoredReceipt { receipt: completion.receipt.clone(), acceptance, source, frontier };
-            let body = serde_json::to_string(&stored).map_err(CellError::Json)?;
-            if body.len() > LIMIT { return Err(refused("limit")); }
+
+        let frontier = source.checked_add(1).ok_or_else(|| refused("frontier"))?;
+        let stored = StoredReceipt { receipt: completion.receipt.clone(), acceptance, source, frontier };
+        let body = serde_json::to_string(&stored).map_err(CellError::Json)?;
+        if body.len() > LIMIT { return Err(refused("limit")); }
+        let authority = crate::codec::hash_json(&stored)?;
+        let batch = CommitBatch {
+            world: MAIN_WORLD.to_owned(), scope: scope.clone(), logical_time: now.as_millis(),
+            events: vec![norn_ir::runtime_object! { "type" => EVENT, "reference" => reference.0.clone(), "authoritySha256" => authority }],
+            ..CommitBatch::default()
+        };
+        self.store.commit_guarded(&batch, |reader| -> Result<(), CellError> {
+            // RECEIPT-STORE-AUTH-1: bind the complete acceptance at the same frontier.
+            if reader.next_commit_seq()? != source { return Err(refused("frontier")); }
+            let pending = reader.head_command()?.ok_or_else(|| refused("unknown"))?;
+            if pending.command.command_id != dispatched.invocation.command_id
+                || pending.command.generation != dispatched.generation().0
+                || pending.command.command.get("payload") != Some(&invocation)
+                || pending.result.as_ref() != Some(&receipt) { return Err(refused("dispatch")); }
             let retained = reader.conn.query_optional("SELECT 1 FROM _norn_function_receipt WHERE reference = ?1", params![reference.0], |row| row.get::<i64>(0))?;
             if retained.is_some() { return Err(refused("already_retained")); }
             reader.conn.execute("INSERT INTO _norn_function_receipt(reference,scope,body) VALUES (?1,?2,?3)", params![reference.0, scope, body])?;
@@ -140,6 +144,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         {
             return Err(refused("digest"));
         }
+        let authority = crate::codec::hash_json(&stored)?;
         self.store.verified_head()?;
         let source = self
             .store
@@ -151,6 +156,8 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
                 event.get("type").and_then(RuntimeValue::as_str) == Some(EVENT)
                     && event.get("reference").and_then(RuntimeValue::as_str)
                         == Some(reference.0.as_str())
+                    && event.get("authoritySha256").and_then(RuntimeValue::as_str)
+                        == Some(authority.as_str())
             })
         {
             return Err(refused("source"));
@@ -651,6 +658,25 @@ mod tests {
             let admitted = crate::receipt_fence::usable(consumed, authenticated, current);
             prop_assert_eq!(admitted, !consumed && authenticated == current);
             prop_assert!(!crate::receipt_fence::usable(true, authenticated, authenticated));
+        }
+        #[test]
+        fn stored_acceptance_or_frontier_tampering_refuses_without_writes(which in 0u8..3, suffix in "[a-z]{1,8}") {
+            let dir = tempfile::tempdir().expect("dir");
+            let (mut cell, dispatched, receipt, checks, _) = setup(&dir.path().join("cell.sqlite"));
+            let reference = retain(&mut cell, &dispatched, &receipt, &checks, true).expect("retain");
+            let mut stored = cell.stored_function_receipt(&reference).expect("read").expect("stored");
+            let before = cell.store().verified_head().expect("head");
+            match which {
+                0 => { prop_assert!(!stored.acceptance.reads.is_empty()); stored.acceptance.reads.clear(); },
+                1 => { stored.acceptance.record.command.0.push_str(&suffix); },
+                _ => { stored.frontier = stored.frontier.wrapping_add(1); },
+            }
+            let body = serde_json::to_string(&stored).expect("body");
+            cell.store.conn.execute("UPDATE _norn_function_receipt SET body=?1 WHERE reference=?2", params![body, reference.0]).expect("tamper");
+            prop_assert!(cell.function_receipt_evidence(&reference).is_err());
+            let reference = norn_kernel::receipt_binding::ReceiptReference::parse(&RuntimeValue::String(reference.0)).expect("reference");
+            prop_assert!(cell.resolve_accepted_receipt(&reference, &receipt.manifest).is_err());
+            prop_assert_eq!(cell.store().verified_head().expect("head"), before);
         }
         #[test]
         fn forged_or_wrong_scope_intake_never_persists(suffix in "[a-z]{1,8}", wrong_scope in any::<bool>()) {
