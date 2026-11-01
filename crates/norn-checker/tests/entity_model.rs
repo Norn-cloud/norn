@@ -1873,21 +1873,13 @@ fn role_diagnostics(declarations: &[Option<bool>], edges: &[u16]) -> Vec<String>
         .iter()
         .enumerate()
         .map(|(i, role)| {
-            let mut def: InterfaceDef =
-                serde_json::from_value(serde_json::json!({"name": format!("test.Node{i}")}))
-                    .expect("interface");
-            def.role = role.map(|happening| {
-                if happening {
-                    norn_ir::ConceptRole::Happening
-                } else {
-                    norn_ir::ConceptRole::Thing
-                }
-            });
-            def.extends = (0..i)
-                .filter(|parent| edges[i] & (1 << parent) != 0)
-                .map(|parent| norn_ir::InterfaceName(format!("test.Node{parent}")))
-                .collect();
-            def
+            serde_json::from_value(serde_json::json!({
+                "name": format!("test.Node{i}"),
+                "role": role.map(|happening| if happening { "happening" } else { "thing" }),
+                "extends": (0..i).filter(|parent| edges[i] & (1 << parent) != 0)
+                    .map(|parent| format!("test.Node{parent}")).collect::<Vec<_>>()
+            }))
+            .expect("interface")
         })
         .collect();
     let model = EntityModel {
@@ -1903,7 +1895,14 @@ fn role_diagnostics(declarations: &[Option<bool>], edges: &[u16]) -> Vec<String>
     };
     check_entity_model(&model, &context)
         .into_iter()
-        .map(|d| d.code.as_str().to_owned())
+        .map(|d| {
+            assert!(
+                serde_json::json!({"interfaces": interfaces})
+                    .pointer(&d.span.as_ref().expect("role location").pointer)
+                    .is_some()
+            );
+            d.code.as_str().to_owned()
+        })
         .collect()
 }
 
