@@ -72,7 +72,8 @@ fn refusal_categories_are_stable() {
     let cases: Vec<(Refusal, &str, RefusalCategory)> = vec![
         (
             decision(DecisionRefusal::NotFromState {
-                key: key.clone(),
+                lifecycle: "status".into(),
+                key: Box::new(key.clone()),
                 transition: "invoice".into(),
                 current: Some("draft".into()),
                 from: vec!["approved".into()],
@@ -313,10 +314,16 @@ fn internal_refusals_never_carry_details() {
     for refusal in [
         DecisionRefusal::Host(HostDown).refusal(),
         CommitError::Host(HostDown).refusal(),
+        CommitError::<HostDown>::Quantity(norn_kernel::quantity::QuantityError::Corrupt).refusal(),
+        DecisionRefusal::<HostDown>::Quantity(
+            norn_kernel::quantity::QuantityError::ClockRegression,
+        )
+        .refusal(),
         ActionRefusal::Decision(DecisionRefusal::Host(HostDown)).refusal(),
     ] {
         assert_eq!(refusal.category, RefusalCategory::Internal);
         assert_eq!(refusal.message, INTERNAL_MESSAGE);
+        assert!(refusal.reason.is_none());
         assert!(!refusal.message.contains("tenant-42"));
     }
 }
@@ -384,11 +391,14 @@ fn actual_step_preserves_versioned_action_refusals() {
 fn nested_wrappers_preserve_internal_redaction() {
     let host = CommitError::Host("private tenant database path");
     let expected = host.refusal();
+    assert!(expected.reason.is_none());
     let step = StepError::Rejected(host);
+    assert!(step.refusal().reason.is_none());
     assert_eq!(step.refusal(), expected);
     assert_eq!(step.refusal().message, INTERNAL_MESSAGE);
     let shell = AuthorizedRejection::Shell(step);
     assert_eq!(shell.refusal(), expected);
+    assert!(shell.refusal().reason.is_none());
     assert_eq!(shell.category(), RefusalCategory::Internal);
     assert_eq!(shell.code(), expected.code);
 }
@@ -479,6 +489,9 @@ fn existence_never_leaks_matrix() {
         "an invisible object must read exactly like an absent one"
     );
     assert_eq!(absent, absent_forbidden);
+    for refusal in [&hidden, &absent, &absent_forbidden] {
+        assert!(refusal.reason.is_none());
+    }
     assert_eq!(hidden.code, "action.target_not_found");
     assert_eq!(hidden.category, RefusalCategory::Visibility);
     assert_eq!(hidden.message, NOT_FOUND_MESSAGE);
@@ -486,4 +499,40 @@ fn existence_never_leaks_matrix() {
     assert_eq!(denied.category, RefusalCategory::Permission);
     assert_eq!(denied.code, "action.permission_denied");
     assert_eq!(cell.ledger().len(), 1, "no refusal committed anything");
+}
+
+#[test]
+fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
+    for current in [Some("on_hold".to_owned()), None] {
+        let decision = DecisionRefusal::<Infallible>::NotFromState {
+            lifecycle: "status".into(),
+            key: Box::new(FactKey::new("commerce.SalesOrder", "SO-1")),
+            transition: "invoice".into(),
+            current: current.clone(),
+            from: vec!["approved".into(), "partially_invoiced".into()],
+        };
+        let expected = format!(
+            "commerce.SalesOrder/SO-1: status is {}; transition invoice only leaves approved or partially_invoiced, so it cannot fire now",
+            current.as_deref().unwrap_or("unset")
+        );
+        assert_eq!(decision.to_string(), expected);
+        let refusal = decision.refusal();
+        assert_eq!(refusal.message, expected);
+        assert_eq!(
+            serde_json::to_value(&refusal).unwrap()["reason"],
+            json!({
+                "law": "lifecycle.transition_source",
+                "subject": "commerce.SalesOrder/SO-1",
+                "values": {
+                    "lifecycle": "status", "transition": "invoice",
+                    "current": current, "allowed": ["approved", "partially_invoiced"]
+                }
+            })
+        );
+        assert_eq!(ActionRefusal::Decision(decision).refusal(), refusal);
+        assert_eq!(
+            serde_json::from_value::<Refusal>(serde_json::to_value(&refusal).unwrap()).unwrap(),
+            refusal
+        );
+    }
 }

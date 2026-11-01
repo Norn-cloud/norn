@@ -13,3 +13,7 @@ CP1-FIFO tests: receive 2 @ 10 + 3 @ 20 (Dr stock 80 / Cr SRBNB 80), deliver
 Follow-up: checked Post/rule bindings, authorized/fenced reads (including empty
 partitions), protected writes, native atomic/retry tests and alpha invoke/replay.
 Witnesses cover rounding, zero cost, oversell and invalid inputs; no installed action is claimed.
+
+INPUT-BOUND: at most 100 manifest lines and 10,000 historical movements.
+An empty candidate, excess history/lines or an invalid identity refuses during
+pure preparation; no caller-supplied layer snapshot substitutes for history.

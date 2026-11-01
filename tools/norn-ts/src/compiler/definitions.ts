@@ -543,7 +543,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "writes", "effect", "compensation"])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "writes", "effect", "quantityEffect", "compensation"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -589,6 +589,7 @@ class DefinitionCompiler {
           })
         : [],
       ...(effectNode ? { effect: this.effect(effectNode) } : {}),
+      ...(members.has("quantityEffect") ? { quantityEffect: this.quantityPost(need("quantityEffect")) } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       at: this.at(call),
     })
@@ -617,6 +618,23 @@ class DefinitionCompiler {
       return X.render(rows[0]!.value, new Map([["input", { zen: root, schema }]]))
     }
     throw new CompileError("NORN-FLOW-EXPRESSION", "raw ZEN is not typed authoring; use Norn.expression(Schema, input => ...) or the explicit unsafeZen escape", input)
+  }
+
+  private quantityPost(input: ts.Expression): A.ActionQuantityPost {
+    const m = this.closedRecord(input, ["ledgerId", "balanceVersionsField", "operation"], ["ledgerId", "balanceVersionsField", "operation"])
+    const op = this.closedRecord(m.get("operation")!, ["kind", "postingIdField", "templateId", "parameters"], ["kind", "postingIdField", "templateId", "parameters"])
+    if (this.string(op.get("kind")!) !== "post") throw new CompileError("NORN-FLOW-LITERAL", "quantityEffect operation is post", input)
+    const parameters: Record<string, { field: string; scale: number }> = {}
+    for (const [id, node] of this.record(op.get("parameters")!)) {
+      const binding = this.closedRecord(node, ["field", "scale"], ["field", "scale"])
+      const scale = this.json(binding.get("scale")!)
+      if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > 28) throw new CompileError("NORN-FLOW-LITERAL", "quantity parameter scale is an integer from 0 to 28", node)
+      Object.defineProperty(parameters, id, { value: { field: this.string(binding.get("field")!), scale }, enumerable: true })
+    }
+    return {
+      ledgerId: this.string(m.get("ledgerId")!), balanceVersionsField: this.string(m.get("balanceVersionsField")!),
+      operation: { kind: "post", postingIdField: this.string(op.get("postingIdField")!), templateId: this.string(op.get("templateId")!), parameters },
+    }
   }
 
   private command(input: ts.Expression): A.ActionCommand {

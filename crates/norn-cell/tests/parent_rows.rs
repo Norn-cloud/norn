@@ -322,10 +322,7 @@ fn native_cell() -> NativeCell {
     native_cell_for(&definitions)
 }
 
-#[test]
-fn owned_row_finalization_and_quantity_intent_share_one_commit() {
-    let definitions = types();
-    let catalog = entity_catalog(&definitions);
+fn quantity_rows_action(direct_post: bool) -> ActionRoot {
     let mut declared = action();
     let mut schema = input_schema();
     schema["properties"]["versions"] = json!({"type": "array", "items": {
@@ -346,7 +343,24 @@ fn owned_row_finalization_and_quantity_intent_share_one_commit() {
         }))
         .expect("existing reserve operation"),
     );
-    for amount in [5, 150] {
+    if direct_post {
+        declared.quantity_effect.as_mut().expect("effect").operation =
+            serde_json::from_value(json!({
+                "kind": "post", "postingIdField": "reservation", "templateId": "ship",
+                "parameters": {"q": {"field": "amount", "scale": 0}}
+            }))
+            .expect("declared direct post");
+    }
+    declared
+}
+
+#[test]
+fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
+    let ledger = |cell: &NativeCell| cell.store().verified_head().expect("verified ledger");
+    let definitions = types();
+    let catalog = entity_catalog(&definitions);
+    for (direct_post, amount) in [(false, 5), (false, 150), (true, 5), (true, 150)] {
+        let declared = quantity_rows_action(direct_post);
         let mut cell = native_cell_for(&definitions);
         cell.commit_quantity(&quantity_support::define(), "define")
             .expect("define");
@@ -357,7 +371,11 @@ fn owned_row_finalization_and_quantity_intent_share_one_commit() {
             .quantity_balance_versions("main", &funding)
             .expect("funding fences");
         cell.commit_quantity(&funding, "fund").expect("fund");
-        let request = quantity_support::reserve(2, "hold", amount, 11000);
+        let request = if direct_post {
+            quantity_support::post(2, "hold", "ship", amount)
+        } else {
+            quantity_support::reserve(2, "hold", amount, 11000)
+        };
         let versions = cell
             .store()
             .read()
@@ -371,18 +389,25 @@ fn owned_row_finalization_and_quantity_intent_share_one_commit() {
         input["versions"] = serde_json::to_value(versions).expect("versions");
         input["reservation"] = json!("hold");
         input["amount"] = json!(amount.to_string());
+        let before = ledger(&cell);
         let invocation = call(&declared, "rows-with-hold", input);
         let outcome = commit_action(&mut cell, &catalog, &invocation, &Allow);
         let reader = cell.store().read();
         let hold = reader
             .quantity_reservation("main", "stock", "hold")
             .expect("reservation");
+        let posting = reader
+            .quantity_posting("main", "stock", "hold")
+            .expect("posting");
         if amount == 5 {
             assert!(
                 matches!(outcome, Ok(ActionOutcome::Committed { .. })),
                 "{outcome:?}"
             );
-            assert!(hold.is_some());
+            assert_eq!(hold.is_some(), !direct_post);
+            assert_eq!(posting.is_some(), direct_post);
+            let posted = ledger(&cell);
+            assert_eq!(posted.commits, before.commits + 1, "POST-ATOMIC");
             assert_eq!(
                 reader.quantity_version("main", "stock").expect("version"),
                 3
@@ -393,16 +418,34 @@ fn owned_row_finalization_and_quantity_intent_share_one_commit() {
                 commit_action(&mut cell, &catalog, &invocation, &Allow),
                 Ok(ActionOutcome::Replayed { .. })
             ));
+            assert_eq!(ledger(&cell), posted, "POST-IDENTITY retry");
+            let mut conflict = invocation.clone();
+            conflict
+                .input
+                .insert("amount".into(), JsonValue::String("6".into()));
+            assert!(matches!(
+                commit_action(&mut cell, &catalog, &conflict, &Allow),
+                Err(ActionRefusal::IdempotencyConflict { .. })
+            ));
+            assert_eq!(ledger(&cell), posted, "POST-IDENTITY conflict");
+            let current = cell.store().read();
             assert_eq!(
-                cell.store()
-                    .read()
-                    .quantity_version("main", "stock")
-                    .expect("replay version"),
+                current.quantity_version("main", "stock").expect("version"),
                 3
             );
         } else {
-            assert!(outcome.is_err());
+            let refusal = outcome.expect_err("POST-ATOMIC insufficient funding");
+            let public = norn_kernel::Refusable::refusal(&refusal);
+            assert_eq!(public.code, "quantity.refused");
+            assert_eq!(public.category, norn_kernel::RefusalCategory::Precondition);
+            assert!(public.message.contains("insufficient available quantity"));
             assert!(hold.is_none());
+            assert_eq!(ledger(&cell), before, "POST-ATOMIC refusal");
+            let receipt = FactKey::new(ACTION_CALL_TYPE, "test.order.edit/rows-with-hold");
+            assert!(!cell.load(&receipt).expect("receipt").exists());
+            let membership = LinkKey::new(parent_key(), COLLECTION, row_key("row-a"));
+            assert!(!cell.load_link(&membership).expect("membership").exists());
+            assert!(posting.is_none());
             assert_eq!(
                 reader.quantity_version("main", "stock").expect("version"),
                 2

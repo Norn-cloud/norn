@@ -289,6 +289,17 @@ declare module "@norn/authoring" {
         readonly fields?: { readonly [field: string]: Expression<unknown> }
       }>
       readonly writes?: ReadonlyArray<{ readonly type: TypeDefinition<unknown> | string; readonly change: "created" | "modified" | "deleted" }>
+      /** Exact Post against a definition-pinned admitted ledger template. */
+      readonly quantityEffect?: {
+        readonly ledgerId: string
+        readonly balanceVersionsField: keyof I["Type"] & string
+        readonly operation: {
+          readonly kind: "post"
+          readonly postingIdField: keyof I["Type"] & string
+          readonly templateId: string
+          readonly parameters: Readonly<Record<string, { readonly field: keyof I["Type"] & string; readonly scale: number }>>
+        }
+      }
       readonly effect?: ActionEffectSpec<I["Type"]>
       readonly compensation?: ActionDefinition<unknown>
     }

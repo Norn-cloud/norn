@@ -59,6 +59,18 @@ export type UpsertWriteMode =
   | { readonly kind: "create_only" }
   | { readonly kind: "draft_only"; readonly lifecycle: string; readonly state: string }
 
+/** Direct quantity post selected by the admitted action definition. */
+export interface ActionQuantityPost {
+  readonly ledgerId: string
+  readonly balanceVersionsField: string
+  readonly operation: {
+    readonly kind: "post"
+    readonly postingIdField: string
+    readonly templateId: string
+    readonly parameters: Readonly<Record<string, { readonly field: string; readonly scale: number }>>
+  }
+}
+
 export interface ActionDef {
   readonly _tag: "Action"
   /** `actionId`; the artifact is `<id>.action` in the id's first namespace segment. */
@@ -81,6 +93,7 @@ export interface ActionDef {
   readonly commands: ReadonlyArray<ActionCommand>
   readonly createLinks?: ReadonlyArray<ActionCreateLink>
   readonly writes: ReadonlyArray<{ readonly entityKind: string; readonly change: WriteChange }>
+  readonly quantityEffect?: ActionQuantityPost
   readonly effect?: ActionEffect
   /** The compensating action's id. */
   readonly compensation?: string
@@ -150,6 +163,7 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     createLinks: omitEmpty(def.createLinks ?? []),
     writes: omitEmpty(def.writes),
     effectProgram: def.effect,
+    quantityEffect: def.quantityEffect,
     compensation: def.compensation === undefined ? undefined : { actionId: def.compensation },
   }
   const artifact = envelope(

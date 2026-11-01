@@ -27,8 +27,9 @@
 //! Traversal from a hidden origin (an empty result) is a read-path rule.
 //! There is no kernel traversal API yet, so it is not covered here.
 
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
+use norn_ir::RuntimeValue;
 use serde::{Deserialize, Serialize};
 
 use crate::action::{ActionCommandRejection, ActionRejection, AuthorizedRejection};
@@ -99,6 +100,21 @@ pub struct Refusal {
     pub category: RefusalCategory,
     /// A message safe to show the caller.
     pub message: String,
+    /// Definition-derived law and operands, when the refusal identifies them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<RefusalReason>,
+}
+
+/// Structured operands of a violated law, shared by every transport.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefusalReason {
+    /// Stable law identifier.
+    pub law: String,
+    /// Object to which the law applies.
+    pub subject: String,
+    /// Named operands; absent states are null and declared state sets are arrays.
+    pub values: BTreeMap<String, RuntimeValue>,
 }
 
 impl Refusal {
@@ -119,6 +135,7 @@ impl Refusal {
             code: code.to_owned(),
             category,
             message,
+            reason: None,
         }
     }
 }
@@ -224,6 +241,7 @@ impl<X> CommitError<X> {
             | Self::EventLimitExceeded { .. }
             | Self::IdentifierTooLong { .. }
             | Self::Overflow => RefusalCategory::Limit,
+            Self::Quantity(reason) => quantity_category(reason),
             Self::Host(_) => RefusalCategory::Internal,
         }
     }
@@ -314,6 +332,7 @@ impl<X> DecisionRefusal<X> {
             | Self::Overflow
             | Self::EnvelopeExceeded { .. }
             | Self::TurnEnvelopeExceeded { .. } => RefusalCategory::Limit,
+            Self::Quantity(reason) => quantity_category(reason),
             Self::Host(_) => RefusalCategory::Internal,
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
@@ -329,9 +348,156 @@ impl<X> DecisionRefusal<X> {
     }
 }
 
+fn refusal_values<const N: usize>(
+    values: [(&str, RuntimeValue); N],
+) -> BTreeMap<String, RuntimeValue> {
+    values
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value))
+        .collect()
+}
+
+fn lifecycle_states(
+    lifecycle: &str,
+    current: Option<&str>,
+    allowed: &[String],
+) -> BTreeMap<String, RuntimeValue> {
+    refusal_values([
+        ("lifecycle", lifecycle.into()),
+        (
+            "current",
+            current.map_or(RuntimeValue::Null, RuntimeValue::from),
+        ),
+        (
+            "allowed",
+            RuntimeValue::Array(allowed.iter().cloned().map(RuntimeValue::String).collect()),
+        ),
+    ])
+}
+
+fn lifecycle_guard(
+    transition: &str,
+    guard: &str,
+    error: Option<&str>,
+) -> BTreeMap<String, RuntimeValue> {
+    let mut values = refusal_values([("transition", transition.into()), ("guard", guard.into())]);
+    let (name, value) = error.map_or(("result", RuntimeValue::Bool(false)), |error| {
+        ("error", error.into())
+    });
+    values.insert(name.to_owned(), value);
+    values
+}
+
+impl<X> DecisionRefusal<X> {
+    fn lifecycle_reason(&self) -> Option<RefusalReason> {
+        let reason = match self {
+            Self::NotFromState {
+                lifecycle,
+                key,
+                transition,
+                current,
+                from,
+            } => Some(("lifecycle.transition_source", key.as_ref(), {
+                let mut values = lifecycle_states(lifecycle, current.as_deref(), from);
+                values.insert("transition".to_owned(), transition.clone().into());
+                values
+            })),
+            Self::InvalidInitialState {
+                key,
+                lifecycle,
+                state,
+                initial,
+            } => Some((
+                "lifecycle.initial_state",
+                key,
+                lifecycle_states(lifecycle, state.as_deref(), initial),
+            )),
+            Self::ImmutableStateWrite {
+                key,
+                lifecycle,
+                state,
+            } => Some((
+                "lifecycle.immutable_state",
+                key,
+                refusal_values([
+                    ("lifecycle", RuntimeValue::String(lifecycle.clone())),
+                    ("current", RuntimeValue::String(state.clone())),
+                ]),
+            )),
+            Self::LifecyclePropertySet {
+                key,
+                property: lifecycle,
+            }
+            | Self::UnknownLifecycle { key, lifecycle }
+            | Self::UnresolvedLifecycle { key, lifecycle } => Some((
+                self.code(),
+                key,
+                refusal_values([("lifecycle", RuntimeValue::String(lifecycle.clone()))]),
+            )),
+            Self::UnknownTransition {
+                key,
+                lifecycle,
+                transition,
+            } => Some((
+                "lifecycle.declared_transition",
+                key,
+                refusal_values([
+                    ("lifecycle", RuntimeValue::String(lifecycle.clone())),
+                    ("transition", RuntimeValue::String(transition.clone())),
+                ]),
+            )),
+            Self::GuardFalse {
+                key,
+                transition,
+                guard,
+            } => Some((
+                "lifecycle.guard",
+                key,
+                lifecycle_guard(transition, guard, None),
+            )),
+            Self::GuardError {
+                key,
+                transition,
+                guard,
+                reason,
+            } => Some((
+                "lifecycle.guard_evaluable",
+                key,
+                lifecycle_guard(transition, guard, Some(reason)),
+            )),
+            Self::ReadOnlyWorld
+            | Self::PerformOutsideMain { .. }
+            | Self::EnvelopeExceeded { .. }
+            | Self::IdentifierTooLong { .. }
+            | Self::TurnEnvelopeExceeded { .. }
+            | Self::UnknownType { .. }
+            | Self::NotInSlice { .. }
+            | Self::SourceOwnedTarget { .. }
+            | Self::ObjectMissing { .. }
+            | Self::ObjectExists { .. }
+            | Self::InvalidOutput { .. }
+            | Self::Stale { .. }
+            | Self::NotPending { .. }
+            | Self::AccountingPosting { .. }
+            | Self::InvariantViolation { .. }
+            | Self::InvariantBudgetExceeded { .. }
+            | Self::TraversalLimitExceeded { .. }
+            | Self::Overflow
+            | Self::Host(_) => None,
+        };
+        reason.map(|(law, key, values)| RefusalReason {
+            law: law.to_owned(),
+            subject: key.to_string(),
+            values,
+        })
+    }
+}
+
 impl<X> Refusable for DecisionRefusal<X> {
     fn refusal(&self) -> Refusal {
-        Refusal::new(self.code(), self.category(), self)
+        let mut refusal = Refusal::new(self.code(), self.category(), self);
+        refusal.reason = self.lifecycle_reason();
+        refusal
     }
 }
 
@@ -365,6 +531,9 @@ impl<X> ActionRefusal<X> {
 
 impl<X> Refusable for ActionRefusal<X> {
     fn refusal(&self) -> Refusal {
+        if let Self::Decision(refusal) = self {
+            return refusal.refusal();
+        }
         Refusal::new(self.code(), self.category(), self)
     }
 }
@@ -515,5 +684,19 @@ impl<R: Refusable + fmt::Display> Refusable for StepError<R> {
 impl Refusable for IngressLimitExceeded {
     fn refusal(&self) -> Refusal {
         Refusal::new("ingress.limit_exceeded", RefusalCategory::Limit, self)
+    }
+}
+
+const fn quantity_category(reason: &crate::quantity::QuantityError) -> RefusalCategory {
+    use crate::quantity::QuantityError;
+    match reason {
+        QuantityError::InsufficientAvailable { .. }
+        | QuantityError::Expired
+        | QuantityError::NotExpired
+        | QuantityError::Terminal => RefusalCategory::Precondition,
+        QuantityError::StaleVersion { .. } | QuantityError::Duplicate => RefusalCategory::Conflict,
+        QuantityError::Overflow => RefusalCategory::Limit,
+        QuantityError::Corrupt | QuantityError::ClockRegression => RefusalCategory::Internal,
+        QuantityError::InvalidContract | QuantityError::InvalidReversal => RefusalCategory::Invalid,
     }
 }

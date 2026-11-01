@@ -952,8 +952,40 @@
       ]
     },
     "ActionQuantityOperation": {
-      "description": "Ordinary quantity-backed actions can reserve or fully post a reservation.",
+      "description": "Ordinary quantity-backed actions select an admitted quantity template.",
       "oneOf": [
+        {
+          "description": "Post a fixed admitted template atomically with the business effect.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "post"
+            },
+            "parameters": {
+              "description": "Exact input bindings; the ledger checks the configured certificate.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/ActionQuantityParameter"
+              }
+            },
+            "postingIdField": {
+              "description": "Input field naming the immutable posting.",
+              "type": "string"
+            },
+            "templateId": {
+              "description": "Template identity pinned by the admitted definition.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "postingIdField",
+            "templateId",
+            "parameters"
+          ]
+        },
         {
           "description": "Reserve the pinned template with exact string-valued parameters.",
           "type": "object",

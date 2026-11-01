@@ -4,7 +4,8 @@ use norn_ir::quantity_ledger::{
     LedgerParameterValue, QUANTITY_CELL_VERSION, QuantityOperation, QuantityRequest,
     QuantityResolution,
 };
-use norn_ir::{ActionQuantityOperation, RuntimeObject, RuntimeValue};
+use norn_ir::{ActionQuantityOperation, ActionQuantityParameter, RuntimeObject, RuntimeValue};
+use std::collections::BTreeMap;
 
 pub(crate) fn prepare_quantity_action<X>(
     call: &ActionCall<'_>,
@@ -29,7 +30,29 @@ pub(crate) fn prepare_quantity_action<X>(
         .ok_or_else(|| invalid(&effect.balance_versions_field))?;
     let balance_versions = norn_ir::runtime::decode(versions)
         .map_err(|_decoding_error| invalid(&effect.balance_versions_field))?;
+    let bind = |parameters: &BTreeMap<String, ActionQuantityParameter>| {
+        parameters
+            .iter()
+            .map(|(id, binding)| {
+                Ok(LedgerParameterValue {
+                    parameter_id: id.clone(),
+                    scale: u8::try_from(binding.scale.0)
+                        .map_err(|_range_error| invalid(&binding.field))?,
+                    unscaled: text(&binding.field)?,
+                })
+            })
+            .collect::<Result<Vec<_>, ActionRefusal<X>>>()
+    };
     let operation = match &effect.operation {
+        ActionQuantityOperation::Post {
+            posting_id_field,
+            template_id,
+            parameters,
+        } => QuantityOperation::Post {
+            posting_id: text(posting_id_field)?,
+            template_id: template_id.clone(),
+            parameters: bind(parameters)?,
+        },
         ActionQuantityOperation::Reserve {
             reservation_id_field,
             template_id,
@@ -38,17 +61,7 @@ pub(crate) fn prepare_quantity_action<X>(
         } => QuantityOperation::Reserve {
             reservation_id: text(reservation_id_field)?,
             template_id: template_id.clone(),
-            parameters: parameters
-                .iter()
-                .map(|(id, binding)| {
-                    Ok(LedgerParameterValue {
-                        parameter_id: id.clone(),
-                        scale: u8::try_from(binding.scale.0)
-                            .map_err(|_range_error| invalid(&binding.field))?,
-                        unscaled: text(&binding.field)?,
-                    })
-                })
-                .collect::<Result<_, ActionRefusal<X>>>()?,
+            parameters: bind(parameters)?,
             expires_at: call
                 .turn
                 .now
