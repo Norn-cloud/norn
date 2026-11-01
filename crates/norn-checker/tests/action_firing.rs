@@ -215,6 +215,9 @@ fn receipt_effect_admits_reference_and_writer_closure_but_refuses_invalid_bindin
     identity["payload"]["effectProgram"]["acceptReceipt"]["digestProperty"] =
         serde_json::json!("so_number");
     assert!(!check(&identity).is_empty());
+    let mut null = action.clone();
+    null["payload"]["effectProgram"]["acceptReceipt"] = Value::Null;
+    assert!(!check(&null).is_empty());
     let mut body = action.clone();
     body["payload"]["inputSchema"]["properties"]["receipt"] =
         serde_json::json!({"type":"object", "properties":{}, "additionalProperties":false});
