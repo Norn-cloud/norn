@@ -3,9 +3,9 @@ use crate::entity_artifacts::{Decoded, decode_v2};
 use crate::entity_lowering::{EntityForm, entity_object_type};
 use crate::receipt::{ArtifactRef, ReceiptError};
 use norn_ir::definition_catalog::{
-    ArtifactKey, CatalogArtifact, CatalogFormat, DefinitionCatalog, DependsOnRow, LawRow,
-    LifecycleStates, LinkRow, MappingRow, Member, MemberRef, PropertyRow, TransitionRow, TypeKind,
-    TypeRow, WritesRow,
+    CatalogArtifact, CatalogFormat, DefinitionCatalog, DependsOnRow, LawRow, LifecycleStates,
+    LinkRow, MappingRow, Member, MemberRef, PropertyRow, TransitionRow, TypeKind, TypeRow,
+    WritesRow,
 };
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, EntityRoot, Lifecycle, ObjectTypeDef, Property,
