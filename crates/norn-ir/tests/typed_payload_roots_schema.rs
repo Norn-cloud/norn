@@ -746,19 +746,38 @@ fn existing_artifact_fixtures_roundtrip_with_identical_canonical_json() {
     );
 }
 
-#[test]
-fn defined_concept_is_a_pack_owned_declaration_not_membership_data() {
-    let root = serde_json::json!({
+fn defined_concept_wire() -> serde_json::Value {
+    serde_json::json!({
         "id": "test.HighValue", "version": "1.0.0",
         "base": { "artifactId": "test.Item.entity", "version": "1.0.0",
             "member": { "kind": "type", "typeName": "test.Item" } },
         "predicate": "self.amount > 100", "dependencies": [],
         "bounds": norn_ir::ResourceLimitProfile::norn_limits_v1()
-    });
+    })
+}
+
+#[test]
+fn defined_concept_is_a_pack_owned_declaration_not_membership_data() {
+    let root = defined_concept_wire();
     let typed: norn_ir::DefinedConceptRoot =
         serde_json::from_value(root.clone()).expect("declaration");
     assert_eq!(serde_json::to_value(&typed).expect("wire"), root);
     let mut membership = root;
     membership["members"] = serde_json::json!(["item-1"]);
     assert!(serde_json::from_value::<norn_ir::DefinedConceptRoot>(membership).is_err());
+}
+
+proptest::proptest! {
+    #[test]
+    fn defined_concept_kind_roundtrips_exact_identity_version_and_bounds(
+        id in "[A-Za-z][A-Za-z0-9_]{0,31}", version in (0u8..10, 0u8..10, 0u8..10)
+    ) {
+        let mut root = defined_concept_wire();
+        root["id"] = serde_json::json!(format!("test.{id}"));
+        root["version"] = serde_json::json!(format!("{}.{}.{}", version.0, version.1, version.2));
+        let payload = ArtifactPayload::from_kind_json(&ArtifactKind::DefinedConcept,
+            serde_json::from_value(root.clone()).expect("IR JSON")).expect("payload");
+        proptest::prop_assert_eq!(payload.kind(), ArtifactKind::DefinedConcept);
+        proptest::prop_assert_eq!(serde_json::to_value(payload.to_json_value()).expect("wire"), root);
+    }
 }
