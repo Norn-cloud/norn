@@ -253,6 +253,26 @@ pub struct NornCheckReceiptDiagnosticsDigest {
     pub sha256: String,
 }
 
+/// Schema for an array of canonical artifact envelopes.
+pub(crate) fn artifact_envelopes_schema() -> Array {
+    Array::new(Ref::from_schema_name("NornArtifactEnvelope"))
+}
+
+/// Schema reference for the canonical checker receipt.
+pub(crate) fn check_receipt_schema() -> Ref {
+    Ref::from_schema_name("NornCheckReceipt")
+}
+
+/// Schema reference for the canonical checker diagnostics document.
+pub(crate) fn checker_diagnostics_schema() -> Ref {
+    Ref::from_schema_name("NornCheckerDiagnostics")
+}
+
+/// Schema reference for the canonical editor-layout sidecar.
+pub(crate) fn layout_sidecar_schema() -> Ref {
+    Ref::from_schema_name("LayoutSidecar")
+}
+
 fn diagnostic_severity_schema() -> Ref {
     Ref::from_schema_name("NornIrDiagnosticSeverity")
 }
