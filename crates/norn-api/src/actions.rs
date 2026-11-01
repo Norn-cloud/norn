@@ -114,7 +114,7 @@ pub fn call_action_in_epoch<E: SqlEngine>(
     }
     let now = LogicalTime::from_millis(cell.store().read().clock_floor().map_err(Refusal::host)?);
     cell.advance_to(now);
-    let call = rule.call(
+    let invocation = rule.call(
         id,
         BTreeMap::from([
             ("orgId".into(), host.scope().org_id.clone()),
@@ -132,7 +132,7 @@ pub fn call_action_in_epoch<E: SqlEngine>(
     let outcome = norn_kernel::commit_action(
         &mut *cell,
         &catalog,
-        &call,
+        &invocation,
         &Policy(host.authorizer.as_ref()),
     )
     .map_err(|error| kernel_refusal(error.refusal()))?;
@@ -190,19 +190,19 @@ pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync:
             let actor = headers.get("x-norn-actor").and_then(|v| v.to_str().ok());
             let value: serde_json::Value = serde_json::from_slice(&body).map_err(|e| Refusal::invalid(e.to_string()))?;
             let id = value.get("id").cloned().unwrap_or(serde_json::Value::Null);
-            if mcp && value["jsonrpc"] != "2.0" { return Err(Refusal::invalid("expected JSON-RPC 2.0")); }
-            if mcp && value["method"] == "tools/list" {
+            if mcp && value.get("jsonrpc").and_then(serde_json::Value::as_str) != Some("2.0") { return Err(Refusal::invalid("expected JSON-RPC 2.0")); }
+            if mcp && value.get("method").and_then(serde_json::Value::as_str) == Some("tools/list") {
                 let document = crate::routes::get_defs(&host, &scope(&headers), actor)?;
                 let schema = serde_json::json!({"type":"object","required":["actionId","input","idempotencyKey","version"],"properties":{"actionId":{"type":"string"},"input":{"type":"object"},"idempotencyKey":{"type":"string"},"version":{"type":"integer","const":document.version}},"additionalProperties":false});
                 return Ok(serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"tools":[{"name":"call_action","description":"Invoke an admitted action through the governed kernel","inputSchema":schema}]}}));
             }
             let request = if mcp {
-                if value["method"] != "tools/call" || value["params"]["name"] != "call_action" { return Err(Refusal::invalid("unknown MCP method or tool")); }
-                let mut args = value["params"]["arguments"].clone();
-                let key = &value["params"]["_meta"]["norn/idempotencyKey"];
+                if value.get("method").and_then(serde_json::Value::as_str) != Some("tools/call") || value.pointer("/params/name").and_then(serde_json::Value::as_str) != Some("call_action") { return Err(Refusal::invalid("unknown MCP method or tool")); }
+                let mut args = value.pointer("/params/arguments").and_then(serde_json::Value::as_object).cloned().ok_or_else(|| Refusal::invalid("expected tool argument object"))?;
+                let key = value.pointer("/params/_meta/norn~1idempotencyKey").ok_or_else(|| Refusal::invalid("missing retry identity"))?;
                 if args.get("idempotencyKey").is_some_and(|v| v != key) { return Err(Refusal::invalid("conflicting retry identities")); }
-                args["idempotencyKey"] = key.clone();
-                serde_json::from_value(args)
+                args.insert("idempotencyKey".into(), key.clone());
+                serde_json::from_value(serde_json::Value::Object(args))
             } else { serde_json::from_value(value) }.map_err(|e| Refusal::invalid(e.to_string()))?;
             let result = call_action_in_epoch(&host, &scope(&headers), actor, request);
             if mcp {
