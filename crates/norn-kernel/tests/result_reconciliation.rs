@@ -1286,7 +1286,7 @@ impl norn_kernel::receipt_binding::AcceptedReceiptStore for ReceiptStore<'_> {
                     receipt: self.receipt,
                 }
             }
-            _ => ReceiptResolution::Unknown,
+            ReceiptLookup::Accepted | ReceiptLookup::Unknown => ReceiptResolution::Unknown,
         })
     }
 }
