@@ -2064,6 +2064,10 @@ fn stock_post_findings(
             .iter()
             .find(|c| c.id.as_str() == post.collection)?;
         let line = collection.child_type.as_str();
+        for id in if post.operation == norn_ir::ActionStockOperation::Receipt { &["quantity", "rate"][..] } else { &["quantity"][..] } {
+            let field = model.effective_object_type_named(line)?.properties.iter().find(|p| p.id.as_str() == *id)?;
+            if field.nullable || field.computed || !matches!(field.kind, crate::entity_instance::EffectiveKind::Base(norn_ir::PropertyType::Decimal { scale, .. }) if scale.0 == 6) { return None; }
+        }
         let resolve = |path: &[String]| -> Option<String> {
             if path.is_empty() || path.len() > 4 {
                 return None;
@@ -2094,6 +2098,9 @@ fn stock_post_findings(
             (&post.accounts.cogs, "stock.Company"),
         ] {
             let (property, links) = path.split_last()?;
+            let mut expected = post.partition.warehouse.clone();
+            if owner == "stock.Company" { expected.push("company".to_owned()); }
+            if links != expected { return None; }
             let name = resolve(links)?;
             let field = model
                 .effective_object_type_named(&name)?

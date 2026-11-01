@@ -38,11 +38,13 @@ test.skipIf(!checker)("compiled definitions are admitted by the real checker", (
 if (checker) test("POST-BINDING: unresolved, mistyped and open declarations refuse", () => {
   const compiled = compileDefinitions(file, options)
   if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
+  if (!checker) throw new Error("POST-BINDING requires checker WASM")
   const original = JSON.stringify(compiled.artifacts)
   for (const [before, after] of [
     ['"warehouse":["destination"]', '"warehouse":["missing"]'],
     ['"stock":["destination","stock_account"]', '"stock":["item","name"]'],
     ['"srbnb":["destination","company","srbnb_account"]', '"srbnb":["destination","company","currency"]'],
+    ['"kind":"decimal","scale":6', '"kind":"decimal","scale":2'],
     ['"collection":"lines"', '"collection":"missing"'],
     ['"operation":"receipt"', '"operation":"transfer"'],
     ['"operation":"receipt"', '"operation":"receipt","templateId":"caller"'],

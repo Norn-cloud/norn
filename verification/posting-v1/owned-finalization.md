@@ -35,7 +35,8 @@ POST-BINDING: `stockPost` is a closed receipt/delivery declaration on an
 idempotent, scoped `status.submit` action. Its collection must be owned by the
 voucher. Item/warehouse paths start at each owned line and traverse 1–4 required
 to-one links to `stock.Item` / `stock.Warehouse`. Account paths end at text
-properties on that warehouse or its company. Missing masters, unresolved links,
+properties on that same warehouse or its company. Line quantity (and receipt
+rate) must be stored, required scale-six decimals. Missing masters, unresolved links,
 wrong types, nullable accounts, arbitrary operations and template overrides refuse
 admission. The real checker conformance test is `POST-BINDING`.
 

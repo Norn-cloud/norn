@@ -28,7 +28,7 @@ export const Party = Norn.type({
 
 export const Voucher = Norn.type({
   name: "stock.Voucher", title: "Stock voucher", version: "0.1.0",
-  description: "Structural lifecycle only. Submit/cancel actions require declared atomic stock and GL posting laws.",
+  description: "Stock voucher lifecycle. Submit requires closed atomic stock and GL preparation.",
   properties: Schema.Struct({
     id: Schema.String, request_id: Schema.String, effective_at: Norn.timestamp("utc"),
     status: Schema.Literals(["draft", "submitted", "cancelled"]),
