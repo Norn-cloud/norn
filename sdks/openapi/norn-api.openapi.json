@@ -6836,7 +6836,8 @@
           "format",
           "role",
           "sourceLayer",
-          "targetLayer"
+          "targetLayer",
+          "members"
         ],
         "properties": {
           "format": {
@@ -6848,6 +6849,13 @@
             "x-enumDescriptions": [
               "First interpretation contract."
             ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMemberInterpretation"
+            },
+            "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions."
           },
           "role": {
             "type": "string",
@@ -8282,6 +8290,259 @@
             "enum": [
               "null"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMember": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf4"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf5"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf6"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf7"
+          }
+        ],
+        "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id."
+      },
+      "NornIrMemberInterpretation": {
+        "type": "object",
+        "description": "One interpretation between exact catalog members, never a coverage claim.",
+        "required": [
+          "source",
+          "target"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Source type, property, link, lifecycle state or transition identity."
+          },
+          "target": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Corresponding target identity, resolved within the pinned target layer."
+          },
+          "transform": {
+            "type": "string",
+            "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf0": {
+        "type": "object",
+        "description": "The artifact as a whole (an action, a decision, a mapping).",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "artifact"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf1": {
+        "type": "object",
+        "description": "An object type or interface.",
+        "required": [
+          "kind",
+          "typeName"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "type"
+            ]
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf2": {
+        "type": "object",
+        "description": "A property of a type.",
+        "required": [
+          "kind",
+          "typeName",
+          "property"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "property"
+            ]
+          },
+          "property": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf3": {
+        "type": "object",
+        "description": "A link of a type.",
+        "required": [
+          "kind",
+          "typeName",
+          "link"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "link"
+            ]
+          },
+          "link": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf4": {
+        "type": "object",
+        "description": "A state of a type's lifecycle (a value of its lifecycle property).",
+        "required": [
+          "kind",
+          "typeName",
+          "lifecycle",
+          "state"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "state"
+            ]
+          },
+          "lifecycle": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf5": {
+        "type": "object",
+        "description": "A declared transition of a type's lifecycle.",
+        "required": [
+          "kind",
+          "typeName",
+          "lifecycle",
+          "transition"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "transition"
+            ]
+          },
+          "lifecycle": {
+            "type": "string"
+          },
+          "transition": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf6": {
+        "type": "object",
+        "description": "An object map of a mapping.",
+        "required": [
+          "kind",
+          "map"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "object_map"
+            ]
+          },
+          "map": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf7": {
+        "type": "object",
+        "description": "A law.",
+        "required": [
+          "kind",
+          "law"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "law"
+            ]
+          },
+          "law": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberRef": {
+        "type": "object",
+        "description": "A member of one exact artifact.",
+        "required": [
+          "artifactId",
+          "version",
+          "member"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "member": {
+            "$ref": "#/components/schemas/NornIrMember"
+          },
+          "version": {
+            "type": "string"
           }
         },
         "additionalProperties": false

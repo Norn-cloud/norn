@@ -2613,6 +2613,11 @@ export interface components {
              */
             format: "norn.interpretation/1";
             /**
+             * @description MAP-MEMBER-CONTRACT-1: retain every explicit member binding.
+             *     Required coverage and unit/link contracts come from pinned definitions.
+             */
+            members: components["schemas"]["NornIrMemberInterpretation"][];
+            /**
              * @description Explicit semantic role.
              * @enum {string}
              */
@@ -3243,6 +3248,83 @@ export interface components {
         NornIrMaskPolicyOneOf2: {
             /** @enum {string} */
             kind: "null";
+        };
+        /**
+         * @description A member of a definition. Names are the IR's own: an object type or
+         *     interface name, a property, link, lifecycle-property, or transition id,
+         *     an object-map id, a law id.
+         */
+        NornIrMember: components["schemas"]["NornIrMemberOneOf0"] | components["schemas"]["NornIrMemberOneOf1"] | components["schemas"]["NornIrMemberOneOf2"] | components["schemas"]["NornIrMemberOneOf3"] | components["schemas"]["NornIrMemberOneOf4"] | components["schemas"]["NornIrMemberOneOf5"] | components["schemas"]["NornIrMemberOneOf6"] | components["schemas"]["NornIrMemberOneOf7"];
+        /** @description One interpretation between exact catalog members, never a coverage claim. */
+        NornIrMemberInterpretation: {
+            /** @description Source type, property, link, lifecycle state or transition identity. */
+            source: components["schemas"]["NornIrMemberRef"];
+            /** @description Corresponding target identity, resolved within the pinned target layer. */
+            target: components["schemas"]["NornIrMemberRef"];
+            /**
+             * @description Absent means identity. Expressions require checked conformance;
+             *     declaring one does not establish preservation.
+             */
+            transform?: string;
+        };
+        /** @description The artifact as a whole (an action, a decision, a mapping). */
+        NornIrMemberOneOf0: {
+            /** @enum {string} */
+            kind: "artifact";
+        };
+        /** @description An object type or interface. */
+        NornIrMemberOneOf1: {
+            /** @enum {string} */
+            kind: "type";
+            typeName: string;
+        };
+        /** @description A property of a type. */
+        NornIrMemberOneOf2: {
+            /** @enum {string} */
+            kind: "property";
+            property: string;
+            typeName: string;
+        };
+        /** @description A link of a type. */
+        NornIrMemberOneOf3: {
+            /** @enum {string} */
+            kind: "link";
+            link: string;
+            typeName: string;
+        };
+        /** @description A state of a type's lifecycle (a value of its lifecycle property). */
+        NornIrMemberOneOf4: {
+            /** @enum {string} */
+            kind: "state";
+            lifecycle: string;
+            state: string;
+            typeName: string;
+        };
+        /** @description A declared transition of a type's lifecycle. */
+        NornIrMemberOneOf5: {
+            /** @enum {string} */
+            kind: "transition";
+            lifecycle: string;
+            transition: string;
+            typeName: string;
+        };
+        /** @description An object map of a mapping. */
+        NornIrMemberOneOf6: {
+            /** @enum {string} */
+            kind: "object_map";
+            map: string;
+        };
+        /** @description A law. */
+        NornIrMemberOneOf7: {
+            /** @enum {string} */
+            kind: "law";
+            law: string;
+        };
+        /** @description A member of one exact artifact. */
+        NornIrMemberRef: {
+            artifactId: string;
+            member: components["schemas"]["NornIrMember"];
+            version: string;
         };
         /**
          * @description How many objects one end of a link may relate to (Gel `single`/`multi`).
