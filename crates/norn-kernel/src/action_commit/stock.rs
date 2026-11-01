@@ -13,6 +13,27 @@ use crate::stock_posting::{
     lower_stock_posting,
 };
 
+/// Activation ceiling; complete history always fits beside bounded master/line work.
+pub const MAX_STOCK_HISTORY_EVENTS: usize = 256;
+
+fn history_capacity<X>(
+    prior: usize,
+    added: usize,
+    non_event: u32,
+    records: u32,
+) -> Result<(), ActionRefusal<X>> {
+    if prior
+        .checked_add(added)
+        .is_none_or(|count| count > MAX_STOCK_HISTORY_EVENTS)
+        || u64::from(non_event).saturating_add(MAX_STOCK_HISTORY_EVENTS as u64) > u64::from(records)
+    {
+        return Err(invalid(
+            "stock history capacity exceeded; posting activation refused",
+        ));
+    }
+    Ok(())
+}
+
 /// One master-selected partition, with lines in owned-manifest order.
 #[derive(Debug)]
 pub struct StockPartitionInput {
@@ -125,8 +146,10 @@ impl<H: CellHost + ?Sized> Reader<'_, '_, '_, H> {
         {
             return Err(invalid("stock binding changed after first posting"));
         }
+        history_capacity(0, 0, self.meter.records(), self.limits.max_records)?;
         let keys = self.targets(partition, "events")?;
         let count = keys.len();
+        history_capacity(count, 0, self.meter.records(), self.limits.max_records)?;
         if witness
             .values
             .as_ref()
@@ -474,6 +497,12 @@ pub fn plan_stock_partition<X>(
     operation: StockPostOperation,
     posting_id: &str,
 ) -> Result<StockPostPlan, ActionRefusal<X>> {
+    history_capacity(
+        partition.history.len(),
+        partition.lines.len(),
+        0,
+        ResourceLimitProfile::norn_limits_v1().slice.max_records,
+    )?;
     lower_stock_posting(
         &partition.bindings,
         operation,
@@ -538,7 +567,7 @@ mod tests {
                 graph_version: 1,
                 account_id: id.into(),
             });
-        let partition = StockPartitionInput {
+        let mut partition = StockPartitionInput {
             masters: [
                 FactKey::new("stock.Company", "c"),
                 FactKey::new("stock.Item", "i"),
@@ -574,6 +603,44 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "insufficient stock for item i in warehouse w: requested 6.25, available 5"
+        );
+        partition.history = (0..255)
+            .map(|i| {
+                FifoMovement::Receipt(FifoLayer {
+                    receipt: i.to_string(),
+                    quantity: 1_000_000,
+                    value: 1_000_000,
+                })
+            })
+            .collect();
+        partition.lines[0].quantity = 1_000_000;
+        assert!(
+            plan_stock_partition::<std::convert::Infallible>(
+                &partition,
+                StockPostOperation::Delivery,
+                "last"
+            )
+            .is_ok(),
+            "POST-HISTORY-CAPACITY 255 + 1"
+        );
+        partition.history.push(FifoMovement::Delivery(1_000_000));
+        assert!(
+            matches!(
+                plan_stock_partition::<std::convert::Infallible>(
+                    &partition,
+                    StockPostOperation::Delivery,
+                    "over"
+                ),
+                Err(ActionRefusal::SliceUnavailable { .. })
+            ),
+            "POST-HISTORY-CAPACITY 256 + 1"
+        );
+        let records = ResourceLimitProfile::norn_limits_v1().slice.max_records;
+        let room = records.saturating_sub(u32::try_from(MAX_STOCK_HISTORY_EVENTS).unwrap());
+        assert!(history_capacity::<std::convert::Infallible>(256, 0, room, records).is_ok());
+        assert!(
+            history_capacity::<std::convert::Infallible>(256, 0, room.saturating_add(1), records)
+                .is_err()
         );
     }
     #[test]
