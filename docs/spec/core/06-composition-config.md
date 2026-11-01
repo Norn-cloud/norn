@@ -22,9 +22,18 @@ Source-record mappings and term correspondence stay distinct from law interpreta
 1. Resolve an acyclic exact dependency graph and explicit instances. Type/unit substitutions instantiate inherited laws and member contracts before checking executable writers. Two instances of one generic ledger may use USD and fine grams; currency-specific laws never apply to grams by accident.
 2. B1 checks source-required totality, member kind, relation role/target/cardinality, identity and unit/scale compatibility. B3 reconstructs each admitted layer using `verify_admission_receipt` against already checked predecessors. Reject forged/reordered/missing receipts, same-version byte changes and lossy numbers; flat multilayer input still refuses without retained authority.
 3. Generate mapping totality/domain coverage, identity/unit preservation, transition simulation and law-preservation goals, plus per-writer refinement over all layers. Neither a reviewed mapping nor a receipt proves those goals. Bind complete paths and source/member interpretations into the challenge.
-4. Resolve runtime settings by explicitly ordered scope precedence, then effective interval at the action's declared effective date, within its recorded-time snapshot. Equal-precedence overlapping candidates refuse. No candidate requires an explicit default or refusal. Replace binary64 economic settings with common exact types; persist selected version in the commit.
-5. Overlays are scoped conjunctions on pinned definitions, independent of declaration order; contradictory guards or impossible progress refuse within the supported analysis profile. New behavior has a new action identity. A numeric threshold is “tighter” only under a declared order of restrictiveness.
+4. Resolve runtime settings by explicitly ordered scope precedence, then effective interval at the action's declared effective date, within its recorded-time snapshot. Equal-precedence overlapping candidates refuse. If no candidate matches, require an explicit default or refuse with `core.composition.parameter_missing`; never leave the setting unbound. Replace binary64 economic settings with common exact types; persist selected version in the commit.
+5. Overlays are scoped conjunctions on pinned definitions, independent of declaration order; contradictory guards or impossible progress refuse within the supported analysis profile. New behavior has a new action identity. Restrictiveness is logical implication: effective guard = `base ∧ overlay`, monotone by construction; no numeric order is inferred or declared. The initial analysis profile is specified below.
 6. Plan migration against pinned definitions/data. Keep in-flight instances/pending effects on their original version unless explicitly transformed; preflight keys, links, states, settings, authority and laws. Atomically activate within a cell with conflict checks and projection generation switch. Larger migrations expose governed resumable availability; rollback is a new validated migration. Never reinterpret old event bytes silently.
+
+### Initial overlay analysis profile
+
+Per the [coordinator ruling, point 2](https://github.com/Norn-cloud/norn/issues/344#issuecomment-6559163104):
+
+- An overlay may only conjoin (a) quantifier-free guards over the target's typed fields, admitted parameters and action inputs using exact-decimal linear arithmetic, enum and identity equality, and booleans; or (b) additional obligations or laws on the same target.
+- The checker generates a satisfiability obligation for `base ∧ overlay` and dispatches it to the existing SMT path. Unsatisfiable on every admissible input refuses with `core.composition.overlay_conflict`.
+- For each statechart transition an `eventually` / `until` law requires to be enabled, check that conjunction for satisfiability within the reachable-state invariant. Unsatisfiable refuses with the same code and `reason: impossible_progress`.
+- Anything outside the fragment refuses with `core.composition.overlay_conflict` and `reason: unsupported_predicate`, including function or `perform` calls, quantifiers, non-linear arithmetic and opaque constraints. Never assume compatibility.
 
 | Invariant / layer | Stable target diagnostic |
 |---|---|
@@ -33,6 +42,7 @@ Source-record mappings and term correspondence stay distinct from law interpreta
 | LAYER-AUTHORITY-1: retained layers verified in order; admission | `core.composition.invalid_retained_input` |
 | OVERLAY-MONOTONE-1: no law/domain replacement; admission | `core.composition.overlay_conflict` |
 | PARAM-EXACT-1: unique effective scoped exact value; admission/commit | `core.composition.parameter_ambiguous` |
+| PARAM-BOUND-1: missing candidates require explicit default or refusal; admission/commit | `core.composition.parameter_missing` |
 | MIGRATE-PIN-1: explicit migration for in-flight work; admission/commit | `core.composition.migration_required` |
 
 Evidence: structural identity/admission, runtime activation/parameter pins, generated interpretation/refinement goals; semantic preservation stays unknown until checked. Published releases pin IR, dependencies, parameter schema, migrations, Function/tool digests and evidence.
@@ -43,6 +53,7 @@ Evidence: structural identity/admission, runtime activation/parameter pins, gene
 - **LAYERS-CHAIN/FORGED/EXACT:** Given three separately admitted layers, when retained authority verifies, then extensions resolve; tampered/reordered predecessors or same-version source changes refuse.
 - **WRITER-NEW/EDGE-NEW/EDGE-OMIT/EDGE-NOPROOF:** Given a law challenge, when a writer/mapping changes, then regenerate goals; removed/substituted goals refuse; review evidence alone leaves proof unknown.
 - **PARAM-TAX:** Given USD 100 net, 10% before July 1 and 12% thereafter, when posting June 30 and July 1, then tax is 10 and 12 with distinct pinned versions; later setting edits leave both receipts unchanged.
+- **PARAM-NO-MATCH:** Given no candidate at the declared scope/effective date/recorded snapshot, when resolving, then select only an explicit default and persist its version; without one refuse `core.composition.parameter_missing` with no writes.
 - **MIGRATE-FLIGHT:** Given a process started under v1, when v2 activates, then it continues under v1; an explicit supported migration changes its pin atomically or refuses without changes.
 
 ## Main and gaps
