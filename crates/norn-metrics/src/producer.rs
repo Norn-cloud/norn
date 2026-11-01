@@ -132,15 +132,14 @@ pub fn prepare_forecast(export: &ForecastExport<'_>, input: &ForecastInput) -> R
 
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::arithmetic_side_effects, reason = "bounded report-unit property")]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use proptest::prelude::*;
     #[test]
     fn nonfinite_negative_and_unrepresentable_scores_refuse() {
         for value in [f64::NAN, f64::INFINITY, -1.0, f64::MAX] { assert!(nanos(value).is_err()); }
     }
-    #[test]
-    fn actual_report_and_late_evidence_assessment_are_distinct() {
+    pub(crate) fn fixture() -> (TemporalPlan, Vec<TemporalRow>) {
         use crate::temporal::{TemporalRow, TemporalValue};
         let root = std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR").expect("typed fixtures");
         let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_slice(&std::fs::read(std::path::Path::new(&root).join("metric-demand.json")).expect("fixture")).expect("artifacts");
@@ -151,6 +150,11 @@ mod tests {
             let x = i32::try_from(i).expect("index") + 1; let at = i64::from(x) * 1_000_000;
             TemporalRow { key: format!("unit-{i}"), at, features: vec![value(x,at)], outcome: value(y,at+1000) }
         }).collect();
+        (plan, rows)
+    }
+    #[test]
+    fn actual_report_and_late_evidence_assessment_are_distinct() {
+        let (plan, rows) = fixture();
         let digest = crate::host::implementation_digest().expect("source");
         let mut export = ForecastExport { tenant:"unit", world:"main", plan:&plan, rows:&rows, version:1,
             source_digest:digest.clone(), source_head:42, as_of:8_000_000, complete:true, quarantine_count:0, fresh:true,
