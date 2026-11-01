@@ -39,7 +39,24 @@ def parse(data):
     return json.loads(data, object_pairs_hook=unique)
 
 
+def validate_members(value, path):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            validate_members(item, f'{path}/{key}')
+    elif isinstance(value, list):
+        if all(isinstance(item, str) for item in value):
+            require(len(value) == len(set(value)), f'{path}: duplicate list members')
+        for item in value:
+            validate_members(item, path)
+
+
 def merge(base, own, current, path):
+    for value in (base, own, current):
+        validate_members(value, path)
+    return _merge(base, own, current, path)
+
+
+def _merge(base, own, current, path):
     if own == base or own == current:
         return current
     if current == base:
@@ -47,7 +64,7 @@ def merge(base, own, current, path):
     if all(isinstance(x, dict) for x in (base, own, current)):
         result = dict(current)
         for key in dict.fromkeys([*base, *own]):
-            value = merge(base.get(key, MISSING), own.get(key, MISSING),
+            value = _merge(base.get(key, MISSING), own.get(key, MISSING),
                           current.get(key, MISSING), f'{path}/{key}')
             if value is MISSING:
                 result.pop(key, None)
@@ -56,8 +73,6 @@ def merge(base, own, current, path):
         return result
     if all(isinstance(x, list) for x in (base, own, current)):
         if all(isinstance(v, str) for items in (base, own, current) for v in items):
-            for items in (base, own, current):
-                require(len(items) == len(set(items)), f'{path}: duplicate list members')
             for items in (own, current):
                 require([x for x in items if x in base] == [x for x in base if x in items],
                         f'{path}: concurrent list reorder')
@@ -69,7 +84,7 @@ def merge(base, own, current, path):
                 result = {v['id']: v for v in items}
                 require(len(result) == len(items), f'{path}: duplicate ids')
                 return result
-            merged = merge(keyed(base), keyed(own), keyed(current), path)
+            merged = _merge(keyed(base), keyed(own), keyed(current), path)
             return list(merged.values())
     raise ValueError(f'{path}: ambiguous concurrent change (resolve manually)')
 
@@ -83,7 +98,7 @@ def main():
 
     def git(*args, check=True):
         result = subprocess.run(['git', '-C', str(root), *args],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
         require(not check or result.returncode == 0, result.stderr.decode().strip())
         return result.stdout.decode()
 
@@ -190,11 +205,11 @@ def main():
                     [sys.executable, 'verification/coverage-v1/validate.py'],
                     ['cargo', 'xtask', 'ci', 'provenance']):
         print('+ ' + ' '.join(command), flush=True)
-        subprocess.run(command, cwd=root, check=True)
+        subprocess.run(command, cwd=root, check=True, timeout=1800)
 
 
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
         sys.exit(f'migration failed: {error}')
