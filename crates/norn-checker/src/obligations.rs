@@ -528,6 +528,78 @@ impl ApprovedContract {
         {
             return Err(ChallengeError::LawChanged);
         }
+        self.build_challenge(source, context, Some(receipt), None)
+    }
+
+    /// EDGE-GOALS-1: generate an unknown proposal for structurally conforming edges.
+    /// This does not admit an interpretation, check a proof or grant activation authority.
+    /// # Errors
+    /// Refuses changed retained authority/laws/contracts, incomplete B1 conformance,
+    /// any admission error except the explicit interpretation-unsupported finding,
+    /// or exhausted obligation/byte budgets.
+    pub fn interpretation_challenge(
+        &self,
+        source: &DefinitionSource,
+        retained: &RetainedLayers,
+    ) -> Result<Challenge, ChallengeError> {
+        if self.retained.as_deref() != Some(retained.exact_digest())
+            || exact_set(&source.base)? != exact_set(retained.artifacts())?
+            || law_refs(&source.artifacts, &source.base)? != self.laws
+            || reference_contracts(&source.artifacts, &source.base)? != self.reference_contracts
+        {
+            return Err(ChallengeError::InvalidSubmission);
+        }
+        let context = EntityArtifactSetContext {
+            registry: retained.registry(),
+            base: &source.base,
+            tenant: None,
+        };
+        let findings = crate::check_artifact_set(&source.artifacts, &context);
+        if findings
+            .iter()
+            .any(|d| d.is_error() && d.code.as_str() != "mapping.interpretation.unsupported")
+        {
+            return Err(ChallengeError::NotAdmitted);
+        }
+        let mut edges = Vec::new();
+        let mut edge_bytes = 0usize;
+        for artifact in source
+            .base
+            .iter()
+            .chain(&source.artifacts)
+            .filter(|a| a.kind() == ArtifactKind::Mapping)
+        {
+            if let Ok(norn_ir::mapping::MappingDocument::LawInterpretation(interpretation)) =
+                serde_json::from_value(
+                    serde_json::to_value(artifact.payload.to_json_value())
+                        .map_err(|_error| ChallengeError::Closure)?,
+                )
+            {
+                let identity = exact_artifact_digest(artifact)?;
+                let statement = json!({"artifactId":artifact.artifact_id,"sha256":identity,"interpretation":interpretation,"laws":self.laws});
+                let bytes = norn_canonical::serialize_json_verbatim(&statement)
+                    .map_err(|_error| ChallengeError::Closure)?;
+                edge_bytes = edge_bytes.saturating_add(bytes.len().saturating_mul(6));
+                if edge_bytes > 8_388_608 || edges.len() >= 1_024 {
+                    return Err(ChallengeError::Limit);
+                }
+                edges.push(statement);
+            }
+        }
+        if edges.is_empty() {
+            return Err(ChallengeError::NotAdmitted);
+        }
+        self.build_challenge(source, &context, None, Some(edges))
+    }
+
+    fn build_challenge(
+        &self,
+        source: &DefinitionSource,
+        context: &EntityArtifactSetContext<'_>,
+        receipt: Option<String>,
+        edges: Option<Vec<Value>>,
+    ) -> Result<Challenge, ChallengeError> {
+        let artifacts = &source.artifacts;
         let pool: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
         let closure = pool
             .iter()
@@ -536,7 +608,7 @@ impl ApprovedContract {
                 crate::verification::conservative_closure(
                     law,
                     &pool,
-                    registry,
+                    context.registry,
                     Budget {
                         max_nodes: 16_384,
                         max_edges: 131_072,
@@ -562,8 +634,12 @@ impl ApprovedContract {
             return Err(ChallengeError::Limit);
         }
         preflight_goal_bytes(&self.laws, &writers, &boundaries)?;
-        let induction = induction::build(&pool, &self.laws, &writers, &boundaries, registry)?;
-        let body = json!({
+        let mut induction =
+            induction::build(&pool, &self.laws, &writers, &boundaries, context.registry)?;
+        if let Some(edges) = &edges {
+            append_edge_goals(&mut induction.goals, edges)?;
+        }
+        let mut body = json!({
             "generator": GENERATOR_PROFILE,
             "admissionReceipt": receipt,
             "retainedLayers": self.retained,
@@ -579,19 +655,52 @@ impl ApprovedContract {
             "writerStatements": induction.writers,
             "obligations": induction.goals,
         });
-        let bytes = norn_canonical::serialize_json_verbatim(&body)
-            .map_err(|_error| ChallengeError::Closure)?;
-        if bytes.len() > 8_388_608 {
-            return Err(ChallengeError::Limit);
+        if edges.is_some() {
+            body["generator"] = json!("norn.interpretation-goals/1");
+            body["admitted"] = json!(false);
+            body["assessment"] = json!("unknown");
+            body["admissionFindings"] =
+                crate::diagnostics_to_json(&crate::check_artifact_set(artifacts, context));
         }
-        norn_canonical::parse_json_verbatim(&bytes).map_err(|_error| ChallengeError::Closure)?;
-        let sha256 = exact_commitment(b"challenge", &[&bytes])?;
-        Ok(Challenge {
-            body,
-            sha256,
-            writers,
-        })
+        finish_challenge(body, writers)
     }
+}
+
+fn append_edge_goals(goals: &mut Vec<Value>, edges: &[Value]) -> Result<(), ChallengeError> {
+    if goals.len().saturating_add(edges.len().saturating_mul(6)) > 8_192 {
+        return Err(ChallengeError::Limit);
+    }
+    for edge in edges {
+        for kind in [
+            "mapping_totality",
+            "mapping_domain_coverage",
+            "mapping_identity_preservation",
+            "mapping_unit_preservation",
+            "mapping_transition_simulation",
+            "mapping_law_preservation",
+        ] {
+            goals.push(json!({"goal":{"kind":kind},"statement":edge,"assessment":"unknown"}));
+        }
+    }
+    Ok(())
+}
+
+fn finish_challenge(
+    body: Value,
+    writers: BTreeSet<crate::verification::LawWriter>,
+) -> Result<Challenge, ChallengeError> {
+    let bytes =
+        norn_canonical::serialize_json_verbatim(&body).map_err(|_error| ChallengeError::Closure)?;
+    if bytes.len() > 8_388_608 {
+        return Err(ChallengeError::Limit);
+    }
+    norn_canonical::parse_json_verbatim(&bytes).map_err(|_error| ChallengeError::Closure)?;
+    let sha256 = exact_commitment(b"challenge", &[&bytes])?;
+    Ok(Challenge {
+        body,
+        sha256,
+        writers,
+    })
 }
 
 fn preflight_goal_bytes(

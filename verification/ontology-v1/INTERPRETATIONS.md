@@ -162,3 +162,15 @@ containment pins and removal of a required member. Kani is infeasible for
 this full catalog/serde/admission pipeline; generated ordering tests exercise
 the production projection. Ordinary source validation remains structural;
 resolved application/protected-law admission requires this complete projection.
+
+EDGE-GOALS-1 generates protected proposal obligations for every complete B1
+interpretation: totality, domain coverage, identity/unit preservation, transition
+simulation and preservation of the protected law set. The edge identity binds
+exact source bytes, endpoints, every member interpretation and retained authority.
+The proposal includes normal writer/induction goals, but records admission as
+unsupported and every edge assessment as unknown. Only the known interpretation
+unsupported finding is eligible for proposal generation; all other admission
+errors refuse. Normal admission and protected executable challenges still refuse
+interpretations. EDGE-NEW/OMIT/NOPROOF and generated omissions exercise this
+boundary; review metadata and echoed inventories never discharge a goal.
+Kani is infeasible for allocated admission/serde/induction generation.
