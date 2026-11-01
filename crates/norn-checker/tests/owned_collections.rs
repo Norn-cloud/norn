@@ -1037,3 +1037,46 @@ fn kernel_owned_row_fields_cannot_be_protected() {
         }
     }
 }
+
+#[test]
+fn owned_children_refuse_protected_declared_and_inherited_defaults() {
+    for default in [json!(""), json!(0), json!(false), Value::Null] {
+        for inherited in [false, true] {
+            let kind = match &default { Value::Number(_) => "integer", Value::Bool(_) => "boolean", _ => "text" };
+            let mut child = child_type("text", "integer");
+            child["properties"][2] = json!({"id":"label", "type":{"kind":kind}, "constraints":{"nullable":true}, "protected":true, "default":default});
+            let mut definitions = vec![parent_type(20, &json!({"to":"many","from":"one"})), child];
+            if inherited {
+                let mut base = definitions[1].clone();
+                base["name"] = json!(CHILD_BASE);
+                definitions[1]["extends"] = json!(CHILD_BASE);
+                definitions[1]["properties"][2].as_object_mut().expect("property").remove("default");
+                definitions[1]["properties"][2]["protected"] = json!(false);
+                definitions.push(base);
+            }
+            assert_finding(&model_findings(definitions), object_codes::PROTECTED_DEFAULT, "/objectTypes/0/ownedCollections/0/childType");
+        }
+    }
+}
+
+#[test]
+fn owned_children_admit_unprotected_defaults_and_protected_lifecycle_initial_without_default() {
+    let parent = parent_type(20, &json!({"to":"many","from":"one"}));
+    let mut child = child_type("text", "integer");
+    child["properties"][2]["default"] = json!("owned");
+    assert!(entity_model_findings(parent.clone(), child.clone()).is_empty());
+    child["properties"][2] = json!({"id":"label", "type":{"kind":"enum","values":[{"value":"open"},{"value":"closed"}]}, "protected":true});
+    child["lifecycles"] = json!([{"property":"label", "initial":["open"], "terminal":["closed"], "transitions":[{"id":"close","from":["open"],"to":"closed"}]}]);
+    assert!(entity_model_findings(parent, child).is_empty());
+}
+
+proptest::proptest! {
+    #[test]
+    fn every_protected_owned_text_default_is_refused(value in "[a-zA-Z0-9]{0,24}") {
+        let mut child = child_type("text", "integer");
+        child["properties"][2]["protected"] = json!(true);
+        child["properties"][2]["default"] = json!(value);
+        let findings = entity_model_findings(parent_type(20, &json!({"to":"many","from":"one"})), child);
+        proptest::prop_assert!(findings.iter().any(|(code, _)| code == object_codes::PROTECTED_DEFAULT));
+    }
+}

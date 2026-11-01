@@ -44,6 +44,8 @@
 //!   and interface invariants are statically checked as bool, and implemented
 //!   interface invariants join the effective object contract.
 //!
+//! PROTECTED-DEFAULT: owned child types have no protected effective defaults.
+//!
 //! Spans are JSON pointers into the document
 //! `{ "interfaces": [...], "objectTypes": [...], "extensions": [...] }`.
 
@@ -1433,6 +1435,15 @@ impl<'a> Checker<'a, '_> {
                 ));
             }
             let child_table = self.table(&collection.child_type);
+            for (property_id, property) in &child_table {
+                if property.default.is_some() && self.protected(&collection.child_type, property_id) {
+                    self.out.push(error(
+                        codes::PROTECTED_DEFAULT,
+                        format!("owned child property {:?} has a protected default; move the value into the authoritative rule's creation effect, or drop the protection", property_id.as_str()),
+                        span_at(&at, &["childType"]),
+                    ));
+                }
+            }
             for (property_id, expected, member) in [
                 (&collection.row_id_property, "text", "rowIdProperty"),
                 (&collection.ordering_key, "integer", "orderingKey"),
