@@ -137,11 +137,11 @@ impl RequirementRefusal {
     pub const fn code(self) -> &'static str {
         match self {
             Self::UnsupportedTiming => "law.validation.unsupported_temporal",
-            Self::UnsupportedResponse => "law.validation.invalid_document",
-            Self::ModalityMismatch => "law.validation.invalid_document",
+            Self::UnsupportedResponse | Self::ModalityMismatch | Self::MissingTemplate => {
+                "law.validation.invalid_document"
+            }
             Self::InvalidBinding => "law.model.unknown_binding",
             Self::PredicateType => "law.model.predicate_type",
-            Self::MissingTemplate => "law.validation.invalid_document",
         }
     }
 }
