@@ -1902,7 +1902,7 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     /// Store failures roll back all schema and data. A changed request, scope,
-    /// or a cell whose definitions have advanced refuses as a conflict.
+    /// or invalid retained history refuses. Identical retries reopen the current model.
     pub fn provision_definitions(
         conn: E,
         model: Model,
@@ -1910,7 +1910,14 @@ impl<E: SqlEngine> CellStore<E> {
         scope: &str,
     ) -> Result<Self, CellError> {
         let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
-        let store = Self::unverified(conn, model);
+        let mut store = Self::unverified(conn, model);
+        if let Some(active) = Self::read_active_definitions(&store.conn)? {
+            let installation = store
+                .export_record(active.commit_seq)?
+                .and_then(|record| record.definition_install)
+                .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
+            store.model = Model::from_snapshot(&installation.model)?;
+        }
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: scope.to_owned(),
@@ -2481,7 +2488,7 @@ impl<E: SqlEngine> CellStore<E> {
                     let active = Self::read_active_definitions(&self.conn)?;
                     if binding("binding:provision")?.as_deref() != Some(identity)
                         || binding("binding:scope")?.as_deref() != Some(batch.scope.as_str())
-                        || !active.is_some_and(|set| set.version == 1 && set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
+                        || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     }
                     let (head, boundary) = self.read().verify_ledger_with_boundary(&LedgerHead::genesis())?;

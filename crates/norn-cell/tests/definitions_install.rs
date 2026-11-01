@@ -5196,3 +5196,36 @@ fn host_provision_atomic_at_every_storage_boundary() {
         }
     }
 }
+
+#[test]
+fn host_provision_atomic_retry_preserves_later_installs() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("tenant.sqlite");
+    let original = provision_input();
+    let mut store = CellStore::provision_definitions(
+        provision_engine(&path),
+        model(false),
+        &original,
+        "demo/dev",
+    )
+    .expect("first provision");
+    let mut next = original.clone();
+    next.installed_at = 2;
+    store
+        .install_definitions(model(true), next, Some(1), "demo/dev")
+        .expect("later install");
+    drop(store);
+    let store = CellStore::provision_definitions(
+        provision_engine(&path),
+        model(false),
+        &original,
+        "demo/dev",
+    )
+    .expect("original retry");
+    assert_eq!(store.model().model_hash(), model(true).model_hash());
+    assert_eq!(store.read().receipts().expect("receipts").len(), 2);
+    assert_eq!(
+        store.read().active_definitions_version().expect("active"),
+        Some(2)
+    );
+}
