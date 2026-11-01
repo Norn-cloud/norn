@@ -3,6 +3,8 @@
 //! Checks use the admitted effective ontology, including inherited and inverse
 //! roles. A successful check is a definition check, never evaluation evidence.
 
+pub mod compute;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::metric::{
