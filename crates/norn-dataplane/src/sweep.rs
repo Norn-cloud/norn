@@ -1,16 +1,64 @@
-//! Pure keyset-page planning for a Frappe completeness sweep.
+//! The Frappe completeness sweep: a pure planner (T12-DP-4).
+//!
+//! Webhooks are the fast path; they can be lost. The sweep periodically polls
+//! Frappe's REST API for every document modified (and every document deleted)
+//! since a cursor, and emits the same raw observations a webhook would have.
+//! Event ids match the webhook's ([`crate::frappe`]), so anything a webhook
+//! already delivered converges as a duplicate and anything it missed is
+//! filled in. History is never mutated: the sweep only appends observations.
+//!
+//! # Execution goes through `perform`
+//!
+//! This module performs no IO. [`FrappeSweep::plan`] produces a
+//! [`SweepCommand`], a serializable description of one HTTP `GET`. The host
+//! enqueues it as a kernel command; its `perform` adapter resolves the site's
+//! base URL and credentials from host configuration, encodes
+//! `path_segments`/`query`, executes the request, and delivers the response
+//! JSON decoded through [`crate::parse_exact_json`] to preserve exact evidence.
+//! For live documents, [`FrappeSweep::plan_documents`] then plans one
+//! full-document GET per listing row: Frappe listings omit child tables.
+//! The host executes these through `perform` and supplies their responses in
+//! listing order to [`FrappeSweep::ingest`]. Only a completely hydrated page
+//! produces observations and a next cursor. The host records that cursor
+//! after accepting all observations, so the sweep resumes after a restart.
+//!
+//! Full documents use `GET /api/method/frappe.client.get` with `doctype` and
+//! `name` query arguments. Its `message` dictionary preserves null parent and
+//! child fields; the document resource endpoint serializes documents with
+//! nulls removed. The host principal must have complete parent/child field-read
+//! permissions, matching the webhook profile ([`crate::frappe`]); this planner
+//! cannot detect fields omitted by Frappe's permission filtering.
+//!
+//! # Paging
+//!
+//! Pages use keyset pagination over `(modified, name)`:
+//! `filters=[["modified", ">=", m]]` and
+//! `or_filters=[["modified", ">", m], ["name", ">", n]]`, ordered
+//! `modified asc, name asc`. That never skips a row when timestamps tie.
+//! Each cycle starts [`FrappeSweep::lookback_secs`] before the previous
+//! cycle's high-water mark ([`FrappeSweep::start_cycle`]) to catch rows
+//! committed late by long transactions; the overlap converges as duplicates.
+//!
+//! Deletes are read from Frappe's `Deleted Document` doctype, whose `data`
+//! column holds the deleted document as JSON.
 //!
 //! DP-SWEEP-PLAN-1: only matching feed/doctype and normalized cursors plan GETs.
 //! DP-SWEEP-PLAN-2: keyset filters implement (modified, name) > cursor; lookback
 //! rewinds time and clears the name without changing the caller's cursor.
 //! Sampled evidence: `sweep_planning_conforms`, `generated_sweep_plans_conform`.
+//! DP-SWEEP-HYDRATE-1: exact listing/full-document bytes retain complete payloads;
+//! identities and listed versions must agree before any page result is returned.
+//! DP-SWEEP-HYDRATE-2: malformed or incomplete pages return no observations/cursor.
+//! Evidence: `sweep_hydration_conforms`, `generated_hydration_conforms`.
+
+use std::collections::BTreeSet;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
-use crate::frappe::FrappeSource;
-use crate::raw_observation::RawObservation;
+use crate::frappe::{FrappeSource, frappe_observation, string_field};
+use crate::raw_observation::{ObservationKind, RawObservation, parse_exact_json};
 use crate::webhook::{IngestError, format_frappe_datetime, normalize_frappe_datetime};
 
 /// The pipeline version recorded on sweep observations.
@@ -219,6 +267,240 @@ impl FrappeSweep {
         })
     }
 
+    /// Plan full-document fetches for every live-document listing row.
+    ///
+    /// Listings contain only identity/version columns; they cannot be sealed
+    /// as documents because Frappe omits child tables. Planning never advances
+    /// a cursor. Execute each command through `perform`, then pass the full
+    /// `{"message": {...}}` responses to [`Self::ingest`] in the same order.
+    ///
+    /// # Errors
+    ///
+    /// A foreign command, a non-document feed, or a malformed listing row.
+    pub fn plan_documents(
+        &self,
+        command: &SweepCommand,
+        response: &[u8],
+    ) -> Result<Vec<SweepDocumentCommand>, IngestError> {
+        self.check_command(command)?;
+        if command.feed != SweepFeed::Documents {
+            return Err(IngestError::InvalidSweep {
+                reason: "only live-document listings need full-document fetches",
+            });
+        }
+        let response = parse_exact_json(response)?;
+        self.rows(command, &response)?
+            .iter()
+            .map(|row| {
+                let cursor = self.row_cursor(command.feed, row)?;
+                Ok(SweepDocumentCommand {
+                    path_segments: vec![
+                        "api".to_owned(),
+                        "method".to_owned(),
+                        "frappe.client.get".to_owned(),
+                    ],
+                    query: vec![
+                        ("doctype".to_owned(), self.doctype.clone()),
+                        ("name".to_owned(), cursor.name.clone()),
+                    ],
+                    cursor,
+                    method: "GET".to_owned(),
+                })
+            })
+            .collect()
+    }
+
+    /// Turn a listing and its full-document responses into observations.
+    ///
+    /// `document_responses` contains exact JSON bytes for each `{"message": {...}}` live
+    /// listing row, in listing order; it must be empty for deletions, whose
+    /// rows already embed the complete document. `extracted_at` is the host's
+    /// receipt time in milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// Missing or malformed responses, a fetched identity/version mismatch,
+    /// or a refused observation. The whole page is refused without returning
+    /// observations or an advanced cursor. If a document changed between the
+    /// listing and the fetch, retry with a fresh listing; never label the new
+    /// payload with the old version. The host persists `next` only after all
+    /// returned observations have been accepted by the observe inbox.
+    pub fn ingest(
+        &self,
+        command: &SweepCommand,
+        response: &[u8],
+        document_responses: &[Vec<u8>],
+        extracted_at: u64,
+    ) -> Result<SweepPage, IngestError> {
+        self.check_command(command)?;
+        let response = parse_exact_json(response)?;
+        let rows = self.rows(command, &response)?;
+        let expected = match command.feed {
+            SweepFeed::Documents => rows.len(),
+            SweepFeed::Deletions => 0,
+        };
+        if document_responses.len() != expected {
+            return Err(IngestError::InvalidSweep {
+                reason: "full-document response count does not match the listing",
+            });
+        }
+        let mut observations = Vec::with_capacity(rows.len());
+        let mut next = None;
+        let documents = document_responses
+            .iter()
+            .map(|bytes| parse_exact_json(bytes))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut documents = documents.iter();
+        for row in rows {
+            let cursor = self.row_cursor(command.feed, row)?;
+            let observation = match command.feed {
+                SweepFeed::Documents => {
+                    let doc = documents
+                        .next()
+                        .and_then(|response| response.get("message"))
+                        .and_then(Value::as_object)
+                        .ok_or(IngestError::MissingField {
+                            field: "message",
+                            expected: "full document object",
+                        })?;
+                    if string_field(doc, "doctype")? != self.doctype
+                        || string_field(doc, "name")? != cursor.name
+                        || normalize_frappe_datetime(string_field(doc, "modified")?)?
+                            != cursor.modified
+                    {
+                        return Err(IngestError::InvalidSweep {
+                            reason: "the fetched document does not match the listed identity/version",
+                        });
+                    }
+                    frappe_observation(
+                        &self.source,
+                        &self.doctype,
+                        ObservationKind::Upsert,
+                        doc.clone(),
+                        extracted_at,
+                        Some(serde_json::to_value(&cursor)?),
+                        FRAPPE_SWEEP_PIPELINE,
+                    )?
+                }
+                SweepFeed::Deletions => self.deletion(
+                    row.as_object().ok_or(IngestError::MissingField {
+                        field: "data[]",
+                        expected: "object",
+                    })?,
+                    &cursor,
+                    extracted_at,
+                )?,
+            };
+            observations.push(observation);
+            next = Some(cursor);
+        }
+        let exhausted = u32::try_from(rows.len()).is_ok_and(|count| count < self.page_size);
+        Ok(SweepPage {
+            observations,
+            next,
+            exhausted,
+        })
+    }
+
+    fn check_command(&self, command: &SweepCommand) -> Result<(), IngestError> {
+        if *command != self.plan(command.feed, command.after.as_ref())? {
+            return Err(IngestError::InvalidSweep {
+                reason: "the command does not match this sweep's listing plan",
+            });
+        }
+        Ok(())
+    }
+
+    fn rows<'a>(
+        &self,
+        command: &SweepCommand,
+        response: &'a Value,
+    ) -> Result<&'a [Value], IngestError> {
+        let rows =
+            response
+                .get("data")
+                .and_then(Value::as_array)
+                .ok_or(IngestError::MissingField {
+                    field: "data",
+                    expected: "array",
+                })?;
+        if u64::try_from(rows.len()).unwrap_or(u64::MAX) > u64::from(self.page_size) {
+            return Err(IngestError::InvalidSweep {
+                reason: "the listing exceeds its page size",
+            });
+        }
+        let mut previous = command.after.clone();
+        let mut seen = BTreeSet::new();
+        if let Some(after) = &command.after {
+            seen.insert((after.modified.clone(), after.name.clone()));
+        }
+        for row in rows {
+            let cursor = self.row_cursor(command.feed, row)?;
+            // Name ordering belongs to the source database collation.
+            if previous
+                .as_ref()
+                .is_some_and(|last| last.modified > cursor.modified)
+                || !seen.insert((cursor.modified.clone(), cursor.name.clone()))
+            {
+                return Err(IngestError::InvalidSweep {
+                    reason: "listing rows must advance in keyset order",
+                });
+            }
+            previous = Some(cursor);
+        }
+        Ok(rows)
+    }
+
+    fn row_cursor(&self, feed: SweepFeed, row: &Value) -> Result<SweepCursor, IngestError> {
+        let row = row.as_object().ok_or(IngestError::MissingField {
+            field: "data[]",
+            expected: "object",
+        })?;
+        Ok(SweepCursor {
+            feed,
+            doctype: self.doctype.clone(),
+            modified: normalize_frappe_datetime(string_field(row, "modified")?)?,
+            name: string_field(row, "name")?.to_owned(),
+        })
+    }
+
+    fn deletion(
+        &self,
+        row: &Map<String, Value>,
+        cursor: &SweepCursor,
+        extracted_at: u64,
+    ) -> Result<RawObservation, IngestError> {
+        if string_field(row, "deleted_doctype")? != self.doctype {
+            return Err(IngestError::InvalidSweep {
+                reason: "a deletion row belongs to another doctype",
+            });
+        }
+        let deleted_name = string_field(row, "deleted_name")?;
+        let data: Value = parse_exact_json(string_field(row, "data")?.as_bytes())?;
+        let Value::Object(doc) = data else {
+            return Err(IngestError::MissingField {
+                field: "data",
+                expected: "JSON object string",
+            });
+        };
+        if string_field(&doc, "doctype")? != self.doctype
+            || string_field(&doc, "name")? != deleted_name
+        {
+            return Err(IngestError::InvalidSweep {
+                reason: "a deletion row's data does not match its deleted_name",
+            });
+        }
+        frappe_observation(
+            &self.source,
+            &self.doctype,
+            ObservationKind::Delete,
+            doc,
+            extracted_at,
+            Some(serde_json::to_value(cursor)?),
+            FRAPPE_SWEEP_PIPELINE,
+        )
+    }
+
     fn check(&self) -> Result<(), IngestError> {
         if self.doctype.trim().is_empty() {
             return Err(IngestError::InvalidSweep {
@@ -289,7 +571,98 @@ mod tests {
         assert!(sweep.plan(SweepFeed::Documents, None).is_err());
     }
 
+    fn hydrated_inputs(name: &str) -> (Vec<u8>, Vec<Vec<u8>>) {
+        let listing = json!({"data":[{"name":name,"modified":"2026-11-01 00:00:00"}]})
+            .to_string()
+            .into_bytes();
+        let full = json!({"message":{"doctype":"Fixture","name":name,"modified":"2026-11-01 00:00:00","items":[{"quantity":42}]}}).to_string().into_bytes();
+        (listing, vec![full])
+    }
+
+    #[test]
+    fn sweep_hydration_conforms() {
+        let sweep = sweep();
+        let command = sweep.plan(SweepFeed::Documents, None).expect("plan");
+        for timestamp in ["2026-11-01 00:00:00.1234567", "2026-11-01 00:00:00.1234568"] {
+            assert!(matches!(
+                normalize_frappe_datetime(timestamp),
+                Err(IngestError::InvalidTimestamp { .. })
+            ));
+        }
+        let (listing, full) = hydrated_inputs("row");
+        assert_eq!(
+            sweep
+                .plan_documents(&command, &listing)
+                .expect("fetches")
+                .len(),
+            1
+        );
+        let page = sweep
+            .ingest(&command, &listing, &full, 42)
+            .expect("full page");
+        assert_eq!(
+            page.observations.first().expect("observation").payload["items"],
+            json!([{"quantity":42}])
+        );
+        assert!(page.next.is_some());
+        assert!(sweep.ingest(&command, &listing, &[], 42).is_err());
+        let lossy = String::from_utf8(full.first().expect("full").clone())
+            .expect("utf8")
+            .replace("42", "1.00000000000000001")
+            .into_bytes();
+        assert!(sweep.ingest(&command, &listing, &[lossy], 42).is_err());
+        let changed = String::from_utf8(full.first().expect("full").clone())
+            .expect("utf8")
+            .replace("00:00:00", "00:00:01")
+            .into_bytes();
+        assert!(sweep.ingest(&command, &listing, &[changed], 42).is_err());
+    }
+
+    #[test]
+    fn source_collated_pages_conform() {
+        let sweep = sweep();
+        let command = sweep.plan(SweepFeed::Documents, None).expect("plan");
+        let row = |name: &str, second| json!({"name":name,"modified":format!("2026-11-01 00:00:0{second}")});
+        let listing = |rows: Value| json!({"data":rows}).to_string().into_bytes();
+        let mixed = listing(json!([row("a", 0), row("B", 0)]));
+        assert_eq!(
+            sweep
+                .plan_documents(&command, &mixed)
+                .expect("source order")
+                .len(),
+            2
+        );
+        let repeated = listing(json!([row("a", 0), row("B", 0), row("a", 0)]));
+        assert!(sweep.plan_documents(&command, &repeated).is_err());
+        let regressed = listing(json!([row("a", 1), row("B", 0)]));
+        assert!(sweep.plan_documents(&command, &regressed).is_err());
+        let cursor = SweepCursor {
+            feed: SweepFeed::Documents,
+            doctype: sweep.doctype.clone(),
+            modified: "2026-11-01 00:00:00.000000".into(),
+            name: "a".into(),
+        };
+        let resumed = sweep
+            .plan(SweepFeed::Documents, Some(&cursor))
+            .expect("resume");
+        assert!(
+            sweep
+                .plan_documents(&resumed, &listing(json!([row("a", 0)])))
+                .is_err()
+        );
+    }
+
     proptest! {
+        #[test]
+        fn generated_hydration_conforms(name in "[a-zA-Z0-9/]{1,24}") {
+            let sweep = sweep();
+            let command = sweep.plan(SweepFeed::Documents, None).expect("plan");
+            let (listing, full) = hydrated_inputs(&name);
+            let page = sweep.ingest(&command, &listing, &full, 42).expect("generated page");
+            prop_assert_eq!(page.observations.len(), 1);
+            prop_assert!(page.exhausted);
+            prop_assert_eq!(page.next.expect("next").name, name);
+        }
         #[test]
         fn generated_sweep_plans_conform(size in 1u32..10_000, name in "[a-zA-Z0-9/]{1,24}", deletions in any::<bool>(), seconds in 0u32..3600) {
             let mut sweep = sweep();
