@@ -163,7 +163,9 @@ impl TemporalPlan {
 
     /// Declared feature freshness bound, retained in the Function input identity.
     #[must_use]
-    pub const fn max_age_micros(&self) -> i64 { self.max_age_micros }
+    pub const fn max_age_micros(&self) -> i64 {
+        self.max_age_micros
+    }
 
     /// Ontology-bound outcome.
     #[must_use]
