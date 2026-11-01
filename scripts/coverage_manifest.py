@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""The coverage manifest: `index.json` plus one `subsystems/<id>.json` per subsystem.
+"""Coverage metadata plus independently addressed array entries.
 
-A subsystem's identity is its file name, so its file has no `id` field and two
-files can never claim the same subsystem. Pull requests that touch different
-subsystems edit different files and different provenance records.
+Each subsystem has index.json metadata and <field>/<identity-hash>.json entries.
+The entry envelope carries its original order and value. Concurrent additions
+share neither source files nor provenance records; ties use identity order.
 """
 
 from __future__ import annotations
@@ -56,24 +56,13 @@ def files(directory: Path = COVERAGE) -> list[Path]:
     if subsystems.is_symlink() or not subsystems.is_dir():
         raise InvalidCoverageLayout(f"{SUBSYSTEMS}: not a directory")
     result = [directory / INDEX]
-    identities = set()
     for entry in sorted(subsystems.iterdir()):
-        identity = entry.stem if entry.is_file() else entry.name
-        if entry.is_symlink():
-            raise InvalidCoverageLayout(f"{entry.name}: not a regular file")
+        identity = entry.name
+        if entry.is_symlink() or not entry.is_dir():
+            raise InvalidCoverageLayout(f"unknown subsystem files: {entry.name}; not a regular directory")
         if not SUBSYSTEM_FILE.fullmatch(f"{identity}.json"):
             raise InvalidCoverageLayout(f"unknown subsystem files: {entry.name}")
-        if identity in identities:
-            raise InvalidCoverageLayout(f"duplicate subsystem: {identity}")
-        identities.add(identity)
-        if entry.is_file():
-            if entry.suffix != ".json":
-                raise InvalidCoverageLayout(f"unknown subsystem files: {entry.name}")
-            result.append(entry)
-        elif entry.is_dir():
-            result.extend(_entry_files(entry))
-        else:
-            raise InvalidCoverageLayout(f"not a regular subsystem: {entry.name}")
+        result.extend(_entry_files(entry))
     return result
 
 
@@ -142,16 +131,16 @@ def load(directory: Path = COVERAGE) -> dict[str, Any]:
         raise InvalidCoverageLayout(f"{INDEX} must not list subsystems; each has its own file")
     subsystems = []
     for entry in sorted((directory / SUBSYSTEMS).iterdir()):
-        body = _subsystem(entry) if entry.is_dir() else _object(entry)
+        body = _subsystem(entry)
         if "id" in body:
             raise InvalidCoverageLayout(f"{entry.name}: file name is the subsystem id; drop the id field")
-        identity = entry.name if entry.is_dir() else entry.stem
+        identity = entry.name
         subsystems.append({"id": identity, **body})
     document["subsystems"] = subsystems
     return document
 
 
-def write(document: dict[str, Any], directory: Path, *, split_entries: bool = False) -> None:
+def write(document: dict[str, Any], directory: Path) -> None:
     """Replace `directory` with `document` in the split layout (codemod and canaries)."""
     index = {key: value for key, value in document.items() if key != "subsystems"}
     bodies: dict[str, dict[str, Any]] = {}
@@ -165,9 +154,6 @@ def write(document: dict[str, Any], directory: Path, *, split_entries: bool = Fa
     (directory / SUBSYSTEMS).mkdir(parents=True)
     (directory / INDEX).write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
     for identity, body in bodies.items():
-        if not split_entries:
-            (directory / SUBSYSTEMS / f"{identity}.json").write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
-            continue
         target = directory / SUBSYSTEMS / identity
         target.mkdir()
         def split(value, parts):
@@ -198,3 +184,33 @@ def digest(directory: Path = COVERAGE) -> str:
         total.update(hashlib.sha256(path.read_bytes()).hexdigest().encode("ascii"))
         total.update(b"\n")
     return total.hexdigest()
+
+
+def migrate_entries() -> None:
+    """One-shot conversion of the previous layout and its exact provenance."""
+    records = ROOT / ".github/ci/provenance/artifacts"
+    old = sorted((COVERAGE / SUBSYSTEMS).glob("*.json"))
+    if not old:
+        raise InvalidCoverageLayout("no legacy subsystem files to migrate")
+    document = _object(COVERAGE / INDEX)
+    document["subsystems"] = [{"id": path.stem, **_object(path)} for path in old]
+    templates = {path.stem: _object(records / (path.relative_to(ROOT).as_posix() + ".json")) for path in old}
+    write(document, COVERAGE)
+    for path in old:
+        (records / (path.relative_to(ROOT).as_posix() + ".json")).unlink()
+    for path in files():
+        relative = path.relative_to(ROOT).as_posix()
+        target = records / (relative + ".json")
+        parts = path.relative_to(COVERAGE).parts
+        value = dict(templates[parts[1]]) if parts[0] == SUBSYSTEMS else _object(target)
+        value["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(value, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--migrate-entries", action="store_true", required=True)
+    parser.parse_args()
+    migrate_entries()

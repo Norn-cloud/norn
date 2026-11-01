@@ -1,0 +1,31 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-VER-DIFFERENTIAL-REFINEMENT",
+    "runtime": "partial",
+    "model": "partial",
+    "proof": "missing",
+    "residual": "Rust rule fixtures, generic quantity properties/fixtures, storage conformance tests, and three hax-extracted predicate lanes provide partial differential/correspondence evidence. There is no uniform generated valid/invalid differential harness for every proof-bearing executable component, no minimized-counterexample registry across every lane, and no general Rust-to-Lean refinement.",
+    "evidence": {
+      "runtime": [
+        {
+          "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
+          "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+          "selectors": [
+            "test:generated_balanced_packs_match_independent_oracle"
+          ]
+        }
+      ],
+      "model": [
+        {
+          "artifact": "verification/stripmine-2026-08-22/fixtures/quantity-ledger.json",
+          "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+          "selectors": [
+            "fixture:quantity-ledger"
+          ]
+        }
+      ],
+      "proof": []
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "order": 4,
+  "value": {
+    "id": "INV-CORE-ESCROW-NON-NEGATIVE",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "missing",
+    "evidence": {
+      "runtime": [],
+      "model": [],
+      "proof": []
+    },
+    "residual": "Specified only; the kernel quantity ledger refuses spending held or absent quantity. Core-pack model and proof are pending."
+  }
+}

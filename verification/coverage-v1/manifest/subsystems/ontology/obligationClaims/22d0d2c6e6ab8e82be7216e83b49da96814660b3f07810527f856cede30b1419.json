@@ -1,0 +1,37 @@
+{
+  "order": 2,
+  "value": {
+    "id": "INV-ONT-RELATION-AUTHORITY",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "partial",
+    "residual": "The canonical versioned authority path has retained InMemory tests for exact Relation artifact identity, exact active Relation/Entity pins, endpoint object kinds, existing and same-commit cardinality conflicts, superseded versions, atomic rejection, and immutable-id payload updates; its Turso/reopen variants were removed in #2764 (not currently covered). Quint checks a two-relation abstraction across all four declared cardinalities, exact accepted-version binding, exact endpoint-kind admission, and rejected no-ops; Lean proves compact pairwise reference lemmas. Neither artifact is Rust refinement evidence, a future parallel writer topology must add relation-kind/index-level serialization, and the legacy unversioned migration path remains non-authoritative until disabled. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+    "evidence": {
+      "runtime": [],
+      "model": [
+        {
+          "artifact": "verification/ontology-v1/models/ontology-relation-authority.qnt",
+          "command": "quint verify verification/ontology-v1/models/ontology-relation-authority.qnt --backend apalache --invariants typeOk acceptedVersionWasExact acceptedEndpointsHadExactKinds cardinalityPreserved rejectedAttemptIsNoOp --max-steps 8",
+          "selectors": [
+            "invariant:acceptedVersionWasExact",
+            "invariant:acceptedEndpointsHadExactKinds",
+            "invariant:cardinalityPreserved",
+            "invariant:rejectedAttemptIsNoOp"
+          ]
+        }
+      ],
+      "proof": [
+        {
+          "artifact": "verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+          "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+          "selectors": [
+            "theorem:superseded_artifact_version_rejects",
+            "theorem:relation_kind_alias_rejects",
+            "theorem:one_to_many_duplicate_target_conflicts",
+            "theorem:same_immutable_relation_identity_is_not_counted_twice"
+          ]
+        }
+      ]
+    }
+  }
+}

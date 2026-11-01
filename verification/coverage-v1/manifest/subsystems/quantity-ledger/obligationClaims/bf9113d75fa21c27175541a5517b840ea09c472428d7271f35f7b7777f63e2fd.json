@@ -1,0 +1,37 @@
+{
+  "order": 4,
+  "value": {
+    "id": "INV-QL-BATCH-ATOMIC",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "residual": "The unused engine multi-posting batch protocol was deleted by owner direction in quantity v2. Current multi-leg templates and ordinary effects are atomic in one cell transaction, but do not implement that protocol's ordered child transaction identities. Legacy Quint/Lean batch models remain reference mathematics; no current batch runtime claim or v2 refinement is credited.",
+    "evidence": {
+      "runtime": [],
+      "model": [
+        {
+          "artifact": "verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt",
+          "command": "quint verify verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt --backend apalache --invariants typeOk sequentialVersions batchAllOrNone stableReceipt --max-steps 8",
+          "selectors": [
+            "invariant:sequentialVersions",
+            "invariant:batchAllOrNone",
+            "invariant:stableReceipt"
+          ]
+        }
+      ],
+      "proof": [
+        {
+          "artifact": "verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+          "command": "lean -DwarningAsError=true verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean",
+          "selectors": [
+            "theorem:accepted_posting_applies_deltas_and_conserves",
+            "theorem:rejected_batch_is_noop",
+            "theorem:accepted_batch_matches_sequential_execution",
+            "theorem:accepted_batch_conserves_total",
+            "theorem:accepted_batch_advances_exactly"
+          ]
+        }
+      ]
+    }
+  }
+}

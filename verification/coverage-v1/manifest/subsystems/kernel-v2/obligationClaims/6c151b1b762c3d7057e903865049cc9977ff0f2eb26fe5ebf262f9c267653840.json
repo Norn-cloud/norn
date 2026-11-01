@@ -1,0 +1,32 @@
+{
+  "order": 0,
+  "value": {
+    "id": "KERNEL-V2-COMMIT",
+    "runtime": "tested",
+    "model": "partial",
+    "proof": "deferred",
+    "residual": "Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
+    "evidence": {
+      "runtime": [
+        {
+          "artifact": "crates/norn-testkit/tests/kernel_quint.rs",
+          "command": "cargo test --locked -p norn-testkit --test kernel_quint",
+          "selectors": [
+            "test:commit_admission_quint_traces",
+            "test:commit_admission_trace_mutants_fail"
+          ]
+        }
+      ],
+      "model": [
+        {
+          "artifact": "verification/kernel-v2/models/commit-admission.qnt",
+          "command": "quint verify verification/kernel-v2/models/commit-admission.qnt --backend apalache --invariants invariant --max-steps 8",
+          "selectors": [
+            "invariant:invariant"
+          ]
+        }
+      ],
+      "proof": []
+    }
+  }
+}

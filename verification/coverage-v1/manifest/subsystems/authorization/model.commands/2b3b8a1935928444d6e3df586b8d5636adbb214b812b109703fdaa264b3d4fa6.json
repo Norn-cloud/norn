@@ -1,0 +1,4 @@
+{
+  "order": 5,
+  "value": "quint verify verification/authz-v1/models/authorization-scope-exactness.qnt --backend apalache --invariants typeOk allowIffExact omittedGrantTenantRejectsPresentRequest omittedGrantSessionRejectsPresentRequest --max-steps 4"
+}

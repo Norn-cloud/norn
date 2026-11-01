@@ -1,0 +1,15 @@
+{
+  "order": 2,
+  "value": {
+    "id": "INV-RULE-HIT-POLICY-ADMISSION-PREDICATE",
+    "runtime": "deferred",
+    "model": "deferred",
+    "proof": "deferred",
+    "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+    "evidence": {
+      "runtime": [],
+      "model": [],
+      "proof": []
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "order": 3,
+  "value": "The Lean file proves declared compact reference semantics for evidence separation and RelationIR binding/cardinality only; no correspondence, OWL soundness, or completeness theorem connects it to the Rust implementation or general OWL semantics."
+}

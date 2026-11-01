@@ -1,0 +1,25 @@
+{
+  "order": 5,
+  "value": {
+    "id": "INV-AUTH-DOMAIN-ADMISSION-PREDICATE",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "missing",
+    "residual": "Two pinned extraction lanes start from the exact production norn_ir::entity_mutation_authority_admits symbol: hax emits F* and Aeneas/Charon emits Lean, and both prove the complete representation-free Boolean truth table used by EntityMutationAuthority::admits. The Aeneas theorem reports no axioms and the gate checks four negative canaries, but the translator/compiler/prover toolchains remain trusted. This claim excludes descriptor parsing, enum-to-Boolean mapping, active-artifact lookup, call-site completeness, persistence, and every domain engine's internal invariants. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+    "evidence": {
+      "runtime": [],
+      "model": [
+        {
+          "artifact": "verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt",
+          "command": "quint verify verification/stripmine-2026-08-22/models/domain-engine-boundary.qnt --backend apalache --invariants typeOk genericNeverCommitsDomainOwned domainNeverCommitsGenericOwned domainCommitMatchesExactOwner rejectionIsNoOp --max-steps 8",
+          "selectors": [
+            "invariant:genericNeverCommitsDomainOwned",
+            "invariant:domainNeverCommitsGenericOwned",
+            "invariant:domainCommitMatchesExactOwner"
+          ]
+        }
+      ],
+      "proof": []
+    }
+  }
+}

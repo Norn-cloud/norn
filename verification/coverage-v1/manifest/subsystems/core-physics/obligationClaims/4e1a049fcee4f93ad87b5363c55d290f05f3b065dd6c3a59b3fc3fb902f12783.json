@@ -1,0 +1,15 @@
+{
+  "order": 5,
+  "value": {
+    "id": "INV-CORE-COMMITMENT-COMPLETION",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "missing",
+    "evidence": {
+      "runtime": [],
+      "model": [],
+      "proof": []
+    },
+    "residual": "Specified only; no runtime enforcement, model or proof yet."
+  }
+}

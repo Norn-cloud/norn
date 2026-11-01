@@ -1,0 +1,26 @@
+{
+  "order": 6,
+  "value": {
+    "id": "INV-QL-REFERENCE-BALANCE-ALGEBRA",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "reference_proved",
+    "residual": "The theorem is intentionally limited to mathematical integer-list semantics; it does not claim keyed unit/layer semantics, checked i128 arithmetic, persistence, or production Rust correspondence.",
+    "evidence": {
+      "runtime": [],
+      "model": [],
+      "proof": [
+        {
+          "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+          "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+          "selectors": [
+            "theorem:balanced_pair",
+            "theorem:net_reverse",
+            "theorem:balanced_reverse",
+            "theorem:balanced_append"
+          ]
+        }
+      ]
+    }
+  }
+}

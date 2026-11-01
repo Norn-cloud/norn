@@ -1,0 +1,39 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-ART-DIRECT-WRITE-PREDICATE",
+    "runtime": "exhaustive_bounded",
+    "model": "missing",
+    "proof": "implementation_proved",
+    "residual": "The promoted Rust table enumerates the current 11 ArtifactKind by 7 ArtifactLifecycle values and the F* theorem is total over the hax-extracted closed production representations. This proves only the pure predicate. API/store callsite completeness, faithful kind/lifecycle derivation, BAC review, trusted-checker receipts, active-pointer publication, persistence, authentication, authorization, concurrency, and any future enum variant before re-extraction remain outside the claim.",
+    "evidence": {
+      "runtime": [
+        {
+          "artifact": "crates/norn-ir/tests/artifact_governance.rs",
+          "command": "cargo test --locked -p norn-ir --test artifact_governance",
+          "selectors": [
+            "test:every_authority_bearing_kind_requires_governed_approval_and_activation",
+            "test:non_authoritative_lifecycles_remain_directly_writable"
+          ]
+        }
+      ],
+      "model": [],
+      "proof": [
+        {
+          "artifact": "target/verification-results/artifact-governance-hax/Norn_ir.fst",
+          "command": "scripts/verify-artifact-governance-extraction.sh",
+          "selectors": [
+            "predicate:Norn_ir.direct_artifact_write_allowed"
+          ]
+        },
+        {
+          "artifact": "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst",
+          "command": "scripts/verify-artifact-governance-extraction.sh",
+          "selectors": [
+            "theorem:direct_artifact_write_truth_table"
+          ]
+        }
+      ]
+    }
+  }
+}

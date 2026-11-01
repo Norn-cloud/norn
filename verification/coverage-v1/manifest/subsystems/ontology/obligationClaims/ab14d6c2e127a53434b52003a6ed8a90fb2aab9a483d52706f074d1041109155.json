@@ -1,0 +1,51 @@
+{
+  "order": 0,
+  "value": {
+    "id": "INV-ONT-MAPPING-PROVENANCE",
+    "runtime": "tested",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "residual": "The closed Rust validator requires immutable source resolution, evidence, integer confidence in 0..10000, non-empty reviewer identity, a shared UTC review timestamp subset, and at most one direct supersession edge to an active same-term/same-pinned-source mapping; adversarial tests cover missing/range/time/unresolved/self/cross-identity/chained cases and valid direct replacement. Quint checks the two-record direct-replacement protocol and Lean proves the compact closed predicate's confidence, review, identity-preservation, direct-terminal, and exactly-one-active consequences. Reviewer strings are not authenticated principals, confidence/evidence truth is not machine-established, timestamp parsing and arbitrary graphs are outside the formal abstractions, and no correspondence proof exists.",
+    "evidence": {
+      "runtime": [
+        {
+          "artifact": "crates/norn-checker/tests/ontology_pack.rs",
+          "command": "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+          "selectors": [
+            "test:ontology_mapping_requires_reviewed_confidence_provenance",
+            "test:ontology_mapping_allows_one_direct_same_term_same_source_replacement",
+            "test:ontology_mapping_supersession_rejects_invalid_graph_edges"
+          ]
+        }
+      ],
+      "model": [
+        {
+          "artifact": "verification/ontology-v1/models/ontology-mapping-provenance.qnt",
+          "command": "quint verify verification/ontology-v1/models/ontology-mapping-provenance.qnt --backend apalache --invariants typeOk replacementIsDirect replacementPreservesIdentity replacementHasReviewedBoundedProvenance exactlyOneActivePerIdentity rejectedAttemptIsNoOp --max-steps 8",
+          "selectors": [
+            "invariant:replacementIsDirect",
+            "invariant:replacementPreservesIdentity",
+            "invariant:replacementHasReviewedBoundedProvenance",
+            "invariant:exactlyOneActivePerIdentity",
+            "invariant:rejectedAttemptIsNoOp"
+          ]
+        }
+      ],
+      "proof": [
+        {
+          "artifact": "verification/ontology-v1/OntologyMappingProvenance.lean",
+          "command": "lean -DwarningAsError=true verification/ontology-v1/OntologyMappingProvenance.lean",
+          "selectors": [
+            "theorem:accepted_provenance_bounds_confidence",
+            "theorem:accepted_provenance_requires_review",
+            "theorem:direct_replacement_is_not_self",
+            "theorem:direct_replacement_preserves_term",
+            "theorem:direct_replacement_preserves_source",
+            "theorem:direct_replacement_is_terminal",
+            "theorem:direct_replacement_leaves_exactly_one_active"
+          ]
+        }
+      ]
+    }
+  }
+}

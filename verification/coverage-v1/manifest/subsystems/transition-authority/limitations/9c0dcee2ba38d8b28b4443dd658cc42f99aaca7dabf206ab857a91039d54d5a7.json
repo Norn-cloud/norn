@@ -1,0 +1,4 @@
+{
+  "order": 7,
+  "value": "Kernel L1 adds a single-object mathematical reference and a checked-successor correspondence fragment only. VersionProof does not prove stale-CAS admission, durable persistence, or whole-kernel refinement; no evidence status is promoted by its enrollment."
+}

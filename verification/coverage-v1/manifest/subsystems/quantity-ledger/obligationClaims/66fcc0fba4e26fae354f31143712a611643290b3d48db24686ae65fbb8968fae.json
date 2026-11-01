@@ -1,0 +1,45 @@
+{
+  "order": 3,
+  "value": {
+    "id": "INV-QL-PENDING-RESOLUTION",
+    "runtime": "tested",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "residual": "Quantity v2 admits any conserving signed subset and funds the remaining vector under explicit policies. Runtime timer expiry and cell clock use the shared commit path. The full-only reference models are not refinement evidence for partial resolution, balance CAS or host scheduling (#3303).",
+    "evidence": {
+      "runtime": [
+        {
+          "artifact": "crates/norn-cell/tests/quantity_reservations.rs",
+          "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+          "selectors": [
+            "test:conserving_partial_post_and_void_preserve_identity_deadline_and_retry",
+            "test:partial_resolution_interleaved_lots_conserve_independent_scalar_fold",
+            "test:lazy_deadline_refuses_post_and_scheduled_expiry_consumes_timer_atomically"
+          ]
+        }
+      ],
+      "model": [
+        {
+          "artifact": "verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+          "command": "quint verify verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt --backend apalache --invariants typeOk conserved recordsAligned terminalResolvedOnce noTerminalReservation pendingHasOneCreate noOpPreservesAuthority --max-steps 8",
+          "selectors": [
+            "invariant:terminalResolvedOnce",
+            "invariant:noTerminalReservation",
+            "invariant:pendingHasOneCreate"
+          ]
+        }
+      ],
+      "proof": [
+        {
+          "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+          "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+          "selectors": [
+            "theorem:every_resolution_releases_the_full_reservation",
+            "theorem:a_terminal_result_rejects_every_second_resolution",
+            "theorem:expiry_before_due_is_rejected"
+          ]
+        }
+      ]
+    }
+  }
+}

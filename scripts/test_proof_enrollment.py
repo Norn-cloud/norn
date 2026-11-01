@@ -109,12 +109,12 @@ class EnrollmentTests(unittest.TestCase):
 
 
 class CoverageLayoutTests(unittest.TestCase):
-    def test_both_layouts_preserve_every_claim_and_order(self):
+    def test_entry_layout_preserves_every_claim_and_order(self):
         document = coverage_manifest.load()
-        for split in (False, True):
+        for split in (True,):
             with self.subTest(split=split), tempfile.TemporaryDirectory() as temporary:
                 target = Path(temporary) / "manifest"
-                coverage_manifest.write(document, target, split_entries=split)
+                coverage_manifest.write(document, target)
                 # Git archives omit empty directories.
                 for folder in sorted(target.rglob("*"), reverse=True):
                     if folder.is_dir() and not any(folder.iterdir()):
@@ -124,11 +124,11 @@ class CoverageLayoutTests(unittest.TestCase):
 
     def test_layout_refusals(self):
         document = {"subsystems": [{"id": "toy", "sourceFiles": ["a.rs", "b.rs"], "obligations": ["INV-X"]}]}
-        for split in (False, True):
+        for split in (True,):
             for mutation in ("stray", "duplicate-key", "symlink", "duplicate-id"):
                 with self.subTest(split=split, mutation=mutation), tempfile.TemporaryDirectory() as temporary:
                     target = Path(temporary) / "manifest"
-                    coverage_manifest.write(document, target, split_entries=split)
+                    coverage_manifest.write(document, target)
                     subsystem = target / "subsystems" / ("toy" if split else "toy.json")
                     metadata = subsystem / "index.json" if split else subsystem
                     if mutation == "stray":
@@ -147,11 +147,19 @@ class CoverageLayoutTests(unittest.TestCase):
                     with self.assertRaises(coverage_manifest.InvalidCoverageLayout):
                         coverage_manifest.load(target)
 
+    def test_legacy_subsystem_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "manifest"
+            coverage_manifest.write({"subsystems": []}, target)
+            (target / "subsystems/toy.json").write_text('{}')
+            with self.assertRaisesRegex(coverage_manifest.InvalidCoverageLayout, "unknown subsystem files"):
+                coverage_manifest.load(target)
+
     def test_entry_identity_and_envelope_refusals(self):
         for change in ("identity", "unknown", "order", "directory"):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
                 target = Path(temporary) / "manifest"
-                coverage_manifest.write({"subsystems": [{"id": "toy", "sourceFiles": ["a.rs"]}]}, target, split_entries=True)
+                coverage_manifest.write({"subsystems": [{"id": "toy", "sourceFiles": ["a.rs"]}]}, target)
                 entry = next((target / "subsystems/toy/sourceFiles").iterdir())
                 if change == "directory":
                     entry.unlink(); entry.mkdir()

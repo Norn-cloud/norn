@@ -343,10 +343,6 @@ fn retained_obligations(root: &Path, base: &Path) -> Result<(), String> {
 }
 
 fn enrolled_obligations(root: &Path) -> Result<Obligations, String> {
-    let load = |path: &Path| -> Result<serde_json::Value, String> {
-        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-        serde_json::from_slice(&bytes).map_err(|error| error.to_string())
-    };
     let manifest = root.join(COVERAGE_MANIFEST);
     if !manifest.join("index.json").is_file() {
         return Err(format!("{COVERAGE_MANIFEST}/index.json is missing"));
@@ -358,12 +354,7 @@ fn enrolled_obligations(root: &Path) -> Result<Obligations, String> {
         let entry = entry.map_err(|error| error.to_string())?;
         let name = entry.file_name();
         let raw = name.to_str().ok_or("invalid subsystem name")?;
-        let is_directory = entry.file_type().map_err(|e| e.to_string())?.is_dir();
-        let id = if is_directory {
-            raw
-        } else {
-            raw.strip_suffix(".json").unwrap_or("")
-        };
+        let id = raw;
         if id.is_empty()
             || !id
                 .bytes()
@@ -371,13 +362,10 @@ fn enrolled_obligations(root: &Path) -> Result<Obligations, String> {
         {
             return Err(format!("{COVERAGE_SUBSYSTEMS}: unknown entry {raw}"));
         }
-        let required = if is_directory {
-            entry_obligations(&entry.path())?
-        } else if entry.file_type().map_err(|e| e.to_string())?.is_file() {
-            obligations(&load(&entry.path())?)?
-        } else {
-            return Err(format!("{raw} is not a regular subsystem"));
-        };
+        if !entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+            return Err(format!("{COVERAGE_SUBSYSTEMS}: unknown entry {raw}"));
+        }
+        let required = entry_obligations(&entry.path())?;
         if enrolled.insert(id.to_owned(), required).is_some() {
             return Err(format!("duplicate subsystem {id}"));
         }
@@ -433,20 +421,6 @@ fn entry_obligations(directory: &Path) -> Result<BTreeSet<String>, String> {
         }
     }
     Ok(result)
-}
-
-fn obligations(subsystem: &serde_json::Value) -> Result<BTreeSet<String>, String> {
-    subsystem
-        .get("obligations")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "missing subsystem obligations".to_owned())?
-        .iter()
-        .map(|id| {
-            id.as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| "invalid obligation id".to_owned())
-        })
-        .collect()
 }
 
 fn artifact_promotion_variants(root: &Path) -> Result<(), String> {

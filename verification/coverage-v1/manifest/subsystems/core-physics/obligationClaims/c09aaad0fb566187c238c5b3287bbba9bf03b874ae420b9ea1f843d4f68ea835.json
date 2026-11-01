@@ -1,0 +1,35 @@
+{
+  "order": 2,
+  "value": {
+    "id": "INV-CORE-LINKED-REVERSAL",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "residual": "The public kernel has no linked journal reversal yet; quantity-ledger reversals are covered by INV-QL-APPEND-REVERSAL. The model and reference proof cover the pack law only.",
+    "evidence": {
+      "runtime": [],
+      "model": [
+        {
+          "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
+          "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+          "selectors": [
+            "invariant:reversalLinkedExact",
+            "invariant:reversedAtMostOnce"
+          ]
+        }
+      ],
+      "proof": [
+        {
+          "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+          "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+          "selectors": [
+            "theorem:reverse_is_linked_exact",
+            "theorem:reversal_nets_account",
+            "theorem:reversal_nets_unit",
+            "theorem:run_reversed_at_most_once"
+          ]
+        }
+      ]
+    }
+  }
+}
