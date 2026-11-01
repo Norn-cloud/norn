@@ -4,7 +4,7 @@ Dependency: stock definitions #227; model references #232 and #243. Evidence in
 this unit is structural admission and exact input normalization, not posting.
 
 - `sourceProvenance`: compiled stock and jewelry artifacts each retain the path
-  of their own authored root module.
+  of their own authored root module, using forward-slash separators on every platform.
 - `exactPurity`: six-place karat or three-place parts-per-thousand fineness
   maps exactly to a numerator over 24,000,000; no binary floating point.
 - `exactPurityRefusal`: missing, nonpositive, out-of-range, malformed or excess
