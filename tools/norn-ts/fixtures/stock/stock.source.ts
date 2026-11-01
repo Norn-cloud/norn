@@ -42,7 +42,7 @@ export const Voucher = Norn.type({
     { id: "amended_from", target: "stock.Voucher", cardinality: { to: "one", from: "many" }, acyclic: true },
   ],
   lifecycles: [{
-    property: "status", initial: ["draft"], terminal: ["cancelled"],
+    property: "status", initial: ["draft"], terminal: ["cancelled"], immutable: ["submitted", "cancelled"],
     transitions: [
       { id: "submit", from: ["draft"], to: "submitted" },
       { id: "cancel", from: ["submitted"], to: "cancelled" },
@@ -123,7 +123,7 @@ export const ReconciliationLine = Norn.type({
 })
 
 export const Holding = Norn.type({
-  name: "stock.Holding", title: "Stock holding", version: "0.1.0", implements: ["core.Resource"],
+  name: "stock.Holding", title: "Stock holding", description: "A lot partitioned by item, location and owner; resource_code identifies the lot.", version: "0.1.0", implements: ["core.Resource"],
   properties: Schema.Struct({
     resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity"),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
@@ -167,10 +167,13 @@ export const Reservation = Norn.type({
 export const Movement = Norn.type({
   name: "stock.Movement", title: "Stock movement", version: "0.1.0", implements: ["core.EconomicEvent"],
   properties: Schema.Struct({
+    status: Schema.Literal("posted"),
     action: Schema.Literals(["transfer_ownership", "transfer_custody", "consume", "produce"]),
     occurred_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity"),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
   }),
+  defaults: { status: "posted" },
+  lifecycles: [{ property: "status", initial: ["posted"], terminal: ["posted"], immutable: ["posted"], transitions: [] }],
   links: [
     { id: "provider", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
     { id: "receiver", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
@@ -183,7 +186,10 @@ export const Movement = Norn.type({
 export const GLEntry = Norn.type({
   name: "stock.GLEntry", title: "Signed GL entry", version: "0.1.0", implements: ["core.LedgerEffect"],
   properties: Schema.Struct({
+    status: Schema.Literal("posted"),
     account_code: Norn.ref("core.code"), amount: Norn.ref("core.money_amount"), currency: Norn.ref("core.code"),
   }),
+  defaults: { status: "posted" },
+  lifecycles: [{ property: "status", initial: ["posted"], terminal: ["posted"], immutable: ["posted"], transitions: [] }],
   links: [{ id: "event", target: Movement, cardinality: { to: "one", from: "many", required: true } }],
 })

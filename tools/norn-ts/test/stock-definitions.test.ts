@@ -27,7 +27,7 @@ test("stock schemas and lifecycle compile deterministically", () => {
   expect(compiled).toHaveLength(21)
   const voucher = compiled.find(value => value && typeof value === "object" && "artifactId" in value && value.artifactId === "stock.Voucher.entity")
   expect(voucher).toMatchObject({ payload: { objectType: { lifecycles: [{
-    property: "status", initial: ["draft"], terminal: ["cancelled"], transitions: [
+    property: "status", initial: ["draft"], terminal: ["cancelled"], immutable: ["submitted", "cancelled"], transitions: [
       { id: "submit", from: ["draft"], to: "submitted" }, { id: "cancel", from: ["submitted"], to: "cancelled" },
     ],
   }] } } })
@@ -35,6 +35,7 @@ test("stock schemas and lifecycle compile deterministically", () => {
 
 test("application types implement core contracts; catalog items are not holdings", () => {
   const compiled = compile()
+  expect(canonicalJson(compiled)).not.toContain("moving-average")
   for (const [name, contract] of [
     ["Company", "Agent"], ["Party", "Agent"], ["Holding", "Resource"],
     ["OrderLine", "Commitment"], ["Reservation", "Hold"], ["Movement", "EconomicEvent"], ["GLEntry", "LedgerEffect"],
@@ -44,13 +45,20 @@ test("application types implement core contracts; catalog items are not holdings
       payload: expect.objectContaining({ objectType: expect.objectContaining({ implements: [`core.${contract}`] }) }),
     }))
   }
+  for (const name of ["Movement", "GLEntry"]) {
+    expect(compiled).toContainEqual(expect.objectContaining({
+      artifactId: `stock.${name}.entity`,
+      payload: expect.objectContaining({ objectType: expect.objectContaining({
+        lifecycles: [{ property: "status", initial: ["posted"], terminal: ["posted"], immutable: ["posted"] }],
+      }) }),
+    }))
+  }
   const item = compiled.find(value => value && typeof value === "object" && "artifactId" in value && value.artifactId === "stock.Item.entity")
   expect(item).not.toHaveProperty("payload.objectType.implements.0")
   const holding = compiled.find(value => value && typeof value === "object" && "artifactId" in value && value.artifactId === "stock.Holding.entity")
   expect(holding).toMatchObject({ payload: { objectType: { links: expect.arrayContaining(
     ["item", "location", "owner"].map(id => expect.objectContaining({ id, cardinality: { to: "one", from: "many", required: true } })),
   ) } } })
-  expect(canonicalJson(compiled)).not.toContain("moving-average")
 }, 60_000)
 
 if (!checker && process.env.CI) throw new Error(`${CHECKER_PKG_ENV} is required in CI`)
