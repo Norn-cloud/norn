@@ -1324,17 +1324,11 @@ fn defined_concept_wire_distinguishes_malformed_and_unsupported_semantics() {
         let mut malformed = wire.clone();
         malformed["payload"][field] = value;
         let findings = norn_checker::check_artifact(&envelope(malformed));
-        assert!(
-            findings
-                .iter()
-                .any(|d| d.code.as_str() == "defined_concept.validation.invalid_payload"),
-            "{field}: {findings:?}"
-        );
-        assert!(
-            !findings
-                .iter()
-                .any(|d| d.code.as_str() == "core.graph.incomplete_classification"),
-            "{field}: {findings:?}"
+        let codes: Vec<_> = findings.iter().map(|d| d.code.as_str()).collect();
+        assert_eq!(
+            codes,
+            ["defined_concept.validation.invalid_payload"],
+            "{field}"
         );
     }
 }
