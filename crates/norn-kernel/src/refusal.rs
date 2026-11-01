@@ -27,7 +27,7 @@
 //! Traversal from a hidden origin (an empty result) is a read-path rule.
 //! There is no kernel traversal API yet, so it is not covered here.
 
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Serialize};
 
@@ -99,6 +99,21 @@ pub struct Refusal {
     pub category: RefusalCategory,
     /// A message safe to show the caller.
     pub message: String,
+    /// Definition-derived law and operands, when the refusal identifies them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<RefusalReason>,
+}
+
+/// Structured operands of a violated law, shared by every transport.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefusalReason {
+    /// Stable law identifier.
+    pub law: String,
+    /// Object to which the law applies.
+    pub subject: String,
+    /// Named operands; absent states are null and declared state sets are arrays.
+    pub values: BTreeMap<String, serde_json::Value>,
 }
 
 impl Refusal {
@@ -119,6 +134,7 @@ impl Refusal {
             code: code.to_owned(),
             category,
             message,
+            reason: None,
         }
     }
 }
@@ -331,7 +347,88 @@ impl<X> DecisionRefusal<X> {
 
 impl<X> Refusable for DecisionRefusal<X> {
     fn refusal(&self) -> Refusal {
-        Refusal::new(self.code(), self.category(), self)
+        use serde_json::json;
+        let mut refusal = Refusal::new(self.code(), self.category(), self);
+        let reason = match self {
+            Self::NotFromState {
+                lifecycle,
+                key,
+                transition,
+                current,
+                from,
+            } => Some((
+                "lifecycle.transition_source",
+                key,
+                json!({ "lifecycle": lifecycle, "transition": transition, "current": current, "allowed": from }),
+            )),
+            Self::InvalidInitialState {
+                key,
+                lifecycle,
+                state,
+                initial,
+            } => Some((
+                "lifecycle.initial_state",
+                key,
+                json!({ "lifecycle": lifecycle, "current": state, "allowed": initial }),
+            )),
+            Self::ImmutableStateWrite {
+                key,
+                lifecycle,
+                state,
+            } => Some((
+                "lifecycle.immutable_state",
+                key,
+                json!({ "lifecycle": lifecycle, "current": state }),
+            )),
+            Self::LifecyclePropertySet { key, property } => Some((
+                "lifecycle.transition_only",
+                key,
+                json!({ "lifecycle": property }),
+            )),
+            Self::UnknownLifecycle { key, lifecycle } => {
+                Some(("lifecycle.declared", key, json!({ "lifecycle": lifecycle })))
+            }
+            Self::UnresolvedLifecycle { key, lifecycle } => {
+                Some(("lifecycle.resolved", key, json!({ "lifecycle": lifecycle })))
+            }
+            Self::UnknownTransition {
+                key,
+                lifecycle,
+                transition,
+            } => Some((
+                "lifecycle.declared_transition",
+                key,
+                json!({ "lifecycle": lifecycle, "transition": transition }),
+            )),
+            Self::GuardFalse {
+                key,
+                transition,
+                guard,
+            } => Some((
+                "lifecycle.guard",
+                key,
+                json!({ "transition": transition, "guard": guard, "result": false }),
+            )),
+            Self::GuardError {
+                key,
+                transition,
+                guard,
+                reason,
+            } => Some((
+                "lifecycle.guard_evaluable",
+                key,
+                json!({ "transition": transition, "guard": guard, "error": reason }),
+            )),
+            _ => None,
+        };
+        if let Some((law, key, serde_json::Value::Object(values))) = reason {
+            refusal.reason = Some(RefusalReason {
+                law: law.to_owned(),
+                subject: key.to_string(),
+                values: values.into_iter().collect(),
+            });
+        }
+        refusal
     }
 }
 
@@ -365,7 +462,10 @@ impl<X> ActionRefusal<X> {
 
 impl<X> Refusable for ActionRefusal<X> {
     fn refusal(&self) -> Refusal {
-        Refusal::new(self.code(), self.category(), self)
+        match self {
+            Self::Decision(refusal) => refusal.refusal(),
+            _ => Refusal::new(self.code(), self.category(), self),
+        }
     }
 }
 

@@ -1412,7 +1412,7 @@ pub enum DecisionRefusal<X> {
         property: String,
     },
     /// A property write to an object in a declared immutable lifecycle state.
-    #[error("{key} is in immutable {lifecycle} state {state:?}; property writes are refused")]
+    #[error("{key} is in immutable {lifecycle} state {state}; property writes are refused")]
     ImmutableStateWrite {
         /// The object.
         key: FactKey,
@@ -1422,7 +1422,7 @@ pub enum DecisionRefusal<X> {
         state: String,
     },
     /// `create` writes a lifecycle property that is not an initial state.
-    #[error("{key}: {lifecycle} must start in one of {initial:?}, not {state:?}")]
+    #[error("{key}: {lifecycle} must start in {allowed}, not {actual}", allowed = initial.join(" or "), actual = state.as_deref().unwrap_or("unset"))]
     InvalidInitialState {
         /// The object.
         key: FactKey,
@@ -1454,7 +1454,7 @@ pub enum DecisionRefusal<X> {
         lifecycle: String,
     },
     /// `transition` names a transition the lifecycle does not declare.
-    #[error("{key}: the {lifecycle} lifecycle declares no transition {transition:?}")]
+    #[error("{key}: the {lifecycle} lifecycle declares no transition {transition}")]
     UnknownTransition {
         /// The object.
         key: FactKey,
@@ -1465,9 +1465,11 @@ pub enum DecisionRefusal<X> {
     },
     /// The object's current state is not a source state of the transition.
     #[error(
-        "{key} is {current:?}; transition {transition:?} only leaves {from:?}, so it cannot fire now"
+        "{key} is {actual}; transition {transition} only leaves {allowed}, so it cannot fire now", actual = current.as_deref().unwrap_or("unset"), allowed = from.join(" or ")
     )]
     NotFromState {
+        /// The lifecycle property.
+        lifecycle: String,
         /// The object.
         key: FactKey,
         /// The transition.
@@ -1478,7 +1480,7 @@ pub enum DecisionRefusal<X> {
         from: Vec<String>,
     },
     /// A guard of the transition is false.
-    #[error("{key}: guard `{guard}` of transition {transition:?} does not hold")]
+    #[error("{key}: guard `{guard}` of transition {transition} does not hold")]
     GuardFalse {
         /// The object.
         key: FactKey,
@@ -1489,7 +1491,7 @@ pub enum DecisionRefusal<X> {
     },
     /// A guard could not be evaluated to a boolean; refused fail-closed.
     #[error(
-        "{key}: guard `{guard}` of transition {transition:?} could not be evaluated ({reason}); refused fail-closed"
+        "{key}: guard `{guard}` of transition {transition} could not be evaluated ({reason}); refused fail-closed"
     )]
     GuardError {
         /// The object.
@@ -2572,6 +2574,7 @@ fn resolve_transition<X>(
             transition: transition.as_str().to_owned(),
         }),
         Err(FiringRefusal::NotFromState) => Err(DecisionRefusal::NotFromState {
+            lifecycle: lifecycle.as_str().to_owned(),
             key: key.clone(),
             transition: transition.as_str().to_owned(),
             current,

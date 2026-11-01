@@ -72,6 +72,7 @@ fn refusal_categories_are_stable() {
     let cases: Vec<(Refusal, &str, RefusalCategory)> = vec![
         (
             decision(DecisionRefusal::NotFromState {
+                lifecycle: "status".into(),
                 key: key.clone(),
                 transition: "invoice".into(),
                 current: Some("draft".into()),
@@ -486,4 +487,40 @@ fn existence_never_leaks_matrix() {
     assert_eq!(denied.category, RefusalCategory::Permission);
     assert_eq!(denied.code, "action.permission_denied");
     assert_eq!(cell.ledger().len(), 1, "no refusal committed anything");
+}
+
+#[test]
+fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
+    for current in [Some("on_hold".to_owned()), None] {
+        let decision = DecisionRefusal::<Infallible>::NotFromState {
+            lifecycle: "status".into(),
+            key: FactKey::new("commerce.SalesOrder", "SO-1"),
+            transition: "invoice".into(),
+            current: current.clone(),
+            from: vec!["approved".into(), "partially_invoiced".into()],
+        };
+        let expected = format!(
+            "commerce.SalesOrder/SO-1 is {}; transition invoice only leaves approved or partially_invoiced, so it cannot fire now",
+            current.as_deref().unwrap_or("unset")
+        );
+        assert_eq!(decision.to_string(), expected);
+        let refusal = decision.refusal();
+        assert_eq!(refusal.message, expected);
+        assert_eq!(
+            serde_json::to_value(&refusal).unwrap()["reason"],
+            json!({
+                "law": "lifecycle.transition_source",
+                "subject": "commerce.SalesOrder/SO-1",
+                "values": {
+                    "lifecycle": "status", "transition": "invoice",
+                    "current": current, "allowed": ["approved", "partially_invoiced"]
+                }
+            })
+        );
+        assert_eq!(ActionRefusal::Decision(decision).refusal(), refusal);
+        assert_eq!(
+            serde_json::from_value::<Refusal>(serde_json::to_value(&refusal).unwrap()).unwrap(),
+            refusal
+        );
+    }
 }
