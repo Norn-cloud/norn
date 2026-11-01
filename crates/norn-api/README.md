@@ -45,3 +45,5 @@ and the definition epoch are host-wiring obligations, not projection guarantees.
 HOST-ADMISSION-FLAG: response projection requires the checker receipt's `admitted`
 field to be explicitly `true`; missing, false, null or non-boolean claims refuse
 with opaque `host.error`. This consistency check does not replace host admission.
+
+HOST-RECEIPT-SHAPE: projection delegates format/field consistency to the checker parser; mapless receipts carrying a flow map refuse opaquely.

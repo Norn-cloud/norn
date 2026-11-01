@@ -58,6 +58,7 @@ pub fn defs_response(
     if admitted.receipt.get("admitted").and_then(Value::as_bool) != Some(true) {
         return Err(Refusal::host("the receipt does not attest admission"));
     }
+    norn_checker::receipt::validate_receipt_shape(&admitted.receipt).map_err(Refusal::host)?;
     let flow_source_map = admitted
         .receipt
         .get("flowSourceMap")

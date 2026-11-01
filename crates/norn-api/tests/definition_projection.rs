@@ -1,9 +1,6 @@
 //! HOST-IDENTITY, HOST-WIRE, HOST-EXACT and HOST-RECEIPT correspondence.
 use norn_api::{defs::Admitted, install::defs_response};
-use norn_checker::{
-    EntityArtifactSetContext, check_artifact_set_with_receipt, diagnostics_to_json,
-    prepare_artifact_source,
-};
+use norn_checker::{diagnostics_to_json, prepare_artifact_source};
 use norn_ir::{LayoutSidecar, ResourceLimitProfile, RuntimeValue};
 use std::collections::BTreeSet;
 
@@ -100,15 +97,13 @@ fn host_definition_wire_keeps_empty_collections_and_revision_names() {
     admitted.canonical_set = "[]".into();
     admitted.artifacts.clear();
     let registry = BTreeSet::new();
-    let context = EntityArtifactSetContext {
-        registry: &registry,
-        base: &[],
-        tenant: None,
-    };
-    let checked = check_artifact_set_with_receipt(
-        &norn_checker::ReceiptSources::new(&[], &[]).unwrap(),
-        &context,
+    let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
+        &[],
+        &[],
+        &registry,
+        None,
         &ResourceLimitProfile::norn_limits_v1(),
+        None,
     )
     .unwrap();
     assert!(checked.receipt.admitted);
@@ -191,4 +186,9 @@ fn host_receipt_projects_the_checker_flow_source_map() {
     assert_eq!(response.flow_source_map.as_ref(), Some(&map));
     let wire = serde_json::to_value(response).unwrap();
     assert_eq!(wire["flowSourceMap"], admitted.receipt["flowSourceMap"]);
+    for format in ["norn-checker/receipt@2", "norn-checker/receipt@5"] {
+        admitted.receipt["format"] = serde_json::json!(format);
+        let refusal = defs_response(&admitted, 1, 0).unwrap_err();
+        assert_eq!(refusal.code, "host.error");
+    }
 }

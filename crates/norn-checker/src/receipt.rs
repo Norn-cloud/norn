@@ -1366,6 +1366,13 @@ struct StoredProfileRef {
     sha256: String,
 }
 
+/// Validate the stored receipt's versioned wire shape.
+/// # Errors
+/// Refuses malformed fields or format/field combinations.
+pub fn validate_receipt_shape(value: &serde_json::Value) -> Result<(), ReceiptError> {
+    parse_stored_receipt(value).map(|_receipt| ())
+}
+
 fn parse_stored_receipt(value: &serde_json::Value) -> Result<StoredReceipt, ReceiptError> {
     let object = exact_object(
         value,
