@@ -98,3 +98,35 @@ and its complete output before it becomes state. Nested ordinary calls retain
 the fold helper's boundary check. Non-fold helper admission is unchanged.
 The checks charge materialization to shared fuel. No schema failure produces
 an accumulator or effects; the execution-unavailable gate still applies here.
+
+## Required execution correspondence and oracle scope
+
+FOLD-SCHEDULE: inspect the node input under shared fuel, select the array, check
+its size/items/unique canonical identities, then sort using metered insertion
+sort. Each adjacent lexicographic comparison costs one unit per declared key.
+Evaluate `initial` once in the original node scope, check canonical state size,
+then invoke the existing helper for each sorted item. Validate each complete
+output and canonicalize it before the next step. Empty input still validates
+and returns the initial state. Output composition uses the existing transform.
+Fuel is shared by selection, initial, sorting, helper graphs and value copies.
+
+FOLD-ORACLES: the unchanged reference fixtures retain 1,008 FIFO histories and
+648 moving-average histories; every average prefix checks allocation and
+balance, including repricing, capped partial returns and final residuals.
+Integer millionths use scale zero and half-away-from-zero division. CP1 checks
+80 received, 60 allocated and one residual worth 20. The capacity declaration
+checks 5/2 allocation and residual 3 under both enumerations.
+Transfer correspondence retains 147 average and 245 cross-layer FIFO histories,
+paired value conservation, nonreturnable transfer identities and dependent
+reversal order. Declared guards compare live allocation cost/receipt identities
+before admitting a replay with removed originals. These are pure derivation
+fixtures; they do not implement application posting, a journal, authorization or
+atomic multi-partition effects. Those remain the admitted effect bridge's work.
+Values outside the core exact decimal range are refusal vectors, including the
+retired u128-maximum examples; no wider numeric parity is claimed.
+
+FOLD-REFUSALS: duplicate canonical identity, missing/null keys, excessive input
+or canonical state, exhausted shared fuel, malformed helper contracts, a late
+step schema failure, zero division and unsupported numeric functions return no
+decision. Later success cannot refund or conceal an exhausted meter. Named
+correspondence tests exercise these boundaries after earlier successful steps.

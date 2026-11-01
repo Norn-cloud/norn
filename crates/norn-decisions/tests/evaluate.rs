@@ -786,3 +786,271 @@ fn numeric_defaults_come_from_source_text() {
         vec![Value::object([("actionId", Value::from("x"))])]
     );
 }
+
+fn fold_rules(
+    item: &Json,
+    state: &Json,
+    stages: &[Vec<(&str, &str)>],
+) -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
+    let mut root = commands_rule(
+        "example.fold",
+        &closed(&json!({"items":{"type":"array","items":item},"initial":state})),
+        "[{actionId: 'result', state: result}]",
+    );
+    root["outputSchema"]["properties"]["commands"]["items"] =
+        closed(&json!({"actionId":{"type":"string"},"state":state}));
+    root["graph"]["nodes"].as_array_mut().unwrap().insert(
+        1,
+        json!({"id":"fold","name":"fold","type":"decisionNode","content":{
+            "key":"example.step","inputField":"slice.items","outputPath":"result","passThrough":true
+        }}),
+    );
+    root["graph"]["edges"][0]["targetId"] = json!("fold");
+    root["graph"]["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"ef","sourceId":"fold","targetId":"x"}));
+    let mut root = rule(&root);
+    if let norn_ir::JdmNode::DecisionNode { content, .. } =
+        &mut root.graph.as_mut().unwrap().nodes[1]
+    {
+        content.ordered_fold = Some(norn_ir::jdm::OrderedFold {
+            semantics_version: "1.0".into(),
+            identity: "id".into(),
+            order: vec![norn_ir::jdm::FoldOrderKey {
+                property: "id".into(),
+                kind: norn_ir::jdm::FoldOrderKind::String,
+            }],
+            item_schema: serde_json::from_value(item.clone()).unwrap(),
+            accumulator_schema: serde_json::from_value(state.clone()).unwrap(),
+            initial: norn_ir::ZenExpression("slice.initial".into()),
+            max_items: 4096,
+            max_accumulator_bytes: 1048576,
+            arithmetic: norn_ir::jdm::FoldArithmetic {
+                scale: 0,
+                rounding: norn_ir::jdm::FoldRounding::HalfAwayFromZero,
+            },
+        });
+    }
+    let mut helper = sub_decision("example.step", None);
+    helper["inputSchema"] =
+        closed(&json!({"accumulator":state,"item":item,"index":{"type":"integer"}}));
+    helper["outputSchema"] = state.clone();
+    let mut nodes = vec![json!({"id":"in","name":"in","type":"inputNode"})];
+    let mut edges = Vec::new();
+    let mut previous = "in".to_owned();
+    for (i, assignments) in stages.iter().enumerate() {
+        let id = format!("s{i}");
+        let expressions: Vec<Json> = assignments
+            .iter()
+            .map(|(key, expression)| json!({"id":key,"key":key,"value":expression}))
+            .collect();
+        nodes.push(json!({"id":id,"name":id,"type":"expressionNode","content":{"expressions":expressions,"passThrough":i+1<stages.len()}}));
+        edges.push(json!({"id":format!("e{i}"),"sourceId":previous,"targetId":id}));
+        previous = id;
+    }
+    nodes.push(json!({"id":"out","name":"out","type":"outputNode"}));
+    edges.push(json!({"id":"eo","sourceId":previous,"targetId":"out"}));
+    helper["graph"] = json!({"nodes":nodes,"edges":edges});
+    (
+        root,
+        BTreeMap::from([("example.step".into(), rule(&helper))]),
+    )
+}
+
+fn folded(
+    rules: &(norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>),
+    initial: Json,
+    items: Json,
+) -> Result<norn_ir::RuntimeValue, Box<dyn std::error::Error>> {
+    let admitted = AdmittedDecision::admit(&rules.0, &rules.1, binding())?;
+    let result = run(
+        &admitted,
+        value(&Json::Object(
+            [("items".into(), items), ("initial".into(), initial)]
+                .into_iter()
+                .collect(),
+        )),
+        event(),
+        EvaluationBudget::new(2_000_000),
+    )?;
+    Ok(result.output.commands[0]["state"].clone())
+}
+
+fn fifo_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
+    let layer = closed(
+        &json!({"id":{"type":"string"},"quantity":{"type":"integer"},"value":{"type":"integer"}}),
+    );
+    let state = closed(
+        &json!({"demand":{"type":"integer"},"value":{"type":"integer"},"layers":{"type":"array","items":layer},"allocations":{"type":"array","items":layer}}),
+    );
+    let mut rules = fold_rules(
+        &layer,
+        &state,
+        &[
+            vec![(
+                "taken",
+                "accumulator.demand < item.quantity ? accumulator.demand : item.quantity",
+            )],
+            vec![(
+                "cost",
+                "taken == item.quantity ? item.value : taken * item.value / item.quantity",
+            )],
+            vec![
+                ("demand", "accumulator.demand - taken"),
+                ("value", "accumulator.value + cost"),
+                (
+                    "layers",
+                    "flatten([accumulator.layers, taken == item.quantity ? [] : [{id:item.id,quantity:item.quantity-taken,value:item.value-cost}]])",
+                ),
+                (
+                    "allocations",
+                    "flatten([accumulator.allocations, taken == 0 ? [] : [{id:item.id,quantity:taken,value:cost}]])",
+                ),
+            ],
+        ],
+    );
+    let expected: norn_ir::JsonValue =
+        serde_json::from_value(json!({"type":"array","items":layer})).unwrap();
+    if let Some(norn_ir::JsonValue::Object(properties)) = rules.0.input_schema.get_mut("properties")
+        && let Some(norn_ir::JsonValue::Object(slice)) = properties.get_mut("slice")
+        && let Some(norn_ir::JsonValue::Object(fields)) = slice.get_mut("properties")
+    {
+        fields.insert("expected".into(), expected);
+    }
+    if let norn_ir::JdmNode::ExpressionNode { content, .. } =
+        &mut rules.0.graph.as_mut().unwrap().nodes[2]
+    {
+        content.expressions[1].value=norn_ir::ZenExpression("slice.expected == null or result.allocations == slice.expected ? [{actionId:'result',state:result}] : null".into());
+    }
+    rules
+}
+
+fn average_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
+    let number = json!({"type":"integer"});
+    let issue = closed(
+        &json!({"id":{"type":"string"},"quantity":number,"value":number,"rq":number,"rv":number}),
+    );
+    let item = closed(
+        &json!({"id":{"type":"string"},"eventId":{"type":"string"},"kind":{"type":"string","enum":["receipt","delivery","return","transfer"]},"reference":{"type":"string"},"expected":{"type":["integer","null"]},"quantity":number,"value":number}),
+    );
+    let state = closed(
+        &json!({"quantity":number,"value":number,"allocation":number,"issues":{"type":"array","items":issue}}),
+    );
+    fold_rules(
+        &item,
+        &state,
+        &[
+            vec![(
+                "prior",
+                "item.kind == 'return' ? filter(accumulator.issues, #.id == item.reference)[0] : {id:'',quantity:0,value:0,rq:0,rv:0}",
+            )],
+            vec![(
+                "share",
+                "item.kind == 'receipt' ? item.value : item.kind == 'return' ? (item.quantity == prior.quantity-prior.rq ? prior.value-prior.rv : item.quantity*prior.value/prior.quantity) : (item.quantity == accumulator.quantity ? accumulator.value : item.quantity*accumulator.value/accumulator.quantity)",
+            )],
+            vec![
+                (
+                    "cost",
+                    "item.kind == 'return' and share > prior.value-prior.rv ? prior.value-prior.rv : share",
+                ),
+                (
+                    "valid",
+                    "item.quantity > 0 and (item.kind == 'receipt' ? item.value >= 0 : item.kind == 'return' ? item.quantity <= prior.quantity-prior.rq : item.quantity <= accumulator.quantity and len(filter(accumulator.issues, #.id == item.eventId)) == 0)",
+                ),
+            ],
+            vec![
+                (
+                    "quantity",
+                    "valid and (item.expected == null or cost == item.expected) ? accumulator.quantity + (item.kind == 'delivery' or item.kind == 'transfer' ? -item.quantity : item.quantity) : null",
+                ),
+                (
+                    "value",
+                    "accumulator.value + (item.kind == 'delivery' or item.kind == 'transfer' ? -cost : cost)",
+                ),
+                ("allocation", "cost"),
+                (
+                    "issues",
+                    "item.kind == 'delivery' or item.kind == 'transfer' ? flatten([accumulator.issues,[{id:item.eventId,quantity:item.kind == 'transfer' ? 0 : item.quantity,value:cost,rq:0,rv:0}]]) : item.kind == 'return' ? map(accumulator.issues, #.id == item.reference ? {id:#.id,quantity:#.quantity,value:#.value,rq:#.rq+item.quantity,rv:#.rv+cost} : #) : accumulator.issues",
+                ),
+            ],
+        ],
+    )
+}
+
+fn movement(
+    index: usize,
+    id: &str,
+    kind: &str,
+    quantity: i64,
+    amount: i64,
+    reference: &str,
+) -> Json {
+    json!({"id":format!("{index:03}"),"eventId":id,"expected":null,"kind":kind,"quantity":quantity,"value":amount,"reference":reference})
+}
+
+fn average_result(items: Vec<Json>) -> Result<Json, Box<dyn std::error::Error>> {
+    let result = folded(
+        &average_fold(),
+        json!({"quantity":0,"value":0,"allocation":0,"issues":[]}),
+        Json::Array(items),
+    )?;
+    Ok(serde_json::from_slice(&result.canonical_json()?)?)
+}
+
+#[test]
+fn fold_declarations_wait_for_execution_conformance() {
+    let item = closed(&json!({"id":{"type":"string"}}));
+    let state = closed(&json!({"total":{"type":"integer"}}));
+    for rules in [
+        fifo_fold(),
+        average_fold(),
+        fold_rules(&item, &state, &[vec![("total", "accumulator.total")]]),
+    ] {
+        assert!(matches!(
+            AdmittedDecision::admit(&rules.0, &rules.1, binding()),
+            Err(AdmissionError::NodeNotAdmitted {
+                node_type: "orderedFold",
+                ..
+            })
+        ));
+        let encoded = serde_json::to_string(&rules.0).unwrap();
+        assert_eq!(
+            serde_json::from_str::<norn_ir::RuleRoot>(&encoded).unwrap(),
+            rules.0
+        );
+    }
+    let error = folded(
+        &fifo_fold(),
+        json!({"demand":1,"value":0,"layers":[],"allocations":[]}),
+        json!([]),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<AdmissionError>(),
+        Some(AdmissionError::NodeNotAdmitted {
+            node_type: "orderedFold",
+            ..
+        })
+    ));
+    let error = average_result(vec![movement(0, "r", "receipt", 1, 10, "")]).unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<AdmissionError>(),
+        Some(AdmissionError::NodeNotAdmitted {
+            node_type: "orderedFold",
+            ..
+        })
+    ));
+    assert_eq!(
+        serde_json::from_str::<Vec<Json>>(include_str!("fixtures/fold-fifo-oracle.json"))
+            .unwrap()
+            .len(),
+        1008
+    );
+    assert_eq!(
+        serde_json::from_str::<Vec<Json>>(include_str!("fixtures/fold-average-oracle.json"))
+            .unwrap()
+            .len(),
+        648
+    );
+}
