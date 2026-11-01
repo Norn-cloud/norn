@@ -212,7 +212,7 @@ fn source_decode_verbatim_and_hash_correspondence() {
         } else {
             &checked.receipt.artifact_set.artifacts
         };
-        assert_eq!(refs[0].artifact_id, "test.cafe\u{301}");
+        assert_eq!(refs[0].artifact_id, "test.café");
         assert_eq!(refs[0].sha256, expected_hash);
         let body = String::from_utf8(checked.receipt.canonical_json().expect("receipt JSON"))
             .expect("receipt UTF-8");
@@ -340,6 +340,7 @@ fn source_hash_order_is_independent_of_unicode_spelling() {
     };
     let decomposed = receipt(first);
     let composed = receipt(composed);
+    assert_eq!(decomposed.artifact_set, composed.artifact_set);
     assert_eq!(
         decomposed.content_sha256().expect("hash"),
         composed.content_sha256().expect("hash")

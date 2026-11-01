@@ -396,9 +396,18 @@ fn source_refs(
         let bytes = semantic_source
             .canonical_json()
             .map_err(|error| invalid_receipt(error.to_string()))?;
+        let hash_source: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|error| invalid_receipt(error.to_string()))?;
+        let label = |field: &str| {
+            hash_source
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| invalid_receipt(format!("source {field} must be a string")))
+        };
         refs.push(ArtifactRef {
-            artifact_id: artifact.artifact_id.clone(),
-            version: artifact.version.clone(),
+            artifact_id: label("artifactId")?,
+            version: label("version")?,
             sha256: RECEIPT_HASH_PROFILE.hash_canonical_bytes(&bytes),
         });
         artifacts.push(artifact);
@@ -684,7 +693,7 @@ fn verify_receipt(
     } else {
         ArtifactSetRef::of(artifacts, base)?
     };
-    if parsed.artifact_set.canonical_json()? != receipt_artifact_set.canonical_json()? {
+    if parsed.artifact_set != receipt_artifact_set {
         return Err(invalid_receipt(
             "receipt artifact-set identity does not match the persisted definitions",
         ));
@@ -1064,10 +1073,6 @@ impl ArtifactSetRef {
             base,
             sha256,
         })
-    }
-
-    fn canonical_json(&self) -> Result<Vec<u8>, CanonicalJsonError> {
-        norn_canonical::serialize(&self.to_canonical_value())
     }
 
     fn members_value(artifacts: &[ArtifactRef], base: &[ArtifactRef]) -> JsonValue {
