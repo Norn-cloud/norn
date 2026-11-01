@@ -4288,6 +4288,7 @@
           "attachment",
           "origin",
           "paths",
+          "instancePaths",
           "bindings"
         ],
         "properties": {
@@ -4301,6 +4302,16 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/NornIrMemberRef"
             }
+          },
+          "instancePaths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrPackInstanceRef"
+              }
+            },
+            "description": "LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope."
           },
           "law": {
             "$ref": "#/components/schemas/NornIrMemberRef",
