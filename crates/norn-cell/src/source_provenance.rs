@@ -82,8 +82,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Ok(None);
         };
         let length: Option<i64> = self.conn.query_optional(
-            "SELECT octet_length(record) + octet_length(hash) FROM _norn_export_journal WHERE commit_seq = ?1",
-            params![crate::read::to_i64(receipt.body.commit_seq, "source commit")?], |row| row.get(0),
+            &format!(
+                "SELECT ({} + octet_length(hash)) FROM _norn_export_journal WHERE commit_seq = ?1",
+                crate::payload_storage::EXPORT_BYTES,
+            ),
+            params![crate::read::to_i64(
+                receipt.body.commit_seq,
+                "source commit"
+            )?],
+            |row| row.get(0),
         )?;
         if !budget.charge_rows(1)
             || !budget.charge(crate::read::to_u64(
