@@ -3097,7 +3097,7 @@ fn obs_evidence_direct_law_violation_persists_its_governing_pin() {
     let (types, interfaces) = definitions();
     let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
     let key = FactKey::new(ITEM, "direct-law");
-    let values = object(json!({"item_id":"direct-law", "amount":101, "status":"draft"}));
+    let values = object(json!({"item_id":"direct-law", "amount":101}));
     let mut observed = observation_cell().with_governing_laws(laws.clone());
     let slice = load_slice(&observed, [key.clone()]).expect("slice");
     commit_observed_snapshot(
@@ -3151,7 +3151,7 @@ norn_testkit::proptest::proptest! {
         let again = finding(&delivery);
         prop_assert_eq!(&first.id, &again.id);
         prop_assert_eq!(&first.dedupe_key, &again.dedupe_key);
-        prop_assert!(norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &values, &first).expect("verify"));
+        prop_assert!(norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &catalog.effective_object_values(&key.object_type, &values).expect("effective defaults"), &first).expect("verify"));
         prop_assert_eq!(catalog.classify_data_quality_rule(&first.rule_ref).expect("classification"), norn_kernel::DataQualityRuleClassification::Integrity);
     }
 }
