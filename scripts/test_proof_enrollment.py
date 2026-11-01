@@ -159,11 +159,20 @@ class CoverageLayoutTests(unittest.TestCase):
             before = {p.relative_to(target): p.read_bytes() for p in coverage_manifest.files(target)}
             updated = copy.deepcopy(original)
             updated["subsystems"][0]["obligationClaims"][0]["evidence"]["runtime"][0]["selectors"].append("test:b")
-            coverage_manifest.write(updated, target)
+            folder = next((target / "subsystems/toy").glob("*.selectors"))
+            (folder / (coverage_manifest.entry_id("test:b") + ".json")).write_text(json.dumps({"order": 1, "value": "test:b"}))
             after = {p.relative_to(target): p.read_bytes() for p in coverage_manifest.files(target)}
             self.assertEqual([p for p in before if before[p] != after.get(p)], [])
             self.assertEqual(len(after) - len(before), 1)
             self.assertEqual(coverage_manifest.load(target), updated)
+
+    def test_distinct_evidence_bindings_can_share_an_artifact(self):
+        bindings = [{"artifact": "a.rs", "command": command, "selectors": selectors} for command, selectors in (("cargo test", ["test:a"]), ("cargo test", ["test:b"]), ("cargo test --all-features", ["test:a"]))]
+        document = {"subsystems": [{"id": "toy", "obligationClaims": [{"id": "INV-X", "evidence": {"runtime": bindings}}]}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "manifest"
+            coverage_manifest.write(document, target)
+            self.assertEqual(coverage_manifest.load(target), document)
 
     def test_layout_refusals(self):
         document = {"subsystems": [{"id": "toy", "sourceFiles": ["a.rs"], "obligations": ["INV-X"]}]}

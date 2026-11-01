@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "crates/norn-kernel/tests/accounting_commit.rs",
+    "command": "cargo test --locked -p norn-kernel --test accounting_commit",
+    "selectors": {
+      "$entries": "obligationClaims.entrye3535fbb2a136f58667847fbd31dd80406d543d1e44dc50eba1bb7249f6af1d6.evidence.runtime.entryd1b6117b28e6e3c32ad7276b006e37515dba837bce7e3a6bc26410caae898508.selectors"
+    }
+  }
+}
