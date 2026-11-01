@@ -1613,13 +1613,30 @@ proptest::proptest! {
 fn typed_authoring_ordered_fold_executes_the_declared_helper() {
     let rules = support::compiled_rules("tools/norn-ts/fixtures/decisions/ordered-fold.source.ts");
     let declared = rules["example.fold.total.rule"].clone();
-    let helpers = BTreeMap::from([("example.fold.step.rule".into(), rules["example.fold.step.rule"].clone())]);
+    let helpers = BTreeMap::from([(
+        "example.fold.step.rule".into(),
+        rules["example.fold.step.rule"].clone(),
+    )]);
     let admitted = AdmittedDecision::admit(&declared, &helpers, binding()).unwrap();
     for count in 0..=8 {
-        let items: Vec<_> = (0..count).rev().map(|n| json!({"id":format!("id{n}"),"amount":n})).collect();
-        let result = run(&admitted, value(&json!({"items":items,"initial":{"total":0,"count":0,"ids":[]}})), event(), EvaluationBudget::new(100_000)).unwrap();
-        let expected = value(&json!({"actionId":"total","state":{"total":count * (count - 1) / 2,"count":count,"ids":(0..count).map(|n| format!("id{n}")).collect::<Vec<_>>()}}));
-        assert_eq!(norn_ir::RuntimeValue::Object(result.output.commands[0].clone()), norn_decisions::value_to_runtime(&expected).unwrap());
+        let items: Vec<_> = (0..count)
+            .rev()
+            .map(|n| json!({"id":format!("id{n}"),"amount":n}))
+            .collect();
+        let result = run(
+            &admitted,
+            value(&json!({"items":items,"initial":{"total":0,"count":0,"ids":[]}})),
+            event(),
+            EvaluationBudget::new(100_000),
+        )
+        .unwrap();
+        let expected = value(
+            &json!({"actionId":"total","state":{"total":count * (count - 1) / 2,"count":count,"ids":(0..count).map(|n| format!("id{n}")).collect::<Vec<_>>()}}),
+        );
+        assert_eq!(
+            norn_ir::RuntimeValue::Object(result.output.commands[0].clone()),
+            norn_decisions::value_to_runtime(&expected).unwrap()
+        );
     }
 }
 
