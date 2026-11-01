@@ -131,10 +131,17 @@ pub fn router<E: SqlEngine + Send + 'static>(host: std::sync::Arc<DevHost<E>>) -
     ) -> axum::response::Response {
         let actor = headers
             .get("x-norn-actor")
-            .and_then(|value| value.to_str().ok());
-        let result = query
-            .map_err(|error| Refusal::invalid(error.to_string()))
-            .and_then(|Query(query)| get_defs(&host, &query, actor));
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let result = match query {
+            Ok(Query(query)) => {
+                tokio::task::spawn_blocking(move || get_defs(&host, &query, actor.as_deref()))
+                    .await
+                    .map_err(Refusal::host)
+                    .and_then(std::convert::identity)
+            }
+            Err(error) => Err(Refusal::invalid(error.to_string())),
+        };
         match result {
             Ok(document) => axum::Json(document).into_response(),
             Err(refusal) => (

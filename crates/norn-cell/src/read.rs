@@ -758,7 +758,9 @@ pub(crate) fn definition_by_version(
     engine: &impl SqlEngine,
     version: u64,
 ) -> Result<Option<InstalledDefinitionSet>, CellError> {
-    let version_sql = to_i64(version, "definitions version")?;
+    let Ok(version_sql) = to_i64(version, "definitions version") else {
+        return Ok(None);
+    };
     let row = engine.query_optional(
         &format!(
             "SELECT \"version\", \"receipt_sha256\", \"canonical_set\", \"model_hash\", \"ddl_hash\", \"installed_at\", \"commit_seq\" FROM \"{DEFINITION_VERSION}\" WHERE \"version\" = ?1"

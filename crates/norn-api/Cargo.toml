@@ -8,10 +8,11 @@ description = "Generated core IR and checker API contracts"
 
 [features]
 default = ["native", "http-host"]
-http-host = ["dep:axum"]
+http-host = ["dep:axum", "dep:tokio"]
 native = ["norn-cell/native"]
 
 [dependencies]
+tokio = { version = "1.53.1", features = ["rt"], optional = true }
 axum = { version = "0.8.8", default-features = false, features = ["http1", "json", "query", "tokio"], optional = true }
 norn-cell = { path = "../norn-cell", default-features = false }
 norn-checker = { path = "../norn-checker" }
