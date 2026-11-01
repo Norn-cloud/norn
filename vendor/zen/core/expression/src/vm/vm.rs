@@ -58,14 +58,65 @@ impl VM {
         self.stack.clear();
         self.scopes.clear();
 
+        let policy = self
+            .meter
+            .as_ref()
+            .and_then(|m| m.arithmetic().map(|p| (m, p)));
+        if let Some((meter, profile)) = policy {
+            check_scaled_value(scope.base(), meter, profile)?;
+            for (_, local) in scope.locals() {
+                check_scaled_value(local, meter, profile)?;
+            }
+        }
         #[allow(unused_mut)]
         let mut inner = VMInner::new(bytecode, &mut self.stack, &mut self.scopes);
         {
             inner.meter = self.meter.as_ref();
         }
 
-        inner.run(scope)
+        let output = inner.run(scope)?;
+        if let Some((meter, profile)) = policy {
+            check_scaled_value(&output, meter, profile)?;
+        }
+        Ok(output)
     }
+}
+
+fn check_scaled_value(
+    value: &Variable,
+    meter: &crate::meter::Meter,
+    profile: crate::scaled::ScaledArithmetic,
+) -> VMResult<()> {
+    let mut pending = vec![value.clone()];
+    while let Some(value) = pending.pop() {
+        meter.charge(1).map_err(BudgetExhausted)?;
+        match value {
+            Number(number) => {
+                profile.coefficient(number).map_err(|message| OpcodeErr {
+                    opcode: "ScaledArithmetic".into(),
+                    message: message.into(),
+                })?;
+            }
+            Array(items) => {
+                let items = items.borrow();
+                meter.charge(items.len() as u64).map_err(BudgetExhausted)?;
+                pending.extend(items.iter().cloned());
+            }
+            Object(fields) => {
+                let fields = fields.borrow();
+                meter.charge(fields.len() as u64).map_err(BudgetExhausted)?;
+                pending.extend(fields.values().cloned());
+            }
+            Null | Bool(_) | String(_) => {}
+            Dynamic(_) => {
+                return Err(OpcodeErr {
+                    opcode: "ScaledArithmetic".into(),
+                    message: "unsupported profiled value".into(),
+                })
+            }
+        }
+    }
+    Ok(())
 }
 
 struct VMInner<'parent_ref, 'bytecode_ref> {
