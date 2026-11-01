@@ -70,6 +70,8 @@ pub mod refusal;
 pub mod result_reconciliation;
 pub mod snapshot_observe;
 pub mod stock_average;
+pub mod stock_fifo;
+pub mod stock_fifo_history;
 pub mod stock_history;
 pub mod stock_valuation;
 mod version_check;
