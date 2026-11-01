@@ -13,6 +13,144 @@ use norn_graph::Budget;
 use norn_ir::ArtifactEnvelope;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+
+fn projected(
+    artifact: &ArtifactEnvelope,
+    base: &[ArtifactEnvelope],
+) -> Vec<norn_ir::verification::EffectiveLawInstance> {
+    norn_checker::verification::effective_law_instances(
+        std::slice::from_ref(artifact),
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base,
+            tenant: None,
+        },
+        Budget {
+            max_nodes: 128,
+            max_edges: 1024,
+            max_steps: 4096,
+        },
+    )
+    .expect("complete projection")
+}
+
+fn diamond_model(base: &mut Vec<ArtifactEnvelope>) {
+    let template = base
+        .iter()
+        .find(|a| a.artifact_id == "core.Order.interface")
+        .expect("contract")
+        .clone();
+    for name in ["Left", "Right"] {
+        let mut artifact = template.clone();
+        artifact.artifact_id = format!("toy.{name}.interface");
+        artifact.namespace = "toy".to_owned();
+        artifact.name = name.to_owned();
+        let mut root: norn_ir::EntityInterfaceRootV2 = serde_json::from_value(
+            serde_json::to_value(template.payload.to_json_value()).expect("wire"),
+        )
+        .expect("interface");
+        root.interface.name = norn_ir::InterfaceName(format!("toy.{name}"));
+        root.interface.extends = vec![norn_ir::InterfaceName("core.Order".to_owned())];
+        root.interface.properties.clear();
+        root.interface.links.clear();
+        artifact.payload = norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Entity,
+            serde_json::from_value(serde_json::to_value(root).expect("wire")).expect("tree"),
+        )
+        .expect("root");
+        base.push(artifact);
+    }
+    let parent = base
+        .iter_mut()
+        .find(|a| a.artifact_id == "commerce.SalesOrder.entity")
+        .expect("implementor");
+    let mut root: norn_ir::EntityRootV2 =
+        serde_json::from_value(serde_json::to_value(parent.payload.to_json_value()).expect("wire"))
+            .expect("root");
+    root.object_type.implements = vec![
+        norn_ir::InterfaceName("toy.Left".to_owned()),
+        norn_ir::InterfaceName("toy.Right".to_owned()),
+    ];
+    parent.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Entity,
+        serde_json::from_value(serde_json::to_value(&root).expect("wire")).expect("tree"),
+    )
+    .expect("root");
+    let mut child = parent.clone();
+    child.artifact_id = "toy.Child.entity".to_owned();
+    child.namespace = "toy".to_owned();
+    child.name = "Child".to_owned();
+    root.object_type.extends = Some(root.object_type.name.clone());
+    root.object_type.name = norn_ir::ObjectTypeName("toy.Child".to_owned());
+    root.object_type.implements.clear();
+    root.object_type.properties.clear();
+    root.object_type.links.clear();
+    root.object_type.identity.clear();
+    root.object_type.lifecycles.clear();
+    root.object_type.invariants.clear();
+    root.object_type.owned_collections.clear();
+    child.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Entity,
+        serde_json::from_value(serde_json::to_value(root).expect("wire")).expect("tree"),
+    )
+    .expect("root");
+    base.push(child);
+}
+
+#[test]
+fn law_transitive_diamond_is_one_instance_per_subject_with_all_paths() {
+    let (law, mut base) = interface_case(true, "self.total_amount >= 0");
+    diamond_model(&mut base);
+    let instances = projected(&law, &base);
+    assert_eq!(instances.len(), 2);
+    for instance in &instances {
+        assert_eq!(instance.law.artifact_id, law.artifact_id);
+        assert_eq!(
+            instance.law_digest,
+            norn_checker::ArtifactRef::of(&law).expect("digest").sha256
+        );
+        assert_eq!(instance.origin.artifact_id, "core.Order.interface");
+        assert_eq!(instance.paths.len(), 2);
+        assert!(
+            instance
+                .paths
+                .iter()
+                .all(|path| path.first() == Some(&instance.origin)
+                    && path.last() == Some(&instance.subject))
+        );
+    }
+    base.reverse();
+    assert_eq!(projected(&law, &base), instances);
+    let (empty, interfaces) = interface_case(false, "self.total_amount >= 0");
+    assert!(projected(&empty, &interfaces).is_empty());
+    assert!(
+        norn_checker::verification::effective_law_instances(
+            &[law],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None
+            },
+            Budget {
+                max_nodes: 1,
+                max_edges: 1,
+                max_steps: 1
+            }
+        )
+        .is_err()
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn law_diamond_generated_orderings_preserve_instances(seed in proptest::collection::vec(proptest::bool::ANY, 0..16)) {
+        let (law, mut base) = interface_case(true, "self.total_amount >= 0"); diamond_model(&mut base);
+        let expected = projected(&law, &base);
+        for reverse in seed { if reverse { base.reverse(); } else { base.rotate_left(1); } }
+        proptest::prop_assert_eq!(projected(&law, &base), expected);
+    }
+}
 fn entities() -> Vec<ArtifactEnvelope> {
     serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).expect("entities")
 }

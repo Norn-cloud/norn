@@ -96,9 +96,9 @@ without retained instance resolution refuse in this intermediate profile.
 Kani is infeasible for the dynamic effective catalog and expression compiler;
 the generated refusal property checks their production admission boundary.
 
-Remaining B1 conformance scenarios: MAP-MEMBERS (source-derived
-totality), MAP-UNITS (dimension/unit/scale), EVENT-MULTI (event identity and
-distinct object links). Missing required members, unsupported transforms or
-incompatible relations must refuse. Source observations confer no mutation
-authority. B2 LAW-* and B3 LAYERS-*, WRITER-*, EDGE-* follow B1 conformance in
-the approved design; this cut establishes none of those semantics.
+LAW-TRANSITIVE/DIAMOND emits one instance per law/subject with all origin paths;
+the catalog selects subjects and the declaration graph provides provenance.
+Aggregate path-work, member-copy and byte limits refuse incomplete output.
+Generated orderings preserve instances; empty sets establish no non-vacuity.
+App/pack resolution awaits shared instance IR. Kani is infeasible for this
+allocated admission/expression/digest pipeline; correspondence is sampled.
