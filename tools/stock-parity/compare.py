@@ -102,10 +102,13 @@ def compare(norn, erpnext, dispositions):
         cases = [s.get(name) for s in sides]
         row = dict(case=alias('case', name), checkpoints=[], status='matched')
         rows.append(row)
-        if any(c is None or c['status'] != 'complete' or not c['checkpoints'] for c in cases):
+        if any(c is None or 'initial' not in c for c in cases):
             row['status'] = 'unsupported'
             counts['unsupported'] += 1
             continue
+        if any(c['status'] != 'complete' or not c['checkpoints'] for c in cases):
+            row['status'] = 'unsupported'
+            counts['unsupported'] += 1
         if cases[0]['method'] != cases[1]['method']:
             raise ValueError('Case method mismatch')
         checkpoints = [indexed([c['initial'], *c['checkpoints']], 'step') for c in cases]

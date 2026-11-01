@@ -64,6 +64,14 @@ class Contract(unittest.TestCase):
         self.e['cases'] = []
         self.assertEqual(self.report()['counts']['unsupported'], 1)
 
+    def test_incomplete_prefix_is_still_compared(self):
+        self.e['cases'][0]['status'] = 'unsupported'
+        self.n['cases'][0]['checkpoints'][0]['stock'][0]['value'] = '21'
+        report = self.report()
+        self.assertEqual(report['counts']['unsupported'], 1)
+        self.assertEqual(report['counts']['untriaged'], 1)
+        self.assertFalse(report['passed'])
+
     def test_exactly_one_reviewed_bucket_bound_to_values(self):
         self.n['cases'][0]['checkpoints'][0]['stock'][0]['value'] = '21'
         diff = self.report()['cases'][0]['checkpoints'][1]['differences'][0]
