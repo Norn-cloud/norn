@@ -151,3 +151,13 @@ fn unknown_payload_root_fields_remain_closed_after_layout_extraction() {
             && diagnostic.message.contains("unrecognizedSemanticRoot")
     }));
 }
+
+fn fixture_sources(
+    artifacts: &[norn_ir::ArtifactEnvelope],
+    base: &[norn_ir::ArtifactEnvelope],
+) -> norn_checker::receipt::ReceiptSources {
+    let candidates = norn_ir::runtime::encode(artifacts).unwrap();
+    let base = norn_ir::runtime::encode(base).unwrap();
+    norn_checker::ReceiptSources::new(candidates.as_array().unwrap(), base.as_array().unwrap())
+        .unwrap()
+}

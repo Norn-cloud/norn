@@ -41,7 +41,7 @@ use norn_ir::identifier_limits::HISTORICAL_IDENTIFIER_PROFILE;
 pub use norn_ir::identifier_limits::IDENTIFIER_ADMISSION_PROFILE;
 use norn_ir::{
     ArtifactEnvelope, DiagnosticRemediation, DiagnosticSeverity, FlowSourceMap, LimitProfileRef,
-    PropertyTypeDef, ResourceLimitProfile,
+    PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
 };
 
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
@@ -310,17 +310,24 @@ impl ReceiptSources {
     /// Refuses undecodable sources or values outside Norn1.
     pub fn new(artifacts: &[RuntimeValue], base: &[RuntimeValue]) -> Result<Self, ReceiptError> {
         let decode = |sources: &[RuntimeValue]| {
-            sources.iter().map(|source| {
-                crate::layout::prepare_artifact_source(source.clone())
-                    .map(|prepared| prepared.artifact)
-                    .or_else(|_| norn_ir::runtime::decode(source))
-            }).collect::<Result<Vec<_>, _>>()
+            sources
+                .iter()
+                .map(|source| {
+                    crate::layout::prepare_artifact_source(source.clone())
+                        .map(|prepared| prepared.artifact)
+                        .or_else(|_| norn_ir::runtime::decode(source))
+                })
+                .collect::<Result<Vec<_>, _>>()
                 .map_err(|errors| invalid_receipt(format!("{errors:?}")))
         };
         let artifacts = decode(artifacts)?;
         let base = decode(base)?;
         let identity = ArtifactSetRef::of(&artifacts, &base)?;
-        Ok(Self { artifacts, base, identity })
+        Ok(Self {
+            artifacts,
+            base,
+            identity,
+        })
     }
 
     fn context<'a>(
@@ -573,8 +580,11 @@ pub fn admission_receipt_sha256(stored: &str) -> Result<String, ReceiptError> {
 /// # Errors
 /// Refuses invalid receipts or mismatched definitions.
 pub fn verify_admission_receipt(
-    stored: &str, expected_sha256: &str, artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope], limits: &ResourceLimitProfile,
+    stored: &str,
+    expected_sha256: &str,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
 ) -> Result<(), ReceiptError> {
     verify_receipt(stored, expected_sha256, artifacts, base, limits).map(drop)
 }
@@ -583,13 +593,26 @@ pub fn verify_admission_receipt(
 /// # Errors
 /// Refuses undecodable sources or invalid historical receipts.
 pub fn verify_admission_receipt_sources(
-    stored: &str, expected_sha256: &str, artifacts: &[RuntimeValue],
-    base: &[RuntimeValue], limits: &ResourceLimitProfile,
+    stored: &str,
+    expected_sha256: &str,
+    artifacts: &[RuntimeValue],
+    base: &[RuntimeValue],
+    limits: &ResourceLimitProfile,
 ) -> Result<ReceiptVersion, ReceiptError> {
-    let decode = |sources: &[RuntimeValue]| sources.iter()
-        .map(norn_ir::runtime::decode).collect::<Result<Vec<ArtifactEnvelope>, _>>()
-        .map_err(invalid_receipt);
-    verify_receipt(stored, expected_sha256, &decode(artifacts)?, &decode(base)?, limits)
+    let decode = |sources: &[RuntimeValue]| {
+        sources
+            .iter()
+            .map(norn_ir::runtime::decode)
+            .collect::<Result<Vec<ArtifactEnvelope>, _>>()
+            .map_err(invalid_receipt)
+    };
+    verify_receipt(
+        stored,
+        expected_sha256,
+        &decode(artifacts)?,
+        &decode(base)?,
+        limits,
+    )
 }
 
 fn verify_receipt(
@@ -791,8 +814,12 @@ pub fn recover_legacy_admission_receipt(
         tenant: None,
     };
     let checked = check_artifact_set_with_profile(
-        artifacts, &context, limits, ArtifactSetRef::of(artifacts, base)?,
-        IDENTIFIER_ADMISSION_PROFILE, None,
+        artifacts,
+        &context,
+        limits,
+        ArtifactSetRef::of(artifacts, base)?,
+        IDENTIFIER_ADMISSION_PROFILE,
+        None,
     )?;
 
     if checked.receipt.admitted {
