@@ -1128,7 +1128,7 @@ fn receipt_changes<H: CellHost + ?Sized>(
         .get(&declaration.reference_field)
         .ok_or_else(invalid)?;
     let reference =
-        crate::receipt_binding::ReceiptReference::parse(value).map_err(|_| invalid())?;
+        crate::receipt_binding::ReceiptReference::parse(value).map_err(|_invalid_reference| invalid())?;
     let binding = host
         .resolve_accepted_receipt(&reference, &declaration.manifest_digest)
         .map_err(host_failure)?
