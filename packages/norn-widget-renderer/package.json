@@ -1,0 +1,22 @@
+{
+  "name": "@norn/widget-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    "./model": "./src/model.ts",
+    "./json": "./src/json.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "lossless-json": "4.3.1"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "6.0.3"
+  }
+}

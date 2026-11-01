@@ -7,6 +7,7 @@ case "$phase" in
     cargo fmt --all -- --check
     (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck)
     (cd packages/norn-sdk && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test --timeout 60000)
+    (cd packages/norn-widget-renderer && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
     python3 scripts/proof_enrollment.py
     python3 scripts/test_proof_enrollment.py
     cargo xtask ci policy
@@ -62,6 +63,7 @@ cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
 node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
 (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
 (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
+(cd packages/norn-widget-renderer && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
 cargo run --locked -p norn-cli -- openapi > sdks/openapi/norn-api.openapi.json
 (cd packages/norn-sdk && bun run generate)
 python3 -m venv "$upstream/openapi-venv"
