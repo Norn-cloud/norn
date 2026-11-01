@@ -554,6 +554,188 @@ fn a_law_on_an_inherited_transition_binds_the_declaring_supertype() {
     assert_eq!(target.artifact_id, "shop.Request.entity");
     assert!(catalog.contains(target));
 }
+
+fn request_member(member: Member) -> MemberRef {
+    MemberRef {
+        artifact_id: "shop.Request.entity".to_owned(),
+        version: "1.0.0".to_owned(),
+        member,
+    }
+}
+
+#[test]
+fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
+    let [parent, child] = request_types();
+    let action = envelope(json!({
+        "irVersion": "0.1", "artifactId": "shop.approve_rush.action", "kind": "action",
+        "namespace": "shop", "name": "approve", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "actionId": "shop.approve_rush", "scopeRequired": [], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object" },
+            "outputSchema": { "type": "object" },
+            "effectProgram": {
+                "kind": "fire_transition", "objectIdField": "id",
+                "objectKind": "shop.RushRequest", "entityArtifactId": "shop.RushRequest.entity",
+                "entityArtifactVersion": "1.0.0", "lifecycle": "status", "transition": "approve"
+            }
+        }
+    }));
+    let mapping = toy_mapping(&json!([{
+        "id": "rush", "source": { "dataset": "requests" },
+        "target": { "entity": "shop.RushRequest.entity", "interface": "shop.RushRequest.entity" },
+        "subject": "input.id", "sourceRecord": "input.id",
+        "lifecycles": [{ "property": "status", "state": "input.status" }],
+        "gaps": [{ "member": "nowhere", "reason": "deferred" }]
+    }]));
+    let catalog = catalog(&[parent, child, action, mapping], &[]);
+    assert_eq!(
+        catalog.writes[0].target,
+        request_member(Member::Transition {
+            type_name: "shop.Request".to_owned(),
+            lifecycle: "status".to_owned(),
+            transition: "approve".to_owned(),
+        })
+    );
+    let targets: Vec<&MemberRef> = catalog.mappings.iter().map(|row| &row.target).collect();
+    // The inherited lifecycle property binds the parent's row; the object
+    // row is the map's own type; an undeclared gap member has no row.
+    assert_eq!(targets.len(), 2);
+    assert!(targets.contains(&&request_member(Member::Property {
+        type_name: "shop.Request".to_owned(),
+        property: "status".to_owned(),
+    })));
+    assert!(targets.iter().all(|target| catalog.contains(target)));
+}
+
+#[test]
+fn a_law_on_an_action_binds_its_pinned_version() {
+    let action = |version: &str| {
+        let mut action = read_json("fixtures/ir/commerce-sales-order-submit-invoice.action.json");
+        action["version"] = json!(version);
+        envelope(action)
+    };
+    let Value::Array(laws) = read_json("fixtures/law-ir/laws.json") else {
+        panic!("laws.json is a list");
+    };
+    let mut law = laws[0].clone();
+    law["payload"]["subject"] = json!("commerce.SalesOrder");
+    law["payload"]["response"] =
+        json!({ "kind": "action", "artifactId": "commerce.sales_order.submit_invoice.action" });
+    law["dependencies"] = json!([{
+        "artifactId": "commerce.sales_order.submit_invoice.action", "kind": "action",
+        "version": "0.2.0", "required": true
+    }]);
+    let catalog = catalog(
+        &[sales_order(), envelope(law)],
+        &[action("0.1.0"), action("0.2.0")],
+    );
+    let Some(LawBinding::Action { target }) = &catalog.laws[0].binds else {
+        panic!("the law binds an action");
+    };
+    assert_eq!(target.version, "0.2.0");
+}
+
+fn approve_action(id: &str, object_kind: &str, entity: &str, version: &str) -> ArtifactEnvelope {
+    envelope(json!({
+        "irVersion": "0.1", "artifactId": id, "kind": "action",
+        "namespace": "shop", "name": "approve", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "actionId": "shop.approve", "scopeRequired": [], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object" },
+            "outputSchema": { "type": "object" },
+            "effectProgram": {
+                "kind": "fire_transition", "objectIdField": "id",
+                "objectKind": object_kind, "entityArtifactId": entity,
+                "entityArtifactVersion": version, "lifecycle": "status", "transition": "approve"
+            }
+        }
+    }))
+}
+
+#[test]
+fn an_installed_supertype_reached_only_by_name_is_projected() {
+    // The candidate subtype names its installed supertype through `extends`
+    // and declares no envelope dependency on it.
+    let [parent, child] = request_types();
+    let action = approve_action(
+        "shop.approve.action",
+        "shop.RushRequest",
+        "shop.RushRequest.entity",
+        "1.0.0",
+    );
+    let catalog = catalog(&[child, action], &[parent]);
+    let parent = catalog
+        .artifact("shop.Request.entity", "1.0.0")
+        .expect("the installed supertype is pinned");
+    assert!(!parent.candidate);
+    assert_eq!(catalog.writes.len(), 1);
+    assert_eq!(catalog.writes[0].target.artifact_id, "shop.Request.entity");
+    assert!(catalog.contains(&catalog.writes[0].target));
+}
+
+#[test]
+fn a_subtype_row_mutation_writes_its_inherited_child_types() {
+    let parent = entity(
+        "shop.Order.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.Order",
+            "properties": [{ "id": "id", "type": { "kind": "text" } }],
+            "links": [{ "id": "lines", "target": "shop.OrderLine",
+                "cardinality": { "to": "many", "from": "one" } }],
+            "ownedCollections": [{ "id": "lines", "childType": "shop.OrderLine",
+                "rowIdProperty": "row_id", "orderingKey": "idx",
+                "cascadeOnParentDelete": true, "maxRows": 20 }]
+        }}),
+    );
+    let rush = entity(
+        "shop.RushOrder.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.RushOrder", "extends": "shop.Order", "properties": []
+        }}),
+    );
+    let child = entity(
+        "shop.OrderLine.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.OrderLine",
+            "properties": [
+                { "id": "row_id", "type": { "kind": "text" } },
+                { "id": "idx", "type": { "kind": "integer" } }
+            ]
+        }}),
+    );
+    let action = envelope(json!({
+        "irVersion": "0.1", "artifactId": "shop.edit_rush.action", "kind": "action",
+        "namespace": "shop", "name": "edit", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "actionId": "shop.edit_rush", "scopeRequired": [], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object" },
+            "outputSchema": { "type": "object" },
+            "effectProgram": {
+                "kind": "mutate_parent_with_rows", "objectIdField": "id",
+                "objectKind": "shop.RushOrder", "entityArtifactId": "shop.RushOrder.entity",
+                "entityArtifactVersion": "1.0.0", "parentValuesField": "values",
+                "rowOpsField": "rows", "parentVersionField": "version",
+                "collections": [{ "id": "lines" }]
+            }
+        }
+    }));
+    let catalog = catalog(&[parent, rush, child, action], &[]);
+    let targets: Vec<String> = catalog
+        .writes
+        .iter()
+        .map(|row| format!("{} {}", row.target.artifact_id, row.target.member.id()))
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            "shop.OrderLine.entity type:shop.OrderLine",
+            "shop.RushOrder.entity type:shop.RushOrder"
+        ]
+    );
+}
 #[test]
 fn entity_projection_preserves_identity_declarations_and_order() {
     let artifact: ArtifactEnvelope = serde_json::from_str(include_str!(
