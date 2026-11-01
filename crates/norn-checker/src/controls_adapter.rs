@@ -165,13 +165,23 @@ fn project(actions: &[ActionRoot], policies: &[PolicyRoot]) -> Option<DutyGraph>
     })
 }
 
-fn evaluate_path(graph: &DutyGraph, path: &[String]) -> (ControlStatus, Reachability, Vec<String>) {
+fn evaluate_path(
+    graph: &DutyGraph,
+    path: &[String],
+) -> (
+    ControlStatus,
+    Reachability,
+    Vec<norn_ir::entity_v2::controls::ControlStep>,
+) {
     let check = check_duties(graph, path, 100_000);
     let (verdict, reachability) = crate::controls::evidence(&check);
     let trace = match check {
         crate::duties::DutyCheck::Counterexample { trace, .. } => trace
             .into_iter()
-            .map(|step| format!("{}:{}", step.role, step.edge.action))
+            .map(|step| norn_ir::entity_v2::controls::ControlStep {
+                role: step.role,
+                action: step.edge.action,
+            })
             .collect(),
         crate::duties::DutyCheck::Separated { .. }
         | crate::duties::DutyCheck::Unreachable
