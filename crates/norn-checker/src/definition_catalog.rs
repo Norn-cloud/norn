@@ -131,6 +131,17 @@ fn at(artifact: &ArtifactEnvelope, member: Member) -> MemberRef {
     }
 }
 
+fn key(artifact: &ArtifactEnvelope) -> ArtifactKey {
+    ArtifactKey {
+        artifact_id: artifact.artifact_id.clone(),
+        version: artifact.version.clone(),
+    }
+}
+
+fn payload_json(artifact: &ArtifactEnvelope) -> serde_json::Value {
+    serde_json::to_value(artifact.payload.to_json_value()).unwrap_or_default()
+}
+
 fn lifecycle_states(property: &Property, lifecycles: &[Lifecycle]) -> Option<LifecycleStates> {
     let lifecycle = lifecycles
         .iter()
@@ -338,6 +349,57 @@ impl Rows {
             links: self.links.into_iter().collect(),
             transitions: self.transitions.into_iter().collect(),
             states: self.states.into_iter().collect(),
+            writes: self.writes.into_iter().collect(),
+            depends_on: self.depends_on.into_iter().collect(),
+            mappings: self.mappings.into_iter().collect(),
+            laws: self.laws.into_iter().collect(),
+        }
+    }
+
+    fn depends_on(&mut self, artifact: &ArtifactEnvelope, all: &[&ArtifactEnvelope]) {
+        let present = |id: &str, version: &str| {
+            all.iter()
+                .any(|other| other.artifact_id == id && other.version == version)
+        };
+        let mut edge = |id: &str, version: &str, via: DependencyVia| {
+            if present(id, version) {
+                self.depends_on.insert(DependsOnRow {
+                    from: key(artifact),
+                    to: ArtifactKey {
+                        artifact_id: id.to_owned(),
+                        version: version.to_owned(),
+                    },
+                    via,
+                });
+            }
+        };
+        for dependency in &artifact.dependencies {
+            if let Some(version) = &dependency.version {
+                edge(&dependency.artifact_id, version, DependencyVia::Dependency);
+            }
+        }
+        if let ArtifactPayload::BusinessPack(_) = &artifact.payload
+            && let Ok(BusinessPackRoot::Composition(pack)) =
+                serde_json::from_value(payload_json(artifact))
+        {
+            for member in &pack.artifacts {
+                edge(
+                    &member.artifact_id,
+                    &member.version,
+                    DependencyVia::PackMember,
+                );
+            }
+        }
+    }
+
+    fn finish(self) -> DefinitionCatalog {
+        DefinitionCatalog {
+            format: CatalogFormat::V1,
+            artifacts: self.artifacts.into_iter().collect(),
+            types: self.types.into_iter().collect(),
+            properties: self.properties.into_iter().collect(),
+            links: self.links.into_iter().collect(),
+            transitions: self.transitions.into_iter().collect(),
             writes: self.writes.into_iter().collect(),
             depends_on: self.depends_on.into_iter().collect(),
             mappings: self.mappings.into_iter().collect(),
