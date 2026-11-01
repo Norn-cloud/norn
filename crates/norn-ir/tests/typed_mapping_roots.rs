@@ -75,12 +75,10 @@ fn map_roles_and_pins_decode_strictly() {
 fn map_roles_schema_requires_each_closed_forms_own_contract() {
     let schema = serde_json::to_value(norn_ir::artifact_payload_schema(&ArtifactKind::Mapping))
         .expect("mapping schema");
-    assert_eq!(
-        schema["oneOf"],
-        json!([
-            {"$ref": "#/$defs/MappingIr"}, {"$ref": "#/$defs/LawInterpretationIr"}
-        ])
-    );
+    let forms = schema["oneOf"].as_array().expect("exclusive mapping forms");
+    assert_eq!(forms.len(), 2);
+    assert_eq!(forms[0]["$ref"], "#/$defs/MappingIr");
+    assert_eq!(forms[1]["$ref"], "#/$defs/LawInterpretationIr");
     for (form, required) in [
         ("MappingIr", vec!["format", "source", "interfaces", "maps"]),
         (
