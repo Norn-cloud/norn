@@ -34,7 +34,7 @@ const OUT_ENV: &str = "NORN_CHECKER_WASM_PARITY_OUT";
 /// `norn-checker`'s pinned hash of the retail registry receipt
 /// (`tests/check_receipt.rs`): the ABI issues the same receipt.
 const RETAIL_RECEIPT_SHA256: &str =
-    "c4f1873c8393a5148cc6b039bcb4e01355345f45e4d921ee55d0d0c8766b803e";
+    "14ea133c9477b0218076a0afa73d87be7da5a529745f1609c67c2035520a347f";
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -279,7 +279,7 @@ fn clean_set_issues_the_pinned_receipt() {
         "norn-checker/diagnostics@1"
     );
     assert_eq!(output["diagnostics"]["diagnostics"], serde_json::json!([]));
-    assert_eq!(output["receipt"]["format"], "norn-checker/receipt@2");
+    assert_eq!(output["receipt"]["format"], "norn-checker/receipt@5");
     assert_eq!(output["receiptSha256"], RETAIL_RECEIPT_SHA256);
 }
 
@@ -567,7 +567,7 @@ fn version_names_the_formats() {
     let version = json_of(&output_of("version"));
     assert_eq!(version["abi"], "norn-checker-abi/1");
     assert_eq!(version["diagnosticsFormat"], "norn-checker/diagnostics@1");
-    assert_eq!(version["receiptFormat"], "norn-checker/receipt@2");
+    assert_eq!(version["receiptFormat"], "norn-checker/receipt@5");
     assert_eq!(version["exprProfile"], "norn-zen/6");
 }
 
@@ -693,4 +693,25 @@ fn widget_parity_corpus_preserves_keys_selections_and_display_values() {
             assert_eq!(output["error"]["code"], expected, "{name}");
         }
     }
+}
+
+#[test]
+fn exact_source_receipts_distinguish_adjacent_literals_through_the_abi() {
+    let source = read("fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json");
+    let source = source.replacen(
+        "\"payload\": {",
+        "\"payload\": {\"extensions\": {\"test/1.0.0\": 0.1234567890123456789012345678},",
+        1,
+    );
+    let first = check_artifact_set_json(&format!("[{source}]"), "null").expect("first receipt");
+    let changed = source.replace(
+        "0.1234567890123456789012345678",
+        "0.1234567890123456789012345679",
+    );
+    let second = check_artifact_set_json(&format!("[{changed}]"), "null").expect("second receipt");
+    let first: Value = serde_json::from_str(&first).expect("first JSON");
+    let second: Value = serde_json::from_str(&second).expect("second JSON");
+    assert_eq!(first["admitted"], true, "{first}");
+    assert_eq!(second["admitted"], true, "{second}");
+    assert_ne!(first["receiptSha256"], second["receiptSha256"]);
 }

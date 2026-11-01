@@ -41,7 +41,7 @@ use norn_ir::identifier_limits::HISTORICAL_IDENTIFIER_PROFILE;
 pub use norn_ir::identifier_limits::IDENTIFIER_ADMISSION_PROFILE;
 use norn_ir::{
     ArtifactEnvelope, DiagnosticRemediation, DiagnosticSeverity, FlowSourceMap, LimitProfileRef,
-    PropertyTypeDef, ResourceLimitProfile,
+    PropertyTypeDef, PropertyTypeName, ResourceLimitProfile, RuntimeValue,
 };
 
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
@@ -55,13 +55,17 @@ pub mod codes {
 }
 
 /// Format tag of newly issued mapless [`CheckReceipt`]s.
-///
-/// Mapless receipts keep this exact format and byte representation so existing
-/// stored definitions do not receive a spurious readmission.
-pub const RECEIPT_FORMAT: &str = "norn-checker/receipt@2";
+pub const RECEIPT_FORMAT: &str = "norn-checker/receipt@5";
 
 /// Format tag of a newly issued [`CheckReceipt`] that carries a flow source map.
-pub const FLOW_SOURCE_MAP_RECEIPT_FORMAT: &str = "norn-checker/receipt@3";
+pub const FLOW_SOURCE_MAP_RECEIPT_FORMAT: &str = "norn-checker/receipt@6";
+
+const FLOAT_RECEIPT_FORMAT: &str = "norn-checker/receipt@2";
+const FLOAT_FLOW_RECEIPT_FORMAT: &str = "norn-checker/receipt@3";
+
+/// Receipt format binding inherited-law origins, with an optional flow map.
+pub const LAW_ENROLLMENT_RECEIPT_FORMAT: &str = "norn-checker/receipt@7";
+const FLOAT_LAW_RECEIPT_FORMAT: &str = "norn-checker/receipt@4";
 
 /// Previous receipt format, which predates identifier admission profiles.
 const LEGACY_RECEIPT_FORMAT: &str = "norn-checker/receipt@1";
@@ -208,6 +212,8 @@ pub struct CheckReceipt {
     /// Non-executable authoring projection, present only when installed with
     /// the definitions it describes.
     pub flow_source_map: Option<FlowSourceMap>,
+    /// Installed pack law origins, without promoting their evidence level.
+    pub law_enrollment: Vec<crate::law_enrollment::LawEnrollment>,
 }
 
 /// The findings of one artifact-set check and its receipt.
@@ -313,6 +319,78 @@ pub fn check_artifact_set_with_receipt(
         IDENTIFIER_ADMISSION_PROFILE,
         None,
     )
+}
+
+/// Check retained exact semantic sources and bind their Norn1 bytes.
+/// Inline editor layout is extracted by the existing admission boundary.
+///
+/// # Errors
+/// Invalid source/envelope, canonicalization, or receipt construction fails.
+pub fn check_artifact_sources_with_receipt(
+    artifacts: &[RuntimeValue],
+    base: &[RuntimeValue],
+    registry: &BTreeSet<PropertyTypeName>,
+    tenant: Option<crate::TenantLayer<'_>>,
+    limits: &ResourceLimitProfile,
+    flow_source_map: Option<&FlowSourceMap>,
+) -> Result<CheckedArtifactSet, ReceiptError> {
+    let (artifacts, candidates) = source_refs(artifacts)?;
+    let (base, installed) = source_refs(base)?;
+    let context = EntityArtifactSetContext {
+        registry,
+        base: &base,
+        tenant,
+    };
+    let mut checked =
+        check_artifact_set_with_flow_source_map(&artifacts, &context, limits, flow_source_map)?;
+    checked.receipt.artifact_set = ArtifactSetRef::from_refs(candidates, installed)?;
+    Ok(checked)
+}
+
+/// Verify a retained receipt against exact candidate and base source bytes.
+/// Historical formats retain their versioned floating-point hash contract.
+///
+/// # Errors
+/// As [`verify_admission_receipt`], or if a source cannot be prepared.
+pub fn verify_admission_receipt_sources(
+    stored: &str,
+    expected_sha256: &str,
+    artifacts: &[RuntimeValue],
+    base: &[RuntimeValue],
+    limits: &ResourceLimitProfile,
+) -> Result<ReceiptVersion, ReceiptError> {
+    let (artifacts, candidates) = source_refs(artifacts)?;
+    let (base, installed) = source_refs(base)?;
+    verify_receipt(
+        stored,
+        expected_sha256,
+        &artifacts,
+        &base,
+        limits,
+        ArtifactSetRef::from_refs(candidates, installed)?,
+    )
+}
+
+fn source_refs(
+    sources: &[RuntimeValue],
+) -> Result<(Vec<ArtifactEnvelope>, Vec<ArtifactRef>), ReceiptError> {
+    let mut artifacts = Vec::with_capacity(sources.len());
+    let mut refs = Vec::with_capacity(sources.len());
+    for source in sources {
+        let prepared = crate::layout::prepare_artifact_source(source.clone())
+            .map_err(|errors| invalid_receipt(format!("invalid artifact source: {errors:?}")))?;
+        let bytes = prepared
+            .source
+            .canonical_json()
+            .map_err(|error| invalid_receipt(error.to_string()))?;
+        refs.push(ArtifactRef {
+            artifact_id: prepared.artifact.artifact_id.clone(),
+            version: prepared.artifact.version.clone(),
+            sha256: RECEIPT_HASH_PROFILE.hash_canonical_bytes(&bytes),
+        });
+        artifacts.push(prepared.artifact);
+    }
+    Ok((artifacts, refs))
 }
 
 /// Check a candidate artifact set and bind an optional non-executable flow
@@ -478,6 +556,11 @@ fn check_artifact_set_with_profile(
         diagnostics: DiagnosticsDigest::of(&diagnostics)?,
         admitted: !has_errors(&diagnostics),
         flow_source_map: flow_source_map.cloned(),
+        law_enrollment: if has_errors(&diagnostics) {
+            Vec::new()
+        } else {
+            crate::law_enrollment::inherited_laws(context.base)?
+        },
     };
     Ok(CheckedArtifactSet {
         diagnostics,
@@ -487,7 +570,7 @@ fn check_artifact_set_with_profile(
 
 /// Recompute the Norn1 content hash of a canonical admission receipt body.
 ///
-/// Receipt formats `norn-checker/receipt@1`, `@2`, and `@3` fix Norn1 as their
+/// Receipt formats `norn-checker/receipt@1` through `@7` fix Norn1 as their
 /// hash profile.
 /// The input must already be canonical JSON; accepting alternate encodings
 /// would make duplicate keys and non-canonical number spellings ambiguous.
@@ -529,6 +612,24 @@ pub fn verify_admission_receipt(
     base: &[ArtifactEnvelope],
     limits: &ResourceLimitProfile,
 ) -> Result<ReceiptVersion, ReceiptError> {
+    verify_receipt(
+        stored,
+        expected_sha256,
+        artifacts,
+        base,
+        limits,
+        ArtifactSetRef::of(artifacts, base)?,
+    )
+}
+
+fn verify_receipt(
+    stored: &str,
+    expected_sha256: &str,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+    exact_artifact_set: ArtifactSetRef,
+) -> Result<ReceiptVersion, ReceiptError> {
     let value: serde_json::Value = serde_json::from_str(stored)
         .map_err(|error| invalid_receipt(format!("receipt JSON is invalid: {error}")))?;
     let parsed = parse_stored_receipt(&value)?;
@@ -559,17 +660,23 @@ pub fn verify_admission_receipt(
         ));
     }
 
-    let semantic_artifact_set = ArtifactSetRef::of(artifacts, base)?;
-    let receipt_artifact_set = if parsed.checker_version == LEGACY_INLINE_LAYOUT_CHECKER_VERSION {
+    let semantic_artifact_set = exact_artifact_set;
+    let receipt_artifact_set = if matches!(
+        parsed.format.as_str(),
+        RECEIPT_FORMAT | FLOW_SOURCE_MAP_RECEIPT_FORMAT | LAW_ENROLLMENT_RECEIPT_FORMAT
+    ) {
+        semantic_artifact_set.clone()
+    } else if parsed.checker_version == LEGACY_INLINE_LAYOUT_CHECKER_VERSION {
         ArtifactSetRef::of_legacy(artifacts, base)?
     } else {
-        semantic_artifact_set.clone()
+        ArtifactSetRef::of(artifacts, base)?
     };
     if parsed.artifact_set != receipt_artifact_set {
         return Err(invalid_receipt(
             "receipt artifact-set identity does not match the persisted definitions",
         ));
     }
+    verify_law_enrollment(&parsed, base)?;
     if let Some(flow_source_map) = &parsed.flow_source_map {
         let findings = crate::validate_flow_source_map(flow_source_map, artifacts, base);
         if let Some(finding) = findings.first() {
@@ -627,10 +734,37 @@ pub fn verify_admission_receipt(
     })
 }
 
+fn verify_law_enrollment(
+    parsed: &StoredReceipt,
+    base: &[ArtifactEnvelope],
+) -> Result<(), ReceiptError> {
+    if matches!(
+        parsed.format.as_str(),
+        LAW_ENROLLMENT_RECEIPT_FORMAT | FLOAT_LAW_RECEIPT_FORMAT
+    ) {
+        let expected: Vec<_> = crate::law_enrollment::inherited_laws(base)?
+            .iter()
+            .map(crate::law_enrollment::LawEnrollment::to_json_value)
+            .collect();
+        if norn_canonical::canonical_json_of(&parsed.law_enrollment)?
+            != norn_canonical::canonical_json_of(&expected)?
+        {
+            return Err(invalid_receipt(
+                "receipt law enrollment does not match the retained pack members",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn retained_identifier_profile(parsed: &StoredReceipt) -> Result<String, ReceiptError> {
     if parsed.format != RECEIPT_FORMAT
         && parsed.format != FLOW_SOURCE_MAP_RECEIPT_FORMAT
+        && parsed.format != LAW_ENROLLMENT_RECEIPT_FORMAT
+        && parsed.format != FLOAT_LAW_RECEIPT_FORMAT
         && parsed.format != LEGACY_RECEIPT_FORMAT
+        && parsed.format != FLOAT_RECEIPT_FORMAT
+        && parsed.format != FLOAT_FLOW_RECEIPT_FORMAT
     {
         return Err(invalid_receipt(format!(
             "unsupported receipt format {:?}",
@@ -710,6 +844,24 @@ pub fn recover_legacy_admission_receipt(
         }
     }
 
+    for format in [FLOAT_RECEIPT_FORMAT, FLOAT_LAW_RECEIPT_FORMAT] {
+        if !checked.receipt.admitted
+            || (format == FLOAT_LAW_RECEIPT_FORMAT && checked.receipt.law_enrollment.is_empty())
+        {
+            continue;
+        }
+        let bytes = norn_canonical::serialize(
+            &checked
+                .receipt
+                .to_canonical_value_with_format(format, true)?,
+        )?;
+        let recovered =
+            String::from_utf8(bytes).map_err(|error| invalid_receipt(error.to_string()))?;
+        if admission_receipt_sha256(&recovered)? == expected_sha256 {
+            return Ok(recovered);
+        }
+    }
+
     let historical_check = check_artifact_set_with_profile(
         artifacts,
         &context,
@@ -748,6 +900,7 @@ pub fn recover_legacy_admission_receipt(
                 diagnostics: diagnostics_digest_for_version(findings, checker_version)?,
                 admitted: true,
                 flow_source_map: None,
+                law_enrollment: Vec::new(),
             };
             let bytes = historical.legacy_canonical_json()?;
             let recovered = std::str::from_utf8(&bytes)
@@ -875,15 +1028,21 @@ impl ArtifactSetRef {
         artifact_ref: fn(&ArtifactEnvelope) -> Result<ArtifactRef, ReceiptError>,
     ) -> Result<Self, ReceiptError> {
         let refs = |envelopes: &[ArtifactEnvelope]| -> Result<Vec<ArtifactRef>, ReceiptError> {
-            let mut refs = envelopes
+            let refs = envelopes
                 .iter()
                 .map(artifact_ref)
                 .collect::<Result<Vec<_>, _>>()?;
-            refs.sort();
             Ok(refs)
         };
-        let artifacts = refs(artifacts)?;
-        let base = refs(base)?;
+        Self::from_refs(refs(artifacts)?, refs(base)?)
+    }
+
+    fn from_refs(
+        mut artifacts: Vec<ArtifactRef>,
+        mut base: Vec<ArtifactRef>,
+    ) -> Result<Self, ReceiptError> {
+        artifacts.sort();
+        base.sort();
         let sha256 = RECEIPT_HASH_PROFILE.hash_canonical_bytes(&norn_canonical::serialize(
             &Self::members_value(&artifacts, &base),
         )?);
@@ -1033,7 +1192,9 @@ impl CheckReceipt {
     /// [`CanonicalJsonError`] if the typed flow source map cannot be serialized
     /// or parsed under the Norn1 profile.
     pub fn to_canonical_value(&self) -> Result<JsonValue, CanonicalJsonError> {
-        let format = if self.flow_source_map.is_some() {
+        let format = if !self.law_enrollment.is_empty() {
+            LAW_ENROLLMENT_RECEIPT_FORMAT
+        } else if self.flow_source_map.is_some() {
             FLOW_SOURCE_MAP_RECEIPT_FORMAT
         } else {
             RECEIPT_FORMAT
@@ -1090,11 +1251,28 @@ impl CheckReceipt {
                 reference(&env.id, env.version, &env.sha256),
             );
         }
-        if format == FLOW_SOURCE_MAP_RECEIPT_FORMAT
-            && let Some(flow_source_map) = &self.flow_source_map
+        if matches!(
+            format,
+            FLOW_SOURCE_MAP_RECEIPT_FORMAT
+                | FLOAT_FLOW_RECEIPT_FORMAT
+                | LAW_ENROLLMENT_RECEIPT_FORMAT
+                | FLOAT_LAW_RECEIPT_FORMAT
+        ) && let Some(flow_source_map) = &self.flow_source_map
         {
             let bytes = norn_canonical::canonical_json_of(flow_source_map)?;
             members.insert("flowSourceMap".to_owned(), norn_canonical::parse(bytes)?);
+        }
+        if matches!(
+            format,
+            LAW_ENROLLMENT_RECEIPT_FORMAT | FLOAT_LAW_RECEIPT_FORMAT
+        ) {
+            let enrollment: Vec<_> = self
+                .law_enrollment
+                .iter()
+                .map(crate::law_enrollment::LawEnrollment::to_json_value)
+                .collect();
+            let bytes = norn_canonical::canonical_json_of(&enrollment)?;
+            members.insert("lawEnrollment".to_owned(), norn_canonical::parse(bytes)?);
         }
         Ok(JsonValue::Object(members))
     }
@@ -1139,6 +1317,7 @@ struct StoredReceipt {
     diagnostics_errors: u64,
     diagnostics_sha256: String,
     admitted: bool,
+    law_enrollment: Option<serde_json::Value>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1161,7 +1340,12 @@ fn parse_stored_receipt(value: &serde_json::Value) -> Result<StoredReceipt, Rece
             "diagnostics",
             "admitted",
         ],
-        &["typeEnv", "identifierProfile", "flowSourceMap"],
+        &[
+            "typeEnv",
+            "identifierProfile",
+            "flowSourceMap",
+            "lawEnrollment",
+        ],
     )?;
     let format = required_string(object, "format", "receipt")?;
     let identifier_profile = object
@@ -1181,10 +1365,12 @@ fn parse_stored_receipt(value: &serde_json::Value) -> Result<StoredReceipt, Rece
             })
         })
         .transpose()?;
+    let law_enrollment = object.get("lawEnrollment").cloned();
     validate_stored_receipt_format(
         &format,
         identifier_profile.as_deref(),
         flow_source_map.as_ref(),
+        law_enrollment.as_ref(),
     )?;
     let checker = exact_object(
         required_value(object, "checker", "receipt")?,
@@ -1240,6 +1426,7 @@ fn parse_stored_receipt(value: &serde_json::Value) -> Result<StoredReceipt, Rece
         diagnostics_errors,
         diagnostics_sha256,
         admitted: required_bool(object, "admitted", "receipt")?,
+        law_enrollment,
     })
 }
 
@@ -1247,23 +1434,42 @@ fn validate_stored_receipt_format(
     format: &str,
     identifier_profile: Option<&str>,
     flow_source_map: Option<&FlowSourceMap>,
+    law_enrollment: Option<&serde_json::Value>,
 ) -> Result<(), ReceiptError> {
+    if matches!(
+        format,
+        LAW_ENROLLMENT_RECEIPT_FORMAT | FLOAT_LAW_RECEIPT_FORMAT
+    ) {
+        if identifier_profile.is_none()
+            || law_enrollment.is_none_or(|value| value.as_array().is_none_or(Vec::is_empty))
+        {
+            return Err(invalid_receipt(
+                "law receipt requires identifierProfile and nonempty lawEnrollment",
+            ));
+        }
+    } else if law_enrollment.is_some() {
+        return Err(invalid_receipt(
+            "lawEnrollment requires a law receipt format",
+        ));
+    }
     match format {
         LEGACY_RECEIPT_FORMAT if identifier_profile.is_some() || flow_source_map.is_some() => {
             return Err(invalid_receipt(
                 "receipt@1 cannot contain identifierProfile or flowSourceMap",
             ));
         }
-        RECEIPT_FORMAT if identifier_profile.is_none() || flow_source_map.is_some() => {
+        RECEIPT_FORMAT | FLOAT_RECEIPT_FORMAT
+            if identifier_profile.is_none() || flow_source_map.is_some() =>
+        {
             return Err(invalid_receipt(
-                "receipt@2 requires identifierProfile and must not contain flowSourceMap",
+                "mapless receipt requires identifierProfile and must not contain flowSourceMap",
             ));
         }
-        FLOW_SOURCE_MAP_RECEIPT_FORMAT
+        FLOW_SOURCE_MAP_RECEIPT_FORMAT | FLOAT_FLOW_RECEIPT_FORMAT
             if identifier_profile.is_none() || flow_source_map.is_none() =>
         {
             return Err(invalid_receipt(
-                "receipt@3 requires identifierProfile and flowSourceMap",
+                "mapped receipt requires identifierProfile and flowSourceMap",
             ));
         }
         _ => {}
@@ -1623,6 +1829,7 @@ mod tests {
                 .expect("empty diagnostics hash"),
             admitted: true,
             flow_source_map: None,
+            law_enrollment: Vec::new(),
         };
         let legacy_body = String::from_utf8(
             historical

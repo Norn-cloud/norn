@@ -26,11 +26,12 @@ use norn_checker::function::{
     admit_function_manifest, check_function_invocation, check_function_receipt,
     decode_function_invocation, decode_function_manifest, decode_function_receipt,
 };
-use norn_checker::receipt::{CHECKER_VERSION, EXPR_PROFILE, RECEIPT_FORMAT};
+use norn_checker::receipt::{
+    CHECKER_VERSION, EXPR_PROFILE, RECEIPT_FORMAT, check_artifact_sources_with_receipt,
+};
 use norn_checker::{
     DIAGNOSTICS_FORMAT, Diagnostic, EntityArtifactSetContext, TenantLayer, check_artifact_set,
-    check_artifact_set_with_flow_source_map, declared_lifecycles, decode_artifact_json,
-    derive_type_env, diagnostics_to_json,
+    declared_lifecycles, decode_artifact_json, derive_type_env, diagnostics_to_json,
 };
 use norn_expr::{
     EvaluationBudget, ExprError, Expression, Type, Value as ExprValue, ZenTypeEnv,
@@ -40,7 +41,7 @@ use norn_ir::canonical::CanonicalJsonError;
 use norn_ir::function::Digest;
 use norn_ir::{
     ArtifactEnvelope, DiagnosticSeverity, ExtensionNamespace, FlowSourceMap, ObjectTypeName,
-    PropertyTypeName, ResourceLimitProfile,
+    PropertyTypeName, ResourceLimitProfile, RuntimeValue,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -219,8 +220,8 @@ fn has_errors(diagnostics: &[Diagnostic]) -> bool {
 ///
 /// Returns `{"format", "admitted", "diagnostics", "receipt",
 /// "receiptSha256"}`: `diagnostics` is the `norn-checker/diagnostics@1`
-/// document, `receipt` the `norn-checker/receipt@2` document when the map is
-/// absent and `@3` when present. When an artifact is not a decodable envelope,
+/// document, `receipt` the `norn-checker/receipt@5` document when the map is
+/// absent and `@6` when present. When an artifact is not a decodable envelope,
 /// `diagnostics` holds the decode findings and `receipt`/`receiptSha256` are
 /// `null` (fail closed).
 ///
@@ -234,7 +235,7 @@ pub fn check_artifact_set_json(
 ) -> Result<String, AbiError> {
     let artifacts = parse_array("artifacts", artifacts_json)?;
     let context = parse_context(context_json)?;
-    let base = envelopes_or_invalid("context.base", &context.base)?;
+    envelopes_or_invalid("context.base", &context.base)?;
     let limits = context
         .limits
         .unwrap_or_else(ResourceLimitProfile::norn_limits_v1);
@@ -242,11 +243,6 @@ pub fn check_artifact_set_json(
         tenant_id: &tenant.tenant_id,
         namespace: &tenant.namespace,
     });
-    let set_context = EntityArtifactSetContext {
-        registry: &context.registry,
-        base: &base,
-        tenant,
-    };
     let output = match decode_envelopes(&artifacts) {
         Err(findings) => json!({
             "format": CHECK_FORMAT,
@@ -255,11 +251,25 @@ pub fn check_artifact_set_json(
             "receipt": null,
             "receiptSha256": null,
         }),
-        Ok(envelopes) => {
+        Ok(_) => {
             let receipt_error = |error: &dyn fmt::Display| AbiError::Receipt(error.to_string());
-            let checked = check_artifact_set_with_flow_source_map(
-                &envelopes,
-                &set_context,
+            let sources = RuntimeValue::from_json_text(artifacts_json)
+                .map_err(|error| receipt_error(&error))?;
+            let raw_context = RuntimeValue::from_json_text(context_json)
+                .map_err(|error| receipt_error(&error))?;
+            let base = raw_context
+                .as_object()
+                .and_then(|object| object.get("base"))
+                .and_then(RuntimeValue::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let checked = check_artifact_sources_with_receipt(
+                sources
+                    .as_array()
+                    .ok_or_else(|| invalid("artifacts", "expected array"))?,
+                base,
+                &context.registry,
+                tenant,
                 &limits,
                 context.flow_source_map.as_ref(),
             )
