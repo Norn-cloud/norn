@@ -5,7 +5,7 @@ const NullableScope = Schema.NullOr(Schema.String)
 export const SettingFields = Schema.Struct({
   id: Schema.String, settingKey: Schema.String, value: Norn.decimal(4),
   effectiveFrom: Norn.timestamp("utc"), effectiveTo: Schema.NullOr(Norn.timestamp("utc")),
-  reviewState: Schema.Literal("approved", "active", "draft"),
+  reviewState: Schema.Union(Schema.Literal("approved"), Schema.Literal("active"), Schema.Literal("draft")),
   orgId: NullableScope, tenantId: NullableScope, workspaceId: NullableScope,
   environmentId: NullableScope, businessUnitId: NullableScope,
 })
