@@ -1,0 +1,59 @@
+{
+  "artifactId": "core.Conversion.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Conversion",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "A measured conversion in one unit, at three decimal places. These are accepted measurements, not a certificate of the associated stock or value effects.",
+      "invariants": [
+        {
+          "expression": "(((self.input_quantity >= 0) and (self.output_quantity >= 0)) and (self.loss_quantity >= 0)) and (self.input_quantity == (self.output_quantity + self.loss_quantity))",
+          "id": "core.law.conversion_conservation",
+          "message": "Input quantity must equal output plus explicitly recorded loss in the same unit."
+        }
+      ],
+      "name": "core.Conversion",
+      "properties": [
+        {
+          "id": "input_quantity",
+          "type": {
+            "kind": "decimal",
+            "scale": 3
+          }
+        },
+        {
+          "id": "output_quantity",
+          "type": {
+            "kind": "decimal",
+            "scale": 3
+          }
+        },
+        {
+          "id": "loss_quantity",
+          "type": {
+            "kind": "decimal",
+            "scale": 3
+          }
+        },
+        {
+          "id": "quantity_unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.Conversion.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

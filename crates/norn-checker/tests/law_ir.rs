@@ -1088,3 +1088,40 @@ fn composition_pack_member_kinds_follow_the_canonical_enum() {
             .any(|code| code == "business_pack.validation.invalid_payload")
     );
 }
+
+#[test]
+fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
+    let law: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.law.conversion_conservation.law.json"
+    ))
+    .expect("generated law");
+    let interface: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.Conversion.interface.json"
+    ))
+    .expect("generated interface");
+    let property_types: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.value_types.entity.json"
+    ))
+    .expect("shared unit vocabulary");
+    let mut melt = interface.clone();
+    melt.artifact_id = "jewelry.Melt.entity".into();
+    melt.namespace = "jewelry".into();
+    melt.name = "Melt".into();
+    melt.payload = ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Entity,
+        serde_json::from_value(json!({"entityVersion":"2.0", "objectType":{
+            "name":"jewelry.Melt", "implements":["core.Conversion"]
+        }}))
+        .expect("exact payload"),
+    )
+    .expect("Melt");
+    let instances = projected(&law, &[interface, property_types, melt]);
+    assert_eq!(instances.len(), 1);
+    assert_eq!(instances[0].subject.artifact_id, "jewelry.Melt.entity");
+    assert_eq!(instances[0].origin.artifact_id, "core.Conversion.interface");
+    assert_eq!(instances[0].law.artifact_id, law.artifact_id);
+    assert_eq!(
+        instances[0].law_digest,
+        norn_checker::ArtifactRef::of(&law).expect("digest").sha256
+    );
+}
