@@ -110,3 +110,20 @@ fn installed_controls_are_rechecked_when_grants_change() {
     let checked = check(&[broadened], &base);
     assert_eq!(checked.controls[0].verdict, ControlStatus::Refuted);
 }
+
+#[test]
+fn subtype_cannot_drop_inherited_controls() {
+    let mut artifacts = fixture(false, true, false);
+    artifacts.push(artifact(
+        "entity",
+        "demo.Child",
+        json!({
+            "entityVersion":"2.0", "objectType":{"name":"demo.Child", "extends":"demo.Order"}
+        }),
+    ));
+    let checked = check(&artifacts, &[]);
+    assert_eq!(checked.controls.len(), 2);
+    assert_eq!(checked.controls[0].object_type.as_str(), "demo.Child");
+    assert_eq!(checked.controls[0].actions, checked.controls[1].actions);
+    assert_eq!(checked.controls[0].verdict, ControlStatus::Proven);
+}

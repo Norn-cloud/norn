@@ -15,6 +15,7 @@ pub fn check_controls(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
 ) -> (Vec<ControlVerdict>, Vec<Diagnostic>) {
+    let resolved = crate::artifact_set::resolve_artifact_set(artifacts, base).is_ok();
     let pool: Vec<_> = base.iter().chain(artifacts).collect();
     let objects: BTreeMap<_, _> = pool
         .iter()
@@ -67,7 +68,7 @@ pub fn check_controls(
             if let Some(controls) = &owner.controls {
                 for path in &controls.sensitive_paths {
                     let valid = path.object_type == owner.name && !path.actions.is_empty();
-                    let result = if valid {
+                    let result = if valid && resolved {
                         actions
                             .as_ref()
                             .zip(policies.as_ref())
