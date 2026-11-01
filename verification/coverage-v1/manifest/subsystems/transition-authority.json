@@ -326,6 +326,7 @@
     "crates/norn-ir/src/policy_value.rs",
     "crates/norn-ir/tests/policy_values.rs",
     "crates/norn-ir/src/provenance.rs",
+    "crates/norn-ir/src/requirement_display.rs",
     "crates/norn-ir/src/rule.rs",
     "crates/norn-ir/src/runtime.rs",
     "crates/norn-ir/src/sealing.rs",
