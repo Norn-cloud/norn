@@ -3116,7 +3116,8 @@ fn obs_evidence_direct_law_violation_persists_its_governing_pin() {
     let findings: Vec<_> = observed
         .ledger()
         .iter()
-        .filter_map(|entry| match &entry.event {
+        .flat_map(|entry| &entry.events)
+        .filter_map(|event| match event {
             ObservationEvent::DataQualityFinding { fact } => Some(fact),
             _ => None,
         })
