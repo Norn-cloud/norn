@@ -2,7 +2,7 @@
 
 Projects the Rust IR and checker schemas into OpenAPI components for the TypeScript SDK.
 Run `norn openapi` to regenerate the contract. Cell execution uses `norn-cell` and
-`norn-kernel` directly; this crate supplies no server.
+`norn-kernel` directly; the fixture example supplies a local definitions server.
 
 ## Host export contract (slice 1a)
 
@@ -64,6 +64,27 @@ Correspondence: `definitions_install::host_provision_atomic_at_every_storage_bou
 injects errors and abrupt subprocess exit after every SQL operation, before
 commit and after commit, then reopens, retries and checks conflicting retries.
 
+
+HOST-FIXTURE-BOOTSTRAP: the fixture executable combines exact artifact arrays,
+checks and atomically installs the complete SalesOrder/stock set into a new
+in-memory tenant on every start. It binds loopback port 4174. Bearer authentication
+removes caller actor headers and supplies a fixed read principal only after a
+credential match; anonymous, incorrect-token and spoofed-actor requests deny.
+Correspondence: the example's authentication matrix and a real TCP Boat smoke
+that compiles stock, starts the command and checks both namespaces via `/v1/defs`.
+
+From the repository root (fixture sources require #147 and #227):
+
+```sh
+(cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile) && mkdir -p ~/.cache/agent-scratch/norn-demo-host && bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/engine-alpha --org org_demo --env dev --out ~/.cache/agent-scratch/norn-demo-host/alpha.json && bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/stock --org org_demo --env dev --out ~/.cache/agent-scratch/norn-demo-host/stock.json && NORN_DEMO_TOKEN=local-demo cargo run --locked -p norn-api --example fixture-server -- ~/.cache/agent-scratch/norn-demo-host/alpha.json ~/.cache/agent-scratch/norn-demo-host/stock.json
+```
+
+Read with `Authorization: Bearer local-demo` at
+`http://127.0.0.1:4174/v1/defs?orgId=org_demo&environmentId=dev`.
+The environment credential is local fixture configuration. This host exposes
+definition reads; actions and subscriptions remain the adapter lane's scope.
+HOST-MODEL-DEFAULT-SNAPSHOT remains unclaimed: numeric JSON object defaults use
+the legacy floating-point IR and need a shared representation migration.
 HOST-VERSION-ABSENT: every syntactically valid but unrepresentable revision is
 absent (404), including u64::MAX and the first integer above the SQL seam limit.
 HOST-HTTP-WORKER: synchronous store access and complete retained-set admission
@@ -73,3 +94,6 @@ still precedes store reads. HTTP correspondence covers allowed/denied actors.
 HOST-CACHE-PRIVATE: all definition HTTP responses, including refusals, declare
 `Cache-Control: no-store`; scope/actor-sensitive results never authorize shared
 cache reuse. The HTTP success/refusal matrices assert the header.
+
+HOST-FIXTURE-SCOPE: both authored sets compile with the same explicit scope;
+the original org_alpha golden is never adopted by the org_demo host.

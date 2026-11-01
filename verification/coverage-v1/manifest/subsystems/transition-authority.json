@@ -255,6 +255,7 @@
   "sourceFiles": [
     "Cargo.toml",
     "crates/norn-api/Cargo.toml",
+    "crates/norn-api/examples/fixture-server.rs",
     "crates/norn-api/src/authz.rs",
     "crates/norn-api/src/contracts.rs",
     "crates/norn-api/src/defs.rs",

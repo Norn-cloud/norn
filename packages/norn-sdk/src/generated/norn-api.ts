@@ -1357,6 +1357,21 @@ export interface components {
             op: components["schemas"]["NornIrCompareOp"];
             value: components["schemas"]["NornIrAccessLiteral"];
         };
+        /** @description Controls belonging to the enclosing object type. */
+        NornIrControls: {
+            /**
+             * @description Closed wire profile.
+             * @enum {string}
+             */
+            format: "norn.controls/1";
+            /** @description Ordered sensitive action sequences. */
+            sensitivePaths: components["schemas"]["NornIrSensitivePath"][];
+        };
+        /**
+         * @description Versioned controls vocabulary.
+         * @enum {string}
+         */
+        NornIrControlsFormat: "norn.controls/1";
         /**
          * @description How a source term relates to its target terms.
          * @enum {string}
@@ -3335,6 +3350,8 @@ export interface components {
              *     Inherited by subtypes. Omitted for object types that are not GL legs.
              */
             accountingLeg?: components["schemas"]["NornIrAccountingLegDeclaration"] | null;
+            /** @description Definition-owned finite duty controls, inherited by subtypes. */
+            controls?: components["schemas"]["NornIrControls"];
             description?: string;
             /**
              * @description The single supertype. The subtype inherits every property, key, and
@@ -3348,6 +3365,8 @@ export interface components {
              *     declare a business key.
              */
             identity?: components["schemas"]["NornIrKeySpec"][];
+            /** @description Append-only: existing instances cannot be changed or deleted. Inherited. */
+            immutable?: boolean;
             /**
              * @description Interfaces the type implements, in addition to those its supertypes
              *     implement. Omitted when empty.
@@ -3739,6 +3758,8 @@ export interface components {
              *     by the checker and cannot be removed by narrowing. Omitted when empty.
              */
             markings?: components["schemas"]["NornIrMarkingId"][];
+            /** @description System-maintained: declared rules may write it, actions may not. */
+            protected?: boolean;
             /** @description The value kind: inline, or a shared property type through `ref`. */
             type: components["schemas"]["NornIrPropertyType"];
         };
@@ -4394,6 +4415,15 @@ export interface components {
          * @enum {string}
          */
         NornIrSemanticAuthority: "semantic_only";
+        /** @description A sensitive action sequence on the enclosing object type. */
+        NornIrSensitivePath: {
+            /** @description Exact action identities in required order. */
+            actions: string[];
+            /** @description Must equal the enclosing type, not an arbitrary external target. */
+            objectType: string;
+            /** @description Require concrete availability evidence in addition to separation. */
+            requireWitness?: boolean;
+        };
         NornIrSettingPayload: {
             effectiveFrom: string;
             /** @description Must sort after `effectiveFrom` (checker rule). */

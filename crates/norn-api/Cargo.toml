@@ -29,5 +29,9 @@ axum = { version = "0.8.8", default-features = false, features = ["http1", "json
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }
 
+[[example]]
+name = "fixture-server"
+required-features = ["http-host"]
+
 [lints]
 workspace = true
