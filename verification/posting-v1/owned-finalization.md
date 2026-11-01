@@ -127,5 +127,15 @@ POST-QUANTITY-REFUSAL: quantity refusals survive the atomic host/decision/action
 transport with stable code, category and redacted internal messages. No generic
 Post action API is activated; the parked generic posting branch stays parked.
 
+## Complete stock effect proposal
+
+POST-EFFECTS: the unsealed proposal contains the voucher transition, immutable
+StockEvents/GL legs, partition totals/layers and complete new event membership,
+all from one FIFO plan. It grants no authority. POST-NO-BACKDATE compares actual UTC instants against the partition witness. POST-HISTORY-BYTES refuses prospective
+history plus its witness above 64 KiB, before publication. CP1 requires exactly
+one partition per voucher. Conformance checks derived GL, remaining quantity,
+backdating and the byte ceiling. The subsequent kernel join must recompute this
+proposal from authorized reads and seal it; callers cannot submit this proposal.
+
 POST-QUANTITY-SNAPSHOT: all quantity reconstruction reads share one adapter-owned SQLite read snapshot, reusing an existing transaction; refusal releases a newly owned snapshot. SQL transaction-control guards remain unchanged.
 POST-CATALOG-ORDER: extension and property-type order does not change the schema pin. Conformance reverses both lists and checks the same pin.
