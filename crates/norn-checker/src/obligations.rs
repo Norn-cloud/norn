@@ -687,8 +687,7 @@ mod exact_identity_tests {
             left_closure[&left[1].artifact_id],
             right_closure[&right[1].artifact_id]
         );
-        // Exercise ordinary admission and the public approval/challenge path as
-        // well as the selectors: spelling differences are admitted and bound.
+        // Non-NFC definitions cannot become an approved authority.
         let challenge = |artifacts: &[ArtifactEnvelope]| {
             let source =
                 DefinitionSource::parse(&serde_json::to_string(artifacts).expect("source"), "[]")
@@ -700,11 +699,12 @@ mod exact_identity_tests {
                 json!({"axioms":[]}),
                 json!({"proof":"checked"}),
             )
-            .expect("ordinarily admitted")
-            .challenge(&source, &BTreeSet::new())
-            .expect("challenge")
         };
-        assert_ne!(challenge(&left).sha256(), challenge(&right).sha256());
+        assert!(challenge(&left).is_ok());
+        assert!(matches!(
+            challenge(&right),
+            Err(ChallengeError::NotAdmitted)
+        ));
     }
 
     #[test]
