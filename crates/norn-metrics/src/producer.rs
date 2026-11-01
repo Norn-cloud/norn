@@ -80,7 +80,7 @@ fn compute(export: &ForecastExport<'_>, input: &ForecastInput, implementation: D
         late_training_labels: u32::try_from(late_training_labels).map_err(failure)?,
         temporal_leakage: late_features != 0 || late_training_labels != 0,
         complete: export.complete, quarantine_count: export.quarantine_count, fresh: export.fresh,
-        rmse_nanos: None, baseline_rmse_nanos: None, report: None,
+        unit: export.plan.outcome().unit.clone(), rmse_nanos: None, baseline_rmse_nanos: None, report: None,
     };
     if !summary.temporal_leakage {
         let table = export.plan.materialize(export.as_of, export.source_head, export.rows.to_vec()).map_err(failure)?;

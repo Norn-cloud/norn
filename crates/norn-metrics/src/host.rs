@@ -59,6 +59,8 @@ pub struct ForecastSummary {
     pub quarantine_count: u32,
     /// Whether the supplied export frontier is current for its declared population.
     pub fresh: bool,
+    /// Ontology-resolved outcome unit, including dimensionless/unknown absence.
+    pub unit: Option<norn_ir::UnitRef>,
     /// RMSE in billionths of the declared outcome unit; absent without a fit.
     pub rmse_nanos: Option<i64>,
     /// Training-mean baseline in the same units; absent without a fit.
@@ -96,9 +98,9 @@ pub fn implementation_digest() -> Result<Digest, CanonicalJsonError> {
         .map(|hex| Digest::from_hex(&hex))
 }
 
-fn schema<T: JsonSchema>(id: &str) -> Result<SchemaRef, CanonicalJsonError> {
+fn schema<T: JsonSchema>(id: &str, version: u32) -> Result<SchemaRef, CanonicalJsonError> {
     let bytes = norn_ir::canonical::canonical_json_of(&schemars::schema_for!(T))?;
-    Ok(SchemaRef { id: id.to_owned(), version: 1, digest: Digest::of_json_document(bytes)? })
+    Ok(SchemaRef { id: id.to_owned(), version, digest: Digest::of_json_document(bytes)? })
 }
 
 /// Declare the native OLS/forecast boundary. Admission remains the checker’s job.
@@ -117,9 +119,9 @@ pub fn manifest() -> Result<FunctionManifest, CanonicalJsonError> {
     closure.digest = closure.computed_digest()?;
     Ok(FunctionManifest {
         abi: FUNCTION_ABI_V1.into(), function_id: "core.analytics.ols_forecast".into(), version: 2,
-        input_schema: schema::<ForecastInput>("core.analytics.ForecastInput")?,
-        output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary")?,
-        error_schema: schema::<ForecastFailure>("core.analytics.ForecastFailure")?,
+        input_schema: schema::<ForecastInput>("core.analytics.ForecastInput", 1)?,
+        output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary", 2)?,
+        error_schema: schema::<ForecastFailure>("core.analytics.ForecastFailure", 1)?,
         implementation: Implementation { format: ImplementationFormat::Host, digest: implementation.clone(),
             entry_point: "norn_metrics::producer::perform_forecast".into(),
             locator: Some(format!("{}/{}@{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"), implementation)) },
