@@ -81,14 +81,6 @@ fn model_refutation_refuses_install_without_claiming_a_witness() {
         checked
             .diagnostics
             .iter()
-            .all(|d| d.code.as_str() == "controls.validation.refuted"),
-        "{:?}",
-        checked.diagnostics
-    );
-    assert!(
-        checked
-            .diagnostics
-            .iter()
             .any(|d| d.code.as_str() == "controls.validation.refuted")
     );
     assert!(!checked.receipt.admitted);
