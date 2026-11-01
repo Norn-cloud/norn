@@ -102,20 +102,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// The original persisted finding remains unchanged.
     ///
     /// # Errors
-    /// More than 64 historical candidates, failed proof lookup or unsupported laws.
+    /// Failed proof lookup or unsupported laws.
     pub fn observation_findings(
         &self,
         world: &str,
         object_type: &str,
         key: &str,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
-        let sequences = self.conn.query(
-            &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 ORDER BY seq LIMIT 65"),
-            params![world, object_type, key],
-        )?;
-        if sequences.len() > 64 {
-            return Err(CellError::OutOfRange("finding review candidates"));
-        }
         let current = self.object(world, object_type, key)?;
         if let Some(record) = &current {
             self.observation_is_quarantined(record)?;
@@ -123,8 +116,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let catalog = self.quality_catalog();
         let mut seen = BTreeSet::new();
         let mut findings = Vec::new();
+        let mut after = 0i64;
+        loop {
+            let sequences = self.conn.query(
+                &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 ORDER BY seq LIMIT 64"),
+                params![world, object_type, key, after],
+            )?;
+            if sequences.is_empty() { break; }
         for values in sequences {
             let seq: i64 = crate::engine::SqlRow(values).get(0)?;
+            after = seq;
             if let Some(event) =
                 self.verified_finding_at(crate::read::to_u64(seq, "finding sequence")?)?
             {
@@ -161,6 +162,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     findings.push(finding);
                 }
             }
+        }
         }
         Ok(findings)
     }
@@ -207,22 +209,24 @@ pub(crate) fn deduplicate<E: SqlEngine>(
             if !seen.insert(finding.id.clone()) {
                 continue;
             }
-            let rows = reader.conn.query(
-                &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.id') = ?2 AND commit_seq < ?3 ORDER BY seq LIMIT 65"),
-                params![&batch.world, finding.id, to_i64(before_commit, "finding cutoff")?],
-            )?;
-            if rows.len() > 64 {
-                return Err(CellError::OutOfRange("finding dedup candidates"));
-            }
-            for values in rows {
-                let seq: i64 = crate::engine::SqlRow(values).get(0)?;
-                if reader
-                    .verified_finding_at(crate::read::to_u64(seq, "finding sequence")?)?
-                    .is_some()
-                {
-                    known = true;
-                    break;
+            let mut after = 0i64;
+            loop {
+                let rows = reader.conn.query(
+                    &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.id') = ?2 AND commit_seq < ?3 AND seq > ?4 ORDER BY seq LIMIT 64"),
+                    params![&batch.world, &finding.id, to_i64(before_commit, "finding cutoff")?, after],
+                )?;
+                if rows.is_empty() { break; }
+                for values in rows {
+                    after = crate::engine::SqlRow(values).get(0)?;
+                    if reader
+                        .verified_finding_at(crate::read::to_u64(after, "finding sequence")?)?
+                        .is_some()
+                    {
+                        known = true;
+                        break;
+                    }
                 }
+                if known { break; }
             }
         }
         if !known {

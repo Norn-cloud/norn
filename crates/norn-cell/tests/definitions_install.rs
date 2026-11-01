@@ -5426,3 +5426,38 @@ fn obs_evidence_idempotent_capture_reuses_the_original_finding_cutoff() {
         .count();
     assert_eq!(retained, 1);
 }
+
+#[test]
+fn obs_evidence_legacy_candidates_do_not_block_a_verified_producer() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut source = purity_quality_host(&directory.path().join("source.sqlite"));
+    capture_purity(&mut source, "source", "1.20");
+    let event = source.store().read().ledger_page(0, 20).expect("history").into_iter()
+        .find(|entry| entry.event.get("op").and_then(Value::as_str) == Some("data_quality_finding"))
+        .expect("finding").event;
+    let path = directory.path().join("legacy.sqlite");
+    let cell = purity_quality_host(&path);
+    let model = cell.store().model().clone();
+    drop(cell);
+    let mut store = CellStore::open(&path, model, StoreOptions::default()).expect("store");
+    for index in 0..65 {
+        store.commit(&norn_cell::CommitBatch {
+            world: MAIN_WORLD.into(), scope: "org_demo/dev".into(),
+            logical_time: store.read().clock_floor().expect("clock"),
+            idempotency_key: Some(format!("legacy-{index}")), events: vec![event.clone()],
+            ..norn_cell::CommitBatch::default()
+        }).expect("unproven legacy metadata");
+    }
+    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("host");
+    capture_purity(&mut cell, "first-proven", "1.20");
+    capture_purity(&mut cell, "redelivery", "1.20");
+    let reader = cell.store().read();
+    let entries = reader.ledger_page(0, 200).expect("history");
+    let mut verified = 0;
+    for entry in entries.iter().filter(|entry| entry.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")) {
+        if reader.verified_history_event(entry).expect("proof").is_some() { verified += 1; }
+    }
+    assert_eq!(verified, 1, "proof search passes the first candidate page");
+    assert_eq!(reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("paged review").len(), 1);
+    assert!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").is_some());
+}
