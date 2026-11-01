@@ -2,12 +2,12 @@ import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 
 const Item = Schema.Struct({ id: Schema.String, amount: Schema.Finite })
-const State = Schema.Struct({ total: Schema.Finite, count: Schema.Int, ids: Schema.Array(Schema.String) })
+const State = Schema.Struct({ total: Schema.Finite, count: Schema.Int, ids: Schema.Array(Schema.String), segments: Schema.Array(Schema.Array(Schema.Finite)) })
 export const Step = Norn.decision({
   id: "example.fold.step", title: "Accumulate", version: "1.0.0", contract: "sub_decision",
   input: Schema.Struct({ accumulator: State, item: Item, index: Schema.Int }), output: State,
   scopeRequired: ["orgId", "environmentId"],
-}, input => ({ total: input.accumulator.total + input.item.amount, count: input.accumulator.count + 1, ids: input.accumulator.ids.concat([input.item.id]) }))
+}, input => ({ total: input.accumulator.total + input.item.amount, count: input.accumulator.count + 1, ids: input.accumulator.ids.concat([input.item.id]), segments: input.accumulator.segments.concat([[input.item.amount]]) }))
 
 export const Fold = Norn.decision({
   id: "example.fold.total", title: "Ordered total", version: "1.0.0", contract: "decide",
