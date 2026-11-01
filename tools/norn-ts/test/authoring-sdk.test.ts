@@ -7,7 +7,7 @@ import { compileDefinitions } from "../src/compiler/definitions.ts"
 import type { MappingSourceContract } from "../src/builder/mapping.ts"
 import { sourceMappedDiagnostics } from "../src/checker-abi.ts"
 import { compileModule } from "../src/compile-stdin.ts"
-import { checkPack, compilePack } from "../src/pack.ts"
+import { checkPack, compilePack, readArtifacts } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker } from "./checker.ts"
 
@@ -175,12 +175,12 @@ test("FOLD-AUTHORING compiles closed step schemas and pins the helper", () => {
 
 test("CP3 allocation goldens come from core-aligned typed declarations", () => {
   const fixture = join(TOOL_ROOT, "fixtures/jewelry/cp3-folds.source.ts")
-  const pack = compilePack(fixture, { scope, root, baseRegistries: ["registry/core"], modules: [join(TOOL_ROOT, "fixtures/stock/stock.source.ts"), fixture] })
+  const pack = compilePack(fixture, { scope, root, modules: [join(TOOL_ROOT, "fixtures/stock/stock.source.ts"), fixture] })
   if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
   const authored = pack.artifacts.filter(a => a !== null && typeof a === "object" && "namespace" in a && a.namespace === "jewelry")
   expect(authored).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-decisions/tests/fixtures/jewelry-folds.json"), "utf8")))
   if (checker) {
-    const checked = checkPack(checker, pack.artifacts, pack.baseArtifacts)
+    const checked = checkPack(checker, pack.artifacts, readArtifacts(join(root, "registry/core/artifacts")).map(entry => entry.artifact))
     expect(checked.diagnostics.diagnostics.filter(d => d.severity === "error")).toEqual([])
     expect(checked.admitted).toBe(true)
   }
