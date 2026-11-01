@@ -8,6 +8,8 @@ mod governed_policy;
 pub mod ivm;
 /// Exact result membership and native fact evidence.
 pub mod lineage;
+#[cfg(feature = "duckdb")]
+mod olap;
 
 use crate::{
     CellError, CellStore, LedgerHead, ObjectRecord,
@@ -66,6 +68,8 @@ pub enum Engine {
     Ivm,
     /// Exact cell snapshot.
     Cell,
+    /// Embedded SQL over the exact authorized contribution snapshot.
+    Duckdb,
 }
 /// Snapshot freshness, independent of source cursor ordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -12,12 +12,14 @@ path = "src/lib.rs"
 [features]
 default = ["native"]
 native = ["dep:rusqlite", "dep:object_store", "dep:tokio", "dep:tempfile"]
+duckdb = ["dep:duckdb"]
 
 [dependencies]
 norn-checker = { path = "../norn-checker" }
 norn-ir = { path = "../norn-ir" }
 norn-kernel = { path = "../norn-kernel" }
 norn-projections = { path = "../norn-projections" }
+duckdb = { version = "=1.10506.1", default-features = false, features = ["bundled"], optional = true }
 # The default host adapter. Bundled SQLite, no default features (no statement
 # cache, no wasm32 backend).
 rusqlite = { version = "0.41.0", default-features = false, features = ["bundled", "hooks"], optional = true }
