@@ -1,0 +1,20 @@
+{
+  "sha256": "5aaf834b55f7dc3e9c9b3966769aa5e820e5b54c3a9960f6658b9dc7eea7e73d",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/norn-ts/corpus/accept/sequential-perform.ts",
+    "tools/norn-ts/test/profile-corpus.test.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

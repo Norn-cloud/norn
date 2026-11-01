@@ -1,0 +1,8 @@
+'Norn.KernelL1.submit_guard' depends on axioms: [propext]
+'Norn.KernelL1.overflow_refused' depends on axioms: [propext]
+'Norn.KernelL1.fresh_conflict_unchanged' depends on axioms: [propext, Quot.sound]
+'Norn.KernelL1.exact_replay_unchanged' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Norn.KernelL1.changed_input_refused' depends on axioms: [propext, Quot.sound]
+'Norn.KernelL1.fresh_atomic' depends on axioms: [propext]
+'Norn.KernelL1.successful_commit_replays' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Norn.KernelL1.fresh_overflow_unchanged' depends on axioms: [propext, Quot.sound]

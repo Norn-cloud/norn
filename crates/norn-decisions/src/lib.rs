@@ -60,6 +60,8 @@
 //! # }
 //! ```
 
+#![forbid(unsafe_code)]
+
 mod admit;
 mod convert;
 mod error;

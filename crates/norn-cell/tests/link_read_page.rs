@@ -867,17 +867,23 @@ fn empty_link_ranges_capture_direction_and_inverse_source_identity() {
     }));
 }
 
-#[test]
-fn incoming_interface_dependencies_cover_empty_add_remove_and_inherited_target_reads() {
+fn inherited_interface_target_model() -> norn_cell::Model {
     let definitions = [
         json!({"name":"test.Node","properties":[],"links":[{"id":"related","target":"test.Target","cardinality":{"to":"many","from":"many"}}]}),
-        json!({"name":"test.TargetA","implements":["test.Target"],"properties":[]}),
+        json!({"name":"test.TargetA","implements":["test.SubTarget"],"properties":[]}),
         json!({"name":"test.TargetChild","extends":"test.TargetA","properties":[]}),
     ].into_iter().map(|value| serde_json::from_value(value).expect("definition")).collect::<Vec<_>>();
     let interface =
         serde_json::from_value(json!({"name":"test.Target","properties":[]})).expect("interface");
-    let model = norn_cell::Model::from_definitions_with_interfaces(&definitions, &[], &[interface])
-        .expect("model");
+    let child = serde_json::from_value(json!({"name":"test.SubTarget","extends":["test.Target"]}))
+        .expect("child interface");
+    norn_cell::Model::from_definitions_with_interfaces(&definitions, &[], &[interface, child])
+        .expect("model")
+}
+
+#[test]
+fn incoming_interface_dependencies_cover_empty_add_remove_and_inherited_target_reads() {
+    let model = inherited_interface_target_model();
     let mut store = CellStore::open_in_memory(model).expect("store");
     store
         .commit(&CommitBatch {
@@ -938,11 +944,24 @@ fn incoming_interface_dependencies_cover_empty_add_remove_and_inherited_target_r
             .expect("read")
             .expect("bounded");
         assert_eq!(page.items.len(), usize::from(stage == 1));
+        assert_eq!(
+            store
+                .read()
+                .links_touching(MAIN_WORLD, "test.TargetChild", "target")
+                .expect("unpaged read")
+                .len(),
+            usize::from(stage == 1)
+        );
         if stage == 1 {
             assert_eq!(page.items[0].edge.target_type, "test.Target");
         }
         let dependencies = decode.take_dependencies().expect("complete capture");
-        for object_type in ["test.TargetChild", "test.TargetA", "test.Target"] {
+        for object_type in [
+            "test.TargetChild",
+            "test.TargetA",
+            "test.SubTarget",
+            "test.Target",
+        ] {
             assert!(
                 dependencies
                     .entries

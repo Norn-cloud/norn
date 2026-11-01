@@ -3,7 +3,7 @@
 //!
 //! | table | row | written by |
 //! | --- | --- | --- |
-//! | `_norn_meta` | store format and the model's DDL hash | open |
+//! | `_norn_meta` | store format, the model's DDL hash, and the property-column layout | open |
 //! | `_norn_ledger` | one event, hash-chained to the previous one | commit |
 //! | `_norn_receipt` | one commit: ledger span and head, request hash, consumption, written versions, idempotency key | commit |
 //! | `_norn_outbox` | one command id: its latest generation, its recorded result, and the commit that consumed it (unconsumed rows are the `perform` queue, in enqueue order) | commit; perform |
@@ -24,6 +24,9 @@
 //! consumed delivery, facts, events, receipt, outbox and timer changes are
 //! atomic (ruling 2026-09-25 §5, "commit … in the same transaction as
 //! enqueueing the resulting commands and timers").
+
+use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlRow, SqlValue, params};
+use crate::error::CellError;
 
 /// Pre-alpha format /7 binds exact values and durable markings on top of
 /// main's pending-link indexes (/4), quantity v2 and cell-wide clock (/6).
@@ -72,6 +75,8 @@ pub(crate) const DEFINITION_ACTIVE: &str = "_norn_definition_active";
 pub(crate) const DEFINITION_LAYOUT: &str = "_norn_definition_layout";
 /// Cumulative current effective markings for each live object property.
 pub(crate) const MARKING_CURRENT: &str = "_norn_marking_current";
+/// Exact fact identities shared by all of their property marking slots.
+pub(crate) const MARKING_SUBJECT: &str = "_norn_marking_subject";
 /// Reserved snapshot slot for fact occurrence/version lineage, independent of
 /// property values. Admitted property identifiers are nonempty.
 pub(crate) const MARKING_OCCURRENCE: &str = "";
@@ -79,6 +84,287 @@ pub(crate) const MARKING_OCCURRENCE: &str = "";
 pub(crate) const MARKING_VERSION: &str = "_norn_marking_version";
 /// Completeness markers for current and immutable marking snapshots.
 pub(crate) const MARKING_SNAPSHOT: &str = "_norn_marking_snapshot";
+
+const MARKING_CURRENT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_marking_current" (
+  "world" TEXT NOT NULL,
+  "object_type" TEXT NOT NULL,
+  "subject" INTEGER NOT NULL,
+  "property" TEXT NOT NULL,
+  "version" INTEGER NOT NULL,
+  "markings" TEXT NOT NULL,
+  PRIMARY KEY ("world", "object_type", "subject", "property")
+)"#;
+const MARKING_VERSION_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_marking_version" (
+  "world" TEXT NOT NULL,
+  "object_type" TEXT NOT NULL,
+  "subject" INTEGER NOT NULL,
+  "property" TEXT NOT NULL,
+  "version" INTEGER NOT NULL,
+  "markings" TEXT NOT NULL,
+  PRIMARY KEY ("world", "object_type", "subject", "property", "version")
+)"#;
+const MARKING_NONEMPTY_DDL: &str = r#"CREATE INDEX IF NOT EXISTS "_norn_marking_current_nonempty" ON "_norn_marking_current" ("world", "object_type", "property") WHERE "markings" != '[]'"#;
+const MARKING_SUBJECT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_marking_subject" (
+  "subject" INTEGER NOT NULL PRIMARY KEY,
+  "world" TEXT NOT NULL,
+  "object_type" TEXT NOT NULL,
+  "id" TEXT NOT NULL
+)"#;
+const MARKING_SUBJECT_INDEX_DDL: &str = r#"CREATE UNIQUE INDEX IF NOT EXISTS "_norn_marking_subject/identity" ON "_norn_marking_subject" ("world", "object_type", "id")"#;
+
+// Match the complete DDL emitted by Norn. Normalize only whitespace, keyword
+// case and quotes around these known identifiers; retain every constraint
+// and reject additional clauses or unknown identifiers.
+fn marking_schema_signature(sql: &str) -> String {
+    let mut sql = sql.to_ascii_lowercase();
+    for identifier in [
+        MARKING_CURRENT,
+        MARKING_VERSION,
+        MARKING_SUBJECT,
+        "_norn_marking_subject/identity",
+        "_norn_marking_current_nonempty",
+        "world",
+        "object_type",
+        "id",
+        "subject",
+        "property",
+        "version",
+        "markings",
+    ] {
+        sql = sql.replace(&format!("\"{identifier}\""), identifier);
+    }
+    let sql = sql
+        .replace('(', " ( ")
+        .replace(')', " ) ")
+        .replace(',', " , ");
+    let sql = sql.split_ascii_whitespace().collect::<Vec<_>>().join(" ");
+    // SQLite omits IF NOT EXISTS when retaining CREATE statements.
+    for prefix in ["create table", "create index", "create unique index"] {
+        if let Some(body) = sql.strip_prefix(&format!("{prefix} if not exists ")) {
+            return format!("{prefix} {body}");
+        }
+    }
+    sql
+}
+
+fn marking_schema<E: SqlEngine>(engine: &E, kind: &str, name: &str) -> Result<String, CellError> {
+    engine.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = ?1 AND name = ?2",
+        params![kind, name],
+        |row| row.get(0),
+    )
+}
+
+fn validate_marking_schema<E: SqlEngine>(
+    engine: &E,
+    kind: &str,
+    name: &str,
+    ddl: &str,
+) -> Result<(), CellError> {
+    if marking_schema_signature(&marking_schema(engine, kind, name)?)
+        != marking_schema_signature(ddl)
+    {
+        return Err(CellError::Engine(format!(
+            "unrecognized marking storage for {name}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_marking_subjects<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    validate_marking_schema(engine, "table", MARKING_SUBJECT, MARKING_SUBJECT_DDL)?;
+    validate_marking_schema(
+        engine,
+        "index",
+        "_norn_marking_subject/identity",
+        MARKING_SUBJECT_INDEX_DDL,
+    )?;
+    validate_marking_schema(
+        engine,
+        "index",
+        "_norn_marking_current_nonempty",
+        MARKING_NONEMPTY_DDL,
+    )?;
+    let unexpected: Option<i64> = engine.query_optional(
+        "SELECT 1 FROM sqlite_master WHERE tbl_name IN (?1, ?2, ?3) AND (type = 'trigger' OR (type = 'index' AND sql IS NOT NULL AND name NOT IN (?4, ?5))) LIMIT 1",
+        params![MARKING_CURRENT, MARKING_VERSION, MARKING_SUBJECT, "_norn_marking_subject/identity", "_norn_marking_current_nonempty"],
+        |row| row.get(0),
+    )?;
+    let invalid: Option<i64> = engine.query_optional(
+        &format!("SELECT 1 FROM \"{MARKING_SUBJECT}\" WHERE typeof(\"subject\") != 'integer' OR \"subject\" NOT BETWEEN 1 AND {MAX_SAFE_INTEGER} OR typeof(\"world\") != 'text' OR typeof(\"object_type\") != 'text' OR typeof(\"id\") != 'text' LIMIT 1"),
+        params![],
+        |row| row.get(0),
+    )?;
+    if unexpected.is_some() || invalid.is_some() {
+        return Err(CellError::Engine(
+            "invalid marking subject storage".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn legacy_marking_schema<E: SqlEngine>(
+    engine: &E,
+    table: &str,
+    ddl: &str,
+) -> Result<bool, CellError> {
+    let schema = marking_schema_signature(&marking_schema(engine, "table", table)?);
+    if schema == marking_schema_signature(ddl) {
+        return Ok(false);
+    }
+    let legacy = ddl
+        .replace("\"subject\" INTEGER NOT NULL", "\"id\" TEXT NOT NULL")
+        .replace("\"subject\"", "\"id\"");
+    if schema != marking_schema_signature(&legacy) {
+        return Err(CellError::Engine(format!(
+            "unrecognized marking storage for {table}"
+        )));
+    }
+    Ok(true)
+}
+
+fn validate_marking_rows<E: SqlEngine>(
+    engine: &E,
+    table: &str,
+    legacy: bool,
+) -> Result<(), CellError> {
+    let (identity, kind) = if legacy {
+        ("id", "text")
+    } else {
+        ("subject", "integer")
+    };
+    let invalid: Option<i64> = engine.query_optional(
+        &format!("SELECT 1 FROM \"{table}\" WHERE typeof(\"world\") != 'text' OR typeof(\"object_type\") != 'text' OR typeof(\"{identity}\") != '{kind}' OR typeof(\"property\") != 'text' OR typeof(\"version\") != 'integer' OR \"version\" NOT BETWEEN 1 AND {MAX_SAFE_INTEGER} OR typeof(\"markings\") != 'text' LIMIT 1"),
+        params![],
+        |row| row.get(0),
+    )?;
+    if invalid.is_some() {
+        return Err(CellError::Engine(format!(
+            "invalid marking rows for {table}"
+        )));
+    }
+    if !legacy {
+        let orphan: Option<i64> = engine.query_optional(
+            &format!("SELECT 1 FROM \"{table}\" AS m LEFT JOIN \"{MARKING_SUBJECT}\" AS s ON s.\"subject\" = m.\"subject\" AND s.\"world\" = m.\"world\" AND s.\"object_type\" = m.\"object_type\" WHERE s.\"subject\" IS NULL LIMIT 1"),
+            params![],
+            |row| row.get(0),
+        )?;
+        if orphan.is_some() {
+            return Err(CellError::Engine(format!(
+                "unknown marking subject in {table}"
+            )));
+        }
+    }
+    // Keep malformed payload checks bounded even for a large existing cell.
+    let mut after = None;
+    loop {
+        let filter = if after.is_some() {
+            " WHERE rowid > ?1"
+        } else {
+            ""
+        };
+        let bindings: Vec<SqlValue> = after.into_iter().map(SqlValue::Integer).collect();
+        let rows = engine.query(
+            &format!("SELECT rowid, \"markings\" FROM \"{table}\"{filter} ORDER BY rowid LIMIT 32"),
+            &bindings,
+        )?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        for values in rows {
+            let row = SqlRow(values);
+            after = Some(row.get::<i64>(0)?);
+            let labels: String = row.get(1)?;
+            let _labels = serde_json::from_str::<Vec<String>>(&labels).map_err(CellError::Json)?;
+        }
+    }
+}
+
+fn verify_marking_copy<E: SqlEngine>(
+    engine: &E,
+    previous: &str,
+    table: &str,
+) -> Result<(), CellError> {
+    let original = format!(
+        "SELECT \"world\", \"object_type\", \"id\", \"property\", \"version\", \"markings\" FROM \"{previous}\""
+    );
+    let copied = format!(
+        "SELECT m.\"world\", m.\"object_type\", s.\"id\", m.\"property\", m.\"version\", m.\"markings\" FROM \"{table}\" AS m JOIN \"{MARKING_SUBJECT}\" AS s ON s.\"subject\" = m.\"subject\" AND s.\"world\" = m.\"world\" AND s.\"object_type\" = m.\"object_type\""
+    );
+    let preserved: i64 = engine.query_row(
+        &format!("SELECT (SELECT COUNT(*) FROM \"{previous}\") = (SELECT COUNT(*) FROM \"{table}\") AND NOT EXISTS ({original} EXCEPT {copied}) AND NOT EXISTS ({copied} EXCEPT {original})"),
+        params![],
+        |row| row.get(0),
+    )?;
+    if preserved != 1 {
+        return Err(CellError::Engine(format!(
+            "marking conversion lost rows from {previous}"
+        )));
+    }
+    Ok(())
+}
+
+/// Look up an exact identity, without allocating a subject on read paths.
+pub(crate) fn marking_subject<E: SqlEngine>(
+    engine: &E,
+    world: &str,
+    object_type: &str,
+    id: &str,
+) -> Result<Option<i64>, CellError> {
+    engine.query_optional(
+        &format!("SELECT \"subject\" FROM \"{MARKING_SUBJECT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3"),
+        params![world, object_type, id],
+        |row| row.get(0),
+    )
+}
+
+/// Intern the full identity inside the caller's commit transaction. SQLite's
+/// integer primary key supplies the locator; equality never relies on a hash.
+pub(crate) fn ensure_marking_subject<E: SqlEngine>(
+    engine: &E,
+    world: &str,
+    object_type: &str,
+    id: &str,
+) -> Result<i64, CellError> {
+    engine.execute(
+        &format!("INSERT INTO \"{MARKING_SUBJECT}\" (\"world\", \"object_type\", \"id\") VALUES (?1, ?2, ?3) ON CONFLICT (\"world\", \"object_type\", \"id\") DO NOTHING"),
+        params![world, object_type, id],
+    )?;
+    marking_subject(engine, world, object_type, id)?
+        .ok_or_else(|| CellError::Engine("marking subject was not retained".to_owned()))
+}
+
+/// Convert the former per-property text identities atomically during store
+/// initialization. Markers, slots (including empty sets), and versions remain
+/// exact; the ledger and export format do not depend on physical locators.
+pub(crate) fn intern_marking_subjects<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    validate_marking_subjects(engine)?;
+    let current_legacy = legacy_marking_schema(engine, MARKING_CURRENT, MARKING_CURRENT_DDL)?;
+    let version_legacy = legacy_marking_schema(engine, MARKING_VERSION, MARKING_VERSION_DDL)?;
+    validate_marking_rows(engine, MARKING_CURRENT, current_legacy)?;
+    validate_marking_rows(engine, MARKING_VERSION, version_legacy)?;
+    for (table, ddl, legacy) in [
+        (MARKING_CURRENT, MARKING_CURRENT_DDL, current_legacy),
+        (MARKING_VERSION, MARKING_VERSION_DDL, version_legacy),
+    ] {
+        if !legacy {
+            continue;
+        }
+        engine.execute_batch(&format!(
+            "INSERT INTO \"{MARKING_SUBJECT}\" (\"world\", \"object_type\", \"id\") SELECT DISTINCT \"world\", \"object_type\", \"id\" FROM \"{table}\" WHERE 1 ORDER BY \"world\", \"object_type\", \"id\" ON CONFLICT (\"world\", \"object_type\", \"id\") DO NOTHING"
+        ))?;
+        engine.execute_batch("DROP INDEX IF EXISTS \"_norn_marking_current_nonempty\"")?;
+        let previous = format!("{table}_uninterned");
+        engine.execute_batch(&format!("ALTER TABLE \"{table}\" RENAME TO \"{previous}\""))?;
+        engine.execute_batch(ddl)?;
+        engine.execute_batch(&format!(
+            "INSERT INTO \"{table}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") SELECT m.\"world\", m.\"object_type\", s.\"subject\", m.\"property\", m.\"version\", m.\"markings\" FROM \"{previous}\" AS m JOIN \"{MARKING_SUBJECT}\" AS s ON s.\"world\" = m.\"world\" AND s.\"object_type\" = m.\"object_type\" AND s.\"id\" = m.\"id\""
+        ))?;
+        verify_marking_copy(engine, &previous, table)?;
+        engine.execute_batch(&format!("DROP TABLE \"{previous}\""))?;
+    }
+    engine.execute_batch(MARKING_NONEMPTY_DDL)
+}
 
 /// The system DDL, in application order.
 pub const SYSTEM_DDL: &[&str] = &[
@@ -285,24 +571,10 @@ pub const SYSTEM_DDL: &[&str] = &[
   PRIMARY KEY ("world", "root_type", "id", "version")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/commit" ON "_norn_fact_values" ("world", "commit_seq", "root_type", "id", "version")"#,
-    r#"CREATE TABLE IF NOT EXISTS "_norn_marking_current" (
-  "world" TEXT NOT NULL,
-  "object_type" TEXT NOT NULL,
-  "id" TEXT NOT NULL,
-  "property" TEXT NOT NULL,
-  "version" INTEGER NOT NULL,
-  "markings" TEXT NOT NULL,
-  PRIMARY KEY ("world", "object_type", "id", "property")
-)"#,
-    r#"CREATE TABLE IF NOT EXISTS "_norn_marking_version" (
-  "world" TEXT NOT NULL,
-  "object_type" TEXT NOT NULL,
-  "id" TEXT NOT NULL,
-  "property" TEXT NOT NULL,
-  "version" INTEGER NOT NULL,
-  "markings" TEXT NOT NULL,
-  PRIMARY KEY ("world", "object_type", "id", "property", "version")
-)"#,
+    MARKING_SUBJECT_DDL,
+    MARKING_SUBJECT_INDEX_DDL,
+    MARKING_CURRENT_DDL,
+    MARKING_VERSION_DDL,
     r#"CREATE TABLE IF NOT EXISTS "_norn_marking_snapshot" (
   "world" TEXT NOT NULL,
   "object_type" TEXT NOT NULL,
@@ -311,5 +583,5 @@ pub const SYSTEM_DDL: &[&str] = &[
   "is_current" INTEGER NOT NULL,
   PRIMARY KEY ("world", "object_type", "id", "version", "is_current")
 )"#,
-    r#"CREATE INDEX IF NOT EXISTS "_norn_marking_current_nonempty" ON "_norn_marking_current" ("world", "object_type", "property") WHERE "markings" != '[]'"#,
+    MARKING_NONEMPTY_DDL,
 ];

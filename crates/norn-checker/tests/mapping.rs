@@ -1866,3 +1866,194 @@ fn on_delete_must_name_a_terminal_state() {
         "{findings:#?}"
     );
 }
+
+// Exhaustive-finite: all code-set origins crossed with both nullability bits.
+// Candidates describe evidence, never a closed enum contract.
+#[test]
+fn temporal_enum_mapping_code_set_origin_and_nullability() {
+    use norn_expr::Type;
+    for origin in ["declared", "inferred", "observed_candidate"] {
+        for required in [false, true] {
+            let mut payload = frappe();
+            for set in payload["codeSets"].as_array_mut().expect("code sets") {
+                if set["field"] == "custom_loyalty_tier" {
+                    set["origin"] = json!(origin);
+                }
+            }
+            for field in payload["fields"].as_array_mut().expect("fields") {
+                if field["dataset"] == "Customer" && field["name"] == "custom_loyalty_tier" {
+                    field["required"] = json!(required);
+                }
+            }
+            if origin == "inferred" {
+                assert!(
+                    decode_source_schema(&payload)
+                        .expect_err("inferred code sets rejected")
+                        .iter()
+                        .any(|d| d.code == "source_schema.validation.promoted_inference")
+                );
+                continue;
+            }
+            let source = decode_source_schema(&payload).expect("valid source schema");
+            let fields = input_fields(&source, "Customer").expect("Customer fields");
+            let ty = &fields["custom_loyalty_tier"];
+            let base = if let Type::Optional(inner) = ty {
+                &**inner
+            } else {
+                ty
+            };
+            assert_eq!(matches!(ty, Type::Optional(_)), !required);
+            assert_eq!(matches!(base, Type::Enum { .. }), origin == "declared");
+            assert_eq!(matches!(base, Type::Text { .. }), origin != "declared");
+        }
+    }
+}
+
+fn temporal_enum_mapping(normalized: &str, required: bool) -> CompiledMapping {
+    let mut source_payload = frappe();
+    source_payload
+        .get_mut("codeSets")
+        .expect("code sets field")
+        .as_array_mut()
+        .expect("code sets")
+        .retain(|set| set["field"] != "custom_loyalty_tier");
+    for field in source_payload
+        .get_mut("fields")
+        .expect("fields field")
+        .as_array_mut()
+        .expect("fields")
+    {
+        if field["dataset"] == "Customer" && field["name"] == "custom_loyalty_tier" {
+            *field
+                .pointer_mut("/typeCandidate/type")
+                .expect("candidate type") = json!(normalized);
+            field
+                .as_object_mut()
+                .expect("field object")
+                .insert("required".to_owned(), json!(required));
+        }
+    }
+    let source = envelope(SOURCE_ID, "source_schema", &source_payload);
+    let mut payload = read_json(&ir_fixtures().join("mapping/erpnext.mapping.json"));
+    *payload
+        .pointer_mut("/maps/0/properties/3/value")
+        .expect("mapped property expression") = json!(if normalized == "date" {
+        // Direct typed-date assignment still validates at ingress.
+        "input.custom_loyalty_tier".to_owned()
+    } else if required {
+        "timestamp(input.custom_loyalty_tier)".to_owned()
+    } else {
+        "input.custom_loyalty_tier == null ? null : timestamp(input.custom_loyalty_tier ?? '')"
+            .to_owned()
+    });
+    *payload
+        .pointer_mut("/source/sha256")
+        .expect("source hash member") =
+        json!(ArtifactRef::of(&source).expect("source hash").sha256);
+    let mapping = mapping_artifact(payload, true);
+    let mut artifacts = model_artifacts();
+    for artifact in &mut artifacts {
+        if artifact.artifact_id == "party.Customer.entity" {
+            let mut wire = serde_json::to_value(&*artifact).expect("entity JSON");
+            let kind = if normalized == "date" {
+                json!({"kind": "date"})
+            } else {
+                json!({"kind": "timestamp", "timezone": "utc"})
+            };
+            *wire
+                .pointer_mut("/payload/objectType/properties/3/type")
+                .expect("property type") = kind;
+            *wire
+                .pointer_mut("/payload/objectType/properties/3/constraints/nullable")
+                .expect("nullable constraint") = json!(!required);
+            *artifact = serde_json::from_value(wire).expect("temporal entity");
+        }
+    }
+    artifacts.extend([source, mapping.clone()]);
+    compile_mapping_artifact(&mapping, &artifacts, &[]).expect("temporal mapping admitted")
+}
+
+#[test]
+fn temporal_enum_mapping_runtime_rejects_invalid_values_and_preserves_nulls() {
+    let recorded = UtcTimestamp("2026-10-25T00:00:00Z".to_owned());
+    for normalized in ["date", "datetime"] {
+        for required in [false, true] {
+            let compiled = temporal_enum_mapping(normalized, required);
+            let apply = |value: Value, state: &str| {
+                compiled.apply(
+                    &[document(
+                        "Customer",
+                        &json!({
+                            "name": "C-1", "customer_name": "Customer", "customer_type": state,
+                            "custom_loyalty_tier": value
+                        }),
+                    )],
+                    &recorded,
+                )
+            };
+            let valid = if normalized == "date" {
+                "2024-02-29"
+            } else {
+                "2026-10-25T02:30:00+02:30"
+            };
+            let expected = if normalized == "date" {
+                valid
+            } else {
+                "2026-10-25T00:00:00Z"
+            };
+            let records = apply(json!(valid), "Company").expect("valid temporal input");
+            assert_eq!(
+                records[0].invocations[0].input.get("loyalty_tier"),
+                Some(&RuntimeValue::String(expected.to_owned()))
+            );
+            let null = apply(Value::Null, "Company");
+            if required {
+                assert!(
+                    null.expect_err("required null")
+                        .iter()
+                        .any(|d| d.code == "mapping.runtime.invalid_record")
+                );
+            } else {
+                assert_eq!(
+                    null.expect("nullable null")[0].invocations[0]
+                        .input
+                        .get("loyalty_tier"),
+                    Some(&RuntimeValue::Null)
+                );
+            }
+            if normalized == "date" && !required {
+                assert_eq!(
+                    apply(json!(""), "Company").expect("existing optional date sentinel")[0]
+                        .invocations[0]
+                        .input
+                        .get("loyalty_tier"),
+                    Some(&RuntimeValue::Null)
+                );
+            } else {
+                assert!(apply(json!(""), "Company").is_err());
+            }
+            let invalid: &[&str] = if normalized == "date" {
+                &["2026-02-29", "2026-13-01", "2026-01-01T00:00:00Z"]
+            } else {
+                &[
+                    "2026-02-29T00:00:00Z",
+                    "2026-10-25T00:00:00",
+                    "2026-10-25T00:00:00-00:00",
+                ]
+            };
+            for value in invalid {
+                assert!(apply(json!(value), "Company").is_err(), "{value}");
+            }
+            assert!(
+                apply(json!(valid), "Unknown")
+                    .expect_err("unknown enum")
+                    .iter()
+                    .any(|d| d.code == "mapping.runtime.invalid_record")
+            );
+            if normalized == "datetime" {
+                let utc = apply(json!(expected), "Company").expect("UTC spelling");
+                assert_eq!(utc[0].invocations, records[0].invocations);
+            }
+        }
+    }
+}

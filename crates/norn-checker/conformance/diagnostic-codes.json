@@ -401,6 +401,62 @@
       "tier": "T2"
     },
     {
+      "code": "consistency.chase.refused",
+      "message": "the chase exceeded its {resource} budget of {limit}; consistency is unknown",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.instance.violation",
+      "message": "the data breaks {rule}: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.mapping.non_total",
+      "message": "{element} never reaches the target",
+      "severity": "warning",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.schema.incompatible",
+      "message": "no {relation} tuple can be mapped: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.schema.unpreserved_constraint",
+      "message": "the source admits data that breaks {rule}: {witness}",
+      "severity": "warning",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.theory.malformed",
+      "message": "the lowered theory is malformed: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.theory.not_weakly_acyclic",
+      "message": "TGDs [{rules}] create existential values on a cycle, so the chase may not terminate",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "consistency.theory.vacuous",
+      "message": "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",
@@ -763,6 +819,13 @@
       "severity": "error",
       "since": "0.1.0",
       "tier": "T2"
+    },
+    {
+      "code": "interface.validation.invalid_inheritance",
+      "message": "interface parent contract is repeated, missing, cyclic or incompatible",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
     },
     {
       "code": "interface.validation.invalid_link_id",
@@ -2641,6 +2704,13 @@
       "tier": "T6"
     },
     {
+      "code": "ontology_link.validation.invalid_payload",
+      "message": "ontology link is invalid at {path}: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
       "code": "ontology_pack.validation.invalid_payload",
       "message": "ontology pack is invalid at {path}: {detail}",
       "severity": "error",
@@ -3261,6 +3331,69 @@
       "message": "dataset {dataset} has no field {field}",
       "severity": "error",
       "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.control_missing_for_transition",
+      "message": "a declared navigation item or action binding has no control that offers it: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.control_without_legal_transition",
+      "message": "a navigation control leads to a page the app does not declare: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.dialog_depth_exceeds_verified_bound",
+      "message": "dialog nesting exceeds the stacked dialogs the renderer interaction statechart is verified for: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.dialog_no_keyboard_close",
+      "message": "a dialog can only be dismissed by pointer; it needs a visible close or Escape: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.dialog_no_restore_target",
+      "message": "a dialog has no focus restore target (action control inside it, named enclosing region or page): {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.keyboard_unreachable_control",
+      "message": "an interactive control is not keyboard reachable: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.nullable_without_clear",
+      "message": "a field bound to a nullable input cannot be cleared to null (no clear affordance, or always required): {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.unnamed_control",
+      "message": "an interactive control has no accessible name: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "widget.interaction.unreachable_page",
+      "message": "an app page has no control that reaches it from the entry page: {detail}",
+      "severity": "error",
+      "since": "0.2.0",
       "tier": "T2"
     },
     {

@@ -41,6 +41,7 @@ pub mod connector;
 pub mod customization;
 pub mod data_quality;
 pub mod decision_output;
+pub mod deontic;
 pub mod entitlement;
 pub mod entity;
 pub mod entity_v2;
@@ -71,6 +72,7 @@ pub mod sealing;
 pub mod setting;
 pub mod source_schema;
 pub mod technical_view;
+pub mod theorem_input;
 pub mod view;
 pub mod widget;
 pub mod widget_ux;
@@ -84,10 +86,12 @@ pub use action::{
     McpToolAnnotations, WriteChange,
 };
 pub use business_pack::{
-    BusinessPackKind, BusinessPackRoot, CompositionPackKind, CompositionPackRoot, MappingRelation,
-    OntologyMapping, OntologyPackKind, OntologyPackRoot, OntologyShape, OntologyShapeField,
-    OntologySource, OntologySourceFile, OntologyTerm, OntologyTermKind, OntologyTermStatus,
-    PackArtifactKind, PackArtifactRef, SemanticAuthority, ShapeValueType, SourceRedistribution,
+    BusinessPackKind, BusinessPackRoot, CompositionPackKind, CompositionPackRoot,
+    CorrespondenceRelation, LinkResidual, LinkedPack, MappingRelation, OntologyLinkKind,
+    OntologyLinkRoot, OntologyMapping, OntologyPackKind, OntologyPackRoot, OntologyShape,
+    OntologyShapeField, OntologySource, OntologySourceFile, OntologyTerm, OntologyTermKind,
+    OntologyTermStatus, PackArtifactKind, PackArtifactRef, ResidualReason, SemanticAuthority,
+    ShapeValueType, SourceImportMode, SourceImporter, SourceRedistribution, TermCorrespondence,
 };
 pub use connector::{
     ApiKeyFormat, ConnectorAuth, ConnectorChildMergeProfile, ConnectorCommand,
@@ -193,6 +197,12 @@ pub use setting::{
     SettingValueType,
 };
 pub use technical_view::{LineageRelation, TECHNICAL_NAMESPACE, TechnicalType, is_technical_type};
+pub use theorem_input::{
+    SourceRef, SourceSpan, TheoremAuthority, TheoremConclusion, TheoremConclusionModality,
+    TheoremEvidenceKind, TheoremEvidenceLabel, TheoremEvidenceTarget, TheoremInput,
+    TheoremInputSchemaVersion, TheoremPremise, TheoremPremiseKind, TheoremSemanticProfile,
+    TheoremStateModel, TheoremVariable, TheoremVariableDomain, TheoremVariableType,
+};
 pub use view::{
     CalcExpr, PrimitiveBasisClass, TemporalScope, TemporalScopeMode, ViewInputKind, ViewInputRef,
     ViewIrPayload, ViewMaintenance,
@@ -1257,8 +1267,9 @@ define_payload_root!(
     // comment below is that schema's description.
     /// The payload of a `business_pack` artifact: a composition pack
     /// (`packKind: "composition"`, or omitted by IR `0.1` packs; `provides`,
-    /// `artifacts`) or an ontology pack (`packKind: "ontology"`; `sources`,
-    /// `terms`, `mappings`, `shapes`).
+    /// `artifacts`), an ontology pack (`packKind: "ontology"`; `sources`,
+    /// `terms`, `mappings`, `shapes`) or a link pack (`packKind: "link"`;
+    /// `fromPack`, `toPack`, `correspondences`, `residuals`).
     #[schemars(with = "BusinessPackRoot")]
     BusinessPackPayload {
     required { pack_id => "packId" as String, pack_version => "packVersion" as String }
@@ -1269,7 +1280,11 @@ define_payload_root!(
         sources => "sources" as Vec<OntologySource>,
         terms => "terms" as Vec<OntologyTerm>,
         mappings => "mappings" as Vec<OntologyMapping>,
-        shapes => "shapes" as Vec<OntologyShape>
+        shapes => "shapes" as Vec<OntologyShape>,
+        from_pack => "fromPack" as LinkedPack,
+        to_pack => "toPack" as LinkedPack,
+        correspondences => "correspondences" as Vec<TermCorrespondence>,
+        residuals => "residuals" as Vec<LinkResidual>
     }
 }
 );

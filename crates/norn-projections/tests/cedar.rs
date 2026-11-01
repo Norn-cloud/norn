@@ -143,7 +143,7 @@ fn representative_model() -> (Vec<ObjectTypeDef>, Vec<PropertyTypeDef>, Vec<Acti
 #[test]
 fn minimal_schema_matches_its_golden() {
     let object_types = vec![object_type(serde_json::json!({ "name": "demo.Note" }))];
-    let projection = project_cedar_schema(&object_types, &[]);
+    let projection = project_cedar_schema(&object_types, &[], &[]);
     let golden = std::fs::read_to_string(fixtures().join(MINIMAL_GOLDEN))
         .expect("minimal Cedar golden exists");
     assert_eq!(projection.schema, golden);
@@ -166,6 +166,7 @@ fn principal_attribute_projection_emits_only_safe_typed_actor_fields() {
     ]);
     let projection = project_cedar_schema_with_catalog_and_principal_attributes(
         &object_types,
+        &[],
         &[],
         &[],
         &attributes,
@@ -191,6 +192,7 @@ fn principal_attribute_projection_emits_only_safe_typed_actor_fields() {
         &object_types,
         &[],
         &[],
+        &[],
         &invalid,
     );
     assert!(projection.principal_attributes.is_empty());
@@ -202,7 +204,8 @@ fn principal_attribute_projection_emits_only_safe_typed_actor_fields() {
 #[test]
 fn inheritance_catalog_refs_links_and_actions_project_deterministically() {
     let (object_types, property_types, actions) = representative_model();
-    let projection = project_cedar_schema_with_catalog(&object_types, &property_types, &actions);
+    let projection =
+        project_cedar_schema_with_catalog(&object_types, &[], &property_types, &actions);
 
     assert!(projection.schema.contains("code?: String"));
     assert!(projection.schema.contains("enabled?: Bool"));
@@ -291,7 +294,12 @@ fn inheritance_catalog_refs_links_and_actions_project_deterministically() {
     reversed_actions.reverse();
     assert_eq!(
         projection,
-        project_cedar_schema_with_catalog(&reversed_types, &reversed_catalog, &reversed_actions)
+        project_cedar_schema_with_catalog(
+            &reversed_types,
+            &[],
+            &reversed_catalog,
+            &reversed_actions
+        )
     );
     assert!(projection.losses.windows(2).all(|pair| pair[0] < pair[1]));
 }
@@ -299,7 +307,8 @@ fn inheritance_catalog_refs_links_and_actions_project_deterministically() {
 #[test]
 fn unsupported_semantics_and_reserved_names_are_reported() {
     let (object_types, property_types, actions) = representative_model();
-    let projection = project_cedar_schema_with_catalog(&object_types, &property_types, &actions);
+    let projection =
+        project_cedar_schema_with_catalog(&object_types, &[], &property_types, &actions);
     let has_loss = |subject: &str, reason: &str| {
         projection
             .losses
@@ -346,7 +355,7 @@ fn missing_and_cyclic_property_refs_are_losses_and_omit_the_attribute() {
             "type": { "kind": "ref", "name": "shared.a" }
         })),
     ];
-    let projection = project_cedar_schema_with_catalog(&object_types, &catalog, &[]);
+    let projection = project_cedar_schema_with_catalog(&object_types, &[], &catalog, &[]);
     assert!(!projection.schema.contains("missing?:"));
     assert!(!projection.schema.contains("cycle?:"));
     assert!(projection.losses.iter().any(|loss| {
@@ -367,10 +376,45 @@ fn the_empty_catalog_wrapper_reports_refs_instead_of_guessing_their_type() {
             { "id": "code", "type": { "kind": "ref", "name": "shared.code" } }
         ]
     }))];
-    let projection = project_cedar_schema(&object_types, &[]);
+    let projection = project_cedar_schema(&object_types, &[], &[]);
     assert!(!projection.schema.contains("code?:"));
     assert!(projection.losses.iter().any(|loss| {
         loss.subject == "demo.Referenced.code -> shared.code"
             && loss.reason.contains("absent from the supplied catalog")
     }));
+}
+
+#[test]
+fn parent_interface_inverse_attributes_reach_child_interface_implementers() {
+    let objects: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(serde_json::json!([
+        {"name":"demo.Source","links":[{"id":"owner","target":"demo.Parent","inverse":"sources","cardinality":{"to":"one","from":"many"}}]},
+        {"name":"demo.Target","implements":["demo.Child"]}
+    ])).expect("objects");
+    let interfaces: Vec<norn_ir::InterfaceDef> = serde_json::from_value(serde_json::json!([
+        {"name":"demo.Parent"},{"name":"demo.Child","extends":["demo.Parent"]}
+    ]))
+    .expect("interfaces");
+    let projection = project_cedar_schema(&objects, &interfaces, &[]);
+    assert_eq!(
+        projection.losses,
+        vec![
+            CedarLoss {
+                subject: "demo.Source.owner".to_owned(),
+                reason: "EntityIR has no hierarchy marker, so Cedar memberOf cannot be inferred",
+            },
+            CedarLoss {
+                subject: "demo.Source.owner".to_owned(),
+                reason: "link target type is not constrained by the generic Cedar record",
+            },
+            CedarLoss {
+                subject: "demo.Target".to_owned(),
+                reason: "implemented interface identity is not represented in Cedar",
+            },
+            CedarLoss {
+                subject: "demo.Target.sources".to_owned(),
+                reason: "inverse link target type is not constrained by the generic Cedar record",
+            }
+        ]
+    );
+    assert!(projection.schema.contains("sources?: Set<"));
 }
