@@ -1104,6 +1104,31 @@ pub fn verify_finding_values(
     values: &JsonObject,
     finding: &DataQualityFinding,
 ) -> Result<bool, ObservationRefusal> {
+    let expected = reevaluate_finding(catalog, key, values, finding)?;
+    Ok(expected.iter().any(|expected| {
+        expected.rule_ref == finding.rule_ref
+            && expected.subjects == finding.subjects
+            && expected.evidence_digest == finding.evidence_digest
+            && expected.message == finding.message
+            && expected.outcome == finding.outcome
+            && expected.severity == finding.severity
+    }))
+}
+
+/// OBS-EVIDENCE-1: revalidate one rule under its pinned catalog, independent of old outcome values.
+/// The caller authenticates the finding and supplies its retained definition model.
+///
+/// # Errors
+/// Unsupported semantics, exhausted evaluation fuel or invalid finding construction.
+pub fn finding_rule_is_violated(
+    catalog: &TypeCatalog<'_>, key: &FactKey, values: &JsonObject, finding: &DataQualityFinding,
+) -> Result<bool, ObservationRefusal> {
+    Ok(reevaluate_finding(catalog, key, values, finding)?.iter().any(|expected| expected.rule_ref == finding.rule_ref))
+}
+
+fn reevaluate_finding(
+    catalog: &TypeCatalog<'_>, key: &FactKey, values: &JsonObject, finding: &DataQualityFinding,
+) -> Result<Vec<DataQualityFinding>, ObservationRefusal> {
     let mut remaining = EvaluationBudget::default().units();
     let failures = evaluate_invariants(catalog, key, values, &mut remaining).map_err(|error| {
         ObservationRefusal::Encoding(format!(
@@ -1123,22 +1148,15 @@ pub fn verify_finding_values(
         },
         |lineage| lineage.provenance.clone(),
     );
-    let expected = findings_for(
+    findings_for(
         catalog,
         key,
         values,
         &provenance,
         "verified-history",
         &failures,
-    )?;
-    Ok(expected.iter().any(|expected| {
-        expected.rule_ref == finding.rule_ref
-            && expected.subjects == finding.subjects
-            && expected.evidence_digest == finding.evidence_digest
-            && expected.message == finding.message
-            && expected.outcome == finding.outcome
-            && expected.severity == finding.severity
-    }))
+    )
+
 }
 
 const TEMPORAL_PROPERTY_RULE_ID: &str = "norn.temporal.property_validity";
