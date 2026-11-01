@@ -2681,9 +2681,9 @@ fn post_partition_plan_fences_absences_and_commits_all_effects_once() {
                 &postings,
                 "later-refusal"
             ),
-            Err(CommitError::Quantity(
+            Err(CommitError::Host(CellError::Quantity(
                 QuantityError::InsufficientAvailable { .. }
-            ))
+            )))
         ),
         "POST-ATOMIC-PARTITIONS later quantity refusal"
     );
