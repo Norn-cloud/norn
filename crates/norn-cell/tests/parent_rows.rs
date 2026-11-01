@@ -3362,7 +3362,7 @@ mod cp1_stock {
             let model = Model::from_definitions(&definitions, &[]).expect("model");
             let dir = tempfile::tempdir().expect("directory");
             let mut store = CellStore::open(
-                dir.path().join("live.sqlite"),
+                &dir.path().join("live.sqlite"),
                 model.clone(),
                 StoreOptions::default(),
             )
