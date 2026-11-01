@@ -1040,9 +1040,8 @@ fn kernel_owned_row_fields_cannot_be_protected() {
 
 #[test]
 fn owned_children_refuse_protected_declared_and_inherited_defaults() {
-    for default in [json!(""), json!(0), json!(false), Value::Null] {
+    for (kind, default) in [("text", json!("")), ("integer", json!(0)), ("boolean", json!(false)), ("text", Value::Null)] {
         for inherited in [false, true] {
-            let kind = match &default { Value::Number(_) => "integer", Value::Bool(_) => "boolean", _ => "text" };
             let mut child = child_type("text", "integer");
             child["properties"][2] = json!({"id":"label", "type":{"kind":kind}, "constraints":{"nullable":true}, "protected":true, "default":default});
             let mut definitions = vec![parent_type(20, &json!({"to":"many","from":"one"})), child];
@@ -1050,11 +1049,18 @@ fn owned_children_refuse_protected_declared_and_inherited_defaults() {
                 let mut base = definitions[1].clone();
                 base["name"] = json!(CHILD_BASE);
                 definitions[1]["extends"] = json!(CHILD_BASE);
-                definitions[1]["properties"][2].as_object_mut().expect("property").remove("default");
+                definitions[1]["properties"][2]
+                    .as_object_mut()
+                    .expect("property")
+                    .remove("default");
                 definitions[1]["properties"][2]["protected"] = json!(false);
                 definitions.push(base);
             }
-            assert_finding(&model_findings(definitions), object_codes::PROTECTED_DEFAULT, "/objectTypes/0/ownedCollections/0/childType");
+            assert_finding(
+                &model_findings(definitions),
+                object_codes::PROTECTED_DEFAULT,
+                "/objectTypes/0/ownedCollections/0/childType",
+            );
         }
     }
 }
@@ -1083,12 +1089,38 @@ proptest::proptest! {
 
 #[test]
 fn base_owned_collections_refuse_protected_extension_defaults() {
-    let objects: Vec<ObjectTypeDef> = vec![parent_type(20, &json!({"to":"many","from":"one"})), child_type("text", "integer")]
-        .into_iter().map(|value| serde_json::from_value(value).expect("base type")).collect();
+    let objects: Vec<ObjectTypeDef> = vec![
+        parent_type(20, &json!({"to":"many","from":"one"})),
+        child_type("text", "integer"),
+    ]
+    .into_iter()
+    .map(|value| serde_json::from_value(value).expect("base type"))
+    .collect();
     let extensions = [serde_json::from_value(json!({"namespace":"acme", "target":CHILD, "properties":[{"id":"acme__flag","type":{"kind":"boolean"},"protected":true,"default":false}]})).expect("extension")];
     let registry = BTreeSet::new();
-    let context = EntityContext { catalog: &[], registry: &registry, base: EntityModel { interfaces: &[], object_types: &objects, extensions: &[] }, tenant: None };
-    let findings = check_entity_model(&EntityModel { interfaces: &[], object_types: &[], extensions: &extensions }, &context);
-    let finding = findings.iter().find(|finding| finding.code.as_str() == object_codes::PROTECTED_DEFAULT).expect("protected extension default refused");
-    assert!(finding.message.contains("move the value into the authoritative rule's creation effect, or drop the protection"));
+    let context = EntityContext {
+        catalog: &[],
+        registry: &registry,
+        base: EntityModel {
+            interfaces: &[],
+            object_types: &objects,
+            extensions: &[],
+        },
+        tenant: None,
+    };
+    let findings = check_entity_model(
+        &EntityModel {
+            interfaces: &[],
+            object_types: &[],
+            extensions: &extensions,
+        },
+        &context,
+    );
+    let finding = findings
+        .iter()
+        .find(|finding| finding.code.as_str() == object_codes::PROTECTED_DEFAULT)
+        .expect("protected extension default refused");
+    assert!(finding.message.contains(
+        "move the value into the authoritative rule's creation effect, or drop the protection"
+    ));
 }

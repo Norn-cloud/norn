@@ -677,23 +677,39 @@ impl<'a> Checker<'a, '_> {
     }
 
     fn check_owned_defaults(&mut self) {
-        let collections = self.types.values().flat_map(|entry| {
-            entry.def.owned_collections.iter().enumerate()
-                .map(move |(index, collection)| (entry.local, index, collection))
-        }).collect::<Vec<_>>();
+        let collections = self
+            .types
+            .values()
+            .flat_map(|entry| {
+                entry
+                    .def
+                    .owned_collections
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, collection)| (entry.local, index, collection))
+            })
+            .collect::<Vec<_>>();
         for (owner, index, collection) in collections {
             let table = self.table(&collection.child_type);
             for (property_id, property) in table.iter() {
-                if property.default.is_some() && self.protected(&collection.child_type, property_id) {
+                if property.default.is_some() && self.protected(&collection.child_type, property_id)
+                {
                     let mut finding = error(
                         codes::PROTECTED_DEFAULT,
-                        format!("owned child property {:?} of {:?} has a protected default; move the value into the authoritative rule's creation effect, or drop the protection", property_id.as_str(), collection.child_type.as_str()),
+                        format!(
+                            "owned child property {:?} of {:?} has a protected default; move the value into the authoritative rule's creation effect, or drop the protection",
+                            property_id.as_str(),
+                            collection.child_type.as_str()
+                        ),
                         span_at(&[], &[]),
                     );
                     finding.span = owner.map(|owner| {
                         let owner = owner.to_string();
                         let index = index.to_string();
-                        span_at(&pointer(self.roots.object_types, &owner), &["ownedCollections", &index, "childType"])
+                        span_at(
+                            &pointer(self.roots.object_types, &owner),
+                            &["ownedCollections", &index, "childType"],
+                        )
                     });
                     self.out.push(finding);
                 }
