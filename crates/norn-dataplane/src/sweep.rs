@@ -287,7 +287,7 @@ impl FrappeSweep {
             });
         }
         let response = parse_exact_json(response)?;
-        Self::rows(&response)?
+        self.rows(command, &response)?
             .iter()
             .map(|row| {
                 let cursor = self.row_cursor(command.feed, row)?;
@@ -310,7 +310,7 @@ impl FrappeSweep {
 
     /// Turn a listing and its full-document responses into observations.
     ///
-    /// `document_responses` contains one `{"message": {...}}` response per live
+    /// `document_responses` contains exact JSON bytes for each `{"message": {...}}` live
     /// listing row, in listing order; it must be empty for deletions, whose
     /// rows already embed the complete document. `extracted_at` is the host's
     /// receipt time in milliseconds.
@@ -332,7 +332,7 @@ impl FrappeSweep {
     ) -> Result<SweepPage, IngestError> {
         self.check_command(command)?;
         let response = parse_exact_json(response)?;
-        let rows = Self::rows(&response)?;
+        let rows = self.rows(command, &response)?;
         let expected = match command.feed {
             SweepFeed::Documents => rows.len(),
             SweepFeed::Deletions => 0,
@@ -409,15 +409,37 @@ impl FrappeSweep {
         Ok(())
     }
 
-    fn rows(response: &Value) -> Result<&[Value], IngestError> {
-        response
-            .get("data")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .ok_or(IngestError::MissingField {
-                field: "data",
-                expected: "array",
-            })
+    fn rows<'a>(
+        &self,
+        command: &SweepCommand,
+        response: &'a Value,
+    ) -> Result<&'a [Value], IngestError> {
+        let rows =
+            response
+                .get("data")
+                .and_then(Value::as_array)
+                .ok_or(IngestError::MissingField {
+                    field: "data",
+                    expected: "array",
+                })?;
+        if u64::try_from(rows.len()).unwrap_or(u64::MAX) > u64::from(self.page_size) {
+            return Err(IngestError::InvalidSweep {
+                reason: "the listing exceeds its page size",
+            });
+        }
+        let mut previous = command.after.clone();
+        for row in rows {
+            let cursor = self.row_cursor(command.feed, row)?;
+            if previous.as_ref().is_some_and(|last| {
+                (&last.modified, &last.name) >= (&cursor.modified, &cursor.name)
+            }) {
+                return Err(IngestError::InvalidSweep {
+                    reason: "listing rows must advance in keyset order",
+                });
+            }
+            previous = Some(cursor);
+        }
+        Ok(rows)
     }
 
     fn row_cursor(&self, feed: SweepFeed, row: &Value) -> Result<SweepCursor, IngestError> {
@@ -539,7 +561,58 @@ mod tests {
         assert!(sweep.plan(SweepFeed::Documents, None).is_err());
     }
 
+    fn hydrated_inputs(name: &str) -> (Vec<u8>, Vec<Vec<u8>>) {
+        let listing = json!({"data":[{"name":name,"modified":"2026-11-01 00:00:00"}]})
+            .to_string()
+            .into_bytes();
+        let full = json!({"message":{"doctype":"Fixture","name":name,"modified":"2026-11-01 00:00:00","items":[{"quantity":42}]}}).to_string().into_bytes();
+        (listing, vec![full])
+    }
+
+    #[test]
+    fn sweep_hydration_conforms() {
+        let sweep = sweep();
+        let command = sweep.plan(SweepFeed::Documents, None).expect("plan");
+        let (listing, full) = hydrated_inputs("row");
+        assert_eq!(
+            sweep
+                .plan_documents(&command, &listing)
+                .expect("fetches")
+                .len(),
+            1
+        );
+        let page = sweep
+            .ingest(&command, &listing, &full, 42)
+            .expect("full page");
+        assert_eq!(
+            page.observations.first().expect("observation").payload["items"],
+            json!([{"quantity":42}])
+        );
+        assert!(page.next.is_some());
+        assert!(sweep.ingest(&command, &listing, &[], 42).is_err());
+        let lossy = String::from_utf8(full.first().expect("full").clone())
+            .expect("utf8")
+            .replace("42", "1.00000000000000001")
+            .into_bytes();
+        assert!(sweep.ingest(&command, &listing, &[lossy], 42).is_err());
+        let changed = String::from_utf8(full.first().expect("full").clone())
+            .expect("utf8")
+            .replace("00:00:00", "00:00:01")
+            .into_bytes();
+        assert!(sweep.ingest(&command, &listing, &[changed], 42).is_err());
+    }
+
     proptest! {
+        #[test]
+        fn generated_hydration_conforms(name in "[a-zA-Z0-9/]{1,24}") {
+            let sweep = sweep();
+            let command = sweep.plan(SweepFeed::Documents, None).expect("plan");
+            let (listing, full) = hydrated_inputs(&name);
+            let page = sweep.ingest(&command, &listing, &full, 42).expect("generated page");
+            prop_assert_eq!(page.observations.len(), 1);
+            prop_assert!(page.exhausted);
+            prop_assert_eq!(page.next.expect("next").name, name);
+        }
         #[test]
         fn generated_sweep_plans_conform(size in 1u32..10_000, name in "[a-zA-Z0-9/]{1,24}", deletions in any::<bool>(), seconds in 0u32..3600) {
             let mut sweep = sweep();
