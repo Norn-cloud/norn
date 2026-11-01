@@ -26,7 +26,7 @@
     },
     "rationale": "A conversion retains its input as output and explicit loss.",
     "response": {
-      "invariantId": "core.law.conversion_conservation",
+      "invariantId": "conversion_conservation",
       "kind": "invariant",
       "objectType": "core.Conversion"
     },
