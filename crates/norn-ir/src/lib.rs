@@ -127,6 +127,7 @@ pub use entity_v2::extension::{
     EXTENSION_MEMBER_SEPARATOR, EXTENSION_NAMESPACE_PATTERN, ExtensionNamespace,
     ObjectTypeExtension,
 };
+pub use entity_v2::concept_role::{ConceptRole, RoleConflict};
 pub use entity_v2::interface::{InterfaceDef, InterfaceName, InterfaceProperty};
 pub use entity_v2::invariant::{ConstraintClass, Invariant, InvariantId};
 pub use entity_v2::lifecycle::{

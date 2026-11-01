@@ -471,6 +471,16 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     entry(
+        "core.graph.role_conflict",
+        Tier::T3,
+        "inherited concept roles disagree",
+    ),
+    entry(
+        "core.graph.role_mismatch",
+        Tier::T3,
+        "declared concept role contradicts an inherited role",
+    ),
+    entry(
         "customization.validation.invalid_payload",
         Tier::T2,
         "CustomizationIR payload is invalid at {path}: {detail}",

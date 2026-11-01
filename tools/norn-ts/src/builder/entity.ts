@@ -138,6 +138,7 @@ export interface InvariantDecl {
 }
 
 interface TypeMetaBase {
+  readonly role?: "thing" | "happening"
   readonly markings?: ReadonlyArray<string>
   /** Qualified name: dotted lower-case domain namespace and a PascalCase type name (`commerce.SalesOrder`). */
   readonly name: string
@@ -286,6 +287,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
           entityVersion: "2.0",
           interface: {
             name: def.name,
+            role: def.role,
             extends: omitEmpty(def.extends),
             markings: omitEmpty(def.markings ?? []),
             description: def.description,
@@ -303,6 +305,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
           entityVersion: "2.0",
           objectType: {
             name: def.name,
+            role: def.role,
             markings: omitEmpty(def.markings ?? []),
             description: def.description,
             extends: def.extends,

@@ -341,6 +341,11 @@ class DefinitionCompiler {
       if (!value) throw new CompileError("NORN-FLOW-LITERAL", `a definition needs ${key}`, call)
       return value
     }
+    const roleNode = members.get("role")
+    const role = roleNode ? this.string(roleNode) : undefined
+    if (role !== undefined && role !== "thing" && role !== "happening") {
+      throw new CompileError("NORN-FLOW-LITERAL", "role must be thing or happening", roleNode!)
+    }
     const description = members.get("description")
     const markings = members.get("markings")
     const schema = this.schemas.read(required("properties"))
@@ -349,6 +354,7 @@ class DefinitionCompiler {
       name: this.string(required("name")),
       title: this.string(required("title")),
       version: this.string(required("version")),
+      ...(role === undefined ? {} : { role }),
       ...(description ? { description: this.string(description) } : {}),
       ...(markings ? { markings: this.strings(markings) } : {}),
       projected,
@@ -435,7 +441,7 @@ class DefinitionCompiler {
 
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
-      "name", "title", "version", "description", "extends", "properties", "links", "invariants", "markings", "propertyMarkings",
+      "name", "title", "version", "description", "role", "extends", "properties", "links", "invariants", "markings", "propertyMarkings",
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
@@ -473,7 +479,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings"])
+    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings"])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()

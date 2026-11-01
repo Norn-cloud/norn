@@ -1866,3 +1866,80 @@ fn inverse_roles_cannot_shadow_members_of_descendant_interfaces_without_implemen
             .any(|(code, _)| code == codes::MEMBER_ID_CONFLICT)
     );
 }
+
+// GRAPH-ROLE-1: exercise admission, including interfaces with no implementors.
+fn role_diagnostics(declarations: &[Option<bool>], edges: &[u16]) -> Vec<String> {
+    let interfaces: Vec<InterfaceDef> = declarations
+        .iter()
+        .enumerate()
+        .map(|(i, role)| {
+            let mut def: InterfaceDef =
+                serde_json::from_value(serde_json::json!({"name": format!("test.Node{i}")}))
+                    .expect("interface");
+            def.role = role.map(|happening| {
+                if happening {
+                    norn_ir::ConceptRole::Happening
+                } else {
+                    norn_ir::ConceptRole::Thing
+                }
+            });
+            def.extends = (0..i)
+                .filter(|parent| edges[i] & (1 << parent) != 0)
+                .map(|parent| norn_ir::InterfaceName(format!("test.Node{parent}")))
+                .collect();
+            def
+        })
+        .collect();
+    let model = EntityModel {
+        interfaces: &interfaces,
+        ..EntityModel::EMPTY
+    };
+    let registry = BTreeSet::new();
+    let context = EntityContext {
+        catalog: &[],
+        registry: &registry,
+        base: EntityModel::EMPTY,
+        tenant: None,
+    };
+    check_entity_model(&model, &context)
+        .into_iter()
+        .map(|d| d.code.as_str().to_owned())
+        .collect()
+}
+
+#[test]
+fn graph_role_defaults_inherits_and_refuses_conflicts_without_implementors() {
+    assert!(role_diagnostics(&[None, None], &[0, 1]).is_empty());
+    assert!(role_diagnostics(&[Some(true), None], &[0, 1]).is_empty());
+    assert_eq!(
+        role_diagnostics(&[Some(true), Some(false)], &[0, 1]),
+        ["core.graph.role_mismatch"]
+    );
+    assert_eq!(
+        role_diagnostics(&[Some(true), Some(false), None], &[0, 0, 3]),
+        ["core.graph.role_conflict"]
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn graph_role_dags_match_independent_bitset_oracle(nodes in proptest::collection::vec((proptest::option::of(proptest::bool::ANY), proptest::num::u16::ANY), 1..12)) {
+        let (roles, edges): (Vec<_>, Vec<_>) = nodes.into_iter().unzip();
+        let mut expected: Vec<Result<bool, &str>> = Vec::new();
+        for (i, declared) in roles.iter().enumerate() {
+            let parents: Vec<_> = (0..i).filter(|p| edges[i] & (1 << p) != 0).map(|p| expected[p]).collect();
+            let bits = parents.iter().filter_map(|p| p.as_ref().ok()).fold(0_u8, |bits, role| bits | if *role { 2 } else { 1 });
+            expected.push(if let Some(error) = parents.iter().find_map(|p| p.as_ref().err()) {
+                Err(*error)
+            } else if bits == 3 {
+                Err("core.graph.role_conflict")
+            } else if declared.is_some_and(|role| bits != 0 && bits != if role { 2 } else { 1 }) {
+                Err("core.graph.role_mismatch")
+            } else {
+                Ok(declared.unwrap_or(bits == 2))
+            });
+        }
+        let refusals: Vec<_> = expected.into_iter().filter_map(Result::err).collect();
+        proptest::prop_assert_eq!(role_diagnostics(&roles, &edges), refusals);
+    }
+}

@@ -395,3 +395,12 @@ test("acyclic authoring compiles and extracts canonical IR with false omitted", 
   expect(canonicalJson(compiled.artifacts)).toBe(canonicalJson([built.artifact]))
   if (checker) expect(checker.checkArtifactSet(compiled.artifacts).admitted).toBe(true)
 })
+
+test("GRAPH-ROLE-1 preserves declared roles and omission in canonical entities", () => {
+  for (const role of [undefined, "thing", "happening"] satisfies ReadonlyArray<"thing" | "happening" | undefined>) {
+    const definition = E.interfaceType({ name: "test.Role", title: "Role", version: "1.0.0", properties: [], ...(role === undefined ? {} : { role }) })
+    const built = E.lowerEntity(definition, { scope })
+    if (!built.ok) throw new Error(JSON.stringify(built.diagnostics))
+    expect(built.artifact).toMatchObject({ payload: { interface: { ...(role === undefined ? {} : { role }) } } })
+  }
+})
