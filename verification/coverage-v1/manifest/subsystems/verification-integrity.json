@@ -428,7 +428,6 @@
     "vendor/zen/core/types/tests/ref_ser.rs",
     "vendor/zen/core/types/tests/variable.rs",
     "vendor/zen/core/types/tests/variable_type.rs",
-    "verification/canonical-values-v1/diagnostic_kani.rs",
     "verification/coverage-v1/negative_canaries.py",
     "verification/coverage-v1/validate.py",
     "verification/coverage-v1/validate_result.py",
@@ -454,6 +453,10 @@
     "verification/stripmine-2026-08-22/scripts/validate.sh",
     "tools/norn-ts/fixtures/stock/stock.source.ts",
     "tools/norn-ts/test/stock-definitions.test.ts",
-    "crates/norn-checker/src/obligations/induction.rs"
+    "crates/norn-checker/src/obligations/induction.rs",
+    "scripts/demo/run.sh",
+    "scripts/demo/jewelry.source.ts",
+    "crates/norn-checker/examples/jewelry_demo.rs",
+    "verification/canonical-values-v1/diagnostic_kani.rs"
   ]
 }
