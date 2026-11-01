@@ -3,6 +3,7 @@
 pub mod raw_observation;
 
 pub use raw_observation::{
-    ObservationError, ObservationKind, RAW_OBSERVATION_CONTRACT, REDACTED, RedactionPolicy,
-    RedactionRecord, parse_exact_json,
+    ObservationDraft, ObservationError, ObservationKind, ObservationSubmission,
+    RAW_OBSERVATION_CONTRACT, REDACTED, RawObservation, RedactionPolicy, RedactionRecord,
+    parse_exact_json, raw_observation_schema,
 };
