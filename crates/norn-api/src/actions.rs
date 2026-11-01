@@ -102,7 +102,7 @@ pub fn call_action_in_epoch<E: SqlEngine>(
     for artifact in &artifacts {
         if let norn_ir::ArtifactPayload::Action(payload) = &artifact.payload {
             let action: norn_ir::ActionRoot =
-                serde_json::from_value(payload.to_json_value()).map_err(Refusal::host)?;
+                norn_ir::runtime::decode(&payload.to_json_value()).map_err(Refusal::host)?;
             actions.push((artifact, action));
         }
     }
