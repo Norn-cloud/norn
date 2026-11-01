@@ -25,6 +25,7 @@ def provision(api, trace):
     ensure(api, 'Territory', 'All Territories', territory_name='All Territories', is_group=1)
     api.update('System Settings', 'System Settings', float_precision=6, currency_precision=2, time_zone='UTC', language='en')
     api.update('Stock Settings', 'Stock Settings', allow_negative_stock=0)
+    ensure(api, 'Warehouse Type', 'Transit', name='Transit')
     api.create('Company', company_name=company, abbr=suffix, default_currency='USD',
                country='United States', chart_of_accounts='Standard', enable_perpetual_inventory=1)
     accounts = list(api.rows('Account', {'company': company}, ['name', 'account_type', 'is_group', 'root_type']))
