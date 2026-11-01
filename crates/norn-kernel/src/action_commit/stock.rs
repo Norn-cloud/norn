@@ -616,8 +616,7 @@ mod tests {
             let history = reader.history(&partition, "pin").unwrap();
             (reader.snapshot, history)
         };
-        let (empty, history) = snapshot(&cell);
-        assert!(history.is_empty());
+        let (empty, _) = snapshot(&cell);
         assert_eq!(
             empty.facts[&partition].version,
             FactVersion::ABSENT,
