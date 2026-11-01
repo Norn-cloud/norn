@@ -129,15 +129,13 @@ fn project(
     if grants.len() != actions.len() {
         return None;
     }
-    let mut concrete = object.extends.is_none()
-        && serde_json::to_value(&object.properties).ok()
-            == Some(serde_json::json!([{"id":"id", "type":{"kind":"text"}}]))
-        && object.identity.is_empty()
-        && object.links.is_empty()
-        && object.invariants.is_empty()
-        && object.lifecycles.is_empty()
-        && object.implements.is_empty()
-        && object.owned_collections.is_empty();
+    let mut shape = serde_json::to_value(object).ok()?;
+    shape.as_object_mut()?.remove("controls");
+    shape.as_object_mut()?.remove("description");
+    let mut concrete = shape
+        == serde_json::json!({
+            "name": object.name, "properties": [{"id":"id", "type":{"kind":"text"}}]
+        });
     for policy in policies {
         let PolicyRoot::Access(policy) = policy else {
             return None;
