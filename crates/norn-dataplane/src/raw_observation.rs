@@ -5,6 +5,7 @@
 //! DP-REDACT-1: an invalid policy leaves the payload unchanged.
 //! DP-REDACT-2: repeated redaction preserves the payload and sorted outermost
 //! replacement paths, including wildcard overlaps and escaped member names.
+//! DP-REDACT-3: malformed RFC 6901 escapes refuse before any mutation.
 //! Sampled correspondence evidence: `boundary_invariants_conform`.
 
 use std::collections::BTreeSet;
@@ -74,7 +75,7 @@ impl RedactionPolicy {
     ///
     /// [`ObservationError::Empty`] for an empty id or version, and
     /// [`ObservationError::InvalidPointer`] for a pointer that does not start
-    /// with `/` (the whole-document pointer `""` is refused: a fully redacted
+    /// with `/` or has an escape other than `~0` or `~1` (the whole-document pointer `""` is refused: a fully redacted
     /// payload should not be ingested at all).
     pub fn apply(&self, payload: &mut Value) -> Result<RedactionRecord, ObservationError> {
         non_empty("redaction.policy_id", &self.id)?;
@@ -85,6 +86,11 @@ impl RedactionPolicy {
             .map(|pointer| {
                 pointer
                     .strip_prefix('/')
+                    .filter(|rest| {
+                        rest.split('~')
+                            .skip(1)
+                            .all(|escaped| escaped.starts_with('0') || escaped.starts_with('1'))
+                    })
                     .ok_or_else(|| ObservationError::InvalidPointer {
                         pointer: (*pointer).to_owned(),
                     })
@@ -258,7 +264,12 @@ mod tests {
             json!(9_007_199_254_740_993_u64)
         );
         let original = json!({"a":{"secret":1},"a/b":{"secret":2},"c":{"secret":3}});
-        for pointers in [vec!["/a", "x"], vec!["/a", ""]] {
+        for pointers in [
+            vec!["/a", "x"],
+            vec!["/a", ""],
+            vec!["/a", "/token~2"],
+            vec!["/a", "/token~"],
+        ] {
             let policy = RedactionPolicy {
                 id: "policy".into(),
                 version: "1".into(),
