@@ -52,6 +52,8 @@ pub enum Engine {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Freshness {
+    /// Complete analytical coverage with admitted source heartbeat lag.
+    Fresh,
     /// Complete and within declared source freshness.
     Exact,
     /// Known coverage at an aged frontier.
