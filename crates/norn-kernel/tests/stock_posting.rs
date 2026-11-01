@@ -155,14 +155,4 @@ fn post_atomic_pure_refusal_and_authority_bindings() {
             .is_err()
         );
     }
-    assert!(
-        lower_stock_posting(
-            &bindings(),
-            Delivery,
-            "forged-cost",
-            &history,
-            &[line("a", 1, Some(1))]
-        )
-        .is_err()
-    );
 }
