@@ -86,3 +86,29 @@ representation-only equality, one-millionth intermediate drift, net-equal but
 wrong gross GL, refusal identity churn, missing coverage, reviewed dispositions,
 stale/duplicate evidence and public-label omission. Run on Boat:
 `python3 -m unittest discover -s tools/stock-parity -p 'test_*.py'`.
+
+## CP2 serial lifecycle
+
+`lifecycle.py` emits the shared trace format, moving average first, then FIFO:
+receipt 10 @ 2 → receipt 10 @ 4 → delivery 3 → transfer 2 a/b → return 1 against the delivery →
+cancel return → cancel delivery → cancel transfer → cancel second/first receipt. The checker
+asserts all 20 outcomes, Q/V at every checkpoint, balanced books, warehouse
+transfer deltas and all original documents cancelled at completion.
+
+- **CP2-native-reference:** returns read the original Delivery Note line and
+  carry `return_against`/`dn_detail`, negative quantity, original warehouse and
+  sale rate; valuation remains entirely native. No original-cost override.
+- **CP2-native-cancel:** cancel through the public document method against the
+  original native ID. Cancellation attempts retain their own request ID but do
+  not alias the original document to the cancel command. Native cancellation
+  rows/flags and GL reversals remain observable under the original request.
+- **CP2-transfer:** Material Transfer carries both warehouse aliases on one
+  stock line, with no invented receipt or delivery; both warehouse accounts
+  must show opposite quantity/value deltas.
+- **CP2-order:** reverse live dependents before originals. Cancel command times
+  are evidence, not a rewritten posting timestamp on the original document.
+
+Run generated traces through `run.py`, then `python3 lifecycle.py results.json`
+on the disposable fork. Moving-average rounding cases, refusal reason
+normalization, duplicate/race replay and integration with the real Norn driver
+remain later units; this witness alone never claims full moving-average parity.
