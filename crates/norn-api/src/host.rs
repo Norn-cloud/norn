@@ -39,13 +39,13 @@ impl<E: SqlEngine> DevHost<E> {
         let (model, input) = installation(admitted, now);
         let cell = CellStore::provision_definitions(engine, model, &input, &scope.key())
             .map_err(Refusal::host)?;
+        let driver =
+            ActionCell::new(cell, scope.key(), |c| c.payload.clone()).map_err(Refusal::host)?;
         Ok(Self {
-            scope: scope.clone(),
+            scope,
             authorizer: Box::new(crate::authz::DenyAll),
             definitions: RwLock::new(()),
-            cell: Mutex::new(
-                ActionCell::new(cell, scope.key(), |c| c.payload.clone()).map_err(Refusal::host)?,
-            ),
+            cell: Mutex::new(driver),
         })
     }
 
@@ -444,6 +444,7 @@ mod defs_read {
         );
     }
 }
+<<<<<<< HEAD
 
 #[cfg(all(test, feature = "native", feature = "http-host"))]
 #[allow(
@@ -456,6 +457,7 @@ mod defs_read {
 )]
 mod cp1_surface {
     use super::*;
+    use norn_ir::quantity_ledger::{QUANTITY_CELL_VERSION, QuantityOperation, QuantityRequest};
     use crate::authz::{AccessRequest, Authorizer, DenyAll};
     use norn_cell::{CommitBatch, FactWriteRow, LinkChange, engine::NativeEngine};
     use norn_ir::{ArtifactEnvelope, ArtifactPayload, EntityIrVersion, EntityRootV2};
@@ -537,17 +539,14 @@ mod cp1_surface {
                 world: World::Main,
                 consumes: None,
             };
-            let call = rule.call("pr", scope, "demo".into(), "prepare".into(), turn);
+            let invocation = rule.call("pr", scope, "demo".into(), "prepare".into(), turn);
             let snapshot = norn_kernel::action_commit::stock::prepare_stock_snapshot(
                 &*cell,
                 &catalog,
-                &call,
+                &invocation,
                 &crate::actions::Policy(&Demo),
             )
             .expect("partition");
-            use norn_ir::quantity_ledger::{
-                QUANTITY_CELL_VERSION, QuantityOperation, QuantityRequest,
-            };
             cell.commit_quantity(
                 &QuantityRequest {
                     version: QUANTITY_CELL_VERSION.into(),
@@ -698,3 +697,7 @@ mod cp1_surface {
         );
     }
 }
+||||||| 70be955a1
+
+=======
+>>>>>>> surface/cp1-action-transports
