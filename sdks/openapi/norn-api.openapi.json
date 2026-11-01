@@ -36,6 +36,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "x-norn-actor",
+            "in": "header",
+            "description": "Actor supplied by the trusted authentication adapter",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
