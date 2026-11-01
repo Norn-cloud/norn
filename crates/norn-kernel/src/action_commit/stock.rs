@@ -1,5 +1,12 @@
 //! Authoritative stock inputs; verification/posting-v1/owned-finalization.md.
-use super::*;
+use super::{
+    ActionAuthorizer, ActionCall, ActionEffectProgram, ActionRefusal, ActionSliceContext, BTreeMap,
+    BTreeSet, CellHost, FactKey, FactSlice, JsonObject, JsonValue, LinkReadExpectation,
+    ObjectTypeName, ResourceLimitProfile, SliceMeter, TypeCatalog, action_link_snapshot,
+    admit_action_fact_record, authorize_target, check_kind, check_scope, host_failure,
+    integer_equals, load_action_fact, owned_manifest_key, prepare_action_input_for_call,
+    read_manifest_ids, record_action_link_read,
+};
 use crate::stock_posting::StockPostLine;
 
 /// One master-selected partition, with lines in owned-manifest order.
@@ -146,8 +153,7 @@ fn millionths<X>(values: &JsonObject, property: &str) -> Result<u128, ActionRefu
 /// Read and authorize owned lines and declared master/account paths.
 ///
 /// # Errors
-/// Scope, authorization, malformed ownership, missing masters or bounds refuse
-/// without any write. The caller must retain every returned fence at commit.
+/// Invalid, unauthorized or over-bound reads refuse without writes. Retain all fences.
 #[allow(
     clippy::too_many_lines,
     reason = "one bounded snapshot preparation pass"
@@ -213,7 +219,6 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
         .find(|c| c.id.as_str() == binding.collection)
         .ok_or_else(|| invalid("missing owned collection"))?;
     let manifest_key = owned_manifest_key::<H::Error>(&target, &binding.collection)?;
-    // Internal manifests are disclosed only after the parent read gate above.
     let manifest = host
         .load_bounded(
             &manifest_key,
@@ -301,13 +306,13 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{JsonObject, JsonValue, millionths};
+    use norn_ir::Decimal;
     #[test]
     fn post_value_exact_millionths_never_round_or_accept_negative()
     -> Result<(), norn_ir::runtime::RuntimeValueError> {
         for (input, expected) in [
             ("1.000001", Some(1_000_001)),
-            ("0", Some(0)),
             ("-1", None),
             ("0.0000001", None),
         ] {

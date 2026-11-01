@@ -51,19 +51,13 @@ identities are read from owned manifests and linked masters, never action input.
 P1 is admission evidence only; the genuine alpha acceptance remains P4.
 
 ## Authoritative preparation reads (P2a)
-
-POST-READ-ORIGIN: `prepare_stock_snapshot` accepts only the admitted call, not
-caller-supplied lines, accounts or history. It reads stable row IDs and order
-from the owned manifest, requires the complete parent-link set to agree, and
-resolves each declared master/account path through complete to-one link reads.
-Every object passes read authorization; the parent snapshot also passes action
-authorization. All facts and link sets are retained for commit fencing. This
-read-only API grants no write authority; P1 execution still refuses.
-
-POST-MASTER-PARTITION: each warehouse must belong to the voucher's company;
-only FIFO items are accepted. Lines retain manifest order within ordered
-company/item/warehouse groups. Missing ownership, masters or accounts refuse.
-POST-EXACT-INPUT: quantities and rates
-convert to integer millionths without rounding; negative and finer-scale
-values refuse (`post_value_exact_millionths_never_round_or_accept_negative`).
+POST-READ-ORIGIN: `prepare_stock_snapshot` reads manifest-ordered owned lines
+and declared master/account link paths. Complete parent links must agree with
+the manifest. All facts and complete link sets survive as commit fences.
+Object/type read authorization precedes disclosure; the action-authorized parent
+snapshot is retained. `post_read_origin_denied_reads_preserve_business_state`
+checks denied-read no-write behavior. The API grants no write authority.
+POST-MASTER-PARTITION: warehouses belong to the voucher company; CP1 requires
+FIFO. POST-EXACT-INPUT: quantities/rates become integer millionths without
+rounding or negative values (the named `post_value_exact_millionths` test).
 History/fold planning follows in P2b; atomic commit and alpha acceptance in P3/P4.

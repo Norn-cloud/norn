@@ -70,6 +70,7 @@ use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope
 use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::{SeriesCandidate, prepare_candidate, scope_from_values, type_series};
 
+/// Read-only stock posting preparation.
 pub mod stock;
 
 /// The object type of the kernel's idempotency records of action calls.
