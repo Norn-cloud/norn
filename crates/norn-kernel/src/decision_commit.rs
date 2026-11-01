@@ -2423,7 +2423,16 @@ fn apply_change<X>(
             }
             FactChange::Set { property, .. } => protected(property.as_str()),
             FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
-            FactChange::Delete { .. } => false,
+            FactChange::Delete { .. } => {
+                catalog
+                    .effective_type(&key.object_type)
+                    .is_some_and(|effective| {
+                        effective
+                            .properties
+                            .iter()
+                            .any(norn_checker::EffectiveProperty::protected)
+                    })
+            }
         };
         if forbidden {
             return Err(DecisionRefusal::InvalidOutput {
@@ -2780,4 +2789,70 @@ fn timer<X>(
         due,
         payload: record.clone(),
     })
+}
+
+#[cfg(test)]
+mod field_authority_tests {
+    use super::*;
+
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    fn protected_delete_then_recreate_is_refused() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" }, "protected": true }]
+        }))
+        .unwrap();
+        let catalog = TypeCatalog::new([&object]);
+        let key = FactKey::new("test.Counter", "one");
+        for origin in [
+            AdmissionOrigin::Action,
+            AdmissionOrigin::Observation,
+            AdmissionOrigin::OwnedRows,
+        ] {
+            let values = Some(JsonObject::from([(
+                "total".to_owned(),
+                JsonValue::from(2_i64),
+            )]));
+            let mut working = BTreeMap::from([(
+                key.clone(),
+                Working {
+                    expected: FactVersion(1),
+                    values: values.clone(),
+                    written: false,
+                },
+            )]);
+            for change in [
+                FactChange::Delete {
+                    object_type: key.object_type.clone(),
+                    key: key.key.clone(),
+                },
+                FactChange::Create {
+                    object_type: key.object_type.clone(),
+                    key: key.key.clone(),
+                    values: JsonObject::default(),
+                },
+            ] {
+                let error = apply_change::<std::convert::Infallible>(
+                    &catalog,
+                    &FactSlice::new(),
+                    &mut working,
+                    &change,
+                    origin,
+                    &BTreeSet::new(),
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.code(),
+                    if matches!(change, FactChange::Delete { .. }) {
+                        "decision.invalid_output"
+                    } else {
+                        "decision.object_exists"
+                    }
+                );
+                assert_eq!(working[&key].values, values);
+                assert!(!working[&key].written);
+            }
+        }
+    }
 }
