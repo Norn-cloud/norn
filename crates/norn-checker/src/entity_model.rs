@@ -672,7 +672,33 @@ impl<'a> Checker<'a, '_> {
         for (index, extension) in self.model.extensions.iter().enumerate() {
             self.check_extension(index, extension);
         }
+        self.check_owned_defaults();
         self.check_member_conflicts();
+    }
+
+    fn check_owned_defaults(&mut self) {
+        let collections = self.types.values().flat_map(|entry| {
+            entry.def.owned_collections.iter().enumerate()
+                .map(move |(index, collection)| (entry.local, index, collection))
+        }).collect::<Vec<_>>();
+        for (owner, index, collection) in collections {
+            let table = self.table(&collection.child_type);
+            for (property_id, property) in table.iter() {
+                if property.default.is_some() && self.protected(&collection.child_type, property_id) {
+                    let mut finding = error(
+                        codes::PROTECTED_DEFAULT,
+                        format!("owned child property {:?} of {:?} has a protected default; move the value into the authoritative rule's creation effect, or drop the protection", property_id.as_str(), collection.child_type.as_str()),
+                        span_at(&[], &[]),
+                    );
+                    finding.span = owner.map(|owner| {
+                        let owner = owner.to_string();
+                        let index = index.to_string();
+                        span_at(&pointer(self.roots.object_types, &owner), &["ownedCollections", &index, "childType"])
+                    });
+                    self.out.push(finding);
+                }
+            }
+        }
     }
 
     // ----- registration -------------------------------------------------
@@ -1435,15 +1461,6 @@ impl<'a> Checker<'a, '_> {
                 ));
             }
             let child_table = self.table(&collection.child_type);
-            for (property_id, property) in &child_table {
-                if property.default.is_some() && self.protected(&collection.child_type, property_id) {
-                    self.out.push(error(
-                        codes::PROTECTED_DEFAULT,
-                        format!("owned child property {:?} has a protected default; move the value into the authoritative rule's creation effect, or drop the protection", property_id.as_str()),
-                        span_at(&at, &["childType"]),
-                    ));
-                }
-            }
             for (property_id, expected, member) in [
                 (&collection.row_id_property, "text", "rowIdProperty"),
                 (&collection.ordering_key, "integer", "orderingKey"),

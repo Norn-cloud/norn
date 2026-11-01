@@ -1080,3 +1080,15 @@ proptest::proptest! {
         proptest::prop_assert!(findings.iter().any(|(code, _)| code == object_codes::PROTECTED_DEFAULT));
     }
 }
+
+#[test]
+fn base_owned_collections_refuse_protected_extension_defaults() {
+    let objects: Vec<ObjectTypeDef> = vec![parent_type(20, &json!({"to":"many","from":"one"})), child_type("text", "integer")]
+        .into_iter().map(|value| serde_json::from_value(value).expect("base type")).collect();
+    let extensions = [serde_json::from_value(json!({"namespace":"acme", "target":CHILD, "properties":[{"id":"acme__flag","type":{"kind":"boolean"},"protected":true,"default":false}]})).expect("extension")];
+    let registry = BTreeSet::new();
+    let context = EntityContext { catalog: &[], registry: &registry, base: EntityModel { interfaces: &[], object_types: &objects, extensions: &[] }, tenant: None };
+    let findings = check_entity_model(&EntityModel { interfaces: &[], object_types: &[], extensions: &extensions }, &context);
+    let finding = findings.iter().find(|finding| finding.code.as_str() == object_codes::PROTECTED_DEFAULT).expect("protected extension default refused");
+    assert!(finding.message.contains("move the value into the authoritative rule's creation effect, or drop the protection"));
+}

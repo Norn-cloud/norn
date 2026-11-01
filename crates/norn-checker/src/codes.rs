@@ -473,7 +473,7 @@ pub static REGISTRY: &[CodeEntry] = &[
     introduced(
         "core.graph.protected_default",
         Tier::T3,
-        "owned child property {property} has a protected default; move the value into the authoritative rule's creation effect, or drop the protection",
+        "owned child property {property} of {child} has a protected default; move the value into the authoritative rule's creation effect, or drop the protection",
         "0.2.0",
     ),
     entry(
