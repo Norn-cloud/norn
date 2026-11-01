@@ -57,7 +57,10 @@ fn self_and_retained_classification_cycles_refuse() {
     assert_eq!(cycles(&[a], &[]), ["test.a"]);
     let a = declaration("test.a", "1.0.0", &[("test.b", "1.0.0")]);
     let b = declaration("test.b", "1.0.0", &[("test.a", "1.0.0")]);
-    assert_eq!(cycles(&[a.clone()], &[b.clone()]), ["test.a"]);
+    assert_eq!(
+        cycles(std::slice::from_ref(&a), std::slice::from_ref(&b)),
+        ["test.a"]
+    );
     assert_eq!(cycles(&[b, a], &[]), ["test.a"]);
 }
 #[test]
@@ -65,7 +68,7 @@ fn retained_versions_and_ambiguous_identities_never_select_a_cycle_target() {
     let a = declaration("test.a", "2.0.0", &[("test.b", "1.0.0")]);
     let b = declaration("test.b", "1.0.0", &[("test.a", "1.0.0")]);
     let old = declaration("test.a", "1.0.0", &[]);
-    assert!(cycles(&[a.clone(), b.clone()], &[old]).is_empty());
+    assert!(cycles(&[a.clone(), b], &[old]).is_empty());
     let b = declaration("test.b", "1.0.0", &[("test.a", "2.0.0")]);
     assert!(cycles(&[a, b.clone(), b], &[]).is_empty());
 }
@@ -73,10 +76,11 @@ proptest::proptest! {
     #[test]
     fn classification_cycle_matches_transitive_closure(bits in proptest::collection::vec(proptest::bool::ANY, 144), dag in proptest::bool::ANY) {
         let names: Vec<_> = (0..12).map(|i| format!("test.c{i}")).collect();
-        let declarations: Vec<_> = (0..12).map(|i| declaration(&names[i], "1.0.0", &(0..12)
-            .filter(|j| bits[i * 12 + j] && (!dag || *j < i)).map(|j| (names[j].as_str(), "1.0.0")).collect::<Vec<_>>())).collect();
-        let mut reach: Vec<Vec<bool>> = (0..12).map(|i| (0..12).map(|j|
-            bits[i * 12 + j] && (!dag || j < i)).collect()).collect();
+        let mut reach: Vec<Vec<bool>> = bits.chunks(12).enumerate().map(|(i, row)|
+            row.iter().enumerate().map(|(j, edge)| *edge && (!dag || j < i)).collect()).collect();
+        let declarations: Vec<_> = reach.iter().enumerate().map(|(i, row)| declaration(&names[i], "1.0.0",
+            &row.iter().enumerate().filter(|(_, edge)| **edge)
+                .map(|(j, _)| (names[j].as_str(), "1.0.0")).collect::<Vec<_>>())).collect();
         for k in 0..12 { for i in 0..12 { for j in 0..12 {
             reach[i][j] |= reach[i][k] && reach[k][j];
         } } }
