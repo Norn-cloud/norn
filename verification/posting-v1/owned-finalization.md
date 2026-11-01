@@ -50,3 +50,7 @@ Typed TypeScript authoring exposes this direct Post declaration through
 `Norn.action.quantityEffect`. The syntax compiler preserves its closed bindings
 and rejects unsupported operation kinds, extra members and invalid scales.
 Reserve/PostReservation remain available through the existing Rust IR.
+
+POST-REFUSAL-REASON: typed quantity refusals survive the host/commit/decision
+boundaries. The public refusal retains insufficiency as a readable precondition;
+corrupt state and clock regression retain the internal-details redaction.

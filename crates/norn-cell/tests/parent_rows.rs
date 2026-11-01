@@ -324,6 +324,7 @@ fn native_cell() -> NativeCell {
 
 #[test]
 fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
+    let ledger = |cell: &NativeCell| cell.store().verified_head().expect("verified ledger");
     let definitions = types();
     let catalog = entity_catalog(&definitions);
     let mut declared = action();
@@ -379,7 +380,7 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
         input["versions"] = serde_json::to_value(versions).expect("versions");
         input["reservation"] = json!("hold");
         input["amount"] = json!(amount.to_string());
-        let before = cell.store().verified_head().expect("initial ledger");
+        let before = ledger(&cell);
         let invocation = call(&declared, "rows-with-hold", input);
         let outcome = commit_action(&mut cell, &catalog, &invocation, &Allow);
         let reader = cell.store().read();
@@ -399,11 +400,7 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
                     .is_some(),
                 direct_post
             );
-            assert_eq!(
-                cell.store().verified_head().expect("ledger").commits,
-                before.commits + 1,
-                "POST-ATOMIC"
-            );
+            assert_eq!(ledger(&cell).commits, before.commits + 1, "POST-ATOMIC");
             assert_eq!(
                 reader.quantity_version("main", "stock").expect("version"),
                 3
@@ -415,7 +412,7 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
                 Ok(ActionOutcome::Replayed { .. })
             ));
             assert_eq!(
-                cell.store().verified_head().expect("ledger").commits,
+                ledger(&cell).commits,
                 before.commits + 1,
                 "POST-IDENTITY retry"
             );
@@ -428,7 +425,7 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
                 Err(ActionRefusal::IdempotencyConflict { .. })
             ));
             assert_eq!(
-                cell.store().verified_head().expect("ledger").commits,
+                ledger(&cell).commits,
                 before.commits + 1,
                 "POST-IDENTITY conflict"
             );
@@ -441,18 +438,12 @@ fn post_atomic_identity_owned_rows_and_quantity_share_one_commit() {
             );
         } else {
             let refusal = outcome.expect_err("POST-ATOMIC insufficient funding");
-            assert!(
-                refusal
-                    .to_string()
-                    .contains("insufficient available quantity"),
-                "{refusal}"
-            );
+            let public = norn_kernel::Refusable::refusal(&refusal);
+            assert_eq!(public.code, "quantity.refused");
+            assert_eq!(public.category, norn_kernel::RefusalCategory::Precondition);
+            assert!(public.message.contains("insufficient available quantity"));
             assert!(hold.is_none());
-            assert_eq!(
-                cell.store().verified_head().expect("ledger").commits,
-                before.commits,
-                "POST-ATOMIC refusal"
-            );
+            assert_eq!(ledger(&cell).commits, before.commits, "POST-ATOMIC refusal");
             assert!(
                 !cell
                     .load(&FactKey::new(

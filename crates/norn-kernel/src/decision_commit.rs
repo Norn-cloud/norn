@@ -1567,6 +1567,9 @@ pub enum DecisionRefusal<X> {
     /// A version, the ledger sequence, or a timer due time would overflow.
     #[error("a version, ledger position, or due time would overflow")]
     Overflow,
+    /// Quantity admission refused before any business writes.
+    #[error("quantity posting refused: {0}")]
+    Quantity(#[source] crate::quantity::QuantityError),
     /// The host failed; nothing was committed.
     #[error("cell host failure")]
     Host(#[source] X),
@@ -1608,6 +1611,7 @@ impl<X> DecisionRefusal<X> {
             Self::InvariantBudgetExceeded { .. } => "decision.invariant_budget_exceeded",
             Self::TraversalLimitExceeded { .. } => "commit.traversal_limit_exceeded",
             Self::Overflow => "decision.overflow",
+            Self::Quantity(_) => "quantity.refused",
             Self::Host(_) => "decision.host",
         }
     }
@@ -1645,6 +1649,7 @@ impl<X> DecisionRefusal<X> {
             | Self::InvalidOutput { .. }
             | Self::NotPending { .. }
             | Self::Overflow
+            | Self::Quantity(_)
             | Self::Host(_) => None,
         }
     }
@@ -1742,6 +1747,7 @@ impl<X> DecisionRefusal<X> {
                 reason: format!("commit emitted {actual} events, limit is {limit}"),
             },
             CommitError::Overflow => Self::Overflow,
+            CommitError::Quantity(reason) => Self::Quantity(reason),
             CommitError::Host(error) => Self::Host(error),
         }
     }

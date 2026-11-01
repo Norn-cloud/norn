@@ -313,6 +313,11 @@ fn internal_refusals_never_carry_details() {
     for refusal in [
         DecisionRefusal::Host(HostDown).refusal(),
         CommitError::Host(HostDown).refusal(),
+        CommitError::<HostDown>::Quantity(norn_kernel::quantity::QuantityError::Corrupt).refusal(),
+        DecisionRefusal::<HostDown>::Quantity(
+            norn_kernel::quantity::QuantityError::ClockRegression,
+        )
+        .refusal(),
         ActionRefusal::Decision(DecisionRefusal::Host(HostDown)).refusal(),
     ] {
         assert_eq!(refusal.category, RefusalCategory::Internal);
