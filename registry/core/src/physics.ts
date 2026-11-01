@@ -20,17 +20,16 @@ const ConversionMeasurements = Schema.Struct({
   loss_quantity: Schema.Finite,
 })
 
-/** LAW-CONVERSION-1: measured quantities in one declared unit conserve exactly. */
+/** LAW-CONVERSION-1: quantities bound to the implementor conserve exactly. */
 export const Conversion = Norn.interfaceType({
   name: "core.Conversion",
   title: "Conversion",
   version: "0.1.0",
-  description: "A measured conversion in one unit, at three decimal places. These are accepted measurements, not a certificate of the associated stock or value effects.",
+  description: "A measured conversion whose quantities share the implementor's explicit unit and scale. These are accepted measurements, not a certificate of associated stock or value effects.",
   properties: Schema.Struct({
-    input_quantity: Norn.decimal(3),
-    output_quantity: Norn.decimal(3),
-    loss_quantity: Norn.decimal(3),
-    quantity_unit: Norn.ref("ucum.unit_code"),
+    input_quantity: Norn.boundDecimal("conversion"),
+    output_quantity: Norn.boundDecimal("conversion"),
+    loss_quantity: Norn.boundDecimal("conversion"),
   }),
   invariants: [{
     id: "conversion_conservation",

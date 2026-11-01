@@ -6,7 +6,7 @@
     reason = "named core conversion conformance scenarios"
 )]
 //! VAL-DECIMAL-SCALE-1 and LAW-CONVERSION-1: the shipped core invariant governs every Melt write.
-use norn_ir::{EntityInterfaceRootV2, InterfaceDef, ObjectTypeDef, PropertyTypeCatalogRootV2};
+use norn_ir::{EntityInterfaceRootV2, InterfaceDef, ObjectTypeDef};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     CellCommit, CellHost, Command, CommandId, Effect, FactKey, FactMutation, FactVersion,
@@ -29,18 +29,10 @@ fn core_interface() -> InterfaceDef {
 }
 
 fn cell() -> Cell {
-    let artifact: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../registry/core/artifacts/std.value_types.entity.json"
-    ))
-    .expect("shared core types");
-    let property_types: PropertyTypeCatalogRootV2 =
-        serde_json::from_value(artifact["payload"].clone()).expect("property types");
     let interface = core_interface();
-    let mut properties = serde_json::to_value(&interface.properties).expect("required members");
-    properties
-        .as_array_mut()
-        .expect("properties")
-        .push(json!({"id":"batch", "type":{"kind":"text"}}));
+    let mut properties = vec![json!({"id":"batch", "type":{"kind":"text"}})];
+    properties.extend(["input_quantity", "output_quantity", "loss_quantity"].map(|id|
+        json!({"id":id,"type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}})));
     let melt: ObjectTypeDef = serde_json::from_value(json!({
         "name":"jewelry.Melt", "implements":["core.Conversion"],
         "properties": properties
@@ -49,12 +41,11 @@ fn cell() -> Cell {
     MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone())
         .with_types(vec![melt])
         .with_interfaces(vec![interface])
-        .with_property_types(property_types.property_types)
 }
 
 fn measurement(id: &str, input: &str, output: &str, loss: &str) -> FactWrite {
     let values = format!(
-        r#"{{"batch":"{id}","input_quantity":{input},"output_quantity":{output},"loss_quantity":{loss},"quantity_unit":"g"}}"#
+        r#"{{"batch":"{id}","input_quantity":{input},"output_quantity":{output},"loss_quantity":{loss}}}"#
     );
     FactWrite {
         key: FactKey::new("jewelry.Melt", id),
