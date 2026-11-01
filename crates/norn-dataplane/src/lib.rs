@@ -10,3 +10,5 @@ pub use raw_observation::{
 
 pub mod converge;
 pub use converge::{Applied, Convergence, ConvergenceError, CurrentRecord};
+
+pub mod iceberg;
