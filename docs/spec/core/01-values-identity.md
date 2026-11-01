@@ -12,7 +12,7 @@ Reuse `PropertyType`, `PropertyConstraints`, `DecimalLiteral`, `UnitRef`, `Runti
 | Object identity | `scope: Scope`, `id: opaque stable ID`, `created_under: Pin`; independent of mutable business keys and concrete subtype labels. |
 | Key binding | `object_id`, `key: KeySpec`, `canonical_components: [RuntimeValue]`, `valid_from`, `valid_to?`, `recorded_at`, `source_aliases: [Alias]`; uniqueness domain is explicit root type + scope + key name. |
 | Alias | `connector_instance`, `source_type`, `source_key`, `object_id`, valid/recorded intervals; source IDs cannot become native authority. |
-| Temporal context | `effective_at: UtcTimestamp`, `recorded_at: Revision`, `calendar: Pin`, `timezone_version`, `dst_policy: reject/earlier/later`; intervals are half-open `[from,to)`. |
+| Temporal context | resolved `effective_at: UtcTimestamp`, `recorded_at: Revision`, `calendar: Pin`, `timezone_version`, `dst_policy?: reject/earlier/later` (required for local-wall-time construction); intervals are half-open `[from,to)`. |
 | Content reference | existing `BlobRef {digest, version?, size_bytes}` plus declared retention/access policy; bytes must match digest before use. |
 
 Definition identity is exact artifact/version/digest plus stable member ID. Renaming a label changes presentation only. A same-version edit changes digest and invalidates admission/evidence; it cannot replace an immutable published release.
@@ -47,7 +47,7 @@ The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserv
 - **VAL-ROUND:** Given scale 2 with midpoint-away rounding, when evaluating `1.005` and `-1.005`, then results are `1.01` and `-1.01`; a zero divisor refuses without effects.
 - **ID-COLLISION:** Given two subtypes sharing a key root, when concurrent creates use the same normalized key, then exactly one commits; another tenant may use its own same key.
 - **ID-RENAME:** Given a posted event linked to object A, when A's label/business key changes and is later tombstoned, then historical links still resolve A; reusing A's identity refuses.
-- **TIME-DST:** Given an ambiguous local timestamp without a pinned disambiguation policy, when admitted, then refuse; an explicit earlier/later choice replays identically.
+- **TIME-DST:** Given an ambiguous local timestamp without a pinned disambiguation policy, when admitted, then refuse; an explicit earlier/later choice resolves to a retained UTC instant and replays that same instant even after timezone rules change. An already-resolved UTC construction needs no DST choice.
 - **BLOB-MISSING:** Given an archived receipt with unavailable bytes, when requested for recomputation, then expose unavailable evidence and do not synthesize a result.
 
 ## Main and gaps
