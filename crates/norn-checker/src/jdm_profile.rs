@@ -661,7 +661,7 @@ fn check_node(
                 sink,
             );
             if let Some(fold) = &body.ordered_fold {
-                if body.execution_mode == Some(norn_ir::JdmExecutionMode::Loop) {
+                if body.execution_mode == Some(norn_ir::jdm::JdmExecutionMode::Loop) {
                     sink.push(
                         codes::ORDERED_FOLD_INVALID,
                         "an ordered fold cannot also use independent JDM loop execution",
