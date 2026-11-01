@@ -534,7 +534,7 @@ fn guard_diagnostics_require_runtime_errors_and_retain_inherited_identity() {
         .iter_mut()
         .find(|transition| transition.id == base_transition.id)
         .expect("narrowed transition");
-    transition.guard_refusal_code = Some("commit.invariant_violation".to_owned());
+    transition.guard_refusal_code = Some("function.invocation.manifest_mismatch".to_owned());
     assert!(
         run(&[base, subtype], &[], None)
             .iter()
