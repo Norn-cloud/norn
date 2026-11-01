@@ -159,6 +159,12 @@ fn source_decode_verbatim_and_hash_correspondence() {
         json!("short ? ['cafe\u{301}'] : []");
     let mut raw = semantic.clone();
     add_inline_layout(&mut raw);
+    for edge in semantic["payload"]["graph"]["edges"]
+        .as_array_mut()
+        .expect("edges")
+    {
+        edge.as_object_mut().expect("edge").remove("type");
+    }
     let source = norn_ir::runtime::encode(&raw).expect("source");
     let prepared = norn_checker::prepare_artifact_source(source.clone()).expect("preparation");
     assert_eq!(
