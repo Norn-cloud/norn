@@ -124,3 +124,6 @@ NORN_CLI="${CARGO_TARGET_DIR:-target}/debug/norn" cargo test --locked -p norn-ap
 The cancellation guard vector starts from an approved order with a trusted
 fixture invoice count of one. The refusal code is `decision.guard_false`. It qualifies the declared guard and transport
 refusals; it does not claim to run the asynchronous invoice-fold workflow.
+
+SURFACE-EXACT-JSON: nested exact decimals and integers retain their values
+in committed JSON fields, HTTP records and MCP structured content/text.

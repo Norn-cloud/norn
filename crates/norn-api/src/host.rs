@@ -487,10 +487,10 @@ mod alpha_surface {
             Ok(())
         }
     }
-    fn host() -> DevHost<NativeEngine> {
+    fn admitted(source: &str) -> DevHost<NativeEngine> {
         DevHost::new(
             NativeEngine::open_in_memory().expect("engine"),
-            include_str!("../../../fixtures/engine-alpha/sales-order.definitions.json"),
+            source,
             CellScope {
                 org_id: "org_alpha".into(),
                 environment_id: "dev".into(),
@@ -499,6 +499,11 @@ mod alpha_surface {
         )
         .expect("admitted alpha")
         .with_authorizer(Demo)
+    }
+    fn host() -> DevHost<NativeEngine> {
+        admitted(include_str!(
+            "../../../fixtures/engine-alpha/sales-order.definitions.json"
+        ))
     }
     #[allow(
         clippy::disallowed_methods,
@@ -652,7 +657,6 @@ mod alpha_surface {
                 records.push(result);
             }
             {
-                // Trusted fixture setup supplies a folded invoice count for the guard vector.
                 let mut cell = host.cell().expect("cell");
                 let mut values = cell
                     .store()
@@ -710,13 +714,113 @@ mod alpha_surface {
             states.push(dump(&host));
             server.abort();
         }
-        assert!(
-            states.windows(2).all(|pair| pair[0] == pair[1]),
-            "committed state parity"
-        );
-        assert!(
-            results.windows(2).all(|pair| pair[0] == pair[1]),
-            "records/refusals parity"
-        );
+        for state in states.iter().skip(1) {
+            assert_eq!(state, &states[0]);
+        }
+        for result in results.iter().skip(1) {
+            assert_eq!(result, &results[0]);
+        }
+    }
+    fn typed<T: serde::de::DeserializeOwned>(value: impl serde::Serialize) -> T {
+        serde_json::from_value(serde_json::to_value(value).expect("encode")).expect("typed")
+    }
+    #[tokio::test]
+    async fn surface_exact_json_roundtrip() {
+        let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../../fixtures/engine-alpha/sales-order.definitions.json"
+        ))
+        .expect("authored alpha");
+        let mut declarations = Vec::new();
+        for mut artifact in artifacts {
+            match &artifact.payload {
+                norn_ir::ArtifactPayload::Entity(payload) => {
+                    let norn_ir::EntityRoot::V2(mut root) = typed(payload) else {
+                        continue;
+                    };
+                    if root.object_type.name.as_str() != "alpha.Customer" {
+                        continue;
+                    }
+                    root.object_type
+                        .properties
+                        .iter_mut()
+                        .find(|p| p.id.as_str() == "name")
+                        .expect("name")
+                        .property_type = norn_ir::PropertyType::JsonExt { schema: None };
+                    artifact.payload = norn_ir::ArtifactPayload::Entity(typed(root));
+                }
+                norn_ir::ArtifactPayload::Action(payload) => {
+                    let mut action: norn_ir::ActionRoot = typed(payload);
+                    if action.action_id != "alpha.customer.create" {
+                        continue;
+                    }
+                    let norn_ir::JsonValue::Object(properties) = action
+                        .input_schema
+                        .get_mut("properties")
+                        .expect("properties")
+                    else {
+                        panic!("object schema")
+                    };
+                    properties.insert(
+                        "name".into(),
+                        norn_ir::JsonValue::Object(BTreeMap::from([(
+                            "type".into(),
+                            norn_ir::JsonValue::String("object".into()),
+                        )])),
+                    );
+                    artifact.payload = norn_ir::ArtifactPayload::Action(typed(action));
+                }
+                _ => continue,
+            }
+            declarations.push(artifact);
+        }
+        let source = serde_json::to_string(&declarations).expect("typed declarations");
+        let exact = r#"{"large":9007199254740993,"decimal":0.1234567890123456789012345678}"#;
+        for surface in ["api", "mcp"] {
+            let host = Arc::new(admitted(&source));
+            let args = format!(
+                r#"{{"actionId":"alpha.customer.create","input":{{"id":"exact","name":{exact}}},"version":1,"idempotencyKey":"exact"}}"#
+            );
+            let body = if surface == "api" {
+                args
+            } else {
+                format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"call_action","arguments":{args},"_meta":{{"norn/idempotencyKey":"exact"}}}}}}"#
+                )
+            };
+            let request = http::Request::builder()
+                .method("POST")
+                .uri(if surface == "api" {
+                    "/v1/actions"
+                } else {
+                    "/mcp"
+                })
+                .header("x-norn-org-id", "org_alpha")
+                .header("x-norn-environment-id", "dev")
+                .header("x-norn-actor", "demo")
+                .body(axum::body::Body::from(body))
+                .expect("request");
+            let response = router(Arc::clone(&host))
+                .oneshot(request)
+                .await
+                .expect("response");
+            assert_eq!(response.status(), http::StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
+                .await
+                .expect("body");
+            let text = String::from_utf8(bytes.to_vec()).expect("JSON");
+            assert!(text.contains("0.1234567890123456789012345678"), "{text}");
+            assert!(text.contains("9007199254740993"), "{text}");
+            let cell = host.cell().expect("cell");
+            let stored = cell
+                .store()
+                .read()
+                .object("main", "alpha.Customer", "exact")
+                .expect("read")
+                .expect("customer");
+            assert_eq!(
+                stored.values.get("name"),
+                Some(&norn_ir::RuntimeValue::from_json_text(exact).expect("exact value"))
+            );
+        }
     }
 }
