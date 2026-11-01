@@ -26,6 +26,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         };
         let observed: Observed<RuntimeValue> =
             norn_ir::runtime::decode(&pending.observed).map_err(CellError::Encoding)?;
+        if observed.id.0 != observation_id { return Err(CellError::MappingBundleMismatch); }
         let bundle: MappingBundle =
             norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
         self.store().read().recheck_mapping_bundle(&bundle)?;
@@ -61,7 +62,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             }
             let key = FactKey::new(record.object_type.as_str(), &record.key);
             let slice =
-                load_slice(self, [key.clone()]).map_err(|e| CellError::Encoding(e.to_string()))?;
+                load_slice(self, [key.clone()])?;
             let mut values = record
                 .invocations
                 .into_iter()
@@ -80,7 +81,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                     provenance: &record.provenance,
                 },
             )
-            .map_err(|e| CellError::Encoding(e.to_string()))?;
+            .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
             let (part, authority) = prepared.into_parts();
             commit.reads.extend(part.reads);
             commit.writes.extend(part.writes);
@@ -92,9 +93,9 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         }
         authorization
             .seal_snapshot_event_chunks(&commit)
-            .map_err(|e| CellError::Encoding(e.to_string()))?;
+            .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         self.commit_observed(commit, authorization)
-            .map_err(|e| CellError::Encoding(e.to_string()))?;
+            .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
         Ok(true)
     }
 }
