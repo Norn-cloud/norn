@@ -160,7 +160,7 @@ fn entity_closure(
             .cloned()
             .collect();
         let resolved = crate::resolve_artifact_set(std::slice::from_ref(&current), &others)
-            .map_err(|_| "the pinned base type closure must resolve")?;
+            .map_err(|_error| "the pinned base type closure must resolve")?;
         for dependency in resolved.base_dependencies {
             if !closure
                 .iter()
@@ -222,7 +222,12 @@ fn qualify(
     let (object, declared) = match base.as_ref() {
         norn_ir::EntityRoot::V2(root) => (true, root.object_type.name.as_str()),
         norn_ir::EntityRoot::V2Interface(root) => (false, root.interface.name.as_str()),
-        _ => return Err("base must declare an object type or interface"),
+        norn_ir::EntityRoot::V1(_)
+        | norn_ir::EntityRoot::V2Extension(_)
+        | norn_ir::EntityRoot::V2PropertyTypes(_)
+        | norn_ir::EntityRoot::V2Markings(_) => {
+            return Err("base must declare an object type or interface");
+        }
     };
     if target.kind() != ArtifactKind::Entity || declared != type_name {
         return Err("base member must be declared by its exact pinned entity artifact");
@@ -235,18 +240,18 @@ fn qualify(
     }
     let closure = entity_closure(target, pool)?;
     let env = crate::derive_type_env(&[], &closure, &root.bounds)
-        .map_err(|_| "the exact base closure must have a supported type environment")?;
+        .map_err(|_error| "the exact base closure must have a supported type environment")?;
     let env = if object {
         env.bind_self(&norn_ir::ObjectTypeName(type_name.clone()))
     } else {
         env.bind_interface_self(&norn_ir::InterfaceName(type_name.clone()))
     }
-    .map_err(|_| "the pinned base must bind self")?;
+    .map_err(|_error| "the pinned base must bind self")?;
     let expression = norn_expr::Expression::compile(root.predicate.as_str())
-        .map_err(|_| "classification predicate must be a supported pure expression")?;
+        .map_err(|_error| "classification predicate must be a supported pure expression")?;
     norn_expr::check_expression_with(&expression, &env, &norn_expr::Type::Bool, &root.bounds)
         .map_err(
-            |_| "classification predicate must be Boolean within its declared resource bounds",
+            |_error| "classification predicate must be Boolean within its declared resource bounds",
         )?;
     Ok(())
 }

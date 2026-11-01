@@ -119,6 +119,29 @@ fn cross_artifact_admission_types_a_pure_boolean_over_the_exact_base() {
     let base = item();
     let class = qualified();
     assert!(findings(std::slice::from_ref(&class), std::slice::from_ref(&base)).is_empty());
+    let mut newer = serde_json::to_value(&base).expect("wire");
+    newer["version"] = json!("2.0.0");
+    newer["payload"]["objectType"]["properties"][0]["type"] = json!({"kind":"text"});
+    assert!(
+        findings(
+            std::slice::from_ref(&class),
+            &[
+                base.clone(),
+                serde_json::from_value(newer).expect("new version")
+            ]
+        )
+        .is_empty()
+    );
+    let mut with_member = serde_json::to_value(&class).expect("wire");
+    with_member["payload"]["dependencies"] = json!([{"artifactId":"test.Item.entity", "version":"1.0.0",
+        "member":{"kind":"property", "typeName":"test.Item", "property":"amount"}}]);
+    assert!(
+        findings(
+            &[serde_json::from_value(with_member).expect("member")],
+            std::slice::from_ref(&base)
+        )
+        .is_empty()
+    );
     assert!(findings(&[base, class], &[]).is_empty());
     let mut interface = serde_json::to_value(item()).expect("wire");
     let definition = interface["payload"]
