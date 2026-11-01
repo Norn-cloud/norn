@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from proof_enrollment import ROOT, discover_sources, validate
+from proof_enrollment import ROOT, discover_sources, load_coverage, validate
 
 
 class EnrollmentTests(unittest.TestCase):
@@ -105,6 +105,33 @@ class EnrollmentTests(unittest.TestCase):
             candidate = {"subsystems": [{"id": "accounting-pack", "sourceFiles": ["crates/toy/src/accounting.rs"], "obligations": ["INV-ACC-JOURNAL-BALANCED"]}]}
             with self.assertRaisesRegex(ValueError, "full domain runtime/Lean/Quint gate enrollment required"):
                 validate(root, candidate, self.gates)
+
+    def test_either_coverage_layout_never_both(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monolith = root / "verification/coverage-v1/coverage.json"
+            monolith.parent.mkdir(parents=True)
+            monolith.write_text(json.dumps(self.coverage))
+            self.assertEqual(load_coverage(root), self.coverage)
+            split = root / "verification/coverage-v1/manifest/subsystems"
+            split.mkdir(parents=True)
+            (split.parent / "index.json").write_text("{}")
+            for subsystem in self.coverage["subsystems"]:
+                body = {key: value for key, value in subsystem.items() if key != "id"}
+                (split / f"{subsystem['id']}.json").write_text(json.dumps(body))
+            with self.assertRaisesRegex(ValueError, "exactly one of"):
+                load_coverage(root)
+            monolith.unlink()
+            loaded = sorted(load_coverage(root)["subsystems"], key=lambda item: item["id"])
+            self.assertEqual(loaded, sorted(self.coverage["subsystems"], key=lambda item: item["id"]))
+            self.assertEqual(validate(ROOT, load_coverage(root), self.gates), set())
+            (split / "notes.txt").write_text("synthetic")
+            with self.assertRaisesRegex(ValueError, "not a subsystem file"):
+                load_coverage(root)
+            (split / "notes.txt").unlink()
+            (split.parent / "index.json").unlink()
+            with self.assertRaisesRegex(ValueError, "index.json is missing"):
+                load_coverage(root)
 
 
 if __name__ == "__main__":

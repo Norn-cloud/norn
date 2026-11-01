@@ -144,11 +144,35 @@ def validate(root: Path, coverage: dict, gates: dict) -> set[str]:
     return present
 
 
+MONOLITH = "verification/coverage-v1/coverage.json"
+MANIFEST = "verification/coverage-v1/manifest"
+
+
+def load_coverage(root: Path) -> dict:
+    """Read either coverage layout as data, never both; the per-subsystem one replaces the monolith (#128)."""
+    monolith, manifest = root / MONOLITH, root / MANIFEST
+    if monolith.exists() == manifest.exists():
+        raise ValueError(f"exactly one of {MONOLITH} and {MANIFEST} must exist")
+    if monolith.exists():
+        return json.loads(monolith.read_text(encoding="utf-8"))
+    if not (manifest / "index.json").is_file():
+        raise ValueError(f"{MANIFEST}/index.json is missing")
+    subsystems = []
+    for path in sorted((manifest / "subsystems").iterdir()):
+        if path.is_symlink() or not path.is_file() or path.suffix != ".json":
+            raise ValueError(f"{MANIFEST}/subsystems/{path.name} is not a subsystem file")
+        body = json.loads(path.read_text(encoding="utf-8"))
+        if "id" in body:
+            raise ValueError(f"{MANIFEST}/subsystems/{path.name}: the file name is the subsystem id")
+        subsystems.append({"id": path.stem, **body})
+    return {"subsystems": subsystems}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT, help="candidate checked only as data by this validator")
     root = parser.parse_args().root.resolve()
-    coverage = json.loads((root / "verification/coverage-v1/coverage.json").read_text())
+    coverage = load_coverage(root)
     gates = json.loads((root / "verification/coverage-v1/promoted-gates.json").read_text())
     present = validate(root, coverage, gates)
     print(f"exact source enrollment: {len(discover_sources(root))} files, {len(coverage['subsystems'])} subsystems; held domains present: {sorted(present)}")
