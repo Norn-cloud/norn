@@ -139,9 +139,20 @@ fn a_decimal_beyond_the_engine_range_is_refused_never_rounded() {
         ..CommitBatch::default()
     });
     assert!(
-        matches!(refused, Err(CellError::ValueType { .. })),
+        matches!(
+            refused,
+            Err(CellError::Value(norn_ir::RuntimeValueError::Inexact { .. }))
+        ),
         "{refused:?}"
     );
+    assert!(
+        store
+            .read()
+            .object(MAIN_WORLD, "commerce.SalesOrderLine", "SO-1/1")
+            .expect("reads")
+            .is_none()
+    );
+    assert!(store.read().ledger(1).expect("ledger").is_empty());
 }
 
 #[test]
