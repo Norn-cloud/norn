@@ -1237,7 +1237,7 @@ norn_testkit::proptest::proptest! {
         let delivery = next_delivery(&mut cell, "original");
         let slice = load_slice(&cell, [key.clone()]).unwrap();
         commit_observed_snapshot(&mut cell, &catalog, &slice, &turn("original", delivery.consumed()), ObservedSnapshot { key: &key, values: &values, lifecycles: &[], provenance: &provenance }).unwrap();
-        let finding = cell.ledger()[0].events.iter().find_map(|event| match event { ObservationEvent::DataQualityFinding {fact} => Some(fact), _ => None }).unwrap();
+        let finding = cell.ledger()[0].events.iter().find_map(|event| match event { ObservationEvent::DataQualityFinding {fact} => Some(fact), ObservationEvent::ObservedFact { .. } | ObservationEvent::ObservedTransition { .. } | ObservationEvent::ObservedDeleted { .. } | ObservationEvent::ObservedRecreated { .. } => None }).unwrap();
         let changed: JsonObject = serde_json::from_value(json!({"amount":amount})).unwrap();
         norn_testkit::proptest::prop_assert!(norn_kernel::snapshot_observe::finding_rule_is_violated(&catalog, &key, &changed, finding).unwrap());
         norn_testkit::proptest::prop_assert!(!norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &changed, finding).unwrap());
