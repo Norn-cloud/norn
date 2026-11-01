@@ -55,8 +55,23 @@ test("repeated tiny returns cap cumulative cost and give final return the residu
     values.push(returned.stock.value)
     state = returned.after
   }
-  expect(values).toEqual([0n, 1n, 0n])
+  expect(values).toEqual([0n, 0n, 1n])
   const snapshot = structuredClone(state)
   expect(() => averageReferencePost(state, { kind: "return", id: "four", delivery: "ship", quantity: 1n })).toThrow("over-return")
   expect(state).toEqual(snapshot)
+})
+
+
+test("rounded partial returns never exceed the original issue value", () => {
+  let state = averageReferencePost(empty, { kind: "receipt", id: "a", quantity: 5n, value: 3n }).after
+  state = averageReferencePost(state, { kind: "delivery", id: "ship", quantity: 5n }).after
+  const values: bigint[] = []
+  for (let index = 0; index < 5; index++) {
+    const returned = averageReferencePost(state, { kind: "return", id: String(index), delivery: "ship", quantity: 1n })
+    conserved(returned)
+    values.push(returned.stock.value)
+    state = returned.after
+  }
+  expect(values).toEqual([1n, 1n, 1n, 0n, 0n])
+  expect(state.value).toBe(3n)
 })

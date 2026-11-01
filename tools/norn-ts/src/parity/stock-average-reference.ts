@@ -8,8 +8,8 @@ export type AverageMovement =
   | Readonly<{ kind: "return"; id: string; delivery: string; quantity: bigint }>
 
 /** Exact reference only. Issues retain original cost independently of later receipts.
- * Returns allocate the difference between cumulative rounded entitlements, so
- * repeated partial returns cannot exhaust value before exhausting quantity. */
+ * Each partial return rounds its original proportional cost, capped by the
+ * remaining issue value. The final return takes the exact residual. */
 export function averageReferencePost(before: AverageReference, event: AverageMovement) {
   if (event.quantity <= 0n || before.quantity < 0n || before.value < 0n) throw new Error("Invalid amount")
   if (before.quantity === 0n && before.value !== 0n) throw new Error("Value without quantity")
@@ -33,9 +33,11 @@ export function averageReferencePost(before: AverageReference, event: AverageMov
       if (!original) throw new Error("Missing original delivery")
       const quantity = original.returned.quantity + event.quantity
       if (quantity > original.quantity) throw new Error("over-return")
-      const value = referenceShare(quantity, original)
-      stock = { quantity: event.quantity, value: value - original.returned.value }
-      issues.set(event.delivery, { ...original, returned: { quantity, value } })
+      const remaining = original.value - original.returned.value
+      const proportional = referenceShare(event.quantity, original)
+      const value = quantity === original.quantity || proportional > remaining ? remaining : proportional
+      stock = { quantity: event.quantity, value }
+      issues.set(event.delivery, { ...original, returned: { quantity, value: original.returned.value + value } })
       break
     }
   }
