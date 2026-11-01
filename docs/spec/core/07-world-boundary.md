@@ -17,7 +17,8 @@ Reuse `ConnectorRoot`, `SourceSchemaIr`, `MappingIr`, mapping evidence/gaps, `Fu
 Functions use canonical `FunctionManifest {abi, function_id, version, input_schema, output_schema, error_schema, implementation, dependency_closure, runtime, platform, capabilities, determinism, bounds, cache, retention, steps}`. Admission rejects a missing `dependency_closure` and requires its declared digest to equal the digest computed from its entries. WIT/language bindings must agree; opaque scoped secret handles resolve only inside authorized performers, never the pure evaluator.
 
 The checker requires `dependency_closure.entries` in strictly increasing order
-by `name`. Each name must be unique, regardless of entry kind or digest;
+by `name`. Names must be non-blank; empty or whitespace-only names refuse.
+Each name must be unique, regardless of entry kind or digest;
 duplicates and out-of-order names refuse rather than being silently sorted or
 deduplicated. An `OciImage` implementation with an empty dependency closure
 refuses admission.
