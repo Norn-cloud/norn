@@ -3649,6 +3649,22 @@ mod tests {
         rule["payload"]["graph"]["nodes"][4]["content"]["inputField"] = json!("slice.items");
         let actual = findings(rule.clone());
         assert!(actual.is_empty(), "{actual:?}");
+        // FOLD-ORDER-1: collection selection is mandatory and explicit.
+        for selector in [None, Some(json!("")), Some(json!("  "))] {
+            let mut bad = rule.clone();
+            let content = bad["payload"]["graph"]["nodes"][4]["content"]
+                .as_object_mut()
+                .unwrap();
+            content.remove("inputField");
+            if let Some(selector) = selector {
+                content.insert("inputField".into(), selector);
+            }
+            assert!(has(
+                &findings(bad),
+                "rule.validation.ordered_fold_invalid",
+                "payload.graph.nodes[4].content.orderedFold"
+            ));
+        }
         for (member, invalid) in [
             ("maxItems", json!(0)),
             ("maxAccumulatorBytes", json!(0)),
