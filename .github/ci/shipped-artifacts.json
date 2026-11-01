@@ -17934,6 +17934,132 @@
       "connector": null
     },
     {
+      "path": "packages/norn-widget-renderer/boundary.json",
+      "sha256": "0bde25ae272698ead438fce229f27373ae3336b6e475c2b9456a27399976a411",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "packages/norn-widget-renderer/bun.lock",
+      "sha256": "3c3bf69e1ce0d7c78f388e683a64acef59a53dad468af2ca6282bc06c1cfc398",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "packages/norn-widget-renderer/package.json",
+      "sha256": "2bcdd1ccec8ccf2cc34adba85ff48b712483eb42f820ec264bdc9fdbd618aceb",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "packages/norn-widget-renderer/src/json.ts",
+      "sha256": "06e33e7910e8f632bbeed5c2ee020148b5a690d7ab9cdba21495b3e7326a6d37",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "packages/norn-widget-renderer/src/model.ts",
+      "sha256": "d44937d66431d0a7ed47ff97b54d8375cc03afbc094e5f82e87cc22c85c4f3ed",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "packages/norn-widget-renderer/test/contract.test.ts",
+      "sha256": "a20687d2ea318e9f8f108dc87d9133271d48bb387ea2b28c191682d45c6f075e",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "packages/norn-widget-renderer/tsconfig.json",
+      "sha256": "d227e4f9819dbe4be5e4f98255aa66861d2645b71b2a0da09218ac77efca4f12",
+      "origin": "authored",
+      "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
       "path": "registry/core/artifacts/commerce.SalesOrder.entity.json",
       "sha256": "33557de483f5e8a3eed035f12b0a23a8e28b653b535364822fc0dbd42817175e",
       "origin": "authored",
@@ -18241,7 +18367,7 @@
     },
     {
       "path": "scripts/ci/core.sh",
-      "sha256": "dc6cbfb55c9f418b9903b2d111973d3935f140b2c0a3c1a64bfca9d12a096913",
+      "sha256": "ce3913843b77e64ad2d3f4293b09a9ec3fd11e1d932c4a640d0c4a110ed7eba5",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
