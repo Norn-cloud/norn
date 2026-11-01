@@ -1126,6 +1126,12 @@ pub fn finding_rule_is_violated(
     values: &JsonObject,
     finding: &DataQualityFinding,
 ) -> Result<bool, ObservationRefusal> {
+    if let DataQualityOutcome::ObservedOutOfBand { property, .. } = &finding.outcome {
+        return Err(ObservationRefusal::InvalidLifecycle {
+            property: property.to_string(),
+            reason: "state-aware finding recovery is unsupported".into(),
+        });
+    }
     Ok(reevaluate_finding(catalog, key, values, finding)?
         .iter()
         .any(|expected| expected.rule_ref == finding.rule_ref))
