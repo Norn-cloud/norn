@@ -282,4 +282,3 @@ or timer effects. The integrator still owns two independent assays, pinned scope
 settings/approval versions, complete partition fences, actual reservations,
 balanced economic effects and atomic posting. No full CP3 runtime or application
 proof claim follows from allocation conformance alone.
-||||||| e838c223b
