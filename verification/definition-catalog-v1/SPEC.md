@@ -22,3 +22,5 @@ states and rule writes other than decide-graph fact changes are outside scope.
 
 Correspondence tests are added alongside each builder capability. The first slice
 defines identity types; builder slices add executable correspondence checks.
+
+The entity-only projection slice defers dependency edges to the action/binding slice.

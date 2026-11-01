@@ -32,7 +32,8 @@ impl std::error::Error for CatalogError {}
 /// Project admitted candidates and installed artifacts into sorted catalog rows.
 ///
 /// Call only after `check_artifact_set` admits the set. This slice projects
-/// entities. See verification/definition-catalog-v1/SPEC.md.
+/// entities. Dependency edges follow in the action/binding slice.
+/// See verification/definition-catalog-v1/SPEC.md.
 ///
 /// # Errors
 /// Returns `CatalogError::Hash` if an artifact semantic hash cannot be computed.
