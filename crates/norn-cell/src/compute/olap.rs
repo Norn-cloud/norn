@@ -9,7 +9,7 @@ use norn_checker::entity_instance::EffectiveKind;
 use norn_ir::PropertyType;
 
 fn db<T>(value: duckdb::Result<T>) -> Result<T, CellError> {
-    value.map_err(|_database| refused(UNSUPPORTED_ENGINE))
+    value.map_err(|error| CellError::Engine(error.to_string()))
 }
 
 impl<E: SqlEngine> CellStore<E> {
@@ -18,7 +18,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// exact DECIMAL operands and rounds a ratio once using integer quotient/remainder.
     /// This analytical result supplies no commit authority or persistent OLAP storage.
     /// # Errors
-    /// Refuses unsupported declared scales, snapshot failures and SQL execution errors.
+    /// Returns snapshot/refusal errors, or a host SQL engine error on execution failure.
     pub fn evaluate_question_duckdb(
         &self,
         plan: &QuestionPlan,
