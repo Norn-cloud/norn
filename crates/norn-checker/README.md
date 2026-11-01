@@ -28,7 +28,6 @@ RETAINED-IDENTITY: rechecks compare exact semantic identity before reusing an at
 a changed install uses current admission. CONTEXT-BASE: a different checker base is refused.
 `tests/check_receipt.rs` enumerates ordinary, flow-map, fresh install, retained install,
 flow-map install and verified recheck writers against both precision vectors in both layer positions.
-The source convenience writer and native/WASM boundary retain their existing vector coverage.
 Conformance in `tests/check_receipt.rs`: EXACT-INTEGER (`9007199254740992` / `9007199254740993`),
 EXACT-DECIMAL (`0.1234567890123456789012345678` / `0.1234567890123456789012345679`),
 EXACT-LITERAL (`25` / `26`), EXACT-VERIFY (substitution refusal), EXACT-ORDER (key reordering).

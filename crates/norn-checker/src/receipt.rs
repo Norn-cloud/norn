@@ -634,8 +634,8 @@ pub fn admission_receipt_sha256(stored: &str) -> Result<String, ReceiptError> {
     Ok(RECEIPT_HASH_PROFILE.hash_canonical_bytes(&canonical))
 }
 
-/// Verify a stored clean admission receipt without rerunning the current
-/// admission checker.
+/// Verify a historical @1–@4 receipt without rerunning admission.
+/// New formats require [`verify_admission_receipt_sources`].
 ///
 /// This is used when opening persisted definitions: it verifies the receipt's
 /// integrity, its exact versioned checker identity, and its bindings to the
