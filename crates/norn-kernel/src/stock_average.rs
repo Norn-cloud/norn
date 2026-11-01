@@ -1,5 +1,5 @@
 //! Moving-average valuation for one admitted partition. No posting authority.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Nonnegative amounts in integer millionths.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -22,9 +22,21 @@ struct Issue {
 pub struct AverageState {
     balance: StockAmount,
     issues: BTreeMap<String, Issue>,
+    transfers: BTreeSet<String>,
 }
 
 impl AverageState {
+    pub(crate) fn transfer_out(
+        &self,
+        id: &str,
+        quantity: u128,
+    ) -> Result<AverageResult, AverageError> {
+        let mut result = allocate_average(self, &AverageMovement::Delivery(id.into(), quantity))?;
+        result.state.issues.remove(id);
+        result.state.transfers.insert(id.into());
+        Ok(result)
+    }
+
     /// Current inventory at its remaining acquisition cost.
     #[must_use]
     pub const fn balance(&self) -> StockAmount {
@@ -94,7 +106,11 @@ pub fn allocate_average(
     let allocation = match movement {
         AverageMovement::Receipt(amount) => *amount,
         AverageMovement::Delivery(id, quantity) => {
-            if id.is_empty() || state.issues.contains_key(id) || *quantity == 0 {
+            if id.is_empty()
+                || state.issues.contains_key(id)
+                || state.transfers.contains(id)
+                || *quantity == 0
+            {
                 return Err(AverageError::Invalid);
             }
             if *quantity > state.balance.quantity {
