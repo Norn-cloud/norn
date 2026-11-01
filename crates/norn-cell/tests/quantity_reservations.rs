@@ -2488,3 +2488,130 @@ fn post_group_codec_preserves_singleton_receipt_bytes_and_order() {
         "POST-GROUP-IDENTITY ordered requests"
     );
 }
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one durable atomic-group conformance history"
+)]
+async fn post_atomic_partitions_refusal_retry_reopen_restore() {
+    use norn_cell::store::QuantityBatch;
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("group.sqlite");
+    let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+    store.bind("scope", "tenant/dev").expect("binding");
+    let group = |key: &str, request: norn_ir::quantity_ledger::QuantityRequest| {
+        let mut other = request.clone();
+        other.ledger_id = "destination".into();
+        CommitBatch {
+            world: "main".into(),
+            scope: "tenant/dev".into(),
+            idempotency_key: Some(key.into()),
+            quantity: Some(QuantityBatch(vec![request, other])),
+            ..CommitBatch::default()
+        }
+    };
+    store
+        .commit_fenced(&group("define-group", define()))
+        .expect("POST-GROUP empty partitions");
+    store
+        .commit_fenced(&group("fund-group", post(0, "fund", "fund", 10)))
+        .expect("fund");
+    let mut batch = group("ship-group", post(0, "ship", "ship", 6));
+    for request in &mut batch.quantity.as_mut().expect("requests").0 {
+        request.balance_versions = store
+            .read()
+            .quantity_balance_versions("main", request)
+            .expect("fences");
+    }
+    let before = store.read().dump().expect("before");
+    let mut bad = batch.clone();
+    bad.writes.push(norn_cell::FactWriteRow::Put {
+        object_type: "fixture.Marker".into(),
+        key: "partial".into(),
+        values: BTreeMap::from([(
+            "label".into(),
+            norn_ir::RuntimeValue::String("must roll back".into()),
+        )]),
+    });
+    if let Some(last) = bad.quantity.as_mut().expect("requests").0.last_mut() {
+        last.operation = post(0, "ship", "ship", 11).operation;
+    }
+    assert!(
+        store.commit(&bad).is_err(),
+        "POST-ATOMIC-PARTITIONS later-partition refusal"
+    );
+    assert_eq!(before, store.read().dump().expect("unchanged"));
+    let mut duplicate = batch.clone();
+    duplicate.quantity.as_mut().expect("requests").0 = vec![post(0, "duplicate", "fund", 1); 2];
+    assert!(
+        store.commit(&duplicate).is_err(),
+        "POST-GROUP-IDENTITY duplicate ledger"
+    );
+    assert_eq!(before, store.read().dump().expect("unchanged"));
+    let mut competitor = batch.clone();
+    competitor.idempotency_key = Some("competing-delivery".into());
+    for request in &mut competitor.quantity.as_mut().expect("requests").0 {
+        if let QuantityOperation::Post { posting_id, .. } = &mut request.operation {
+            *posting_id = "competitor".into();
+        }
+    }
+    store.commit(&batch).expect("POST-GROUP commits together");
+    assert!(matches!(
+        store.commit(&batch).expect("identical retry"),
+        CommitOutcome::Replayed(_)
+    ));
+    let committed = store.read().dump().expect("winner");
+    assert!(
+        matches!(
+            store.commit(&competitor),
+            Err(CellError::Quantity(QuantityError::StaleVersion { .. }))
+        ),
+        "POST-PARTITION-FENCES overlapping deliveries oversell"
+    );
+    assert_eq!(committed, store.read().dump().expect("loser unchanged"));
+    let mut reordered = batch.clone();
+    reordered.quantity.as_mut().expect("requests").0.reverse();
+    assert!(
+        matches!(
+            store.commit(&reordered),
+            Err(CellError::IdempotencyConflict(_))
+        ),
+        "POST-GROUP-IDENTITY ordered complete intent"
+    );
+    let expected = store.read().dump().expect("expected");
+    let head = store.read().verify_ledger().expect("chain");
+    let mut exporter =
+        norn_cell::export::Exporter::local(&dir.path().join("export")).expect("exporter");
+    for seq in 1..=store.export_commit_count().expect("count") {
+        exporter
+            .append(&store.export_record(seq).expect("journal").expect("record"))
+            .await
+            .expect("append");
+    }
+    drop(store);
+    let mut store =
+        CellStore::open(&path, model(), StoreOptions::default()).expect("POST-GROUP-REOPEN");
+    assert_eq!(expected, store.read().dump().expect("reopened"));
+    assert!(matches!(
+        store.commit(&batch).expect("reopened retry"),
+        CommitOutcome::Replayed(_)
+    ));
+    let restored = dir.path().join("restore.sqlite");
+    CellStore::restore_from(
+        &mut exporter,
+        &restored,
+        model(),
+        "tenant/dev",
+        &BTreeMap::from([("scope".into(), "tenant/dev".into())]),
+        StoreOptions::default(),
+    )
+    .await
+    .expect("POST-GROUP-REPLAY");
+    let restored = CellStore::open(&restored, model(), StoreOptions::default()).expect("restored");
+    assert_eq!(expected, restored.read().dump().expect("restored state"));
+    assert_eq!(
+        head,
+        restored.read().verify_ledger().expect("restored chain")
+    );
+}
