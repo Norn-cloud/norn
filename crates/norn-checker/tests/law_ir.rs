@@ -10,7 +10,10 @@ use norn_checker::{
     verification::{LawWriter, codes, conservative_closure},
 };
 use norn_graph::Budget;
-use norn_ir::ArtifactEnvelope;
+use norn_ir::{
+    ArtifactEnvelope, ArtifactPayload, CompositionPackRoot, LawIR, PackArtifactKind,
+    PackArtifactRef, PackInstance, PackInstanceRef,
+};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -158,21 +161,21 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
         artifact.artifact_id = id.to_owned();
         artifact.namespace = "toy".to_owned();
         artifact.dependencies.clear();
-        let root = norn_ir::CompositionPackRoot {
+        let root = CompositionPackRoot {
             pack_id: id.to_owned(),
             pack_version: artifact.version.clone(),
             pack_kind: None,
             provides: None,
-            artifacts: vec![norn_ir::PackArtifactRef {
+            artifacts: vec![PackArtifactRef {
                 artifact_id: member.to_owned(),
                 version: "0.1.0".to_owned(),
-                kind: norn_ir::PackArtifactKind::Entity,
+                kind: PackArtifactKind::Entity,
                 additional: BTreeMap::new(),
             }],
             instances,
             extensions: None,
         };
-        artifact.payload = norn_ir::ArtifactPayload::from_kind_json(
+        artifact.payload = ArtifactPayload::from_kind_json(
             &norn_ir::ArtifactKind::BusinessPack,
             serde_json::from_value(serde_json::to_value(root).expect("pack")).expect("tree"),
         )
@@ -181,7 +184,7 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
     };
     let root = pack("toy.root", "core.Order.interface", None);
     let leaf = pack("toy.leaf", "commerce.SalesOrder.entity", None);
-    let reference = |id: &str, artifact: &ArtifactEnvelope| norn_ir::PackInstanceRef {
+    let reference = |id: &str, artifact: &ArtifactEnvelope| PackInstanceRef {
         instance_id: id.to_owned(),
         pack: norn_ir::mapping::InterpretationEndpoint {
             artifact_id: artifact.artifact_id.clone(),
@@ -198,7 +201,7 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
     let nodes = refs
         .iter()
         .enumerate()
-        .map(|(index, at)| norn_ir::PackInstance {
+        .map(|(index, at)| PackInstance {
             instance_id: at.instance_id.clone(),
             scope: law.scope.clone(),
             pack: at.pack.clone(),
@@ -231,16 +234,29 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
         .is_empty(),
         "retained fixture admission"
     );
-    let mut declaration: norn_ir::LawIR =
+    let mut declaration: LawIR =
         serde_json::from_value(serde_json::to_value(law.payload.to_json_value()).expect("law"))
             .expect("typed");
     declaration.scope.root = norn_ir::LawRoot::App("app-root".to_owned());
-    law.payload = norn_ir::ArtifactPayload::from_kind_json(
+    law.payload = ArtifactPayload::from_kind_json(
         &norn_ir::ArtifactKind::Law,
         serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
     )
     .expect("payload");
     (law, base)
+}
+
+#[test]
+fn law_contained_shared_graph_contract_is_closed_and_scoped() {
+    let (law, base) = membership_case();
+    let owner = base.last().expect("holder");
+    let root: CompositionPackRoot =
+        serde_json::from_value(serde_json::to_value(owner.payload.to_json_value()).expect("wire"))
+            .expect("pack");
+    let instances = root.instances.expect("declarations");
+    assert_eq!(instances.len(), 4);
+    assert!(instances.iter().all(|instance| instance.scope == law.scope));
+    assert_eq!(instances[0].imports.len(), 2);
 }
 
 fn membership(
@@ -283,7 +299,7 @@ fn law_contained_unknown_stale_missing_duplicate_cycle_and_budget_refuse() {
     for case in 0..6 {
         let mut base = original.clone();
         let owner = base.last_mut().expect("declarations");
-        let mut root: norn_ir::CompositionPackRoot = serde_json::from_value(
+        let mut root: CompositionPackRoot = serde_json::from_value(
             serde_json::to_value(owner.payload.to_json_value()).expect("wire"),
         )
         .expect("root");
@@ -299,7 +315,7 @@ fn law_contained_unknown_stale_missing_duplicate_cycle_and_budget_refuse() {
                 nodes.push(nodes[0].clone());
             }
             3 => {
-                nodes[3].instances = vec![norn_ir::PackInstanceRef {
+                nodes[3].instances = vec![PackInstanceRef {
                     instance_id: nodes[0].instance_id.clone(),
                     pack: nodes[0].pack.clone(),
                 }];
@@ -309,13 +325,13 @@ fn law_contained_unknown_stale_missing_duplicate_cycle_and_budget_refuse() {
             }
             _ => {
                 nodes[0].imports.clear();
-                nodes[0].instances = vec![norn_ir::PackInstanceRef {
+                nodes[0].instances = vec![PackInstanceRef {
                     instance_id: "missing".to_owned(),
                     pack: nodes[0].pack.clone(),
                 }];
             }
         }
-        owner.payload = norn_ir::ArtifactPayload::from_kind_json(
+        owner.payload = ArtifactPayload::from_kind_json(
             &norn_ir::ArtifactKind::BusinessPack,
             serde_json::from_value(serde_json::to_value(root).expect("root")).expect("tree"),
         )
