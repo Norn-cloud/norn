@@ -1611,7 +1611,7 @@ proptest::proptest! {
 
 #[test]
 fn typed_authoring_ordered_fold_executes_the_declared_helper() {
-    let rules = support::compiled_rules("tools/norn-ts/fixtures/decisions/ordered-fold.source.ts");
+    let rules = support::generated_rules("crates/norn-decisions/tests/fixtures/typed-ordered-fold.json");
     let declared = rules["example.fold.total.rule"].clone();
     let helpers = BTreeMap::from([(
         "example.fold.step.rule".into(),

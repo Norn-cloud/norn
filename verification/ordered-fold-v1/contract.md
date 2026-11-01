@@ -238,3 +238,7 @@ flattening its elements, lowering to existing one-level `flatten([left, right])`
 Both operands must be arrays with compatible item schemas. This permits declared
 allocation lineage to accumulate without a new runtime operator. String/scalar
 concat and additional arguments remain outside this authoring form.
+
+FOLD-AUTHORING-CORRESPONDENCE: Rust conformance consumes compiler-generated
+RuleIR goldens; TypeScript tests compare those goldens with fresh extraction.
+The evaluator tests never spawn a compiler or acquire a process capability.
