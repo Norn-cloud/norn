@@ -66,13 +66,16 @@ pub(crate) fn require_nfc_text(source: &RuntimeValue) -> Result<(), Vec<Diagnost
                 .find_map(|(i, item)| visit(item, &format!("{path}/{i}"))),
             RuntimeValue::Object(fields) => fields.iter().find_map(|(key, value)| {
                 let pointer = format!("{path}/{}", key.replace('~', "~0").replace('/', "~1"));
-                if norn_canonical::nfc(key) != *key {
-                    Some(pointer)
-                } else {
+                if norn_canonical::nfc(key) == *key {
                     visit(value, &pointer)
+                } else {
+                    Some(pointer)
                 }
             }),
-            _ => None,
+            RuntimeValue::Null
+            | RuntimeValue::Bool(_)
+            | RuntimeValue::Number(_)
+            | RuntimeValue::String(_) => None,
         }
     }
     if let Some(path) = visit(source, "") {

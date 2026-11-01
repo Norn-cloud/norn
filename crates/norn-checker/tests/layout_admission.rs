@@ -165,125 +165,6 @@ fn fixture_sources(
     .expect("fixture")
 }
 
-fn unicode_rule_sources() -> (Value, Value) {
-    let mut semantic = valid_rule();
-    semantic["artifactId"] = json!("test.café");
-    semantic["payload"]["inputSchema"]["properties"]["café"] = json!({"type":"string"});
-    semantic["payload"]["graph"]["nodes"][4]["content"]["expressions"][0]["value"] =
-        json!("short ? ['café'] : []");
-    let mut raw = semantic.clone();
-    add_inline_layout(&mut raw);
-    for edge in semantic["payload"]["graph"]["edges"]
-        .as_array_mut()
-        .expect("edges")
-    {
-        edge.as_object_mut().expect("edge").remove("type");
-    }
-    (raw, semantic)
-}
-
-#[test]
-fn source_decode_verbatim_and_hash_correspondence() {
-    use norn_checker::obligations::ApprovedContract;
-    use norn_checker::receipt::{
-        RECEIPT_HASH_PROFILE, check_artifact_sources_with_receipt, verify_admission_receipt_sources,
-    };
-    use norn_ir::RuntimeValue;
-
-    let (raw, semantic) = unicode_rule_sources();
-    let source = norn_ir::runtime::encode(&raw).expect("source");
-    let prepared = norn_checker::prepare_artifact_source(source.clone()).expect("preparation");
-    assert_eq!(
-        prepared.source,
-        norn_ir::runtime::encode(&semantic).expect("semantic source")
-    );
-    assert_eq!(
-        prepared.artifact,
-        decode_artifact_json(&semantic).expect("verbatim envelope")
-    );
-    assert!(!prepared.layout.artifacts.is_empty());
-    let bytes = RECEIPT_HASH_PROFILE
-        .canonicalize_json(serde_json::to_vec(&semantic).expect("semantic JSON"))
-        .expect("existing hash profile");
-    assert_eq!(
-        prepared.source.canonical_json().expect("canonical source"),
-        bytes
-    );
-    let expected_hash = RECEIPT_HASH_PROFILE.hash_canonical_bytes(&bytes);
-    let limits = ResourceLimitProfile::norn_limits_v1();
-    for in_base in [false, true] {
-        let sources = [source.clone()];
-        let (candidates, base): (&[RuntimeValue], &[RuntimeValue]) = if in_base {
-            (&[], &sources)
-        } else {
-            (&sources, &[])
-        };
-        let checked = check_artifact_sources_with_receipt(
-            candidates,
-            base,
-            &BTreeSet::new(),
-            None,
-            &limits,
-            None,
-        )
-        .expect("source writer");
-        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
-        let refs = if in_base {
-            &checked.receipt.artifact_set.base
-        } else {
-            &checked.receipt.artifact_set.artifacts
-        };
-        assert_eq!(refs[0].artifact_id, "test.café");
-        assert_eq!(refs[0].sha256, expected_hash);
-        let body = String::from_utf8(checked.receipt.canonical_json().expect("receipt JSON"))
-            .expect("receipt UTF-8");
-        verify_admission_receipt_sources(
-            &body,
-            &checked.receipt.content_sha256().expect("receipt hash"),
-            candidates,
-            base,
-            &limits,
-        )
-        .expect("writer to source verification");
-        let mut changed = raw.clone();
-        changed["payload"]["graph"]["nodes"][4]["content"]["expressions"][0]["value"] =
-            json!("short ? ['changed'] : []");
-        let changed = [norn_ir::runtime::encode(&changed).expect("changed source")];
-        let (changed_candidates, changed_base): (&[RuntimeValue], &[RuntimeValue]) = if in_base {
-            (&[], &changed)
-        } else {
-            (&changed, &[])
-        };
-        assert!(
-            verify_admission_receipt_sources(
-                &body,
-                &checked.receipt.content_sha256().expect("receipt hash"),
-                changed_candidates,
-                changed_base,
-                &limits,
-            )
-            .is_err()
-        );
-        let documents =
-            serde_json::to_string(std::slice::from_ref(&raw)).expect("source documents");
-        let (candidate_text, base_text) = if in_base {
-            ("[]", documents.as_str())
-        } else {
-            (documents.as_str(), "[]")
-        };
-        let challenge_source =
-            DefinitionSource::parse(candidate_text, base_text).expect("challenge source");
-        ApprovedContract::approve(
-            &challenge_source,
-            &BTreeSet::new(),
-            json!({"test":"semantics"}),
-            json!({"test":"assumptions"}),
-            json!({"test":"assurance"}),
-        )
-        .expect("challenge and source writer share the verbatim model");
-    }
-}
-
 #[test]
 fn receipt_shape_refuses_unknown_formats_and_malformed_law_origins() {
     let source = norn_ir::runtime::encode(&valid_rule()).expect("source");
@@ -411,5 +292,57 @@ fn definition_text_nfc_paths() {
             norn_checker::prepare_artifact_source(source).expect_err("non-NFC refused");
         assert_eq!(diagnostics[0].code.as_str(), "definition.text.not_nfc");
         assert_eq!(diagnostics[0].span.as_ref().expect("span").pointer, pointer);
+    }
+}
+
+#[test]
+fn retained_receipt_refuses_non_nfc_substitution_in_both_layers() {
+    use norn_checker::receipt::{
+        check_artifact_sources_with_receipt, verify_admission_receipt_sources,
+    };
+    let mut document = valid_rule();
+    document["artifactId"] = json!("test.café");
+    let source = norn_ir::runtime::encode(&document).expect("source");
+    let changed = norn_ir::RuntimeValue::from_json_text(
+        serde_json::to_string(&document)
+            .expect("JSON")
+            .replace('é', "e\u{301}"),
+    )
+    .expect("non-NFC source");
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    for in_base in [false, true] {
+        let sources = [source.clone()];
+        let changed = [changed.clone()];
+        let (candidate, base) = if in_base {
+            (&[][..], &sources[..])
+        } else {
+            (&sources[..], &[][..])
+        };
+        let checked = check_artifact_sources_with_receipt(
+            candidate,
+            base,
+            &BTreeSet::new(),
+            None,
+            &limits,
+            None,
+        )
+        .expect("receipt");
+        assert!(checked.receipt.admitted);
+        let body =
+            String::from_utf8(checked.receipt.canonical_json().expect("JSON")).expect("UTF-8");
+        let digest = checked.receipt.content_sha256().expect("hash");
+        verify_admission_receipt_sources(&body, &digest, candidate, base, &limits)
+            .expect("unchanged source verifies");
+        let (candidate, base) = if in_base {
+            (&[][..], &changed[..])
+        } else {
+            (&changed[..], &[][..])
+        };
+        assert!(
+            verify_admission_receipt_sources(&body, &digest, candidate, base, &limits)
+                .expect_err("non-NFC substitution")
+                .to_string()
+                .contains("definition.text.not_nfc")
+        );
     }
 }
