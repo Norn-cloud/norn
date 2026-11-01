@@ -1385,3 +1385,24 @@ fn declared_average_cp1_and_delivery_to_transfer_identity_collision() {
         .is_err()
     );
 }
+
+#[test]
+fn allocation_declarations_refuse_oversell_nonpositive_and_invalid_source_amounts() {
+    let rules = fifo_fold();
+    for (demand, quantity, amount) in [(2, 1, 10), (0, 1, 10), (-1, 1, 10), (1, 0, 10), (1, 1, -1)]
+    {
+        assert!(
+            folded(
+                &rules,
+                json!({"demand":demand,"value":0,"layers":[],"allocations":[]}),
+                json!([{"id":"a","quantity":quantity,"value":amount}])
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        "340282366920938463463374607431768211455"
+            .parse::<norn_expr::Number>()
+            .is_err()
+    );
+}
