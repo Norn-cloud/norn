@@ -29,10 +29,9 @@ struct Fixture {
     catalog: EffectiveCatalog,
 }
 fn catalog(objects: &[ObjectTypeDef]) -> EffectiveCatalog {
-    let template: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
-        "../../../fixtures/ir/metrics/ontology.json"
-    ))
-    .expect("artifacts");
+    let template: Vec<ArtifactEnvelope> =
+        serde_json::from_str(include_str!("../../../fixtures/ir/metrics/ontology.json"))
+            .expect("artifacts");
     let artifacts: Vec<_> = objects
         .iter()
         .map(|object| {
