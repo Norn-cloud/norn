@@ -43,6 +43,7 @@ def checked_result(path: Path | None, pins: dict) -> dict | None:
     """Use the existing full result validator, including logs, tools and clean source."""
     if path is None:
         return None
+    path = path.resolve()
     try:
         before = path.read_bytes()
         checked = subprocess.run(
@@ -111,9 +112,10 @@ def project(coverage: dict, statements: dict, pins: dict, checked: dict | None) 
 def challenge_rows(challenge: dict) -> list[dict]:
     """An obligation inventory or transition-frame assessment is never checked proof."""
     laws = challenge["lawStatements"]
-    return [{"law": laws[goal["law"]] if "law" in goal else None, "obligation": index,
+    binding = digest(challenge)
+    return [{"law": laws[goal["law"]] if type(goal.get("law")) is int and 0 <= goal["law"] < len(laws) else None, "obligation": index,
              "statement": goal["statement"], "goal": goal["goal"],
-             "level": "unknown", "statementDigest": digest(goal["statement"])}
+             "level": "unknown", "statementDigest": digest({"challenge": binding, "statement": goal["statement"]})}
             for index, goal in enumerate(challenge["obligations"])]
 
 
@@ -125,7 +127,7 @@ def main() -> None:
     coverage, statements, pins = inputs()
     document = project(coverage, statements, pins, checked_result(args.result, pins))
     if args.challenge:
-        raw = args.challenge.read_bytes()
+        raw = sys.stdin.buffer.read() if str(args.challenge) == "-" else args.challenge.read_bytes()
         challenge = json.loads(raw)
         challenge_digest = hashlib.sha256(raw).hexdigest()
         document["challengeDigest"] = challenge_digest

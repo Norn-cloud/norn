@@ -86,6 +86,13 @@ class GuaranteesScenarios(unittest.TestCase):
         self.assertEqual(row["level"], "unknown")
         self.assertEqual(row["tests"], {"level": "tested", "scope": "partial"})
 
+    def test_guarantees_statement_digest_binds_the_entire_challenge(self):
+        challenge = {"lawStatements": [{"artifactId": "core.law", "sha256": "a" * 64}],
+            "obligations": [{"law": 0, "goal": {"kind": "initialization"}, "statement": {"law": 0}}]}
+        before = matrix.challenge_rows(challenge)[0]["statementDigest"]
+        challenge["lawStatements"][0]["sha256"] = "b" * 64
+        self.assertNotEqual(before, matrix.challenge_rows(challenge)[0]["statementDigest"])
+
     def test_generated_evidence_removal_never_increases_assurance(self):
         rng = random.Random(213)
         rank = {"unknown": 0, "tested": 1, "proved": 2}
