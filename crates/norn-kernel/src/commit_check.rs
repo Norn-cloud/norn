@@ -1471,9 +1471,6 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
         }
     }
     for write in &commit.writes {
-        if !matches!(write.mutation, FactMutation::Put { .. }) {
-            continue;
-        }
         if let Some(concrete) = view
             .concrete(&model.canonical(&write.key))
             .map_err(CommitError::Host)?
