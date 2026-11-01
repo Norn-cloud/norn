@@ -35,3 +35,8 @@ fn ratio_is_nearest_and_sign_symmetric() {
 fn zero_divisor_always_refuses() {
     assert!(arithmetic::ratio(kani::any(), 0).is_none());
 }
+
+#[kani::proof]
+fn ratio_never_panics_for_full_width_inputs() {
+    let _result = arithmetic::ratio(kani::any(), kani::any());
+}

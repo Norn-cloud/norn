@@ -40,7 +40,7 @@ adding a domain operation or changing Lane A's ordered-fold contract.
 
 Native scenarios cover 98%/97.5%, signed ties, zero and range refusals.
 Generated properties cover commutative sum and ratio error/sign symmetry.
-The Kani harness includes the production module: full-width checked-sum safety
+The Kani harness includes the production module: full-width checked-sum/ratio safety,
 zero-divisor refusal, and exhaustive i16 numerators with signed 128 divisors
 (nearest, tie-away and sign correspondence). This does not claim a
 universal arithmetic proof or an evaluator/frontier qualification.
