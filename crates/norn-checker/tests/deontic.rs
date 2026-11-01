@@ -266,6 +266,39 @@ fn structured_sources_feed_existing_precedence_without_a_new_hierarchy() {
 }
 
 #[test]
+fn structured_nested_bindings_must_identify_real_slots() {
+    use norn_checker::deontic::{RequirementRefusal as R, check_requirement};
+    let mut r = requirement();
+    r.norm.exceptions.push(norn_ir::deontic::RuleException {
+        id: "exception".into(),
+        condition: norn_ir::ZenExpression("input.active".into()),
+        source: r.norm.source.clone(),
+    });
+    r.norm.law.response = norn_ir::LawResponse::Invariant {
+        object_type: "example.Type".into(),
+        invariant_id: "nonnegative".into(),
+    };
+    let wire = serde_json::to_value(r).expect("typed fixture");
+    for (pointer, value) in [
+        ("/norm/law/scope/root/id", ""),
+        ("/norm/law/scope/objectTypes/0", " "),
+        ("/norm/exceptions/0/id", ""),
+        ("/norm/exceptions/0/source/pointer", "/~2"),
+        ("/norm/exceptions/0/source/artifactId", ""),
+        ("/norm/law/response/objectType", ""),
+        ("/norm/law/response/invariantId", " "),
+    ] {
+        let mut invalid = wire.clone();
+        *invalid.pointer_mut(pointer).expect("declared slot") = json!(value);
+        let invalid = serde_json::from_value(invalid).expect("shape");
+        assert_eq!(
+            check_requirement(&invalid, &requirement_env()),
+            Err(R::InvalidBinding)
+        );
+    }
+}
+
+#[test]
 fn core_physics_bilingual_views_round_trip_one_semantic_target() {
     use norn_expr::{EntityDefinitions, EnvOptions, Type, ZenTypeEnv};
     use norn_ir::deontic::{RequirementText, RequirementTiming};
