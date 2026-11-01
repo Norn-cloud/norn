@@ -25,6 +25,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use std::collections::BTreeMap;
+
+use crate::ScopeRef;
+use crate::mapping::InterpretationEndpoint;
 use crate::members::{IrVersion01, WholeNumber, one_of_forms, present_non_null};
 use crate::rule::JsonObject;
 
@@ -97,6 +101,14 @@ pub struct CompositionPackRoot {
     pub provides: Option<Vec<String>>,
     /// Non-empty list of the pack's artifacts.
     pub artifacts: Vec<PackArtifactRef>,
+    /// Declarations in the retained scoped graph; omitted when there are none.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Vec<PackInstance>")]
+    pub instances: Option<Vec<PackInstance>>,
     /// Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.
     #[serde(
         default,
@@ -105,6 +117,58 @@ pub struct CompositionPackRoot {
     )]
     #[schemars(with = "JsonObject")]
     pub extensions: Option<JsonObject>,
+}
+
+/// PACK-PIN-1: an opaque instance identity, pinned separately from its release.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackInstanceRef {
+    pub instance_id: String,
+    pub pack: InterpretationEndpoint,
+}
+
+/// A scoped declaration; imports and contained instances reference this same model.
+/// Identity survives release upgrades. Structural admission grants no execution authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackInstance {
+    pub instance_id: String,
+    #[serde(
+        deserialize_with = "instance_scope",
+        serialize_with = "instance_scope_wire"
+    )]
+    #[schemars(schema_with = "instance_scope_schema")]
+    pub scope: ScopeRef,
+    pub pack: InterpretationEndpoint,
+    pub imports: BTreeMap<String, PackInstanceRef>,
+    pub instances: Vec<PackInstanceRef>,
+}
+
+fn instance_scope_wire<S: serde::Serializer>(
+    scope: &ScopeRef,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    crate::ScopeRefWire(scope).serialize(serializer)
+}
+
+fn instance_scope_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut schema = ScopeRef::json_schema(generator);
+    schema.insert("additionalProperties".into(), false.into());
+    schema
+}
+
+fn instance_scope<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<ScopeRef, D::Error> {
+    let scope = BTreeMap::<String, crate::JsonValue>::deserialize(decoder)?;
+    if scope.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "orgId" | "tenantId" | "workspaceId" | "environmentId" | "businessUnitId"
+        )
+    }) {
+        return Err(serde::de::Error::custom("unknown instance scope dimension"));
+    }
+    serde_json::from_value(serde_json::to_value(scope).map_err(serde::de::Error::custom)?)
+        .map_err(serde::de::Error::custom)
 }
 
 /// One exact artifact version in a composition pack.
