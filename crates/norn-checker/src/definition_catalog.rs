@@ -61,8 +61,10 @@ pub fn project(
             candidate,
         });
     }
+    let combined: Vec<_> = all.iter().map(|artifact| (*artifact).clone()).collect();
+    let effective = crate::EffectiveCatalog::from_artifacts_with_registry(&combined, registry);
     for artifact in &all {
-        rows.entity(artifact);
+        rows.entity(artifact, &effective);
         rows.depends_on(artifact, &all);
     }
     let admission = Admission::new(artifacts, base, registry);
@@ -127,6 +129,7 @@ struct Rows {
     properties: BTreeSet<PropertyRow>,
     links: BTreeSet<LinkRow>,
     transitions: BTreeSet<TransitionRow>,
+    states: BTreeSet<MemberRef>,
     writes: BTreeSet<WritesRow>,
     depends_on: BTreeSet<DependsOnRow>,
     mappings: BTreeSet<MappingRow>,
@@ -206,20 +209,20 @@ fn member_of(key: &ArtifactKey, member: Member) -> MemberRef {
 }
 
 impl Rows {
-    fn entity(&mut self, artifact: &ArtifactEnvelope) {
+    fn entity(&mut self, artifact: &ArtifactEnvelope, effective: &crate::EffectiveCatalog) {
         let decoded = decode_v2(artifact);
         if let (Decoded::NotV2, ArtifactPayload::Entity(payload)) = (&decoded, &artifact.payload)
             && let Ok(Some(object)) = entity_object_type(payload)
             && object.form == EntityForm::V1
         {
-            self.object_type(artifact, &object.root.object_type);
+            self.object_type(artifact, &object.root.object_type, effective);
             return;
         }
         let Decoded::Root(root) = decoded else {
             return;
         };
         match *root {
-            EntityRoot::V2(root) => self.object_type(artifact, &root.object_type),
+            EntityRoot::V2(root) => self.object_type(artifact, &root.object_type, effective),
             EntityRoot::V2Interface(root) => {
                 let name = root.interface.name.as_str().to_owned();
                 self.types.insert(TypeRow {
@@ -263,7 +266,12 @@ impl Rows {
         }
     }
 
-    fn object_type(&mut self, artifact: &ArtifactEnvelope, def: &ObjectTypeDef) {
+    fn object_type(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        def: &ObjectTypeDef,
+        effective: &crate::EffectiveCatalog,
+    ) {
         let name = def.name.as_str().to_owned();
         self.types.insert(TypeRow {
             at: at(
@@ -287,6 +295,20 @@ impl Rows {
             self.link(artifact, &name, link.id.as_str(), link.target.as_str());
         }
         for lifecycle in &def.lifecycles {
+            if let Some(Ok(object)) = effective.object_type(&artifact.artifact_id)
+                && let Some(machine) = object.lifecycle(lifecycle.property.as_str())
+            {
+                self.states.extend(machine.states.iter().map(|state| {
+                    at(
+                        artifact,
+                        Member::State {
+                            type_name: name.clone(),
+                            lifecycle: lifecycle.property.as_str().to_owned(),
+                            state: state.clone(),
+                        },
+                    )
+                }));
+            }
             for transition in &lifecycle.transitions {
                 self.transitions.insert(TransitionRow {
                     at: at(
@@ -329,6 +351,22 @@ impl Rows {
             ),
             target: target.to_owned(),
         });
+    }
+
+    fn finish(self) -> DefinitionCatalog {
+        DefinitionCatalog {
+            format: CatalogFormat::V1,
+            artifacts: self.artifacts.into_iter().collect(),
+            types: self.types.into_iter().collect(),
+            properties: self.properties.into_iter().collect(),
+            links: self.links.into_iter().collect(),
+            transitions: self.transitions.into_iter().collect(),
+            states: self.states.into_iter().collect(),
+            writes: self.writes.into_iter().collect(),
+            depends_on: self.depends_on.into_iter().collect(),
+            mappings: self.mappings.into_iter().collect(),
+            laws: self.laws.into_iter().collect(),
+        }
     }
 
     fn depends_on(&mut self, artifact: &ArtifactEnvelope, all: &[&ArtifactEnvelope]) {
