@@ -19,6 +19,8 @@ use norn_kernel::{
     DecisionTurn, FactEvent, FactKey, LogicalTime, TypeCatalog, World, commit_action,
 };
 use std::{collections::BTreeMap, path::Path, process::Command};
+const JUN30: &str = "2026-06-30T23:59:59Z";
+const JUL01: &str = "2026-07-01T00:00:00Z";
 type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
 struct Policy;
 impl ActionAuthorizer for Policy {
@@ -41,15 +43,7 @@ fn definitions() -> (Vec<ObjectTypeDef>, Vec<ActionRoot>) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let compiled = Command::new("bun")
         .current_dir(&root)
-        .args([
-            "tools/norn-ts/src/cli.ts",
-            "compile",
-            "tools/norn-ts/fixtures/parameters",
-            "--org",
-            "org_demo",
-            "--env",
-            "dev",
-        ])
+        .args("tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/parameters --org org_demo --env dev".split_whitespace())
         .output()
         .expect("typed compiler");
     assert!(
@@ -85,25 +79,8 @@ fn definitions() -> (Vec<ObjectTypeDef>, Vec<ActionRoot>) {
         lifecycles: vec![],
         markings: vec![],
         accounting_leg: None,
-        properties: [
-            "actionId",
-            "actionArtifactId",
-            "actionVersion",
-            "effectKind",
-            "object",
-            "input",
-            "effectiveInput",
-            "derivedValues",
-            "preconditionOutcomes",
-            "parameterReads",
-            "actor",
-            "turn",
-            "transition",
-            "from",
-            "to",
-            "rowOperations",
-        ]
-        .into_iter()
+        properties: "actionId actionArtifactId actionVersion effectKind object input effectiveInput derivedValues preconditionOutcomes parameterReads actor turn transition from to rowOperations"
+        .split_whitespace()
         .map(|name| Property {
             id: PropertyId(name.into()),
             description: None,
@@ -247,22 +224,8 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
     .expect("governed link membership");
     let mut originals = Vec::new();
     for (id, rate, at, tax, gross, setting) in [
-        (
-            "june-invoice",
-            "0.10",
-            "2026-06-30T23:59:59Z",
-            10,
-            110,
-            "june",
-        ),
-        (
-            "july-invoice",
-            "0.12",
-            "2026-07-01T00:00:00Z",
-            12,
-            112,
-            "july",
-        ),
+        ("jun30", "0.10", JUN30, 10, 110, "june"),
+        ("jul01", "0.12", JUL01, 12, 112, "july"),
     ] {
         let invocation = call(
             action("demo.tax.post"),
