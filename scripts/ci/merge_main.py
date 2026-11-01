@@ -104,6 +104,7 @@ def main():
     pending = conflicts()
     if merged.returncode and not pending:
         return merged.returncode
+    failed = set()
     for path in sorted(pending, key=lambda p: (p.startswith(PROVENANCE), p)):
         try:
             if path.startswith(PROVENANCE) and path.endswith('.json'):
@@ -119,8 +120,9 @@ def main():
                     value = json.loads(Path(record).read_text())
                     write(record, provenance(record, value, value, value, conflicts()))
         except (ValueError, OSError, subprocess.CalledProcessError) as error:
+            failed.add(path)
             print(f'{path}: {error}', file=sys.stderr)
-    remaining = conflicts()
+    remaining = conflicts() | failed
     if remaining:
         print('Unresolved conflicts:\n' + '\n'.join(sorted(remaining)), file=sys.stderr)
         return 1
