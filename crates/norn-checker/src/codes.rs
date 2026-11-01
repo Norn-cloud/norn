@@ -501,6 +501,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "executable boundary \"{boundary}\" is retired: inline custom execution is not admitted; move the code into a pool Function invoked through perform",
     ),
     entry(
+        "defined_concept.validation.invalid_payload",
+        Tier::T2,
+        "defined-concept payload does not match its strict root",
+    ),
+    entry(
         "derived.validation.incremental_not_supported",
         Tier::T2,
         "maintenance \"incremental\" is reserved for a future IVM phase and is not yet supported; use \"recompute_on_read\"",

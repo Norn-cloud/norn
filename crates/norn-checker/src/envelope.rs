@@ -302,13 +302,6 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
     validate_root_shape(&artifact.payload, diagnostics, artifact_id, code);
     let payload = validation_json_value(&artifact.payload);
     match &artifact.payload {
-        // GRAPH-CLASS-1: a wire declaration cannot authorize unsupported execution.
-        ArtifactPayload::DefinedConcept(_) => diagnostics.push(invalid_diagnostic(
-            "core.graph.incomplete_classification",
-            "defined-concept semantic admission is not implemented",
-            "payload",
-            artifact_id,
-        )),
         ArtifactPayload::Entity(_) => validate_entity_payload(&payload, diagnostics, artifact_id),
         ArtifactPayload::Relation(relation) => {
             validate_relation_payload(&payload, diagnostics, artifact_id, &artifact.name);
@@ -349,7 +342,8 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         // and `crate::mapping` (run per document and over the artifact set).
         ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
-        | ArtifactPayload::Law(_) => {}
+        | ArtifactPayload::Law(_)
+        | ArtifactPayload::DefinedConcept(_) => {}
     }
     if matches!(artifact.payload, ArtifactPayload::Law(_)) {
         diagnostics.extend(
@@ -372,6 +366,16 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
     // malformed member is reported once, by the validator.
     if diagnostics.len() == before {
         crate::typed_roots::check_typed_root(&artifact.payload, diagnostics, artifact_id);
+    }
+    // GRAPH-CLASS-1: a valid wire declaration cannot authorize unsupported execution.
+    if diagnostics.len() == before && matches!(artifact.payload, ArtifactPayload::DefinedConcept(_))
+    {
+        diagnostics.push(invalid_diagnostic(
+            "core.graph.incomplete_classification",
+            "defined-concept semantic admission is not implemented",
+            "payload",
+            artifact_id,
+        ));
     }
 }
 
@@ -427,7 +431,7 @@ const fn artifact_payload_validation_code(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema.validation.invalid_document",
         ArtifactKind::Mapping => "mapping.validation.invalid_document",
         ArtifactKind::Law => crate::verification::codes::INVALID_DOCUMENT,
-        ArtifactKind::DefinedConcept => "core.graph.incomplete_classification",
+        ArtifactKind::DefinedConcept => "defined_concept.validation.invalid_payload",
     }
 }
 

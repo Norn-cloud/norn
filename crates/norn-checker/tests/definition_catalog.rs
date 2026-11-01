@@ -1290,7 +1290,7 @@ fn graph_catalog_roles_follow_declarations_not_lifecycle_shape() {
 }
 
 #[test]
-fn defined_concept_wire_support_cannot_activate_unimplemented_semantics() {
+fn defined_concept_wire_distinguishes_malformed_and_unsupported_semantics() {
     let declaration = envelope(json!({
         "irVersion": "0.1", "artifactId": "test.HighValue", "kind": "defined_concept",
         "namespace": "test", "name": "HighValue", "version": "1.0.0", "lifecycle": "draft",
@@ -1307,4 +1307,28 @@ fn defined_concept_wire_support_cannot_activate_unimplemented_semantics() {
             .iter()
             .any(|d| d.code.as_str() == "core.graph.incomplete_classification")
     );
+    let wire = serde_json::to_value(&declaration).expect("wire");
+    for (field, value) in [
+        ("base", json!(false)),
+        ("bounds", json!({})),
+        ("predicate", json!(1)),
+        ("dependencies", json!([false])),
+        ("members", json!([])),
+    ] {
+        let mut malformed = wire.clone();
+        malformed["payload"][field] = value;
+        let findings = norn_checker::check_artifact(&envelope(malformed));
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.code.as_str() == "defined_concept.validation.invalid_payload"),
+            "{field}: {findings:?}"
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|d| d.code.as_str() == "core.graph.incomplete_classification"),
+            "{field}: {findings:?}"
+        );
+    }
 }

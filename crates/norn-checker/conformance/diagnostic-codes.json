@@ -499,6 +499,13 @@
       "tier": "T2"
     },
     {
+      "code": "defined_concept.validation.invalid_payload",
+      "message": "defined-concept payload does not match its strict root",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
       "code": "derived.validation.incremental_not_supported",
       "message": "maintenance \"incremental\" is reserved for a future IVM phase and is not yet supported; use \"recompute_on_read\"",
       "severity": "error",
