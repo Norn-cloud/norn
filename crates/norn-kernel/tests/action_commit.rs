@@ -4018,3 +4018,161 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
             .exists()
     );
 }
+
+#[test]
+fn candidate_promotion_requires_kernel_admission_and_commit() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set_with_receipt};
+    use norn_ir::{ArtifactEnvelope, ControlStatus, Reachability, ResourceLimitProfile};
+
+    let object: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "demo.Order", "properties": [{"id":"id", "type":{"kind":"text"}}],
+        "controls": {"format":"norn.controls/1", "sensitivePaths":[{
+            "objectType":"demo.Order", "actions":["demo.approve", "demo.pay"]
+        }]}
+    }))
+    .unwrap();
+    let types = vec![object.clone()];
+    let catalog = TypeCatalog::new(&types);
+    let values: JsonObject = serde_json::from_value(json!({"id":"witness"})).unwrap();
+    for variant in [
+        "upsert",
+        "effect_free",
+        "create_only",
+        "guarded",
+        "denied",
+        "overlong",
+    ] {
+        let approve = if variant == "overlong" {
+            format!("demo.{}", "a".repeat(257))
+        } else {
+            "demo.approve".into()
+        };
+        let mut object = object.clone();
+        object.controls.as_mut().unwrap().sensitive_paths[0].actions[0] = approve.clone();
+        let mut artifacts = Vec::<ArtifactEnvelope>::new();
+        let mut envelope = |kind: &str, id: &str, payload: Value| {
+            let mut raw = fixture("ir/commerce-sales-order-submit-invoice.action.json");
+            raw["kind"] = json!(kind);
+            raw["artifactId"] = json!(id);
+            raw["namespace"] = json!("demo");
+            raw["payload"] = payload;
+            artifacts.push(serde_json::from_value(raw).unwrap());
+        };
+        envelope(
+            "entity",
+            "demo.Order",
+            json!({"entityVersion":"2.0", "objectType":object}),
+        );
+        let actions: Vec<ActionRoot> = [approve.as_str(), "demo.pay"].into_iter().map(|id| {
+            serde_json::from_value(json!({
+                "actionId":id, "scopeRequired":["orgId"], "idempotent":true, "ledgered":false, "writes":[{"entityKind":"demo.Order", "change":"created"}, {"entityKind":"demo.Order", "change":"modified"}],
+                "inputSchema":{"type":"object", "properties":{"id":{"type":"string"}}, "required":["id"], "additionalProperties":false},
+                "outputSchema":{"type":"object", "properties":{}, "required":[], "additionalProperties":false},
+                "effectProgram":{"kind":"upsert_input_object", "objectIdField":"id", "objectKind":"demo.Order", "entityArtifactId":"demo.Order", "entityArtifactVersion":"0.1.0"}
+            })).unwrap()
+        }).map(|mut action: ActionRoot| {
+            match variant {
+                "effect_free" => action.effect_program = None,
+                "create_only" => {
+                    if let Some(norn_ir::ActionEffectProgram::UpsertInputObject {write_mode, ..}) = &mut action.effect_program { *write_mode = norn_ir::UpsertWriteMode::CreateOnly; }
+                    action.writes.retain(|write| write.change == norn_ir::action::WriteChange::Created);
+                },
+                "guarded" => action.preconditions = vec![serde_json::from_value(json!("false")).unwrap()],
+                _ => {}
+            }
+            action
+        }).collect();
+        for action in &actions {
+            envelope(
+                "action",
+                &action.action_id,
+                serde_json::to_value(action).unwrap(),
+            );
+        }
+        envelope(
+            "policy",
+            "demo.access",
+            json!({"accessVersion":"0.1", "policyId":"demo.access", "rules":[{
+                "ruleId":"reviewer", "actions":[approve, "demo.pay"], "resourceType":"demo.Order",
+                "scope":{"dimensions":["org"]}, "allOf":[{"role":{"anyOf":["reviewer"]}}]
+            }]}),
+        );
+        let checked = check_artifact_set_with_receipt(
+            &artifacts,
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            },
+            &ResourceLimitProfile::norn_limits_v1(),
+        )
+        .unwrap();
+        assert!(
+            checked
+                .diagnostics
+                .iter()
+                .all(|d| variant == "overlong" || d.code.as_str() == "controls.validation.refuted"),
+            "{variant}: {:?}",
+            checked.diagnostics
+        );
+        let control = &checked.controls[0];
+        let mut cell = Cell::new(|_| JsonObject::new()).with_types(types.clone());
+        let target = FactKey::new("demo.Order", "witness");
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: target.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: values.clone(),
+                },
+            }],
+            ..CellCommit::empty()
+        })
+        .unwrap();
+        assert_eq!(control.reachability, Reachability::Unknown);
+        let calls: Vec<_> = control
+            .trace
+            .iter()
+            .enumerate()
+            .map(|(index, step)| {
+                let action = actions
+                    .iter()
+                    .find(|action| action.action_id == step.action)
+                    .unwrap();
+                let mut invocation = call(action, "witness", &format!("witness-{index}"));
+                invocation.actor = step.role.clone();
+                invocation.input = values.clone();
+                invocation
+            })
+            .collect();
+        let mut mismatched = calls.clone();
+        mismatched[0].actor = "different-role".into();
+        let before = cell.ledger().len();
+        let unmatched = norn_kernel::action_commit::replay_control_candidate(
+            &mut cell,
+            &catalog,
+            control,
+            &mismatched,
+            &Allow,
+        );
+        assert_eq!(unmatched.reachability, Reachability::Unknown);
+        assert_eq!(cell.ledger().len(), before);
+        let denied = Deny(ActionDenial::Invisible);
+        let authorizer: &dyn ActionAuthorizer = if variant == "denied" { &denied } else { &Allow };
+        let promoted = norn_kernel::action_commit::replay_control_candidate(
+            &mut cell, &catalog, control, &calls, authorizer,
+        );
+        assert_eq!(promoted.verdict, ControlStatus::Refuted);
+        assert_eq!(
+            promoted.reachability,
+            if variant == "upsert" {
+                Reachability::Witnessed
+            } else {
+                Reachability::Unknown
+            },
+            "{variant}"
+        );
+        assert_eq!(control.reachability, Reachability::Unknown);
+        assert_eq!(cell.load(&target).unwrap().values.as_ref(), Some(&values));
+    }
+}

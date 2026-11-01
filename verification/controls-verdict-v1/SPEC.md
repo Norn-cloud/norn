@@ -45,3 +45,9 @@ The evidence truth table is exhaustively exercised by controls module tests.
 Adapter tests cover candidate-only status, refusal, unknown, closure and required
 witnesses through artifact-set admission. Kernel promotion has its own replay tests.
 Evidence is finite model evidence, never a temporal proof or a live-runtime claim.
+
+Kernel conformance (`candidate_promotion_requires_kernel_admission_and_commit`):
+normal upserts promote only after the whole trace commits; missing effects,
+create-only collisions, false guards, authorization denial and overlong command
+identities stay unknown. A mismatched actor is rejected before any commit.
+Replay records must address one object of the declared type in one scope.
