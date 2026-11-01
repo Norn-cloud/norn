@@ -52,7 +52,7 @@ between reference and incremental evaluation. It validates stored properties
 against the admitted effective types, selects the half-open question window,
 uses Monday-based ISO-UTC buckets, and evaluates each operand's own predicates.
 Missing/computed values and unsupported precision refuse; nothing rounds here.
-Timestamp comparisons use instants, including predicate equality. Rows matching
+Timestamp equality uses instants; ordered predicates remain unsupported. Rows matching
 no operand contribute no membership. The original declarations and effective
 properties remain on the immutable plan for model binding and content identity.
 Named and generated projection scenarios cover weekly buckets, cutoff exclusion,

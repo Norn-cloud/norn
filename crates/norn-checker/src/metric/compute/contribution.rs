@@ -1,6 +1,4 @@
 //! Pure row projection shared by reference and incremental query execution.
-use std::cmp::Ordering;
-
 use norn_ir::metric::{FilterOperator, MetricFilter, TimeGrain};
 use norn_ir::{Decimal, PropertyType, RuntimeObject, RuntimeValue};
 
@@ -119,37 +117,30 @@ fn matches_filters(
 ) -> Result<bool, &'static str> {
     for filter in filters {
         let actual = value(plan, row, filter.path.property.as_str())?;
-        let compare = match (actual, &filter.value) {
-            (RuntimeValue::Number(a), RuntimeValue::Number(b)) => Some(a.cmp(b)),
-            (RuntimeValue::String(a), RuntimeValue::String(b)) => {
-                let property = plan
-                    .properties
-                    .iter()
-                    .find(|p| p.id == filter.path.property)
-                    .ok_or(UNSUPPORTED_ENGINE)?;
-                if matches!(
-                    property.kind,
-                    EffectiveKind::Base(PropertyType::Timestamp { .. })
-                ) {
-                    let parse = norn_expr::temporal::timestamp_ordering_key;
-                    Some(
-                        parse(a)
-                            .map_err(|_a| UNSUPPORTED_ENGINE)?
-                            .cmp(&parse(b).map_err(|_b| UNSUPPORTED_ENGINE)?),
-                    )
-                } else {
-                    Some(a.cmp(b))
-                }
-            }
-            _ => None,
+        let property = plan
+            .properties
+            .iter()
+            .find(|p| p.id == filter.path.property)
+            .ok_or(UNSUPPORTED_ENGINE)?;
+        let equal = if matches!(
+            property.kind,
+            EffectiveKind::Base(PropertyType::Timestamp { .. })
+        ) && !actual.is_null()
+            && !filter.value.is_null()
+        {
+            let parse = norn_expr::temporal::timestamp_ordering_key;
+            parse(actual.as_str().ok_or(UNSUPPORTED_ENGINE)?).map_err(|_a| UNSUPPORTED_ENGINE)?
+                == parse(filter.value.as_str().ok_or(UNSUPPORTED_ENGINE)?)
+                    .map_err(|_b| UNSUPPORTED_ENGINE)?
+        } else {
+            actual == &filter.value
         };
         let matches = match filter.operator {
-            FilterOperator::Eq => compare.map_or(actual == &filter.value, |c| c == Ordering::Equal),
-            FilterOperator::Ne => compare.map_or(actual != &filter.value, |c| c != Ordering::Equal),
-            FilterOperator::Lt => compare == Some(Ordering::Less),
-            FilterOperator::Le => matches!(compare, Some(Ordering::Less | Ordering::Equal)),
-            FilterOperator::Gt => compare == Some(Ordering::Greater),
-            FilterOperator::Ge => matches!(compare, Some(Ordering::Greater | Ordering::Equal)),
+            FilterOperator::Eq => equal,
+            FilterOperator::Ne => !equal,
+            FilterOperator::Lt | FilterOperator::Le | FilterOperator::Gt | FilterOperator::Ge => {
+                return Err(UNSUPPORTED_ENGINE);
+            }
         };
         if !matches {
             return Ok(false);
