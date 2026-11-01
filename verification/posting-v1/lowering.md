@@ -12,5 +12,4 @@ CP1-FIFO tests: receive 2 @ 10 + 3 @ 20 (Dr stock 80 / Cr SRBNB 80), deliver
 4 (Dr COGS 60 / Cr stock 60), leaving 1 worth 20; replay and balance agree.
 Follow-up: checked Post/rule bindings, authorized/fenced reads (including empty
 partitions), protected writes, native atomic/retry tests and alpha invoke/replay.
-Witnesses cover rounding, zero cost, oversell, invalid pins/quantities/overflow.
-No installed stock action is claimed.
+Witnesses cover rounding, zero cost, oversell and invalid inputs; no installed action is claimed.
