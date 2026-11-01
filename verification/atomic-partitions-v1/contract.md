@@ -21,3 +21,6 @@ The specification is enforced and tested, not a formal implementation proof.
 Application rules and laws must separately establish ownership, conserved
 measures, provenance and financial interpretation. No domain algorithm or
 second posting path is introduced.
+
+POST-GROUP-SNAPSHOT: prepare all plans from the same verified pre-write state.
+Multiple first definitions must not inspect another plan's unreceipted writes.

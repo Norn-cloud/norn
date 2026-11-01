@@ -223,16 +223,7 @@ pub(crate) fn validate_boundary<S: SqlEngine>(
     {
         return Err(QuantityError::Corrupt.into());
     }
-    transition_request(
-        engine,
-        &evidence.0,
-        evidence.4,
-        &receipt
-            .quantity
-            .as_ref()
-            .ok_or(QuantityError::Corrupt)?
-            .ledger_id,
-    )?;
+    transition_requests(engine, &evidence.0, evidence.4)?;
     Ok(())
 }
 
@@ -261,10 +252,8 @@ fn check_expiry_timer_effects(batch: &CommitBatch) -> Result<(), CellError> {
     }
     if let Some(crate::Consumption::Timer { timer_id, .. }) = &batch.consumes
         && timer_id.starts_with(EXPIRY_TIMER_PREFIX)
-        && batch
-            .quantity
-            .as_ref()
-            .is_none_or(|request| match &request.operation {
+        && batch.quantity.as_ref().is_none_or(|requests| {
+            requests.iter().all(|request| match &request.operation {
                 QuantityOperation::Expire { reservation_id } => {
                     expiry_timer_id(&batch.world, &request.ledger_id, reservation_id)
                         .ok()
@@ -278,6 +267,7 @@ fn check_expiry_timer_effects(batch: &CommitBatch) -> Result<(), CellError> {
                 | QuantityOperation::Void { .. }
                 | QuantityOperation::Reverse { .. } => true,
             })
+        })
     {
         return Err(QuantityError::InvalidContract.into());
     }
@@ -317,7 +307,7 @@ pub(crate) fn admit_events<S: SqlEngine>(
     };
     let mut candidate = batch.clone();
     check_expiry_timer_effects(batch)?;
-    let Some(request) = &batch.quantity else {
+    let Some(requests) = &batch.quantity else {
         if batch.quantity_intent.is_some() {
             return Err(QuantityError::InvalidContract.into());
         }
@@ -330,7 +320,19 @@ pub(crate) fn admit_events<S: SqlEngine>(
         }
         return Ok((candidate, None));
     };
-    check_request(engine, batch, request)?;
+    let mut ledgers = BTreeSet::new();
+    if requests.is_empty()
+        || requests.len() > 100
+        || canonical_json(requests)?.len() > MAX_RECORD_BYTES
+    {
+        return Err(QuantityError::InvalidContract.into());
+    }
+    for request in requests.iter() {
+        if !ledgers.insert(&request.ledger_id) {
+            return Err(QuantityError::InvalidContract.into());
+        }
+        check_request(engine, batch, request)?;
+    }
     let new_boundary = if boundary.is_none() {
         let reader = StoreReader::new(engine, model);
         Some(FormatBoundary {
@@ -349,15 +351,18 @@ pub(crate) fn admit_events<S: SqlEngine>(
             prior.is_some_and(|receipt| receipt.body.commit_seq == boundary.commit_seq)
         })
     });
-    let event = transition_event(request)?;
-    if candidate
-        .events
+    let events = requests
         .iter()
-        .enumerate()
-        .any(|(index, supplied)| {
-            internal(supplied)
-                && (index.checked_add(1) != Some(candidate.events.len()) || supplied != &event)
-        })
+        .map(transition_event)
+        .collect::<Result<Vec<_>, _>>()?;
+    let supplied = candidate.events.iter().any(internal);
+    if supplied
+        && (!candidate.events.ends_with(&events)
+            || candidate
+                .events
+                .iter()
+                .take(candidate.events.len().saturating_sub(events.len()))
+                .any(internal))
     {
         return Err(QuantityError::InvalidContract.into());
     }
@@ -377,8 +382,8 @@ pub(crate) fn admit_events<S: SqlEngine>(
     } else if candidate.events.iter().any(marker) {
         return Err(QuantityError::InvalidContract.into());
     }
-    if candidate.events.last() != Some(&event) {
-        candidate.events.push(event);
+    if !supplied {
+        candidate.events.extend(events);
     }
     Ok((candidate, new_boundary))
 }
@@ -414,7 +419,7 @@ const LATEST_TRANSITION_SQL: &str = r#"SELECT "commit_seq" FROM "_norn_ledger" W
     AND json_extract("event", '$.request.ledgerId')=?2
     AND json_extract("event", '$.type')='quantity.transition'
     AND EXISTS (SELECT 1 FROM "_norn_receipt" AS r WHERE r."commit_seq"="_norn_ledger"."commit_seq"
-      AND json_extract(r."receipt", '$.quantity.version')='norn.quantity.commit/2')
+      AND json_type(r."receipt", '$.quantity') IN ('object','array'))
     AND "seq">?3
     ORDER BY "seq" DESC LIMIT 1"#;
 const REVERSAL_EVIDENCE_SQL: &str = r#"SELECT "commit_seq" FROM "_norn_ledger" WHERE "world"=?1
@@ -423,7 +428,7 @@ const REVERSAL_EVIDENCE_SQL: &str = r#"SELECT "commit_seq" FROM "_norn_ledger" W
     AND json_extract("event", '$.type')='quantity.transition'
     AND json_extract("event", '$.request.operation.kind')='reverse' AND "seq">?4
     AND EXISTS (SELECT 1 FROM "_norn_receipt" AS r WHERE r."commit_seq"="_norn_ledger"."commit_seq"
-      AND json_extract(r."receipt", '$.quantity.version')='norn.quantity.commit/2') LIMIT 2"#;
+      AND json_type(r."receipt", '$.quantity') IN ('object','array')) LIMIT 2"#;
 
 // SQL identities and immutable Norn1 events must retain the same exact strings.
 // Refuse a request that canonical serialization would reinterpret.
@@ -863,14 +868,22 @@ fn state<S: SqlEngine>(
     Ok(state)
 }
 
+pub(crate) fn plan<S: SqlEngine>(
+    engine: &S,
+    batch: &CommitBatch,
+    request: &QuantityRequest,
+) -> Result<norn_kernel::quantity::QuantityPlan, CellError> {
+    let state = state(engine, &batch.world, request)?;
+    Ok(prepare_quantity(request, &state, batch.logical_time)?)
+}
+
 pub(crate) fn apply<S: SqlEngine>(
     engine: &S,
     batch: &CommitBatch,
     request: &QuantityRequest,
     commit_seq: u64,
+    plan: norn_kernel::quantity::QuantityPlan,
 ) -> Result<norn_kernel::quantity::QuantityResult, CellError> {
-    let state = state(engine, &batch.world, request)?;
-    let plan = prepare_quantity(request, &state, batch.logical_time)?;
     let version = to_i64(plan.version, "quantity version")?;
     let seq = to_i64(commit_seq, "quantity commit seq")?;
     match &request.operation {
@@ -956,9 +969,12 @@ pub(crate) fn apply<S: SqlEngine>(
 pub(crate) fn verify_replay<S: SqlEngine>(
     engine: &S,
     batch: &CommitBatch,
-    request: &QuantityRequest,
+    requests: &crate::store::QuantityBatch<QuantityRequest>,
 ) -> Result<(), CellError> {
-    verify_request_replay(engine, batch, request)
+    for request in requests.iter() {
+        verify_request_replay(engine, batch, request)?;
+    }
+    Ok(())
 }
 fn verify_request_replay<S: SqlEngine>(
     engine: &S,
@@ -996,7 +1012,11 @@ fn verify_request_replay<S: SqlEngine>(
     )?
     .ok_or(QuantityError::Corrupt)?;
     if receipt_evidence(engine, &batch.world, prior.body.commit_seq)? != prior.body
-        || prior.body.quantity.as_ref() != Some(request)
+        || prior
+            .body
+            .quantity
+            .as_ref()
+            .is_none_or(|requests| !requests.iter().any(|prior| prior == request))
     {
         return Err(QuantityError::Corrupt.into());
     }
@@ -1107,7 +1127,7 @@ fn transition_requests<S: SqlEngine>(
     commit_seq: i64,
 ) -> Result<Vec<QuantityRequest>, CellError> {
     let receipt = receipt_evidence(engine, world, to_u64(commit_seq, "quantity commit seq")?)?;
-    let requests = std::slice::from_ref(receipt.quantity.as_ref().ok_or(QuantityError::Corrupt)?);
+    let requests = receipt.quantity_requests();
     let count = u64::try_from(requests.len()).map_err(|_range| QuantityError::Corrupt)?;
     if count == 0 || count > 100 || receipt.event_count < count {
         return Err(QuantityError::Corrupt.into());
