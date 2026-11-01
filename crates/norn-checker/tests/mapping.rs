@@ -225,6 +225,179 @@ fn map_members_total_contract_leaves_semantic_preservation_unsupported() {
     );
 }
 
+fn distinct_target_contract(
+    document: &mut norn_ir::mapping::LawInterpretationIr,
+    base: &mut Vec<ArtifactEnvelope>,
+) -> usize {
+    use norn_ir::definition_catalog::Member;
+    let source = base
+        .iter()
+        .find(|a| a.artifact_id == "commerce.SalesOrder.entity")
+        .expect("source");
+    let mut root: norn_ir::EntityRootV2 =
+        serde_json::from_value(serde_json::to_value(source.payload.to_json_value()).expect("wire"))
+            .expect("object root");
+    root.object_type.name = ObjectTypeName("toy.Order".to_owned());
+    root.object_type.implements.clear();
+    let target = envelope(
+        "toy.Order.entity",
+        "entity",
+        &serde_json::to_value(root).expect("root"),
+    );
+    let layer = base.get_mut(1).expect("target pack");
+    let mut pack: norn_ir::CompositionPackRoot =
+        serde_json::from_value(serde_json::to_value(layer.payload.to_json_value()).expect("wire"))
+            .expect("pack");
+    pack.artifacts
+        .first_mut()
+        .expect("entity reference")
+        .artifact_id = target.artifact_id.clone();
+    layer.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::BusinessPack,
+        serde_json::from_value(serde_json::to_value(pack).expect("pack wire")).expect("tree"),
+    )
+    .expect("pack root");
+    document.target_layer.sha256 = ArtifactRef::of(layer).expect("pin").sha256;
+    for binding in &mut document.members {
+        binding.target.artifact_id.clone_from(&target.artifact_id);
+        match &mut binding.target.member {
+            Member::Type { type_name }
+            | Member::Property { type_name, .. }
+            | Member::Link { type_name, .. }
+            | Member::State { type_name, .. }
+            | Member::Transition { type_name, .. } => *type_name = "toy.Order".to_owned(),
+            Member::Artifact {} | Member::ObjectMap { .. } | Member::Law { .. } => {
+                panic!("not a contract member")
+            }
+        }
+    }
+    let index = base.len();
+    base.push(target);
+    index
+}
+
+#[test]
+fn map_units_and_roles_refuse_changed_contracts_under_a_total_member_list() {
+    let (mut document, mut base) = complete_member_interpretation();
+    let index = distinct_target_contract(&mut document, &mut base);
+    assert!(
+        member_findings(&document, &base)
+            .iter()
+            .all(|f| f.code != "core.composition.mapping_gap")
+    );
+    for case in 0..4 {
+        let mut changed = base.clone();
+        let target = changed.get_mut(index).expect("target");
+        let mut root: norn_ir::EntityRootV2 = serde_json::from_value(
+            serde_json::to_value(target.payload.to_json_value()).expect("wire"),
+        )
+        .expect("root");
+        if case < 2 {
+            let p = root
+                .object_type
+                .properties
+                .iter_mut()
+                .find(|p| p.id.as_str() == "total_amount")
+                .expect("amount");
+            let norn_ir::PropertyType::Decimal { unit, scale, .. } = &mut p.property_type else {
+                panic!("decimal");
+            };
+            if case == 0 {
+                *unit = Some(norn_ir::UnitRef {
+                    system: norn_ir::UnitSystem::Ucum,
+                    code: "kg".to_owned(),
+                });
+            } else {
+                *scale = norn_ir::members::WholeNumber(2);
+            }
+        } else {
+            let link = root.object_type.links.first_mut().expect("link");
+            if case == 2 {
+                link.target = ObjectTypeName("fashion.Style".to_owned());
+            } else {
+                link.cardinality.to = norn_ir::Multiplicity::Many;
+            }
+        }
+        target.payload = norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Entity,
+            serde_json::from_value(serde_json::to_value(root).expect("wire")).expect("tree"),
+        )
+        .expect("entity");
+        assert!(
+            member_findings(&document, &changed)
+                .iter()
+                .any(|f| f.code == "core.composition.mapping_gap"),
+            "case {case}"
+        );
+    }
+}
+
+fn compiled_with_two_event_roles() -> CompiledMapping {
+    let mapping = erpnext_mapping();
+    let mut document: norn_ir::mapping::MappingIr = serde_json::from_value(
+        serde_json::to_value(mapping.payload.to_json_value()).expect("wire"),
+    )
+    .expect("mapping");
+    let order = document
+        .maps
+        .iter_mut()
+        .find(|m| m.id == "sales_order")
+        .expect("event map");
+    let mut second = order.links.first().expect("first role").clone();
+    second.link = LinkId("second_party".to_owned());
+    second.key = norn_ir::ZenExpression("input.name".to_owned());
+    order.links.push(second);
+    let mut artifacts = set_with(&mapping);
+    let entity = artifacts
+        .iter_mut()
+        .find(|a| a.artifact_id == "commerce.SalesOrder.entity")
+        .expect("event type");
+    let mut root: norn_ir::EntityRootV2 =
+        serde_json::from_value(serde_json::to_value(entity.payload.to_json_value()).expect("wire"))
+            .expect("root");
+    let mut link = root.object_type.links.first().expect("first role").clone();
+    link.id = LinkId("second_party".to_owned());
+    root.object_type.links.push(link);
+    entity.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Entity,
+        serde_json::from_value(serde_json::to_value(root).expect("wire")).expect("tree"),
+    )
+    .expect("entity");
+    let mut mapping = mapping;
+    mapping.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Mapping,
+        serde_json::from_value(serde_json::to_value(document).expect("wire")).expect("tree"),
+    )
+    .expect("mapping");
+    compile_mapping_artifact(&mapping, &artifacts, &[]).expect("two ordinary event roles compile")
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn event_multi_generated_object_keys_keep_event_identity_and_both_roles(suffix in "[A-Z0-9]{1,10}") {
+        let event = format!("EVENT-{suffix}");
+        let party = format!("PARTY-{suffix}");
+        let docs = [
+            document("Customer", &json!({"name": party, "customer_name": "Party", "customer_type": "Company", "custom_loyalty_tier": ""})),
+            document("Customer", &json!({"name": event, "customer_name": "Other", "customer_type": "Company", "custom_loyalty_tier": ""})),
+            document("Sales Order", &json!({"name": event, "customer": party, "transaction_date": "2026-09-29", "grand_total": 1, "docstatus": 0, "items": []})),
+        ];
+        let records = compiled_with_two_event_roles().apply(&docs, &UtcTimestamp("2026-10-01T00:00:00Z".to_owned())).expect("mapped observations");
+        let record = records.iter().find(|r| r.map == "sales_order").expect("one event");
+        proptest::prop_assert_eq!(&record.key, &event);
+        proptest::prop_assert_eq!(record.links.len(), 2);
+        let first = record.links.iter().find(|l| l.link.as_str() == "counterparty").expect("first role");
+        let second = record.links.iter().find(|l| l.link.as_str() == "second_party").expect("second role");
+        proptest::prop_assert_eq!(&first.key, &event);
+        proptest::prop_assert_eq!(&second.key, &event);
+        proptest::prop_assert_eq!(&first.target_key, &party);
+        proptest::prop_assert_eq!(&second.target_key, &event);
+        proptest::prop_assert_ne!(&first.target_key, &second.target_key);
+        proptest::prop_assert_ne!(&first.provenance.transform, &second.provenance.transform);
+    }
+}
+
 #[test]
 fn map_members_refuses_duplicates_unknown_members_kinds_and_transforms() {
     let (document, base) = complete_member_interpretation();

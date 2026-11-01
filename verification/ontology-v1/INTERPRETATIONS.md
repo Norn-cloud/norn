@@ -58,6 +58,19 @@ effective catalogs and dynamically sized sets; the generated omission property
 checks the production admission boundary instead. Unit/relation compatibility
 is the next conformance cut, not established by this inventory check.
 
+MAP-UNITS checks resolved scalar kinds (including exact unit/currency path and
+scale), nullability, relation target interpretations and both cardinalities.
+Bindings must follow their declared type-owner interpretation. The initial
+identity profile requires unchanged lifecycle IDs/machines; complex links,
+unresolved interface value types and conversions refuse, never approximate.
+The ordinary source-record EVENT-MULTI property test compiles/applies two role
+maps and preserves the event key, distinct object keys and rule provenance.
+This tests observed-data transport, not native mutation or law preservation.
+Named unit/scale/role/arity negatives accompany it. Kani is infeasible for these
+serde/catalog/compiled-expression paths with dynamically allocated trees;
+generated runtime inputs check the production mapper instead. Preservation
+obligations remain unsupported and interpretation admission still refuses.
+
 Remaining B1 conformance scenarios: MAP-MEMBERS (source-derived
 totality), MAP-UNITS (dimension/unit/scale), EVENT-MULTI (event identity and
 distinct object links). Missing required members, unsupported transforms or
