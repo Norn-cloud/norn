@@ -82,6 +82,7 @@ fn main() -> DemoResult<()> {
     if input.len() > 1_048_576 {
         return Err("demo input exceeds 1 MiB".into());
     }
+    let exact = DefinitionSource::parse(&input, "[]")?;
     let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
     let law = authored_law(&artifacts)?;
     let registry = BTreeSet::new();
@@ -109,7 +110,6 @@ fn main() -> DemoResult<()> {
         "{}",
         serde_json::to_string_pretty(&target_wording())?
     )?;
-    let exact = source(&artifacts)?;
     let authority = ApprovedContract::approve(
         &exact,
         &registry,

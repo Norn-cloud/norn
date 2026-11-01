@@ -17,7 +17,7 @@ The [gap matrix](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6559
 
 ## Authoring correspondence
 
-`DEMO-TS-LAW`: profile → compile the TypeScript law, then admit the resulting artifact unchanged. Its source path and explicit entity dependency participate in the generated challenge. No positive law definition is constructed in Rust. The live refusal probes edit that compiled law to `true` (protected-law refusal) and an absent property (predicate-type refusal); they make no execution/proof claim. Review the authored law and the TARGET bilingual adapter together until #58 supplies that profile constructor.
+`DEMO-TS-LAW`: profile → compile the TypeScript law, then admit the resulting artifact unchanged. Its source path and explicit entity dependency participate in the generated challenge, which binds the original compiler JSON bytes before typed projection. Re-serialization is confined to the deliberately edited refusal probes. No positive law definition is constructed in Rust. The live refusal probes edit that compiled law to `true` (protected-law refusal) and an absent property (predicate-type refusal); they make no execution/proof claim. Review the authored law and the TARGET bilingual adapter together until #58 supplies that profile constructor.
 
 ## TARGET app declarations — not compilable CURRENT imports
 
