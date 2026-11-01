@@ -891,7 +891,13 @@ where
             Some(ActionEffectProgram::MutateParentWithRows { .. })
         )
         || (!matches!(call.turn.world, crate::World::Main)
-            && matches!(action.effect_program, Some(ActionEffectProgram::FireTransition { accept_receipt: Some(_), .. })))
+            && matches!(
+                action.effect_program,
+                Some(ActionEffectProgram::FireTransition {
+                    accept_receipt: Some(_),
+                    ..
+                })
+            ))
     {
         return Err(ActionRefusal::UnsupportedEffect {
             action_id: action.action_id.clone(),
