@@ -79,15 +79,11 @@ pub struct RuleException {
 }
 
 /// Structured authoring over the existing law and normative source model.
-/// Not an admitted artifact, authorization grant or proof certificate.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StructuredRequirement {
-    /// Scope, subject, pointwise condition, grade, response and source bindings.
     pub norm: DeonticRule,
-    /// Commit-relative interpretation; never inferred from prose.
     pub timing: RequirementTiming,
-    /// Reviewed templates accompany, but cannot replace, semantic expressions.
     pub wording: RequirementWording,
 }
 
@@ -102,8 +98,7 @@ pub enum RequirementTiming {
     SameCommit,
 }
 
-/// Display templates for the four domain-specific slots. Identifiers and
-/// expressions remain in `norm`; translating these labels creates no new law.
+/// Reviewed bilingual templates; identifiers and expressions remain in `norm`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequirementWording {

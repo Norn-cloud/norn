@@ -1,12 +1,8 @@
 # Structured requirements: closed demo fragment
 
-`StructuredRequirement` is typed authoring over `DeonticRule` and its existing
-`LawIR`. It is not a new artifact kind or a second hierarchy. Scope (root,
-types, lifecycle states, commitments), subject, Boolean activation condition and
-response remain in LawIR. The normative grade, source span, exact authority
-version, exceptions and preferred identities remain in DeonticRule.
-
-Invariants:
+`StructuredRequirement` is typed authoring over `DeonticRule` and `LawIR`.
+The law retains scope, subject, conditions and response; the norm retains grade,
+exact sources, authority, exceptions and preferences. No second hierarchy.
 
 - **SR1 Identity:** serialization preserves every law, source, scope and numeric
   expression byte. English/Arabic templates cannot alter semantic fields.
@@ -23,17 +19,14 @@ Invariants:
   typecheck as Boolean under the existing bounded ZEN profile. Arithmetic stays
   exact, including decimal spelling; readable templates do not execute. Action
   and transition occurrence responses refuse as `requirement.response.unsupported`.
-- **SR5 Authority:** no priority is inferred. Grounding for `norm_precedence`
-  retains the original identity/grade/authority and exception domains. Its
-  superior/posterior/specialis rules remain the only precedence algorithm;
-  normative consistency never overrides protected physics.
+- **SR5 Authority:** original identities, grades, authorities and exception
+  domains feed the existing grounded superior/posterior/specialis checker.
+  No priority is inferred; normative consistency never overrides core physics.
 
-`check_requirement` checks the authoring fragment, not ontology bindings,
-writer preservation, signatures, runtime enforcement or solver evidence.
-Consumers must retain the complete wrapper including its commit timing, then
-perform ordinary LawIR admission. No FRET compatibility or timed-liveness
-claim is made. Terminal commitment persistence is a state invariant; deadline
-breach needs a separate future clock-aware requirement.
+Structural checking confers no ontology admission, runtime enforcement,
+signatures or solver evidence. Retain the complete wrapper, including timing,
+and run normal LawIR admission. No FRET or timed-liveness claim is made.
+Deadline breach needs a separate future clock-aware requirement.
 
 Bilingual view conformance:
 

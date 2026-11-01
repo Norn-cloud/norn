@@ -174,21 +174,25 @@ pub fn check_requirement(
     {
         return Err(R::ModalityMismatch);
     }
-    let ids = [
-        &law.id,
-        &law.subject,
-        &rule.authority_id,
-        &rule.authority_version,
-        root,
-    ];
-    if ids.iter().any(|s| s.trim().is_empty())
+    let mut ids = [&law.id, &law.subject, root]
+        .into_iter()
+        .chain([&rule.authority_id, &rule.authority_version])
+        .chain(&law.scope.object_types)
+        .chain(&law.scope.commitments)
+        .chain(&rule.defeated_by);
+    if ids.any(|s| s.trim().is_empty())
         || law.scope.object_types.is_empty()
-        || law.scope.object_types.iter().any(|id| id.trim().is_empty())
         || !valid_source(&rule.source)
         || rule
             .exceptions
             .iter()
             .any(|e| e.id.trim().is_empty() || !valid_source(&e.source))
+        || law.scope.lifecycle_states.iter().any(|s| {
+            s.object_type.trim().is_empty()
+                || s.property.trim().is_empty()
+                || s.states.is_empty()
+                || s.states.iter().any(|id| id.trim().is_empty())
+        })
     {
         return Err(R::InvalidBinding);
     }
