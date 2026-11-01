@@ -207,6 +207,10 @@ pub struct ObjectTypeDef {
     /// Inherited by subtypes. Omitted for object types that are not GL legs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accounting_leg: Option<AccountingLegDeclaration>,
+    /// Definition-owned finite duty controls, inherited by subtypes.
+    #[serde(default, deserialize_with = "present_non_null", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "super::controls::Controls")]
+    pub controls: Option<super::controls::Controls>,
 }
 
 /// A declared, parent-owned ordered collection of child objects.
