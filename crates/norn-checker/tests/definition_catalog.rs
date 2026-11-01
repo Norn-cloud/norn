@@ -10,7 +10,6 @@
 use norn_checker::definition_catalog::project;
 use norn_ir::ArtifactEnvelope;
 use norn_ir::definition_catalog::{Member, MemberRef};
-use serde_json::json;
 use std::collections::BTreeSet;
 #[test]
 fn entity_projection_preserves_identity_declarations_and_order() {
