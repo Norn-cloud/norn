@@ -192,3 +192,7 @@ Kani assumes sequential atomic execution; concurrent interleavings are unqualifi
 ([tool limitation](https://model-checking.github.io/kani/rust-feature-support/intrinsics.html)).
 No application law or generated-obligation qualification is inferred from these
 engine harnesses. Results must be recorded against the exact engine source head.
+
+The full-width meter witness first accepts u64::MAX exactly, then refuses an
+additional unit and every later charge. The diagnostic total saturates at
+u64::MAX when the rejected mathematical total is wider; accepted fuel never wraps.

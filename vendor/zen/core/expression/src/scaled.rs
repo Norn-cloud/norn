@@ -1,4 +1,4 @@
-//! Checked scaled-integer arithmetic for a declaration's numeric profile.
+//! FOLD-SCALED: checked scaled-integer arithmetic for the declared numeric profile.
 use rust_decimal::Decimal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +44,7 @@ impl ScaledArithmetic {
             .map_err(|_| "number exceeds the exact decimal range")
     }
 
+    /// FOLD-ARITHMETIC: exact signed remainders select the declared rounding rule.
     fn quotient(self, numerator: i128, denominator: i128) -> Result<i128, &'static str> {
         let quotient = numerator
             .checked_div(denominator)
