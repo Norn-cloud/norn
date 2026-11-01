@@ -67,7 +67,7 @@ fn forged_rule_identity_or_definition_pin_is_refused() {
     renamed.rule_id = "another.rule".to_owned();
     let other_id = admit(&renamed, "environment-a");
     let other_binding = admit(&root, "environment-b");
-    let mut changed = root.clone();
+    let mut changed = root;
     if let norn_ir::jdm::JdmNode::ExpressionNode { name, .. } =
         &mut changed.graph.as_mut().unwrap().nodes[1]
     {
