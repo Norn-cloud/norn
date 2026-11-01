@@ -85,7 +85,8 @@ def _assemble(directory: Path) -> tuple[dict[str, Any], list[Path]]:
                 if set(entry) != {"order", "value"} or type(entry["order"]) is not int or entry["order"] < 0:
                     raise InvalidCoverageLayout(f"{path}: invalid entry envelope")
                 item = restore(entry["value"], [*parts, "entry" + path.stem])
-                if path.name != entry_id(item) + ".json":
+                keyed = not isinstance(item, dict) or "id" in item
+                if not re.fullmatch(r"[0-9a-f]{64}\.json", path.name) or (keyed and path.name != entry_id(item) + ".json"):
                     raise InvalidCoverageLayout(f"{path}: mismatched entry identity")
                 result.append(path)
                 entries.append((entry["order"], path.name, item))
@@ -104,12 +105,11 @@ def _entry_files(directory: Path) -> list[Path]:
 
 
 def entry_id(value: Any) -> str:
-    """Stable identity: an object's declared id/path, or a scalar's value."""
-    identity = value
-    if isinstance(value, dict):
-        key = next((key for key in ("id", "artifact", "path") if key in value), None)
-        if key:
-            identity = {key: value[key]}
+    """Assign a declared/scalar identity, or an opaque initial-value ID.
+
+    Unkeyed object IDs stay fixed when their nested entry directories change.
+    """
+    identity = {"id": value["id"]} if isinstance(value, dict) and "id" in value else value
     return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
