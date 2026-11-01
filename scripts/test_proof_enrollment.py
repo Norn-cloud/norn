@@ -115,6 +115,10 @@ class CoverageLayoutTests(unittest.TestCase):
             with self.subTest(split=split), tempfile.TemporaryDirectory() as temporary:
                 target = Path(temporary) / "manifest"
                 coverage_manifest.write(document, target, split_entries=split)
+                # Git archives omit empty directories.
+                for folder in sorted(target.rglob("*"), reverse=True):
+                    if folder.is_dir() and not any(folder.iterdir()):
+                        folder.rmdir()
                 self.assertEqual(coverage_manifest.load(target), document)
                 self.assertTrue(coverage_manifest.digest(target))
 

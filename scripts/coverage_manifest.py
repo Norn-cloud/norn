@@ -89,12 +89,14 @@ def _entry_files(directory: Path) -> list[Path]:
         elif isinstance(value, list):
             raise InvalidCoverageLayout(f"{directory}: shared arrays must be entry files")
     walk(metadata, [])
-    if {p.name for p in directory.iterdir()} != {INDEX, *fields}:
+    if not {p.name for p in directory.iterdir()}.issubset({INDEX, *fields}):
         raise InvalidCoverageLayout(f"{directory}: unknown or missing entry fields")
     result = [directory / INDEX]
     for field, folder in sorted(fields.items()):
-        if folder.is_symlink() or not folder.is_dir():
+        if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
             raise InvalidCoverageLayout(f"{field}: not an entry directory")
+        if not folder.exists():
+            continue
         for path in sorted(folder.iterdir()):
             entry = _object(path)
             if set(entry) != {"order", "value"} or type(entry["order"]) is not int or entry["order"] < 0:
@@ -121,7 +123,7 @@ def _subsystem(directory: Path) -> dict[str, Any]:
         if isinstance(value, dict):
             if "$entries" in value:
                 folder = directory / value["$entries"]
-                entries = [(_object(path), path.name) for path in folder.iterdir()]
+                entries = [(_object(path), path.name) for path in folder.iterdir()] if folder.exists() else []
                 return [entry["value"] for entry, _ in sorted(entries, key=lambda x: (x[0]["order"], x[1]))]
             return {key: restore(item) for key, item in value.items()}
         return value
