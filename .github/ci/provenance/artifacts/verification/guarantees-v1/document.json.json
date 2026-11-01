@@ -1,11 +1,17 @@
 {
   "sha256": "0eaa6ead6e47a1dd149084bd2637ae8ce208c0e33ebdc1647a14c6b7a15fb98b",
-  "origin": "authored",
-  "category": "code",
+  "origin": "derived",
+  "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "scripts/guarantees_document.py",
+    "verification/guarantees-v1/demo-laws.json",
+    "verification/coverage-v1/coverage.json",
+    "verification/stripmine-2026-08-22/obligations.json",
+    "verification/core-physics-v1/obligations.json"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",
