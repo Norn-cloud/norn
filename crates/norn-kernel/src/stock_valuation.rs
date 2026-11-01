@@ -56,8 +56,7 @@ pub enum StockHistoryError {
 impl Valuation for AverageState {
     type Movement = AverageMovement;
     fn apply(&self, movement: &Self::Movement) -> Result<(Self, StockEffect), StockHistoryError> {
-        let result =
-            allocate_average(self, movement).map_err(|_refusal| StockHistoryError::Valuation)?;
+        let result = allocate_average(self, movement).map_err(StockHistoryError::from)?;
         Ok((
             result.state,
             StockEffect {
@@ -73,11 +72,7 @@ impl Valuation for AverageState {
     fn transfer(&self, id: &str, quantity: u128) -> Result<(Self, StockEffect), StockHistoryError> {
         let result = self
             .transfer_out(id, quantity)
-            .map_err(|error| match error {
-                crate::stock_average::AverageError::Invalid => StockHistoryError::Invalid,
-                crate::stock_average::AverageError::InsufficientStock
-                | crate::stock_average::AverageError::OverReturn => StockHistoryError::Valuation,
-            })?;
+            .map_err(StockHistoryError::from)?;
         Ok((
             result.state,
             StockEffect {
@@ -89,5 +84,15 @@ impl Valuation for AverageState {
     }
     fn receipt(_: &str, amount: StockAmount) -> Self::Movement {
         AverageMovement::Receipt(amount)
+    }
+}
+
+impl From<crate::stock_average::AverageError> for StockHistoryError {
+    fn from(error: crate::stock_average::AverageError) -> Self {
+        match error {
+            crate::stock_average::AverageError::Invalid => Self::Invalid,
+            crate::stock_average::AverageError::InsufficientStock
+            | crate::stock_average::AverageError::OverReturn => Self::Valuation,
+        }
     }
 }

@@ -107,7 +107,8 @@ pub fn allocate_average(
         AverageMovement::Receipt(amount) => *amount,
         AverageMovement::Delivery(id, quantity) => {
             if id.is_empty()
-                || (state.issues.contains_key(id) || state.transfers.contains(id))
+                || state.issues.contains_key(id)
+                || state.transfers.contains(id)
                 || *quantity == 0
             {
                 return Err(AverageError::Invalid);
