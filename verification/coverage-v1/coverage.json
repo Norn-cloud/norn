@@ -1244,8 +1244,6 @@
           "verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt",
           "crates/norn-cell/tests/quantity_reservations.rs",
           "crates/norn-kernel/src/quantity.rs",
-        "crates/norn-kernel/src/stock_fifo.rs",
-        "crates/norn-kernel/tests/stock_fifo.rs",
           "crates/norn-kernel/tests/accounting_commit.rs",
           "crates/norn-checker/src/posting.rs",
           "crates/norn-ir/src/posting.rs"
