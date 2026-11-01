@@ -8,7 +8,7 @@
 
 //! Correspondence to verification/definition-catalog-v1/SPEC.md.
 use norn_checker::definition_catalog::project;
-use norn_checker::resolve_artifact_set;
+use norn_checker::{EntityArtifactSetContext, check_artifact_set, resolve_artifact_set};
 use norn_ir::ArtifactEnvelope;
 use norn_ir::definition_catalog::{
     ArtifactKey, DefinitionCatalog, DependencyVia, DependsOnRow, LawBinding, MapRule, Member,
@@ -453,7 +453,7 @@ fn a_parent_row_mutation_writes_its_child_types() {
     let action = envelope(json!({
         "irVersion": "0.1", "artifactId": "shop.edit_order.action", "kind": "action",
         "namespace": "shop", "name": "edit", "version": "1.0.0", "lifecycle": "draft",
-        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "scope": {}, "dependencies": [{ "artifactId": "shop.OrderLine.entity", "kind": "entity", "required": true, "version": "1.0.0" }], "provenance": { "source": "system" },
         "payload": {
             "actionId": "shop.edit_order", "scopeRequired": [], "idempotent": false,
             "ledgered": false, "inputSchema": { "type": "object" },
@@ -469,7 +469,19 @@ fn a_parent_row_mutation_writes_its_child_types() {
     }));
     // The child type is installed and reached only through the owned
     // collection; it is projected and pinned like any other reference.
-    let catalog = catalog(&[parent, action], &[child]);
+    let artifacts = [parent, action];
+    let base = [child];
+    let registry = BTreeSet::new();
+    let findings = check_artifact_set(
+        &artifacts,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &base,
+            tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+    let catalog = catalog(&artifacts, &base);
     assert!(catalog.artifact("shop.OrderLine.entity", "1.0.0").is_some());
     let targets: Vec<String> = catalog
         .writes
@@ -541,13 +553,25 @@ fn a_law_on_an_inherited_transition_binds_the_declaring_supertype() {
         panic!("laws.json is a list");
     };
     let mut law = laws[0].clone();
-    law["dependencies"] = json!([]);
+    law["dependencies"] = json!([{ "artifactId": "shop.RushRequest.entity", "kind": "entity", "required": true, "version": "1.0.0" }]);
+    law["payload"]["scope"]["objectTypes"] = json!(["shop.RushRequest"]);
     law["payload"]["subject"] = json!("shop.RushRequest");
     law["payload"]["response"] = json!({
         "kind": "transition", "objectType": "shop.RushRequest",
         "property": "status", "transitionId": "approve"
     });
-    let catalog = catalog(&[parent, child, envelope(law)], &[]);
+    let artifacts = [parent, child, envelope(law)];
+    let registry = BTreeSet::new();
+    let findings = check_artifact_set(
+        &artifacts,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+    let catalog = catalog(&artifacts, &[]);
     let Some(LawBinding::Transition { target }) = &catalog.laws[0].binds else {
         panic!("the law binds a transition");
     };
