@@ -2,7 +2,7 @@
 use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
 use norn_expr::{EvaluationBudget, Expression, Value};
 use norn_ir::{
-    ArtifactEnvelope, DataQualityOutcome, DataQualitySeverity, LawIR, LawModality, LawResponse,
+    ArtifactEnvelope, DataQualityOutcome, LawIR, LawModality, LawResponse,
     LawRoot, LawSeverity, ObjectTypeName,
 };
 use serde::{Deserialize, de::IntoDeserializer};
@@ -42,8 +42,8 @@ impl LawEvaluationError {
 /// One evaluated law violation; findings retain the actual law pin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LawFailure {
-    /// Declared severity, independent of proof classification.
-    pub severity: DataQualitySeverity,
+    /// Whether this declared law refuses native writes.
+    pub refuses_native: bool,
     /// Declared explanation.
     pub message: String,
 }
@@ -142,10 +142,7 @@ pub fn evaluate(
         };
         if result.is_err() {
             failures.push(LawFailure {
-                severity: match law.severity {
-                    LawSeverity::Error => DataQualitySeverity::Error,
-                    LawSeverity::Warning => DataQualitySeverity::Warning,
-                },
+                refuses_native: law.severity == LawSeverity::Error,
                 message: format!("{}: {}", law.id, law.rationale),
             });
         }

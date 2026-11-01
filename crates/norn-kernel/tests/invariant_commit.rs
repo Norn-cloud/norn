@@ -3046,6 +3046,7 @@ fn direct_amount_law() -> norn_ir::ArtifactEnvelope {
         serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("laws");
     let law = &mut laws[0];
     law["artifactId"] = json!("invariant.amount.law");
+    law["dependencies"][0]["artifactId"] = json!("invariant.Item.entity");
     law["payload"]["id"] = json!("amount_bounded");
     law["payload"]["subject"] = json!(ITEM);
     law["payload"]["scope"] = json!({"root":{"kind":"entity", "id":ITEM}, "objectTypes":[ITEM]});

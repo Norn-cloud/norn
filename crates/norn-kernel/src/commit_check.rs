@@ -497,7 +497,7 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
         }
         if let Some(failure) = failures
             .into_iter()
-            .find(|failure| failure.severity == norn_ir::DataQualitySeverity::Error)
+            .find(|failure| failure.refuses_native)
         {
             return Err(CommitError::Law {
                 key: write.key.clone(),
