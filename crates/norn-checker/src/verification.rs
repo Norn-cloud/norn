@@ -301,7 +301,8 @@ fn scope_packs(base: &[ArtifactEnvelope]) -> Option<ScopePacks<'_>> {
         .filter(|a| a.kind() == ArtifactKind::BusinessPack)
     {
         let value = serde_json::to_value(artifact.payload.to_json_value()).ok()?;
-        bytes = bytes.saturating_add(serde_json::to_vec(&value).ok()?.len());
+        let size = norn_canonical::serialize_json_verbatim(&value).ok()?.len();
+        bytes = bytes.saturating_add(size);
         if bytes > 8_388_608 {
             return None;
         }
@@ -377,7 +378,8 @@ fn scope_members(
                 continue;
             }
             copies = copies.saturating_add(path.len());
-            bytes = bytes.saturating_add(serde_json::to_vec(&path).ok()?.len());
+            let size = norn_canonical::serialize_json_verbatim(&path).ok()?.len();
+            bytes = bytes.saturating_add(size);
             if copies > budget.max_edges || bytes > 8_388_608 {
                 return None;
             }
@@ -588,7 +590,7 @@ impl LawProjection<'_> {
             for instance_paths in groups {
                 instance.instance_paths = instance_paths;
                 *bytes = bytes.saturating_add(
-                    serde_json::to_vec(&instance)
+                    norn_canonical::serialize_json_verbatim(&instance)
                         .map_err(|_error| refused())?
                         .len(),
                 );
@@ -723,9 +725,11 @@ fn law_paths(
             let mut resolved = Vec::new();
             for name in path {
                 let reference = owners.get(name)?;
-                work.bytes = work
-                    .bytes
-                    .saturating_add(serde_json::to_vec(reference).ok()?.len());
+                work.bytes = work.bytes.saturating_add(
+                    norn_canonical::serialize_json_verbatim(reference)
+                        .ok()?
+                        .len(),
+                );
                 if work.bytes > 8_388_608 {
                     return None;
                 }
