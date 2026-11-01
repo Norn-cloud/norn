@@ -6,8 +6,8 @@ export const Measurement = Norn.interfaceType({
   properties: Schema.Struct({
     id: Schema.String, metal: Schema.Literals(["gold", "silver"]),
     role: Schema.Literals(["input", "output", "loss"]),
-    gross_grams: Norn.decimal(6, { unit: "g" }), purity: Norn.decimal(6),
-    fine_grams: Norn.decimal(6, { unit: "g" }), occurred_at: Schema.String,
+    gross_grams: Norn.decimal(6, { unit: { system: "ucum", code: "g" } }), purity: Norn.decimal(6),
+    fine_grams: Norn.decimal(6, { unit: { system: "ucum", code: "g" } }), occurred_at: Schema.String,
   }),
 })
 
@@ -17,8 +17,8 @@ export const StockEntryMeasurement = Norn.type({
   properties: Schema.Struct({
     id: Schema.String, metal: Schema.Literals(["gold", "silver"]),
     role: Schema.Literals(["input", "output", "loss"]),
-    gross_grams: Norn.decimal(6, { unit: "g" }), purity: Norn.decimal(6),
-    fine_grams: Norn.decimal(6, { unit: "g" }), occurred_at: Schema.String,
+    gross_grams: Norn.decimal(6, { unit: { system: "ucum", code: "g" } }), purity: Norn.decimal(6),
+    fine_grams: Norn.decimal(6, { unit: { system: "ucum", code: "g" } }), occurred_at: Schema.String,
   }),
   identity: [{ name: "primary", properties: ["id"] }],
   links: [
