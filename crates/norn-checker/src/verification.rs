@@ -245,7 +245,7 @@ pub fn effective_law_instances(
     budget: Budget,
 ) -> Result<Vec<norn_ir::verification::EffectiveLawInstance>, Vec<Diagnostic>> {
     let findings = crate::check_artifact_set(artifacts, context);
-    if findings.iter().any(|f| f.is_error()) {
+    if findings.iter().any(Diagnostic::is_error) {
         return Err(findings);
     }
     let pool: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
@@ -272,7 +272,7 @@ pub fn effective_law_instances(
                 .map(|r| ((a.artifact_id.as_str(), a.version.as_str()), r.sha256))
         })
         .collect::<Result<BTreeMap<_, _>, _>>()
-        .map_err(|_| refused())?;
+        .map_err(|_error| refused())?;
     let mut path_work = LawPathWork::default();
     if edges
         .values()
@@ -315,8 +315,11 @@ pub fn effective_law_instances(
             .ok_or_else(refused)?;
             let instance = law_instance(artifact, &law, subject, origin, paths, &digests)
                 .ok_or_else(refused)?;
-            bytes =
-                bytes.saturating_add(serde_json::to_vec(&instance).map_err(|_| refused())?.len());
+            bytes = bytes.saturating_add(
+                serde_json::to_vec(&instance)
+                    .map_err(|_error| refused())?
+                    .len(),
+            );
             if bytes > 8_388_608 || out.len() >= budget.max_nodes {
                 return Err(refused());
             }
