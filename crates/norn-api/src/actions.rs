@@ -208,7 +208,7 @@ pub(crate) fn router<E: SqlEngine + Send + 'static>() -> axum::Router<std::sync:
                 let envelope: Envelope = serde_json::from_slice(&body).map_err(|e| Refusal::invalid(e.to_string()))?;
                 let mut args: BTreeMap<String, Box<serde_json::value::RawValue>> = serde_json::from_str(envelope.params.arguments.get()).map_err(|e| Refusal::invalid(e.to_string()))?;
                 let key = value.pointer("/params/_meta/norn~1idempotencyKey").ok_or_else(|| Refusal::invalid("missing retry identity"))?;
-                if args.get("idempotencyKey").is_some_and(|v| serde_json::from_str::<serde_json::Value>(v.get()).as_ref() != Ok(key)) { return Err(Refusal::invalid("conflicting retry identities")); }
+                if args.get("idempotencyKey").is_some_and(|v| serde_json::from_str::<serde_json::Value>(v.get()).ok().as_ref() != Some(key)) { return Err(Refusal::invalid("conflicting retry identities")); }
                 args.insert("idempotencyKey".into(), serde_json::value::RawValue::from_string(key.to_string()).map_err(Refusal::host)?);
                 serde_json::from_str(&serde_json::to_string(&args).map_err(Refusal::host)?)
             } else { serde_json::from_slice(&body) }.map_err(|e| Refusal::invalid(e.to_string()))?;
