@@ -128,12 +128,12 @@ fn call<'a>(action: &'a ActionRoot, key: &str, input: JsonObject, actor: &str) -
 }
 fn rate(id: &str, value: &str, from: &str, to: &str) -> JsonObject {
     values(&format!(
-        r#"{{"id":"{id}","settingKey":"tax.rate","value":{value},"effectiveFrom":"{from}","effectiveTo":"{to}","reviewState":"approved","orgId":"org_demo","environmentId":"dev","tenantId":null,"workspaceId":null,"businessUnitId":null}}"#
+        r#"{{"id":"{id}","setting_key":"tax.rate","value":{value},"effective_from":"{from}","effective_to":"{to}","review_state":"approved","org_id":"org_demo","environment_id":"dev","tenant_id":null,"workspace_id":null,"business_unit_id":null}}"#
     ))
 }
 fn invoice(id: &str, rate: &str, at: &str) -> JsonObject {
     values(&format!(
-        r#"{{"id":"{id}","registry":"tax","currency":"USD","net":100,"rate":{rate},"effectiveAt":"{at}"}}"#
+        r#"{{"id":"{id}","registry":"tax","currency":"USD","net":100,"rate":{rate},"effective_at":"{at}"}}"#
     ))
 }
 fn recorded(cell: &Cell, key: &str) -> ActionCallRecord {
