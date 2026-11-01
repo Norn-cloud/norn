@@ -16,50 +16,41 @@ pub(crate) fn check(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) 
         let Decoded::Root(root) = decode_v2(artifact) else {
             continue;
         };
-        let nodes: Vec<_> = match *root {
-            EntityRoot::V2(root) => root
-                .object_type
-                .properties
-                .into_iter()
-                .enumerate()
-                .map(|(i, p)| (format!("objectType/properties/{i}/type"), p.property_type))
-                .collect(),
-            EntityRoot::V2Interface(root) => root
-                .interface
-                .properties
-                .into_iter()
-                .enumerate()
-                .map(|(i, p)| (format!("interface/properties/{i}/type"), p.property_type))
-                .collect(),
-            EntityRoot::V2Extension(root) => root
-                .object_type_extension
-                .properties
-                .into_iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    (
-                        format!("objectTypeExtension/properties/{i}/type"),
-                        p.property_type,
-                    )
-                })
-                .collect(),
-            EntityRoot::V2PropertyTypes(root) => root
-                .property_types
-                .into_iter()
-                .enumerate()
-                .map(|(i, p)| (format!("propertyTypes/{i}/type"), p.property_type))
-                .collect(),
-            EntityRoot::V1(_) | EntityRoot::V2Markings(_) => Vec::new(),
-        };
         let codes = pinned_codes(artifact, candidates, base);
-        for (path, ty) in nodes {
-            visit(
-                &ty,
-                &format!("/payload/{path}"),
-                artifact,
-                codes.as_deref(),
-                &mut out,
-            );
+        let mut inspect = |path: &str, i, ty: &PropertyType| {
+            visit(ty, &format!("/payload/{path}/{i}/type"), artifact, codes.as_deref(), &mut out);
+        };
+        let (prefix, properties, links) = match *root {
+            EntityRoot::V2(root) => {
+                let object = root.object_type;
+                ("objectType", object.properties, object.links)
+            }
+            EntityRoot::V2Extension(root) => {
+                let extension = root.object_type_extension;
+                ("objectTypeExtension", extension.properties, extension.links)
+            }
+            EntityRoot::V2Interface(root) => {
+                for (i, p) in root.interface.properties.iter().enumerate() {
+                    inspect("interface/properties", i, &p.property_type);
+                }
+                continue;
+            }
+            EntityRoot::V2PropertyTypes(root) => {
+                for (i, p) in root.property_types.iter().enumerate() {
+                    inspect("propertyTypes", i, &p.property_type);
+                }
+                continue;
+            }
+            EntityRoot::V1(_) | EntityRoot::V2Markings(_) => continue,
+        };
+        for (i, p) in properties.iter().enumerate() {
+            inspect(&format!("{prefix}/properties"), i, &p.property_type);
+        }
+        for (i, link) in links.iter().enumerate() {
+            let path = format!("{prefix}/links/{i}/properties");
+            for (j, p) in link.properties.iter().enumerate() {
+                inspect(&path, j, &p.property_type);
+            }
         }
     }
     out

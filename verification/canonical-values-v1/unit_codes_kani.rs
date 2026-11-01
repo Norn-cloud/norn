@@ -4,25 +4,13 @@ mod unit_codes;
 
 #[kani::proof]
 #[kani::unwind(8)]
-fn missing_vocabulary_and_unknown_system_refuse() {
+fn membership_respects_system_and_vocabulary() {
     let bytes: [u8; 2] = kani::any();
+    let is_ucum: bool = kani::any();
     let code = std::str::from_utf8(&bytes).unwrap_or("");
-    assert!(!unit_codes::admitted(
-        false,
-        code,
-        ["mg", "kg"].iter().copied()
-    ));
-    assert!(!unit_codes::admitted(true, code, std::iter::empty()));
-}
-
-#[kani::proof]
-#[kani::unwind(8)]
-fn membership_preserves_exact_spelling() {
-    let bytes: [u8; 2] = kani::any();
-    if let Ok(code) = std::str::from_utf8(&bytes) {
-        assert_eq!(
-            unit_codes::admitted(true, code, ["mg", "kg"].iter().copied()),
-            matches!(bytes, [b'm', b'g'] | [b'k', b'g'])
-        );
-    }
+    assert_eq!(
+        unit_codes::admitted(is_ucum, code, ["mg", "kg"].iter().copied()),
+        is_ucum && matches!(bytes, [b'm', b'g'] | [b'k', b'g'])
+    );
+    assert!(!unit_codes::admitted(is_ucum, code, std::iter::empty()));
 }

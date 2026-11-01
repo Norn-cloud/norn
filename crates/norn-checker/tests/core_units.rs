@@ -190,7 +190,7 @@ fn val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins() {
             _ => {
                 let mut hidden = base.clone();
                 hidden.first_mut().expect("catalog").scope.org_id = Some("other".to_owned());
-                assert!(!unit_findings(&artifact, &hidden).is_empty());
+                assert!(unit_findings(&artifact, &hidden).iter().any(|d| d.code == "core.values.unit_mismatch"));
                 continue;
             }
         }
@@ -214,5 +214,18 @@ proptest! {
         if !expected {
             prop_assert!(findings.iter().any(|d| d.code == "core.values.unit_mismatch" && d.span.as_ref().is_some_and(|s| s.pointer == "/payload/propertyTypes/0/type/members/0/type/unit")));
         }
+    }
+}
+
+#[test]
+fn val_unit_link_properties_refuse_unknown_units() {
+    for (source, root) in [
+        (include_str!("../../../fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"), "objectType"),
+        (include_str!("../../../fixtures/ir/entity-v2/artifact-set/acme-sku.extension.entity.json"), "objectTypeExtension"),
+    ] {
+        let mut artifact: serde_json::Value = serde_json::from_str(source).expect("fixture");
+        artifact["payload"][root]["links"] = serde_json::json!([{"id":"unit_link","target":"retail.Sku","cardinality":{"to":"many","from":"many"},"properties":[{"id":"amount","type":unit_type("unknown",norn_ir::UnitSystem::Ucum)}]}]);
+        let artifact = serde_json::from_value(artifact).expect("typed envelope");
+        assert!(unit_findings(&artifact, &[]).iter().any(|d| d.code == "core.values.unit_mismatch" && d.span.as_ref().is_some_and(|s| s.pointer == format!("/payload/{root}/links/0/properties/0/type/unit"))));
     }
 }
