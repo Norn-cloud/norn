@@ -40,16 +40,12 @@ fn cycles(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<Str
     .collect()
 }
 #[test]
-fn forward_dependencies_are_acyclic_and_do_not_enable_execution() {
+fn forward_dependencies_are_acyclic() {
     let a = declaration("test.a", "1.0.0", &[("test.b", "1.0.0")]);
     let b = declaration("test.b", "1.0.0", &[]);
     assert!(cycles(&[a.clone(), b.clone()], &[]).is_empty());
     assert!(cycles(&[b, a.clone()], &[]).is_empty());
-    assert!(
-        norn_checker::check_artifact(&a)
-            .iter()
-            .any(|d| d.code.as_str() == "core.graph.incomplete_classification")
-    );
+    assert!(norn_checker::check_artifact(&a).is_empty());
 }
 #[test]
 fn self_and_retained_classification_cycles_refuse() {
@@ -85,5 +81,103 @@ proptest::proptest! {
             reach[i][j] |= reach[i][k] && reach[k][j];
         } } }
         proptest::prop_assert_eq!(cycles(&declarations, &[]).is_empty(), !(0..12).any(|i| reach[i][i]));
+    }
+}
+
+fn item() -> ArtifactEnvelope {
+    serde_json::from_value(json!({
+        "irVersion":"0.1", "artifactId":"test.Item.entity", "version":"1.0.0",
+        "kind":"entity", "namespace":"test", "name":"Item", "lifecycle":"draft",
+        "scope":{}, "provenance":{"source":"system"}, "dependencies":[],
+        "payload":{"entityVersion":"2.0", "objectType":{"name":"test.Item",
+            "properties":[{"id":"amount", "type":{"kind":"integer"}}]}}
+    }))
+    .expect("base entity")
+}
+fn qualified() -> ArtifactEnvelope {
+    let mut wire = serde_json::to_value(declaration("test.HighValue", "1.0.0", &[])).expect("wire");
+    wire["dependencies"] = json!([{"artifactId":"test.Item.entity", "version":"1.0.0",
+        "kind":"entity", "required":true}]);
+    wire["payload"]["predicate"] = json!("self.amount > 100");
+    serde_json::from_value(wire).expect("qualified declaration")
+}
+fn findings(
+    candidates: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Vec<norn_checker::Diagnostic> {
+    check_artifact_set(
+        candidates,
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base,
+            tenant: None,
+        },
+    )
+}
+#[test]
+fn cross_artifact_admission_types_a_pure_boolean_over_the_exact_base() {
+    let base = item();
+    let class = qualified();
+    assert!(findings(std::slice::from_ref(&class), std::slice::from_ref(&base)).is_empty());
+    assert!(findings(&[base, class], &[]).is_empty());
+    let mut interface = serde_json::to_value(item()).expect("wire");
+    let definition = interface["payload"]
+        .as_object_mut()
+        .expect("object")
+        .remove("objectType")
+        .expect("type");
+    interface["payload"]["interface"] = definition;
+    assert!(
+        findings(
+            &[qualified()],
+            &[serde_json::from_value(interface).expect("interface")]
+        )
+        .is_empty()
+    );
+}
+#[test]
+fn missing_pins_members_types_and_unbounded_or_impure_predicates_refuse() {
+    let original = serde_json::to_value(qualified()).expect("wire");
+    for (pointer, value) in [
+        ("/dependencies", json!([])),
+        ("/dependencies/0/required", json!(false)),
+        ("/dependencies/0/version", json!("2.0.0")),
+        ("/dependencies/0/kind", json!("defined_concept")),
+        ("/payload/version", json!("2.0.0")),
+        ("/payload/base/member/typeName", json!("test.Absent")),
+        ("/payload/base/member", json!({"kind":"artifact"})),
+        (
+            "/payload/dependencies",
+            json!([{"artifactId":"test.Item.entity", "version":"1.0.0",
+            "member":{"kind":"property", "typeName":"test.Item", "propertyId":"absent"}}]),
+        ),
+        ("/payload/predicate", json!("self.amount")),
+        ("/payload/predicate", json!("self.absent > 0")),
+        ("/payload/predicate", json!("fetch('https://example.com')")),
+        ("/payload/bounds/id", json!("unadmitted")),
+    ] {
+        let mut wire = original.clone();
+        *wire.pointer_mut(pointer).expect("field") = value;
+        let class = serde_json::from_value(wire).expect("wire remains typed");
+        assert!(
+            findings(&[class], &[item()])
+                .iter()
+                .any(|d| d.code.as_str() == "core.graph.incomplete_classification"),
+            "{pointer}"
+        );
+    }
+    assert!(!findings(&[qualified()], &[]).is_empty());
+    let base = item();
+    assert!(!findings(&[qualified()], &[base.clone(), base]).is_empty());
+}
+proptest::proptest! {
+    #[test]
+    fn excessive_resource_bounds_never_admit(extra in 1_u64..1_000_000) {
+        let mut wire = serde_json::to_value(qualified()).expect("wire");
+        let ceiling = ResourceLimitProfile::norn_limits_v1().slice.max_records;
+        wire["payload"]["bounds"]["slice"]["maxRecords"] = json!(ceiling.saturating_add(extra));
+        let class = serde_json::from_value(wire).expect("wire remains typed");
+        proptest::prop_assert!(findings(&[class], &[item()]).iter()
+            .any(|d| d.code.as_str() == "core.graph.incomplete_classification"));
     }
 }

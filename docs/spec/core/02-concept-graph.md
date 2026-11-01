@@ -36,8 +36,12 @@ and units, capped by the admitted profile; there is no separate classifier limit
 Classifications keep base object IDs, never store writable membership, and trigger no effects.
 Malformed payload objects refuse `defined_concept.validation.invalid_payload`;
 non-object payloads fail envelope decoding with `ir.validation.invalid_envelope`.
-The initial wire-only cut refuses semantic admission with `core.graph.incomplete_classification`;
-GRAPH-DAG-1 admission and GRAPH-CLASS-1 evaluation remove that refusal only for qualified semantics.
+Artifact-set admission requires an exact required pin for the base and every dependency,
+a declared base type/interface, a pure Boolean predicate over its exact type closure,
+and `norn_limits_v1` bounds at or below every admitted field. Missing/ambiguous members,
+invalid predicates or excessive bounds refuse `core.graph.incomplete_classification`.
+Per-artifact checking validates transport shape; cross-artifact admission checks semantics.
+GRAPH-CLASS-1 evaluation is a separate cut; admission creates no writable membership.
 GRAPH-DAG-1 checks classification dependencies over exact artifact/version identities,
 including retained declarations. A cycle containing a candidate refuses `core.graph.cycle`;
 self references count as cycles and ambiguous identities never select a version.

@@ -367,16 +367,6 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
     if diagnostics.len() == before {
         crate::typed_roots::check_typed_root(&artifact.payload, diagnostics, artifact_id);
     }
-    // GRAPH-CLASS-1: a valid wire declaration cannot authorize unsupported execution.
-    if diagnostics.len() == before && matches!(artifact.payload, ArtifactPayload::DefinedConcept(_))
-    {
-        diagnostics.push(invalid_diagnostic(
-            "core.graph.incomplete_classification",
-            "defined-concept semantic admission is not implemented",
-            "payload",
-            artifact_id,
-        ));
-    }
 }
 
 /// The payload object the kind validators walk: the bare payload without the

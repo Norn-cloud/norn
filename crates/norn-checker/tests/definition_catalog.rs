@@ -1302,11 +1302,7 @@ fn defined_concept_wire_distinguishes_malformed_and_unsupported_semantics() {
             "bounds": norn_ir::ResourceLimitProfile::norn_limits_v1()
         }
     }));
-    assert!(
-        norn_checker::check_artifact(&declaration)
-            .iter()
-            .any(|d| d.code.as_str() == "core.graph.incomplete_classification")
-    );
+    assert!(norn_checker::check_artifact(&declaration).is_empty());
     let wire = serde_json::to_value(&declaration).expect("wire");
     let positional = json!(["test.Item.entity", "1.0.0", {"kind":"type", "typeName":"test.Item"}]);
     let mut budget = wire["payload"]["bounds"].clone();
