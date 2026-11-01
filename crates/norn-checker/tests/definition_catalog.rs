@@ -10,7 +10,10 @@
 use norn_checker::definition_catalog::project;
 use norn_checker::resolve_artifact_set;
 use norn_ir::ArtifactEnvelope;
-use norn_ir::definition_catalog::{DefinitionCatalog, Member, MemberRef, WriteVia};
+use norn_ir::definition_catalog::{
+    DefinitionCatalog, LawBinding, MapRule, Member, MemberRef, WriteVia,
+};
+use norn_ir::mapping::GapReason;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
@@ -111,6 +114,124 @@ fn a_decide_graph_writes_only_the_declared_members_its_schema_admits() {
                 WriteVia::FactObject
             ),
         ]
+    );
+}
+
+#[test]
+fn a_mapping_observes_members_and_declares_gaps() {
+    let mapping = envelope(json!({
+        "irVersion": "0.1",
+        "artifactId": "erpnext.sales_order.mapping",
+        "kind": "mapping",
+        "namespace": "erpnext",
+        "name": "Sales orders",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {},
+        "dependencies": [],
+        "provenance": { "source": "authoring_sdk" },
+        "payload": {
+            "format": "norn.mapping/1",
+            "source": {
+                "schemaId": "erpnext.schema",
+                "version": "0.1.0",
+                "sha256": "a".repeat(64)
+            },
+            "interfaces": ["core.Order.interface"],
+            "maps": [{
+                "id": "sales_order",
+                "source": { "dataset": "Sales Order" },
+                "target": {
+                    "entity": "commerce.SalesOrder.entity",
+                    "interface": "core.Order.interface"
+                },
+                "subject": "input.name",
+                "sourceRecord": "input.name",
+                "properties": [{ "property": "total_amount", "value": "input.grand_total" }],
+                "links": [{ "link": "counterparty", "key": "input.customer" }],
+                "lifecycles": [{ "property": "status", "state": "input.status" }],
+                "gaps": [{ "member": "amended_from", "reason": "deferred" }]
+            }]
+        }
+    }));
+    let catalog = catalog(&[sales_order(), mapping], &[]);
+    let mut rows: Vec<(String, MapRule)> = catalog
+        .mappings
+        .iter()
+        .map(|row| {
+            assert_eq!(row.map.member.id(), "map:sales_order");
+            assert_eq!(row.dataset, "Sales Order");
+            assert_eq!(row.target.artifact_id, "commerce.SalesOrder.entity");
+            (row.target.member.id(), row.rule.clone())
+        })
+        .collect();
+    rows.sort();
+    assert_eq!(
+        rows,
+        [
+            (
+                "link:commerce.SalesOrder#amended_from".to_owned(),
+                MapRule::Gap {
+                    reason: GapReason::Deferred
+                }
+            ),
+            (
+                "link:commerce.SalesOrder#counterparty".to_owned(),
+                MapRule::Link {}
+            ),
+            (
+                "property:commerce.SalesOrder#status".to_owned(),
+                MapRule::Lifecycle {}
+            ),
+            (
+                "property:commerce.SalesOrder#total_amount".to_owned(),
+                MapRule::Property {}
+            ),
+            ("type:commerce.SalesOrder".to_owned(), MapRule::Object {}),
+        ]
+    );
+    // Observation is not authorship: a mapping adds no write.
+    assert!(catalog.writes.is_empty());
+}
+
+#[test]
+fn laws_bind_their_subject_and_response() {
+    let mut artifacts: Vec<ArtifactEnvelope> = Vec::new();
+    for path in ["fixtures/law-ir/entities.json", "fixtures/law-ir/laws.json"] {
+        let Value::Array(values) = read_json(path) else {
+            panic!("{path} is a list of artifacts");
+        };
+        artifacts.extend(values.into_iter().map(envelope));
+    }
+    let catalog = catalog(&artifacts, &[]);
+    assert_eq!(catalog.laws.len(), 5);
+    let identity = catalog
+        .laws
+        .iter()
+        .find(|row| row.at.artifact_id == "erpnext.invariant_identity.law")
+        .expect("the invariant law is a row");
+    let purchase_order = MemberRef {
+        artifact_id: "erpnext.PurchaseOrder.entity".to_owned(),
+        version: "0.1.0".to_owned(),
+        member: Member::Type {
+            type_name: "erpnext.PurchaseOrder".to_owned(),
+        },
+    };
+    assert_eq!(identity.subject, purchase_order);
+    assert!(catalog.contains(&identity.subject));
+    assert_eq!(
+        identity.binds,
+        Some(LawBinding::Invariant {
+            owner: purchase_order,
+            invariant: "amount_frozen".to_owned(),
+        })
+    );
+    assert!(
+        catalog
+            .laws
+            .iter()
+            .filter(|row| row.at.artifact_id != "erpnext.invariant_identity.law")
+            .all(|row| row.binds.is_none())
     );
 }
 
