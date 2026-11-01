@@ -56,7 +56,7 @@ POST-LINK-PARITY: link lookup and relation ownership include admitted extension
 members on every type in the lineage, using the same nearest-declaration and
 furthest-owner rules as ordinary links. The stock checker can admit these paths;
 the shared commit shape check must accept their complete read fences too.
-`extension_links_preserve_shape_owner_fences_and_required_roles` checks base
+`extension_links_share_declaration_owner_and_empty_fence_admission` checks base
 and subtype lookup, common owner, successful empty-fence admission and continued
 refusal of an undeclared extension member. No link target/cardinality, scope,
 CAS or complete-adjacency guard is weakened. This fixes the shared lookup before
@@ -65,4 +65,5 @@ stock preparation consumes it; full stock invocation remains subsequent work.
 POST-LINK-REQUIRED: the same declared-member inventory supplies required-role
 validation. A source with a required extension role refuses creation without
 a target and removal of its last target, on base types and subtypes alike.
-The named extension-link conformance test exercises both refusals.
+`required_extension_links_refuse_missing_or_removed_last_targets` exercises
+both refusals.
