@@ -10,7 +10,7 @@
       "status": "passed",
       "details": {
         "terms": 14,
-        "mappings": 61,
+        "mappings": 11,
         "shapes": 14,
         "requiredClasses": [
           "norn.commerce.offer",
@@ -26,8 +26,8 @@
           "maxCount": 100
         },
         "derivedBytes": {
-          "categories": 3173684,
-          "attributes": 143853
+          "categories": 517,
+          "attributes": 905
         }
       }
     },
@@ -51,22 +51,22 @@
   "sourceVersions": {
     "schema.org": {
       "release": "30.0",
-      "retrievedAt": "2026-08-25",
-      "sha256": "0f0c97a4f666b2f8563573fe48453782fd51b87a504523cf0c9aff6a71c3eec4"
+      "retrievedAt": "2026-10-31",
+      "sha256": "4467fa19edcb1d7fb3c46c0adf3591b7f870c4a60b7838bdb61694fd02864cf6"
     },
     "shopifyProductTaxonomy": {
       "release": "toy-1",
       "retrievedAt": "2026-08-25",
-      "contentSha256": "48469cc22dd9318ca5f323a191c8de88fd980686c7f71b847fe759b173275df0"
+      "contentSha256": "48623e1f673dfcf1e73dba2f28eb8875b4324524d1ab9bd9b3ed39cd51b958a3"
     },
     "derived": {
       "categories": {
-        "bytes": 3173684,
-        "sha256": "2c1b2a1097ca8db52819ec6f7312b2391c40d7ac8d6ee220bb0b1f2a19128ac0"
+        "bytes": 517,
+        "sha256": "95e1ae1a025b72575f327969a0ef6a7f36c04f1eb911811fa47f3a280e1d8674"
       },
       "attributes": {
-        "bytes": 143853,
-        "sha256": "bfdb790c6f0a965bdcc4c2ded37b11335ad27388ca81dc5ee857cc4d7bf912c7"
+        "bytes": 905,
+        "sha256": "60dc99bb3142b992492946ec1b80199f3068b906ae1cd7f1139cdcd119c143ef"
       }
     }
   }

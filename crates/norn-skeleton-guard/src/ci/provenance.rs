@@ -107,7 +107,7 @@ enum Category {
     AccountingDomain,
     InventoryDomain,
     CertifiedDomainLaw,
-    Soliman,
+    PrivateBusiness,
 }
 
 #[derive(Deserialize)]
@@ -397,7 +397,7 @@ fn forbidden(category: Category) -> bool {
             | Category::AccountingDomain
             | Category::InventoryDomain
             | Category::CertifiedDomainLaw
-            | Category::Soliman
+            | Category::PrivateBusiness
     )
 }
 
