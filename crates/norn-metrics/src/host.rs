@@ -216,6 +216,7 @@ mod tests {
     #[test]
     fn host_manifest_is_admitted_and_refuses_a_changed_source_locator() {
         let mut declaration = manifest().expect("manifest");
+        assert_ne!(declaration.runtime.digest, declaration.implementation.digest);
         norn_checker::function::admit_function_manifest(&declaration).expect("admitted");
         declaration.implementation.locator = Some("norn-metrics/mutable".into());
         assert!(norn_checker::function::admit_function_manifest(&declaration).is_err());
