@@ -23,6 +23,16 @@ const GATE_FILES: [&str; 10] = [
     "crates/norn-checker/tests/non_code_literals.baseline.json",
 ];
 
+/// Exact opt-in contract: event payloads and arbitrary variables cannot select a runner.
+const MERGE_RUNNER: &str = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('[\"self-hosted\",\"norn-merge\",\"norn-run-{0}\"]', github.run_id)) || 'ubuntu-24.04' }}";
+
+fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
+    matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
+        || (path == ".github/workflows/ci-policy.yml"
+            && matches!(job, "core" | "plan" | "test" | "phase" | "full")
+            && runner == Some(MERGE_RUNNER))
+}
+
 /// The longest merge-queue group the trusted lane walks; longer groups fail closed.
 const MAX_MERGE_GROUP: usize = 64;
 
@@ -106,12 +116,13 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
             Ok(doc) => {
                 if let Some(yaml::Value::Map(jobs)) = doc.get("jobs") {
                     for (name, job) in jobs {
-                        if !matches!(
+                        if !runner_is_admitted(
+                            path,
+                            name,
                             job.get("runs-on").and_then(yaml::Value::as_str),
-                            Some("ubuntu-latest" | "ubuntu-24.04")
                         ) {
                             errors.push(format!(
-                                "{path}::{name}: only GitHub-hosted runners are admitted"
+                                "{path}::{name}: runner must be hosted or the exact merge-only opt-in"
                             ));
                         }
                     }
@@ -478,6 +489,61 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn runner_routing_is_merge_only_opt_in_in_the_public_core_jobs() {
+        let path = ".github/workflows/ci-policy.yml";
+        for job in ["core", "plan", "test", "phase", "full"] {
+            assert!(super::runner_is_admitted(
+                path,
+                job,
+                Some(super::MERGE_RUNNER)
+            ));
+            for removed in [
+                "github.event_name == 'merge_group' && ",
+                "vars.NORN_MERGE_RUNNER == 'self-hosted' && ",
+            ] {
+                let changed = super::MERGE_RUNNER.replace(removed, "");
+                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
+            }
+            for event in [
+                "pull_request",
+                "pull_request_target",
+                "issue_comment",
+                "push",
+                "workflow_dispatch",
+            ] {
+                let changed = super::MERGE_RUNNER.replace("merge_group", event);
+                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
+            }
+            for (before, after) in [
+                ("norn-run-{0}", "norn-run-123"),
+                ("github.run_id", "github.event.pull_request.number"),
+                ("norn-run-{0}", "norn-merge"),
+            ] {
+                let changed = super::MERGE_RUNNER.replace(before, after);
+                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
+            }
+            assert!(!super::runner_is_admitted(path, job, Some("self-hosted")));
+        }
+        for job in ["trusted-policy", "unknown"] {
+            assert!(!super::runner_is_admitted(
+                path,
+                job,
+                Some(super::MERGE_RUNNER)
+            ));
+        }
+        assert!(!super::runner_is_admitted(
+            ".github/workflows/other.yml",
+            "core",
+            Some(super::MERGE_RUNNER)
+        ));
+        assert!(super::runner_is_admitted(
+            path,
+            "trusted-policy",
+            Some("ubuntu-24.04")
+        ));
+    }
+
     use super::{compare_artifact_variants, contract_errors, maintainer_approval};
     use serde_json::{Value, json};
 
