@@ -776,6 +776,7 @@ pub(super) fn prepare_stock_commit<H: CellHost + ?Sized>(
     slice: &mut FactSlice,
     links: &mut Vec<LinkReadExpectation>,
     output: &norn_ir::DecisionOutput,
+    limits: &crate::EnvelopeLimits,
 ) -> Result<PreparedStockCommit, ActionRefusal<H::Error>> {
     use norn_ir::quantity_ledger::{
         QUANTITY_CELL_VERSION, QuantityBalanceVersion, QuantityRequest,
@@ -831,12 +832,13 @@ pub(super) fn prepare_stock_commit<H: CellHost + ?Sized>(
             layer: key.layer,
         })
         .collect();
-    let prepared = crate::prepare_rule_decision(
+    let prepared = crate::rule_authority::prepare_rule_decision_with_limits(
         catalog,
         slice,
         &call.turn,
         &rule.seal(plan.output),
         &BTreeSet::new(),
+        limits,
     )?;
     Ok((prepared, plan.links, (request, posting_id)))
 }

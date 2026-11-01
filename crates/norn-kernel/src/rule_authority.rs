@@ -120,6 +120,24 @@ pub fn prepare_rule_decision<X>(
     decision: &RuleDecision,
     source_owned_targets: &BTreeSet<FactKey>,
 ) -> Result<PreparedDecision, DecisionRefusal<X>> {
+    prepare_rule_decision_with_limits(
+        catalog,
+        slice,
+        turn,
+        decision,
+        source_owned_targets,
+        &EnvelopeLimits::V1,
+    )
+}
+
+pub(crate) fn prepare_rule_decision_with_limits<X>(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    decision: &RuleDecision,
+    source_owned_targets: &BTreeSet<FactKey>,
+    limits: &EnvelopeLimits,
+) -> Result<PreparedDecision, DecisionRefusal<X>> {
     if catalog
         .rules
         .get(decision.rule_id.as_str())
@@ -142,7 +160,7 @@ pub fn prepare_rule_decision<X>(
         slice,
         turn,
         &decision.output,
-        &EnvelopeLimits::V1,
+        limits,
         AdmissionOrigin::Rule,
         source_owned_targets,
     )
@@ -191,6 +209,10 @@ impl AdmittedStockRule {
         &self,
         scope: &BTreeMap<String, String>,
     ) -> Result<String, crate::ActionRefusal<X>> {
+        let scope: Vec<_> = scope
+            .iter()
+            .map(|(key, value)| (key.as_bytes(), value.as_bytes()))
+            .collect();
         norn_ir::canonical::domain_hash_hex(b"stock.receipt/1\0", &(&self.pin, scope))
             .map(|pin| format!("stock.post/1:{pin}"))
             .map_err(|_error| crate::ActionRefusal::InvalidInput {

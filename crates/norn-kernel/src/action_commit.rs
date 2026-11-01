@@ -3606,6 +3606,7 @@ where
                 &mut slice,
                 &mut link_reads,
                 &output,
+                limits,
             )
         })
         .transpose()?;
@@ -3728,6 +3729,7 @@ where
         )),
         Err(error) => action_commit_conflict(
             host,
+            catalog,
             call,
             authorizer,
             error,
@@ -4019,6 +4021,7 @@ struct ActionReplayState<'a> {
 
 fn action_commit_conflict<H: CellHost + ?Sized>(
     host: &H,
+    catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     authorizer: &dyn ActionAuthorizer,
     error: CommitError<H::Error>,
@@ -4053,6 +4056,9 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
             // The winner may have changed authorization-relevant
             // values. A replay must use current authorization too.
             authorize_target(host, call, effective_input, authorizer, &record.object)?;
+            if call.action.stock_post.is_some() {
+                stock::prepare_stock_snapshot(host, catalog, call, authorizer)?;
+            }
             return Ok(outcome);
         }
     }
