@@ -397,7 +397,13 @@ fn scope_members(
                 return None;
             }
             copies = copies.saturating_add(path.len().saturating_add(1));
-            if copies > budget.max_edges {
+            bytes = bytes.saturating_add(
+                norn_canonical::serialize_json_verbatim(&path)
+                    .ok()?
+                    .len()
+                    .saturating_add(norn_canonical::serialize_json_verbatim(next).ok()?.len()),
+            );
+            if copies > budget.max_edges || bytes > 8_388_608 {
                 return None;
             }
             let mut child = path.clone();
