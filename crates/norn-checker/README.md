@@ -21,14 +21,7 @@ Retained definition receipts are verified against their recorded checker/profile
 
 ### Exact-source receipt identity (HOST-RECEIPT)
 RECEIPT-EXACT: receipt identity is injective over exact canonical source (assuming SHA-256 collision resistance).
-WRITER-CLOSURE: every writer requires `ReceiptSources` from exact candidate/base runtime sources; the convenience source writer uses that same constructor.
-CHALLENGE-PHASE: protected ingress retains verbatim sources; Norn1 collisions still refuse at admission.
-CHALLENGE-BUDGET: numeric preflight and array admission precede runtime source construction.
-Typed verification refuses @5–@7; historical @1–@4 readers and hash-only reconstruction remain.
-RETAINED-IDENTITY: rechecks compare exact semantic identity before reusing an attested profile;
-a changed install uses current admission. CONTEXT-BASE: a different checker base is refused.
-`tests/check_receipt.rs` enumerates ordinary, flow-map, fresh install, retained install,
-flow-map install and verified recheck writers against both precision vectors in both layer positions.
+WRITER-CLOSURE: every writer requires `ReceiptSources` from exact candidate/base runtime sources; the convenience source writer uses that same constructor. CHALLENGE-PHASE: protected ingress retains verbatim sources; Norn1 collisions still refuse at admission. CHALLENGE-BUDGET: numeric preflight and array admission precede runtime source construction. Typed verification refuses @5–@7; historical @1–@4 readers and hash-only reconstruction remain. RETAINED-IDENTITY: rechecks compare exact semantic identity before reusing an attested profile; a changed install uses current admission. CONTEXT-BASE: a different checker base is refused. `tests/check_receipt.rs` enumerates ordinary, flow-map, fresh install, retained install, flow-map install and verified recheck writers against both precision vectors in both layer positions.
 Conformance in `tests/check_receipt.rs`: EXACT-INTEGER (`9007199254740992` / `9007199254740993`),
 EXACT-DECIMAL (`0.1234567890123456789012345678` / `0.1234567890123456789012345679`),
 EXACT-LITERAL (`25` / `26`), EXACT-VERIFY (substitution refusal), EXACT-ORDER (key reordering).
