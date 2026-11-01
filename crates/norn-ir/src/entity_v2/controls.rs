@@ -69,7 +69,7 @@ pub struct ControlStep {
 }
 
 /// One deterministic controls verdict carried beside ordinary diagnostics.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[serde(try_from = "ControlVerdictWire")]
 pub struct ControlVerdict {
@@ -88,7 +88,8 @@ pub struct ControlVerdict {
     pub explanation: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(transform = witness_trace_schema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ControlVerdictWire {
     object_type: ObjectTypeName,
@@ -113,5 +114,31 @@ impl TryFrom<ControlVerdictWire> for ControlVerdict {
             trace: value.trace,
             explanation: value.explanation,
         })
+    }
+}
+
+fn witness_trace_schema(schema: &mut schemars::Schema) {
+    schema.insert("allOf".into(), serde_json::json!([{
+        "if": {"properties":{"reachability":{"const":"witnessed"}}, "required":["reachability"]},
+        "then": {"properties":{"trace":{"minItems":1}}, "required":["trace"]}
+    }]));
+}
+
+impl Serialize for ControlVerdict {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.reachability == Reachability::Witnessed && self.trace.is_empty() {
+            return Err(serde::ser::Error::custom(
+                "witnessed controls require a nonempty concrete trace",
+            ));
+        }
+        ControlVerdictWire {
+            object_type: self.object_type.clone(),
+            actions: self.actions.clone(),
+            verdict: self.verdict.clone(),
+            reachability: self.reachability.clone(),
+            trace: self.trace.clone(),
+            explanation: self.explanation.clone(),
+        }
+        .serialize(serializer)
     }
 }
