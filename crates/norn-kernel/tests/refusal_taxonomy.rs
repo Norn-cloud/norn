@@ -318,6 +318,7 @@ fn internal_refusals_never_carry_details() {
     ] {
         assert_eq!(refusal.category, RefusalCategory::Internal);
         assert_eq!(refusal.message, INTERNAL_MESSAGE);
+        assert!(refusal.reason.is_none());
         assert!(!refusal.message.contains("tenant-42"));
     }
 }
@@ -385,11 +386,14 @@ fn actual_step_preserves_versioned_action_refusals() {
 fn nested_wrappers_preserve_internal_redaction() {
     let host = CommitError::Host("private tenant database path");
     let expected = host.refusal();
+    assert!(expected.reason.is_none());
     let step = StepError::Rejected(host);
+    assert!(step.refusal().reason.is_none());
     assert_eq!(step.refusal(), expected);
     assert_eq!(step.refusal().message, INTERNAL_MESSAGE);
     let shell = AuthorizedRejection::Shell(step);
     assert_eq!(shell.refusal(), expected);
+    assert!(shell.refusal().reason.is_none());
     assert_eq!(shell.category(), RefusalCategory::Internal);
     assert_eq!(shell.code(), expected.code);
 }
@@ -480,6 +484,9 @@ fn existence_never_leaks_matrix() {
         "an invisible object must read exactly like an absent one"
     );
     assert_eq!(absent, absent_forbidden);
+    for refusal in [&hidden, &absent, &absent_forbidden] {
+        assert!(refusal.reason.is_none());
+    }
     assert_eq!(hidden.code, "action.target_not_found");
     assert_eq!(hidden.category, RefusalCategory::Visibility);
     assert_eq!(hidden.message, NOT_FOUND_MESSAGE);
