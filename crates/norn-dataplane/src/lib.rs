@@ -10,3 +10,8 @@ pub use raw_observation::{
 
 pub mod converge;
 pub use converge::{Applied, Convergence, ConvergenceError, CurrentRecord};
+
+pub mod frappe;
+pub mod webhook;
+pub use frappe::{FRAPPE_SIGNATURE_HEADER, FrappeSource, frappe_event_kind, ingest_frappe_webhook};
+pub use webhook::IngestError;
