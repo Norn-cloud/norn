@@ -1,5 +1,11 @@
 {
+<<<<<<< HEAD:.github/ci/provenance/artifacts/scripts/coverage_manifest.py.json
   "sha256": "ca1f1645f7997d5efafe2b1ef21e5f38dd420f878adb1cb632bd075219f0b545",
+||||||| dbb7af3b4:.github/ci/provenance/artifacts/verification/coverage-v1/coverage.json.json
+  "sha256": "4a08dcdc45d726ea9333217f7e0aa260f644ca2cd3a5e32e52e141ad37fc6db3",
+=======
+  "sha256": "8e6d4c1845e32171d168055066b41c003dc5223e497040b89d22203b75dc10c6",
+>>>>>>> origin/main:.github/ci/provenance/artifacts/verification/coverage-v1/coverage.json.json
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",

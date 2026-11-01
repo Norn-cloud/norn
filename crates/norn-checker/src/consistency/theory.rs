@@ -124,6 +124,8 @@ pub enum TheoryError {
         /// The conflicting arity.
         found: usize,
     },
+    /// A mapping contains an EGD; mappings are TGDs from source to target.
+    EgdInMapping(String),
     /// A relation no dependency mentions.
     UnknownRelation(String),
     /// An EGD side names a variable its body does not bind.
