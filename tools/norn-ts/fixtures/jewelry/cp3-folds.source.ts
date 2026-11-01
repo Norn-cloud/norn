@@ -12,7 +12,7 @@ export const ReceiptStep = Norn.decision({ id: "jewelry.fold.receipt_step", titl
   eligible: input.accumulator.eligible && input.item.gross > 0 && input.item.purity > 0 && input.item.purity <= 1000 && input.item.value >= 0,
   sources: input.accumulator.sources.concat([input.item.resource_code]),
 }))
-const HoldingSnapshot = Schema.Struct({ resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity"), unit: Schema.Literal("g"), currency: Schema.Null, valuation_method: Schema.Literals(["fifo", "moving_average"]), gross_quantity: Schema.Finite, purity: Schema.Int, valuation_currency: Schema.Literal("USD"), book_value: Schema.Finite })
+const HoldingSnapshot = Schema.Struct({ resource_code: Schema.String, quantity: Schema.Finite, unit: Schema.Literal("g"), currency: Schema.Null, valuation_method: Schema.Literals(["fifo", "moving_average"]), gross_quantity: Schema.Finite, purity: Schema.Int, valuation_currency: Schema.Literal("USD"), book_value: Schema.Finite })
 const HoldingItem = Schema.Struct({ resource_code: Schema.String, quantity: Schema.Finite, gross: Schema.Finite, purity: Schema.Int, value: Schema.Finite, unit: Schema.Literal("g"), currency: Schema.Literal("USD") })
 const Allocation = Schema.Struct({ resource_code: Schema.String, quantity: Schema.Finite, gross: Schema.Finite, value: Schema.Finite, residual_quantity: Schema.Finite, residual_value: Schema.Finite })
 const AllocationState = Schema.Struct({ demand: Schema.Finite, fine: Schema.Finite, gross: Schema.Finite, value: Schema.Finite, residual: Schema.Finite, residual_value: Schema.Finite, eligible: Schema.Boolean, allocations: Schema.Array(Allocation) })
