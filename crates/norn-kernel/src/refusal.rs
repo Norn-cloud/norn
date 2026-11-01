@@ -355,6 +355,37 @@ fn refusal_values<const N: usize>(
         .collect()
 }
 
+fn lifecycle_states(
+    lifecycle: &str,
+    current: Option<&str>,
+    allowed: &[String],
+) -> BTreeMap<String, RuntimeValue> {
+    refusal_values([
+        ("lifecycle", lifecycle.into()),
+        (
+            "current",
+            current.map_or(RuntimeValue::Null, RuntimeValue::from),
+        ),
+        (
+            "allowed",
+            RuntimeValue::Array(allowed.iter().cloned().map(RuntimeValue::String).collect()),
+        ),
+    ])
+}
+
+fn lifecycle_guard(
+    transition: &str,
+    guard: &str,
+    error: Option<&str>,
+) -> BTreeMap<String, RuntimeValue> {
+    let mut values = refusal_values([("transition", transition.into()), ("guard", guard.into())]);
+    let (name, value) = error.map_or(("result", RuntimeValue::Bool(false)), |error| {
+        ("error", error.into())
+    });
+    values.insert(name.to_owned(), value);
+    values
+}
+
 impl<X> Refusable for DecisionRefusal<X> {
     fn refusal(&self) -> Refusal {
         let mut refusal = Refusal::new(self.code(), self.category(), self);
@@ -365,26 +396,11 @@ impl<X> Refusable for DecisionRefusal<X> {
                 transition,
                 current,
                 from,
-            } => Some((
-                "lifecycle.transition_source",
-                key.as_ref(),
-                refusal_values([
-                    ("lifecycle", RuntimeValue::String(lifecycle.clone())),
-                    ("transition", RuntimeValue::String(transition.clone())),
-                    (
-                        "current",
-                        current.as_ref().map_or(RuntimeValue::Null, |state| {
-                            RuntimeValue::String(state.clone())
-                        }),
-                    ),
-                    (
-                        "allowed",
-                        RuntimeValue::Array(
-                            from.iter().cloned().map(RuntimeValue::String).collect(),
-                        ),
-                    ),
-                ]),
-            )),
+            } => Some(("lifecycle.transition_source", key.as_ref(), {
+                let mut values = lifecycle_states(lifecycle, current.as_deref(), from);
+                values.insert("transition".to_owned(), transition.clone().into());
+                values
+            })),
             Self::InvalidInitialState {
                 key,
                 lifecycle,
@@ -393,21 +409,7 @@ impl<X> Refusable for DecisionRefusal<X> {
             } => Some((
                 "lifecycle.initial_state",
                 key,
-                refusal_values([
-                    ("lifecycle", RuntimeValue::String(lifecycle.clone())),
-                    (
-                        "current",
-                        state.as_ref().map_or(RuntimeValue::Null, |state| {
-                            RuntimeValue::String(state.clone())
-                        }),
-                    ),
-                    (
-                        "allowed",
-                        RuntimeValue::Array(
-                            initial.iter().cloned().map(RuntimeValue::String).collect(),
-                        ),
-                    ),
-                ]),
+                lifecycle_states(lifecycle, state.as_deref(), initial),
             )),
             Self::ImmutableStateWrite {
                 key,
@@ -455,11 +457,7 @@ impl<X> Refusable for DecisionRefusal<X> {
             } => Some((
                 "lifecycle.guard",
                 key,
-                refusal_values([
-                    ("transition", RuntimeValue::String(transition.clone())),
-                    ("guard", RuntimeValue::String(guard.clone())),
-                    ("result", RuntimeValue::Bool(false)),
-                ]),
+                lifecycle_guard(transition, guard, None),
             )),
             Self::GuardError {
                 key,
@@ -469,11 +467,7 @@ impl<X> Refusable for DecisionRefusal<X> {
             } => Some((
                 "lifecycle.guard_evaluable",
                 key,
-                refusal_values([
-                    ("transition", RuntimeValue::String(transition.clone())),
-                    ("guard", RuntimeValue::String(guard.clone())),
-                    ("error", RuntimeValue::String(reason.clone())),
-                ]),
+                lifecycle_guard(transition, guard, Some(reason)),
             )),
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
@@ -495,13 +489,11 @@ impl<X> Refusable for DecisionRefusal<X> {
             | Self::Overflow
             | Self::Host(_) => None,
         };
-        if let Some((law, key, values)) = reason {
-            refusal.reason = Some(RefusalReason {
-                law: law.to_owned(),
-                subject: key.to_string(),
-                values,
-            });
-        }
+        refusal.reason = reason.map(|(law, key, values)| RefusalReason {
+            law: law.to_owned(),
+            subject: key.to_string(),
+            values,
+        });
         refusal
     }
 }
