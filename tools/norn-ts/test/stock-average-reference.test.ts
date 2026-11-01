@@ -75,3 +75,17 @@ test("rounded partial returns never exceed the original issue value", () => {
   expect(values).toEqual([1n, 1n, 1n, 0n, 0n])
   expect(state.value).toBe(3n)
 })
+
+
+test("different receipt costs combine into a quantity-weighted moving average", () => {
+  const first = averageReferencePost(empty, { kind: "receipt", id: "a", quantity: 2n, value: 4n })
+  const second = averageReferencePost(first.after, { kind: "receipt", id: "b", quantity: 1n, value: 11n })
+  const issue = averageReferencePost(second.after, { kind: "delivery", id: "ship", quantity: 1n })
+  conserved(issue)
+  expect(issue.stock.value).toBe(-5n)
+  const depleted = averageReferencePost(issue.after, { kind: "delivery", id: "last", quantity: 2n })
+  conserved(depleted)
+  expect(depleted.stock.value).toBe(-10n)
+  expect(depleted.after.quantity).toBe(0n)
+  expect(depleted.after.value).toBe(0n)
+})
