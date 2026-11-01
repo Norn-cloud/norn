@@ -1489,6 +1489,7 @@ dependencies = [
 name = "norn-api"
 version = "0.1.0"
 dependencies = [
+ "http",
  "norn-ir",
  "serde",
  "serde_json",
