@@ -28,6 +28,7 @@ Closed effect operations are the existing canonical fact mutations, link mutatio
 |---|---|
 | TXN-ATOMIC-1: all synchronous effects and outbox/timers commit together; commit | `core.txn.atomic_boundary` |
 | TXN-CLOSED-1: every writer admitted in full closure; admission/preparation | `core.txn.unchecked_writer` |
+| PROTECTED-DEFAULT: owned child types have no protected effective default, including inherited and extension defaults; admission | `core.graph.protected_default` |
 | TXN-READSET-1: absence/membership/definition/settings/auth dependencies fenced; commit | `core.txn.contention` |
 | TXN-INTENT-1: user preconditions survive retries; preparation/commit | `core.txn.stale_intent` |
 | TXN-IDEMPOTENT-1: one accepted consequence per exact intent; commit | `core.txn.identity_mismatch` |
@@ -38,6 +39,7 @@ Expected evidence: runtime atomicity/CAS enforcement, crash/reopen/race correspo
 ## Named acceptance scenarios
 
 - **TXN-ALL:** Given receipt quantity/value and matching GL effects, when a final guard fails, then no voucher, stock, GL, command or timer changes; successful replay returns the whole same commit.
+- **PROTECTED-DEFAULT:** A declared default is a creation-time write. Admission refuses protected owned-child defaults, including empty text, zero and false. Move the value into the authoritative rule's creation effect, or drop the protection. A lifecycle initial state without a declared default remains admitted; runtime refusal remains a backstop.
 - **TXN-PHANTOM:** Given a fold over an empty or populated partition, when another commit inserts/removes a member before finalization, then the stale proposal commits nothing.
 - **TXN-TWO:** Given balance 5, when two consumers each request 4, then at most one succeeds and the other recomputes/refuses without negative balance.
 - **TXN-RETRY:** Given committed operation O, when O is retried after lost acknowledgement, then return its authorized receipt; changed amount under O refuses.
