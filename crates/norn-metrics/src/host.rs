@@ -79,8 +79,6 @@ pub struct ForecastSummary {
     pub latest_training_label_ms: i64,
     /// Non-forward outcomes, retained as refusal evidence.
     pub non_forward_outcome_count: u32,
-    /// Host-resolved source frontier lag.
-    pub frontier_age_ms: u64,
     /// Whether every computed library diagnostic passed.
     pub diagnostics_passed: bool,
     /// UCUM outcome code; 1 denotes a dimensionless integer column.
@@ -117,6 +115,8 @@ pub fn implementation_digest() -> Result<Digest, CanonicalJsonError> {
         ("src/lib.rs", include_str!("lib.rs")),
         ("src/temporal.rs", include_str!("temporal.rs")),
         ("workspace/Cargo.lock", include_str!("../../../Cargo.lock")),
+        ("workspace/Cargo.toml", include_str!("../../../Cargo.toml")),
+        ("workspace/.cargo/config.toml", include_str!("../../../.cargo/config.toml")),
     ];
     norn_ir::canonical::domain_hash_hex(b"norn.metrics.host-source.v1\0", &sources)
         .map(|hex| Digest::from_hex(&hex))

@@ -11,16 +11,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("runtime compiler identity unavailable".into());
     }
     let compiler = String::from_utf8(compiler.stdout)?;
-    let config: Vec<_> = [
-        "TARGET",
-        "PROFILE",
-        "OPT_LEVEL",
-        "DEBUG",
-        "CARGO_ENCODED_RUSTFLAGS",
-        "CARGO_CFG_TARGET_FEATURE",
-    ]
-    .map(|key| (key, env::var(key).unwrap_or_default()))
-    .into();
+    let mut config: Vec<_> = env::vars().filter(|(key, _)| {
+        key.starts_with("CARGO_PROFILE_") || key.starts_with("CARGO_CFG_")
+            || key.starts_with("CARGO_FEATURE_") || key == "CARGO_ENCODED_RUSTFLAGS"
+            || matches!(key.as_str(), "TARGET" | "PROFILE" | "OPT_LEVEL" | "DEBUG")
+    }).collect();
+    config.sort();
     println!(
         "cargo:rustc-env=NORN_NATIVE_RUNTIME_BUILD={:?}",
         (compiler, config)
