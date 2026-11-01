@@ -48,6 +48,17 @@
 //!
 //! Observations are history, not authorization: ingesting one records what a
 //! source said; it never authorizes an action.
+//!
+//!
+//! DP-EXACT-1: parsing refuses numbers or duplicate keys changed by JSON decoding.
+//! DP-REDACT-1: an invalid policy leaves the payload unchanged.
+//! DP-REDACT-2: repeated redaction preserves the payload and sorted outermost
+//! replacement paths, including wildcard overlaps and escaped member names.
+//! Sampled correspondence evidence: `boundary_invariants_conform`.
+//! DP-OBS-1: sealing hashes the redacted payload; checked decoding verifies it.
+//! DP-OBS-2: received draft/observation bytes cannot round numeric evidence or
+//! collapse duplicate keys. Public types have no unchecked Deserialize path.
+//! Sampled correspondence evidence: `observation_sealing_conforms`.
 
 use std::collections::BTreeSet;
 
@@ -122,13 +133,18 @@ impl RedactionPolicy {
         non_empty("redaction.policy_id", &self.id)?;
         non_empty("redaction.policy_version", &self.version)?;
         let pointers: BTreeSet<&str> = self.pointers.iter().map(String::as_str).collect();
+        let validated = pointers
+            .iter()
+            .map(|pointer| {
+                pointer
+                    .strip_prefix('/')
+                    .ok_or_else(|| ObservationError::InvalidPointer {
+                        pointer: (*pointer).to_owned(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut redacted = BTreeSet::new();
-        for pointer in pointers {
-            let Some(rest) = pointer.strip_prefix('/') else {
-                return Err(ObservationError::InvalidPointer {
-                    pointer: pointer.to_owned(),
-                });
-            };
+        for rest in validated {
             let tokens: Vec<String> = rest.split('/').map(unescape_token).collect();
             redact_at(payload, &tokens, String::new(), &mut redacted);
         }
@@ -138,10 +154,11 @@ impl RedactionPolicy {
         let outermost: Vec<String> = redacted
             .iter()
             .filter(|pointer| {
-                !redacted.iter().any(|ancestor| {
-                    pointer
-                        .strip_prefix(ancestor.as_str())
-                        .is_some_and(|rest| rest.starts_with('/'))
+                !pointer.match_indices('/').any(|(index, _)| {
+                    index > 0
+                        && pointer
+                            .get(..index)
+                            .is_some_and(|prefix| redacted.contains(prefix))
                 })
             })
             .cloned()
@@ -528,4 +545,103 @@ pub enum ObservationError {
     /// JSON encoding failed.
     #[error("raw observation JSON: {0}")]
     Json(#[from] serde_json::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    #[allow(clippy::expect_used, reason = "conformance assertions")]
+    fn boundary_invariants_conform() {
+        for bytes in [br#"{"a":9007199254740993}"#.as_slice(), br#"{"a":1,"a":2}"#] {
+            assert!(parse_exact_json(bytes).is_err());
+        }
+        assert_eq!(
+            parse_exact_json(br#"{"a":42}"#).expect("exact"),
+            json!({"a":42})
+        );
+        let original = json!({"a":{"secret":1},"a/b":{"secret":2},"c":{"secret":3}});
+        for pointers in [vec!["/a", "x"], vec!["/a", ""]] {
+            let policy = RedactionPolicy {
+                id: "policy".into(),
+                version: "1".into(),
+                pointers: pointers.into_iter().map(str::to_owned).collect(),
+            };
+            let mut payload = original.clone();
+            assert!(matches!(
+                policy.apply(&mut payload),
+                Err(ObservationError::InvalidPointer { .. })
+            ));
+            assert_eq!(payload, original);
+        }
+        let policy = RedactionPolicy {
+            id: "policy".into(),
+            version: "1".into(),
+            pointers: vec!["/*/secret".into(), "/a".into(), "/a~1b".into()],
+        };
+        let mut payload = original;
+        let record = policy.apply(&mut payload).expect("redact");
+        assert_eq!(
+            payload,
+            json!({"a":REDACTED,"a/b":REDACTED,"c":{"secret":REDACTED}})
+        );
+        assert_eq!(record.redacted, vec!["/a", "/a~1b", "/c/secret"]);
+        assert_eq!(policy.apply(&mut payload).expect("repeat"), record);
+        assert_eq!(
+            payload,
+            json!({"a":REDACTED,"a/b":REDACTED,"c":{"secret":REDACTED}})
+        );
+    }
+
+    #[test]
+    #[allow(clippy::expect_used, reason = "conformance assertions")]
+    fn observation_sealing_conforms() {
+        let bytes = br#"{"source":"fixture","source_id":"record","event_id":"event",
+            "kind":"upsert","source_version":"1","payload":{"secret":1,"amount":42},
+            "extracted_at":1,"pipeline_version":"fixture/v1"}"#;
+        let policy = RedactionPolicy {
+            id: "policy".into(),
+            version: "1".into(),
+            pointers: vec!["/secret".into()],
+        };
+        let observation = ObservationDraft::from_json_slice(bytes)
+            .expect("draft")
+            .seal(Some(&policy))
+            .expect("seal");
+        assert_eq!(observation.payload, json!({"secret":REDACTED,"amount":42}));
+        assert_eq!(
+            observation.payload_digest,
+            payload_digest(&observation.payload).expect("digest")
+        );
+        let stored = serde_json::to_vec(&observation).expect("encode");
+        assert_eq!(
+            RawObservation::from_json_slice(&stored).expect("replay"),
+            observation
+        );
+        let mut tampered = observation.clone();
+        tampered.payload = json!({"secret":REDACTED,"amount":43});
+        assert!(matches!(
+            RawObservation::from_json_slice(&serde_json::to_vec(&tampered).expect("encode")),
+            Err(ObservationError::DigestMismatch { .. })
+        ));
+        let lossy = String::from_utf8(bytes.to_vec())
+            .expect("utf8")
+            .replace("42", "9007199254740993");
+        assert!(ObservationDraft::from_json_slice(lossy.as_bytes()).is_err());
+        let duplicate = String::from_utf8(bytes.to_vec())
+            .expect("utf8")
+            .replace("\"amount\":42", "\"amount\":42,\"amount\":43");
+        assert!(ObservationDraft::from_json_slice(duplicate.as_bytes()).is_err());
+        let submission = observation.submission().expect("submission");
+        assert_eq!(submission.source, "fixture");
+        assert_eq!(
+            RawObservation::from_json_slice(
+                &serde_json::to_vec(&submission.payload).expect("payload")
+            )
+            .expect("checked submission"),
+            observation
+        );
+    }
 }
