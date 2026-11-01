@@ -1543,6 +1543,7 @@
         "crates/norn-checker/src/consistency/divergence.rs",
         "crates/norn-checker/src/consistency/exchange.rs",
         "crates/norn-checker/src/consistency/theory.rs",
+        "crates/norn-ir/src/definition_catalog.rs",
         "crates/norn-checker/src/lint/mapping.rs",
         "crates/norn-checker/src/mapping.rs",
         "crates/norn-checker/src/mapping/compile.rs",
