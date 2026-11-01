@@ -231,6 +231,141 @@ TARGET types/interfaces generate candidate measures with declared additivity; bu
 
 A board is a view/screen, reactive by default, with authorized queries and drill-through. Declare revision tokens, freshness/completeness and reconnect/permission invalidation. A paginated UI subset cannot discharge a universal law. Do not turn the current MetricIR/checker into a claim of a working metric runtime.
 
+## Data engineering (TARGET unless marked CURRENT)
+
+Read the [data-engineering acceptance contract](../spec/acceptance/data-engineering.md)
+and the [data-engineering decision](../architecture/decisions/2026-11-01.md#owner-addition-data-engineering-and-demo-beat-6).
+This section describes required semantics, not executable SDK syntax or a qualified
+pipeline. No capability in this section is marked CURRENT. IR types, admission,
+evaluation, runtime enforcement, authoring and proof need separate evidence.
+
+### One definition, three engines
+
+The ontology is the semantic layer. Author one question against typed concepts,
+links and measures; declarations generate its pipeline rather than requiring a
+handwritten DAG. The same definition targets:
+
+- Exact in-cell execution for the declared snapshot.
+- Incremental view maintenance (IVM) over admitted changes.
+- Analytical OLAP over DuckDB/Iceberg (WellDB).
+
+Equivalence is an obligation: compare canonical totals and contribution identities
+at the same source frontier, time slice and definition version. An IR declaration
+or an OLAP result alone does not establish three-engine execution. Preserve exact
+units, scale, rounding, currency and zero-denominator behavior across engines.
+An analytical or statistical result gains no stock/ledger authority by existing.
+
+### Grain, keys and fan-out
+
+Declare what one input and output row represents, its stable identity keys, link
+multiplicities and grouping dimensions before writing an aggregate. State which
+source owns each observation and which mappings supply enrichment or explicit
+gaps. Missing cost is not permission to invent it from a selling price.
+
+Count each numeric contribution at its declared grain. A one-to-many enrichment
+join must not multiply the measure: two tags or two order lines do not create two
+holdings. Link cardinality alone is not an aggregation contract. Declare the
+contribution identities used for deduplication and correspondence checks.
+
+### Freshness and completeness travel with the answer
+
+Declare required sources and a freshness bound. Return per-source cursors,
+observed lag, freshness, completeness and quarantine count as result metadata;
+carry generation/frontier identity into Iceberg, exports, subscriptions and views.
+Heartbeats establish observed freshness separately from data cursor movement.
+Fresh heartbeats do not make unknown or gapped coverage complete.
+
+A label-permitted analytical read may show a stale answer with its stale label;
+an exact governed-law use refuses stale inputs. Never hide an incomplete answer
+behind a fresh badge. In DATA-FRESH, a 60-second bound makes lag 30 seconds fresh
+and 61 seconds stale. These are synthetic acceptance inputs, not service claims.
+
+### Column and definition lineage
+
+For each output measure/column, retain the contributing objects and source
+columns/documents, allocation or valuation transforms, source digests, mapping
+identity and cursor frontier. Pin the question/definition version that gave those
+inputs meaning. This is both column lineage and definition-level lineage.
+Drill-through must distinguish numeric contributions from catalog enrichment;
+restricted document content is redacted with the restriction visible.
+
+### Findings, refusals and replay-stable quarantine
+
+Keep imported observations as evidence even when they violate a law. Capture the
+raw record and cursor, link a DataQualityFinding to the violated law and source
+evidence, quarantine the observation, and exclude it from eligible aggregates
+while reporting its quarantine count. DATA-QUARANTINE requires durable raw data
+and a `core.boundary.import_finding`; capture itself is not refused.
+
+A native governed action proposing the same invalid state refuses and writes no
+canonical business state. A finding records a nonconforming observation; it does
+not approve or repair it. Reprocessing the same source event must not create a
+second active finding or duplicate its contribution. Test redelivery and restart
+with the same source identity, evidence and frontier: quarantine must be replay-stable.
+
+### As-of questions, late data and restatement
+
+Declare both effective time (when a fact applies) and knowledge time (when it was
+recorded). An as-of answer pins both, plus the applicable definition and approved
+restatement. Late-arriving correction evidence is appended; it does not overwrite
+the earlier observation or silently rewrite old answers.
+
+Rebuild affected temporal slices through an explicit restatement plan. Keep old
+results reproducible, label the new analytical view restated, and keep original
+posted books unchanged until a separate governed adjustment posts. Analytical
+restatement is not evidence that the books have been reconciled.
+
+Retraction/replacement deltas must match recompute for each bitemporal slice.
+An interrupted rebuild leaves the old complete generation visible and stale;
+never switch readers to a partially rebuilt generation.
+
+Training and holdout cutoffs also use recorded-time evidence. A feature or label
+recorded after its declared prediction/training/holdout cutoff cannot be treated
+as if it had been known earlier. Reject publication for temporal leakage, retain
+the unpublished result and report the publication-guard detail. Late data is not
+a reason to silently move the split or relabel a historical prediction.
+
+### Incremental = recompute
+
+For each accepted change, compare the IVM delta and resulting answer with full
+recompute, exact cell and OLAP at the same frontier. Include redelivery,
+restart/resume, quarantine exclusion and late correction/restatement cases.
+Match canonical values and contribution IDs, not just a plausible dashboard total.
+Old and new generations must remain identifiable across all output sinks.
+
+Use the nine named DATA-* acceptance scenarios for qualification. Keep runtime,
+sampled differential and statistical evidence separate. A passing fixture is not
+a universal IVM proof or a production forecast-quality claim. Forecast/regression
+runs behind the controlled Function boundary with pinned input version, split,
+model/code digest, parameters and receipt; authorized publication checks complete,
+fresh, non-quarantined inputs, temporal validity and the declared holdout threshold.
+
+### Synthetic orders/payments: before and after
+
+**Before — pandas-style sketch:** the join grain and temporal assumptions live in
+notebook code. An order with several payments repeats its order amount below.
+
+```python
+# Synthetic tables only; illustrative, not a qualified pipeline.
+joined = orders.merge(payments, on="order_id")
+by_region = joined.groupby("region")["order_amount"].sum()
+```
+
+**After — Norn authoring contract (TARGET, not SDK code):** declare an Order key
+and a Payment key, a typed Payment → Order link, and a question at Order grain.
+Declare whether the measure is ordered amount or paid amount. Ordered amount
+contributes once per Order; paid amount aggregates Payment identities explicitly
+before combining at Order grain. Pin currency, rounding, region mapping, source
+ownership and gaps rather than letting a join decide the meaning.
+
+The generated pipeline must maintain that same definition across the three
+engines. Every answer carries its frontier, freshness/completeness and quarantine
+count. Drill-through explains source columns/documents and definition lineage.
+Invalid imported observations become replay-stable findings; a governed invalid
+action refuses. Late payment/correction evidence produces an explicit bitemporal
+restatement, while prior knowledge-time answers remain reproducible. Prove the
+claimed behavior with named correspondence scenarios before calling it CURRENT.
+
 ## Do / don't
 
 | Do | Don't |
