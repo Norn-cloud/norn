@@ -1,6 +1,7 @@
 //! Exact JSON admission and deterministic redaction for received observations.
 //!
 //! DP-EXACT-1: parsing refuses numbers or duplicate keys changed by JSON decoding.
+//! DP-EXACT-2: integers in the u64 range remain exact beyond f64 precision.
 //! DP-REDACT-1: an invalid policy leaves the payload unchanged.
 //! DP-REDACT-2: repeated redaction preserves the payload and sorted outermost
 //! replacement paths, including wildcard overlaps and escaped member names.
@@ -242,12 +243,19 @@ mod tests {
     #[test]
     #[allow(clippy::expect_used, reason = "conformance assertions")]
     fn boundary_invariants_conform() {
-        for bytes in [br#"{"a":9007199254740993}"#.as_slice(), br#"{"a":1,"a":2}"#] {
+        for bytes in [
+            br#"{"a":1.00000000000000001}"#.as_slice(),
+            br#"{"a":1,"a":2}"#,
+        ] {
             assert!(parse_exact_json(bytes).is_err());
         }
         assert_eq!(
             parse_exact_json(br#"{"a":42}"#).expect("exact"),
             json!({"a":42})
+        );
+        assert_eq!(
+            parse_exact_json(br#"9007199254740993"#).expect("exact integer"),
+            json!(9007199254740993_u64)
         );
         let original = json!({"a":{"secret":1},"a/b":{"secret":2},"c":{"secret":3}});
         for pointers in [vec!["/a", "x"], vec!["/a", ""]] {
