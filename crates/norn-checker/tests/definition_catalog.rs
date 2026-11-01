@@ -8,7 +8,7 @@
 
 //! Correspondence to verification/definition-catalog-v1/SPEC.md.
 use norn_checker::definition_catalog::project;
-use norn_checker::resolve_artifact_set;
+use norn_checker::{EntityArtifactSetContext, check_artifact_set, resolve_artifact_set};
 use norn_ir::ArtifactEnvelope;
 use norn_ir::definition_catalog::{
     ArtifactKey, DefinitionCatalog, DependencyVia, DependsOnRow, LawBinding, MapRule, Member,
@@ -588,7 +588,36 @@ fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
         "lifecycles": [{ "property": "status", "state": "input.status" }],
         "gaps": [{ "member": "nowhere", "reason": "deferred" }]
     }]));
-    let catalog = catalog(&[parent, child, action, mapping], &[]);
+    let mut source = read_json("fixtures/ir/synthetic-contact.source_schema.json");
+    source["artifactId"] = json!("shop.source");
+    source["scope"] = json!({});
+    source["payload"]["datasets"][0]["id"] = json!("requests");
+    source["payload"]["datasets"][0]["nativeName"] = json!("requests");
+    let field = source["payload"]["fields"][0].clone();
+    source["payload"]["fields"] = json!([
+        { "dataset": "requests", "name": "id", "nativeType": "text", "ordinal": 0, "required": true, "typeCandidate": field["typeCandidate"] },
+        { "dataset": "requests", "name": "status", "nativeType": "text", "ordinal": 1, "required": true, "typeCandidate": field["typeCandidate"] }
+    ]);
+    let source = envelope(source);
+    let mut mapping = serde_json::to_value(mapping).expect("mapping");
+    mapping["payload"]["interfaces"] = json!(["shop.RushRequest.entity"]);
+    mapping["payload"]["source"]["sha256"] = json!(
+        norn_checker::receipt::ArtifactRef::of(&source)
+            .expect("source hash")
+            .sha256
+    );
+    let artifacts = [parent, child, action, envelope(mapping), source];
+    let registry = BTreeSet::new();
+    let findings = check_artifact_set(
+        &artifacts,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+    let catalog = catalog(&artifacts, &[]);
     assert_eq!(
         catalog.writes[0].target,
         request_member(Member::Transition {
