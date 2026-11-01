@@ -37,6 +37,7 @@
               ],
               "guardRefusalCode": "core.projection.publication_guard",
               "guards": [
+                "false",
                 "self.receipt_digest != ''",
                 "((((((self.table_version != '') and (self.table_digest != '')) and (self.source_digest != '')) and (self.result_table_version == self.table_version)) and (self.result_table_digest == self.table_digest)) and (self.result_source_digest == self.source_digest)) and (self.result_split_at_ms == self.split_at_ms)",
                 "(((self.model_digest != '') and (self.parameters_digest != '')) and (self.result_model_digest == self.model_digest)) and (self.result_parameters_digest == self.parameters_digest)",

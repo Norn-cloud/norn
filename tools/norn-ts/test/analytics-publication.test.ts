@@ -19,6 +19,12 @@ function publication() {
 
 test("ANALYSIS-PUBLISH-1 declares publication states, law and reference-only governed actions", () => {
   const artifacts = publication().map(artifact => Schema.decodeUnknownSync(Envelope)(artifact))
+  expect(artifacts.find(artifact => artifact.artifactId === "core.analytics.Publication.entity")?.payload).toMatchObject({
+    objectType: { lifecycles: [{ property: "status", transitions: [
+      { id: "publish", guardRefusalCode: "core.projection.publication_guard", guards: expect.arrayContaining(["false"]) },
+      { id: "refuse" },
+    ] }] },
+  })
   expect(artifacts.find(artifact => artifact.artifactId === "core.analytics.publish.action")?.payload).toMatchObject({
     inputSchema: { additionalProperties: false, properties: { id: { type: "string" }, receipt: { type: "string" } }, required: ["id", "receipt"] },
     effectProgram: { kind: "fire_transition", transition: "publish" },
