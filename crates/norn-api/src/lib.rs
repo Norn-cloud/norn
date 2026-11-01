@@ -13,3 +13,6 @@ pub mod refusal;
 pub mod routes;
 /// Explicit cell and request scope perimeter.
 pub mod scope;
+
+/// Governed action transport adapters.
+pub mod actions;

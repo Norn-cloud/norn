@@ -9,6 +9,8 @@ use crate::{
 pub enum Operation {
     /// Read the admitted definitions.
     ReadDefinitions,
+    /// Invoke the named admitted action.
+    CallAction(String),
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -23,6 +25,39 @@ pub struct AccessRequest<'a> {
 
 /// Trusted server policy for host reads.
 pub trait Authorizer: Send + Sync {
+    /// Current and proposed state authorization, delegated by the kernel.
+    ///
+    /// # Errors
+    /// A denied call returns the server policy denial.
+    fn action(
+        &self,
+        _request: &norn_kernel::ActionAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Err(norn_kernel::ActionDenial::Forbidden {
+            reason: "authz.denied".into(),
+        })
+    }
+    /// Object disclosure for declared action reads.
+    ///
+    /// # Errors
+    /// An invisible object refuses the action read.
+    fn action_read(
+        &self,
+        _request: &norn_kernel::ActionReadAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Err(norn_kernel::ActionDenial::Invisible)
+    }
+    /// Collection disclosure before loading declared reads.
+    ///
+    /// # Errors
+    /// An inaccessible collection refuses before loading rows.
+    fn action_read_type(
+        &self,
+        _request: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Err(norn_kernel::ActionDenial::Invisible)
+    }
+
     /// Decide before any target is loaded.
     ///
     /// # Errors

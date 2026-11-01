@@ -158,5 +158,6 @@ pub fn router<E: SqlEngine + Send + 'static>(host: std::sync::Arc<DevHost<E>>) -
     }
     axum::Router::new()
         .route("/v1/defs", axum::routing::get(read::<E>))
+        .merge(crate::actions::router())
         .with_state(host)
 }
