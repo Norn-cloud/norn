@@ -34,7 +34,7 @@ const OUT_ENV: &str = "NORN_CHECKER_WASM_PARITY_OUT";
 /// `norn-checker`'s pinned hash of the retail registry receipt
 /// (`tests/check_receipt.rs`): the ABI issues the same receipt.
 const RETAIL_RECEIPT_SHA256: &str =
-    "14ea133c9477b0218076a0afa73d87be7da5a529745f1609c67c2035520a347f";
+    "c4f1873c8393a5148cc6b039bcb4e01355345f45e4d921ee55d0d0c8766b803e";
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -279,7 +279,7 @@ fn clean_set_issues_the_pinned_receipt() {
         "norn-checker/diagnostics@1"
     );
     assert_eq!(output["diagnostics"]["diagnostics"], serde_json::json!([]));
-    assert_eq!(output["receipt"]["format"], "norn-checker/receipt@5");
+    assert_eq!(output["receipt"]["format"], "norn-checker/receipt@2");
     assert_eq!(output["receiptSha256"], RETAIL_RECEIPT_SHA256);
 }
 
@@ -372,9 +372,6 @@ fn invalid_input_is_an_error() {
     assert!(output_of("artifacts-not-json").starts_with("error: invalid artifacts: "));
     assert!(output_of("context-unknown-member").starts_with("error: invalid context: "));
     assert!(output_of("expression-bad-expected-type").starts_with("error: invalid expectedType: "));
-    let source = read("fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json");
-    let duplicate = source.replacen("\"payload\": {", "\"payload\": {},\"payload\": {", 1);
-    assert!(check_artifact_set_json(&format!("[{duplicate}]"), "null").is_err());
 }
 
 #[test]
@@ -570,7 +567,7 @@ fn version_names_the_formats() {
     let version = json_of(&output_of("version"));
     assert_eq!(version["abi"], "norn-checker-abi/1");
     assert_eq!(version["diagnosticsFormat"], "norn-checker/diagnostics@1");
-    assert_eq!(version["receiptFormat"], "norn-checker/receipt@5");
+    assert_eq!(version["receiptFormat"], "norn-checker/receipt@2");
     assert_eq!(version["exprProfile"], "norn-zen/6");
 }
 

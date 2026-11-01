@@ -19,12 +19,4 @@ It holds every check over the typed IR in `norn-ir` (T1-CHK-1, #2524, moved them
 
 Retained definition receipts are verified against their recorded checker/profile and exact artifact set before re-admission. Legacy `receipt@1` evidence retains the historical identifier policy; upgraded `receipt@2` evidence records that policy explicitly. New installs and updates always enforce the current identifier limits. Identifier limits are defined in `norn-ir::identifier_limits`.
 
-### Exact-source receipt identity (HOST-RECEIPT)
-RECEIPT-EXACT: receipt identity is injective over exact canonical source (assuming SHA-256 collision resistance).
-Raw callers use `check_artifact_sources_with_receipt` and `verify_admission_receipt_sources`; typed entry points bind serialized projections.
-Conformance in `tests/check_receipt.rs`: EXACT-INTEGER (`9007199254740992` / `9007199254740993`),
-EXACT-DECIMAL (`0.1234567890123456789012345678` / `0.1234567890123456789012345679`),
-EXACT-LITERAL (`25` / `26`), EXACT-VERIFY (substitution refusal), EXACT-ORDER (key reordering).
-Both positions are covered. Writers emit @5 (mapless), @6 (flow map), @7 (law origins); readers retain @1–@4 until contract cleanup.
-LEGACY-INLINE: verify original inline-layout source, then recheck after extraction; `old_receipt_hashes_recover_and_recheck_after_inline_layout_extraction` covers it.
-ABI-PROFILE: duplicate JSON keys fail the Norn1 source parse and produce an ABI error; no receipt is issued.
+New receipts (@5–@7) bind retained exact canonical source through `ReceiptSources`. All writers require those sources; typed historical verification grants no recheck authority. RECEIPT-EXACT preserves integer and decimal distinctions beyond f64 precision in both candidate and base layers. Retained-source verification is required for rechecks. Historical @1–@4 readers retain their versioned hash contracts.
