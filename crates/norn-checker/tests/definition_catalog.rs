@@ -459,9 +459,10 @@ fn a_parent_row_mutation_writes_its_child_types() {
         "namespace": "shop", "name": "edit", "version": "1.0.0", "lifecycle": "draft",
         "scope": {}, "dependencies": [{ "artifactId": "shop.OrderLine.entity", "kind": "entity", "required": true, "version": "1.0.0" }], "provenance": { "source": "system" },
         "payload": {
-            "actionId": "shop.edit_order", "scopeRequired": [], "idempotent": false,
-            "ledgered": false, "inputSchema": { "type": "object" },
-            "outputSchema": { "type": "object" },
+            "actionId": "shop.edit_order", "scopeRequired": ["orgId"], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "values": { "type": "object", "additionalProperties": true }, "rows": { "type": "array", "items": { "type": "object", "additionalProperties": true } }, "version": { "type": "string" } }, "required": ["id", "values", "rows", "version"] },
+            "outputSchema": { "type": "object", "properties": {} },
+            "writes": [{ "entityKind": "shop.Order", "change": "created" }, { "entityKind": "shop.Order", "change": "modified" }, { "entityKind": "shop.OrderLine", "change": "created" }, { "entityKind": "shop.OrderLine", "change": "modified" }, { "entityKind": "shop.OrderLine", "change": "deleted" }],
             "effectProgram": {
                 "kind": "mutate_parent_with_rows", "objectIdField": "id",
                 "objectKind": "shop.Order", "entityArtifactId": "shop.Order.entity",
@@ -594,14 +595,19 @@ fn request_member(member: Member) -> MemberRef {
 #[test]
 fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
     let [parent, child] = request_types();
+    let contract = entity("shop.RequestScope.interface", &json!({ "entityVersion": "2.0", "interface": { "name": "shop.RequestScope", "properties": [] } }));
+    let mut child = serde_json::to_value(child).expect("child");
+    child["payload"]["objectType"]["implements"] = json!(["shop.RequestScope"]);
+    let child = envelope(child);
     let action = envelope(json!({
         "irVersion": "0.1", "artifactId": "shop.approve_rush.action", "kind": "action",
         "namespace": "shop", "name": "approve", "version": "1.0.0", "lifecycle": "draft",
         "scope": {}, "dependencies": [], "provenance": { "source": "system" },
         "payload": {
-            "actionId": "shop.approve_rush", "scopeRequired": [], "idempotent": false,
-            "ledgered": false, "inputSchema": { "type": "object" },
-            "outputSchema": { "type": "object" },
+            "actionId": "shop.approve_rush", "scopeRequired": ["orgId"], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] },
+            "outputSchema": { "type": "object", "properties": {} },
+            "writes": [{ "entityKind": "shop.RushRequest", "change": "modified" }],
             "effectProgram": {
                 "kind": "fire_transition", "objectIdField": "id",
                 "objectKind": "shop.RushRequest", "entityArtifactId": "shop.RushRequest.entity",
@@ -611,10 +617,9 @@ fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
     }));
     let mapping = toy_mapping(&json!([{
         "id": "rush", "source": { "dataset": "requests" },
-        "target": { "entity": "shop.RushRequest.entity", "interface": "shop.RushRequest.entity" },
+        "target": { "entity": "shop.RushRequest.entity", "interface": "shop.RequestScope.interface" },
         "subject": "input.id", "sourceRecord": "input.id",
-        "lifecycles": [{ "property": "status", "state": "input.status" }],
-        "gaps": [{ "member": "nowhere", "reason": "deferred" }]
+        "lifecycles": [{ "property": "status", "state": "\"open\"" }]
     }]));
     let mut source = read_json("fixtures/ir/synthetic-contact.source_schema.json");
     source["artifactId"] = json!("shop.source");
@@ -628,13 +633,18 @@ fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
     ]);
     let source = envelope(source);
     let mut mapping = serde_json::to_value(mapping).expect("mapping");
-    mapping["payload"]["interfaces"] = json!(["shop.RushRequest.entity"]);
+    mapping["payload"]["interfaces"] = json!(["shop.RequestScope.interface"]);
+    mapping["dependencies"] = json!([
+        { "artifactId": "shop.source", "kind": "source_schema", "required": true, "version": "1.0.0" },
+        { "artifactId": "shop.RushRequest.entity", "kind": "entity", "required": true, "version": "1.0.0" },
+        { "artifactId": "shop.RequestScope.interface", "kind": "entity", "required": true, "version": "1.0.0" }
+    ]);
     mapping["payload"]["source"]["sha256"] = json!(
         norn_checker::receipt::ArtifactRef::of(&source)
             .expect("source hash")
             .sha256
     );
-    let artifacts = [parent, child, action, envelope(mapping), source];
+    let artifacts = [parent, child, action, envelope(mapping), source, contract];
     let registry = BTreeSet::new();
     let findings = check_artifact_set(
         &artifacts,
@@ -656,7 +666,7 @@ fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
     );
     let targets: Vec<&MemberRef> = catalog.mappings.iter().map(|row| &row.target).collect();
     // The inherited lifecycle property binds the parent's row; the object
-    // row is the map's own type; an undeclared gap member has no row.
+    // row is the map's own type.
     assert_eq!(targets.len(), 2);
     assert!(targets.contains(&&request_member(Member::Property {
         type_name: "shop.Request".to_owned(),
