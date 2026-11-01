@@ -31,7 +31,7 @@ test("the Rust FIFO correspondence corpus is exactly the interval reference outp
     const wire = (layers: ReferencePosition["layers"]) => layers.map(layer => ({
       receipt: layer.receipt, quantity: String(layer.quantity), value: String(layer.value),
     }))
-    expect(wire(state.layers)).toEqual(sample.layers)
-    expect(wire(allocated)).toEqual(sample.allocations)
+    expect(wire(state.layers)).toEqual([...sample.layers])
+    expect(wire(allocated)).toEqual([...sample.allocations])
   }
 })
