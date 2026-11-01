@@ -61,13 +61,10 @@ impl<E: SqlEngine> DevHost<E> {
     ) -> Result<InstalledDefinitionSet, Refusal> {
         let admitted = Admitted::from_source(source, &self.scope)?;
         let _epoch = self.definitions.write().map_err(Refusal::host)?;
-        install(
-            self.cell()?.store_mut(),
-            admitted,
-            Some(expected_version),
-            &self.scope,
-            now,
-        )
+        let (model, input) = installation(admitted, now);
+        self.cell()?
+            .install_definitions(model, input, Some(expected_version))
+            .map_err(Refusal::host)
     }
 
     /// Configure trusted server authorization before sharing this host.
@@ -94,18 +91,6 @@ impl<E: SqlEngine> DevHost<E> {
     pub(crate) fn cell(&self) -> Result<MutexGuard<'_, ActionCell<E>>, Refusal> {
         self.cell.lock().map_err(Refusal::host)
     }
-}
-
-fn install<E: SqlEngine>(
-    cell: &mut CellStore<E>,
-    admitted: Admitted,
-    expected: Option<u64>,
-    scope: &CellScope,
-    now: LogicalTime,
-) -> Result<InstalledDefinitionSet, Refusal> {
-    let (model, input) = installation(admitted, now);
-    cell.install_definitions(model, input, expected, &scope.key())
-        .map_err(Refusal::host)
 }
 
 fn installation(
@@ -172,6 +157,10 @@ mod tests {
             .install("[]", 1, LogicalTime::from_millis(3))
             .expect("install");
         assert_eq!(after.version, 2);
+        host.cell()
+            .expect("cell")
+            .commit_host_events_idempotently("after-install", vec![])
+            .expect("SURFACE-CLOCK-INSTALL: host commits use the installed clock");
         assert_eq!(after.commit_seq, before.commit_seq + 1);
         assert_eq!(after.receipt_sha256, before.receipt_sha256);
         assert!(host.install("[]", 1, LogicalTime::from_millis(4)).is_err());
