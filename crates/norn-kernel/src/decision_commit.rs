@@ -76,7 +76,6 @@ use crate::observations::{LogicalTime, World};
 pub struct TypeCatalog<'a> {
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     pub(crate) rules: BTreeMap<&'a str, &'a crate::AdmittedRule>,
-    pub(crate) stock_rules: BTreeMap<&'a str, &'a crate::AdmittedStockRule>,
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
     extensions: Vec<&'a ObjectTypeExtension>,
     property_types: Option<&'a [PropertyTypeDef]>,
@@ -113,7 +112,6 @@ impl<'a> TypeCatalog<'a> {
                 .map(|object_type| (object_type.name.as_str(), object_type))
                 .collect(),
             rules: BTreeMap::new(),
-            stock_rules: BTreeMap::new(),
             interfaces: BTreeMap::new(),
             extensions: Vec::new(),
             property_types: None,
@@ -130,39 +128,6 @@ impl<'a> TypeCatalog<'a> {
                 .map(|rule| (rule.decision().rule_id(), rule)),
         );
         self
-    }
-
-    pub(crate) fn stock_schema_pin(
-        &self,
-    ) -> Result<String, norn_ir::canonical::CanonicalJsonError> {
-        let types: BTreeMap<_, _> = self
-            .types
-            .iter()
-            .filter(|(name, ty)| {
-                !matches!(**name, crate::ACTION_CALL_TYPE | crate::OWNED_ROWS_TYPE)
-                    || ty.extends.is_some()
-                    || !ty.implements.is_empty()
-                    || !ty.links.is_empty()
-                    || !ty.owned_collections.is_empty()
-            })
-            .collect();
-        let mut extensions = self
-            .extensions
-            .iter()
-            .map(|extension| norn_ir::canonical::canonical_json_of(*extension))
-            .collect::<Result<Vec<_>, _>>()?;
-        extensions.sort();
-        let mut properties = self
-            .property_types
-            .unwrap_or(&[])
-            .iter()
-            .map(norn_ir::canonical::canonical_json_of)
-            .collect::<Result<Vec<_>, _>>()?;
-        properties.sort();
-        norn_ir::canonical::domain_hash_hex(
-            b"norn.stock-schema/1\0",
-            &(types, &self.interfaces, extensions, properties),
-        )
     }
 
     /// The same catalog with the admitted interfaces implemented by its
@@ -373,22 +338,6 @@ impl<'a> TypeCatalog<'a> {
     ) -> Option<&EffectiveProperty> {
         self.effective_type(object_type)
             .and_then(|object_type| object_type.property(property.as_str()))
-    }
-
-    pub(crate) fn declared_links(&self, owner: &ObjectTypeName) -> Vec<&'a norn_ir::Link> {
-        let mut links: Vec<_> = self
-            .types
-            .get(owner.as_str())
-            .copied()
-            .into_iter()
-            .flat_map(|definition| &definition.links)
-            .collect();
-        for extension in self.extensions.iter().copied() {
-            if extension.target == *owner {
-                links.extend(&extension.links);
-            }
-        }
-        links
     }
 
     /// The effective object type in this catalog, if it resolves.
@@ -1639,9 +1588,6 @@ pub enum DecisionRefusal<X> {
     /// A version, the ledger sequence, or a timer due time would overflow.
     #[error("a version, ledger position, or due time would overflow")]
     Overflow,
-    /// Quantity admission refused before any business writes.
-    #[error("quantity posting refused: {0}")]
-    Quantity(#[source] crate::quantity::QuantityError),
     /// The host failed; nothing was committed.
     #[error("cell host failure")]
     Host(#[source] X),
@@ -1683,7 +1629,6 @@ impl<X> DecisionRefusal<X> {
             Self::InvariantBudgetExceeded { .. } => "decision.invariant_budget_exceeded",
             Self::TraversalLimitExceeded { .. } => "commit.traversal_limit_exceeded",
             Self::Overflow => "decision.overflow",
-            Self::Quantity(_) => "quantity.refused",
             Self::Host(_) => "decision.host",
         }
     }
@@ -1722,7 +1667,6 @@ impl<X> DecisionRefusal<X> {
             | Self::InvalidOutput { .. }
             | Self::NotPending { .. }
             | Self::Overflow
-            | Self::Quantity(_)
             | Self::Host(_) => None,
         }
     }
@@ -1821,7 +1765,6 @@ impl<X> DecisionRefusal<X> {
                 reason: format!("commit emitted {actual} events, limit is {limit}"),
             },
             CommitError::Overflow => Self::Overflow,
-            CommitError::Quantity(reason) => Self::Quantity(reason),
             CommitError::Host(error) => Self::Host(error),
         }
     }

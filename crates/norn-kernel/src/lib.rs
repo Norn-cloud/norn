@@ -70,8 +70,6 @@ pub mod refusal;
 pub mod result_reconciliation;
 mod rule_authority;
 pub mod snapshot_observe;
-pub mod stock_fifo;
-pub mod stock_posting;
 mod version_check;
 // Hosts and the dependency-bounded reference harness share the input codec
 // contract used to bind exact observation continuation payloads.
@@ -126,6 +124,6 @@ pub use refusal::{INTERNAL_MESSAGE, NOT_FOUND_MESSAGE, Refusable, Refusal, Refus
 mod action_quantity;
 
 pub use rule_authority::{
-    AdmittedRule, AdmittedStockRule, RuleAdmissionError, RuleDecision, admit_stock_rules,
-    commit_rule_decision, evaluate_rule, prepare_rule_decision,
+    AdmittedRule, RuleAdmissionError, RuleDecision, commit_rule_decision, evaluate_rule,
+    prepare_rule_decision,
 };

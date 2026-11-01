@@ -142,14 +142,6 @@ pub trait SqlEngine {
     /// The closure's error, or a backend begin/commit/rollback error.
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X>;
 
-    /// Run a consistent read snapshot. Hosts may reuse an active transaction.
-    ///
-    /// # Errors
-    /// The read or transaction could not complete. The default refuses nesting.
-    fn read_snapshot<T>(&self, f: impl FnOnce() -> Result<T, CellError>) -> Result<T, CellError> {
-        self.transaction(f)
-    }
-
     /// Decode the first row; absence is an error.
     ///
     /// # Errors
@@ -451,19 +443,6 @@ impl SqlEngine for NativeEngine {
         let _user_sql = UserSql::enter(&self.user_sql);
         self.conn.execute_batch(sql)?;
         Ok(())
-    }
-
-    fn read_snapshot<T>(&self, f: impl FnOnce() -> Result<T, CellError>) -> Result<T, CellError> {
-        if !self.conn.is_autocommit() {
-            return f();
-        }
-        let tx = rusqlite::Transaction::new_unchecked(
-            &self.conn,
-            rusqlite::TransactionBehavior::Deferred,
-        )?;
-        let value = f()?;
-        tx.commit()?;
-        Ok(value)
     }
 
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {

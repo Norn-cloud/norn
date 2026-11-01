@@ -66,7 +66,8 @@ pub fn get_defs<E: SqlEngine>(
     })?;
     let installed = host
         .cell()?
-        .store().read()
+        .store()
+        .read()
         .installed_definitions(query.version)
         .map_err(Refusal::host)?
         .ok_or_else(|| {
@@ -157,7 +158,7 @@ pub fn router<E: SqlEngine + Send + 'static>(host: std::sync::Arc<DevHost<E>>) -
         response
     }
     axum::Router::new()
+        .merge(crate::actions::router::<E>())
         .route("/v1/defs", axum::routing::get(read::<E>))
-        .merge(crate::actions::router())
         .with_state(host)
 }

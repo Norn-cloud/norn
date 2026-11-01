@@ -256,7 +256,6 @@
     "Cargo.toml",
     "crates/norn-api/Cargo.toml",
     "crates/norn-api/examples/fixture-server.rs",
-    "crates/norn-api/src/actions.rs",
     "crates/norn-api/src/authz.rs",
     "crates/norn-api/src/contracts.rs",
     "crates/norn-api/src/defs.rs",
@@ -293,7 +292,6 @@
     "crates/norn-checker/Cargo.toml",
     "crates/norn-cli/Cargo.toml",
     "crates/norn-cli/src/main.rs",
-    "crates/norn-cli/src/remote.rs",
     "crates/norn-graph/Cargo.toml",
     "crates/norn-graph/src/algorithms.rs",
     "crates/norn-graph/src/graph.rs",
@@ -503,6 +501,7 @@
     "verification/kernel-l1/Reference.lean",
     "verification/kernel-l1/VersionProof.lean",
     "verification/kernel-l1/version_kani.rs",
-    "verification/kernel-l1/version_verus.rs"
+    "verification/kernel-l1/version_verus.rs",
+    "crates/norn-api/src/actions.rs"
   ]
 }

@@ -1168,19 +1168,6 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         crate::quantity::version(self.conn, world, ledger)
     }
 
-    /// Read the verified, pack-bounded inputs of one closed quantity intent.
-    ///
-    /// # Errors
-    /// Missing/corrupt state, invalid intent or storage errors.
-    pub fn quantity_state(
-        &self,
-        world: &str,
-        request: &norn_ir::quantity_ledger::QuantityRequest,
-    ) -> Result<norn_kernel::quantity::QuantityState, CellError> {
-        self.conn
-            .read_snapshot(|| crate::quantity::state(self.conn, world, request))
-    }
-
     /// Read the complete balance CAS set for a quantity intent.
     ///
     /// # Errors
@@ -4214,38 +4201,6 @@ mod link_candidate_index_tests {
     use crate::engine::{NativeEngine, SqlEngine, SqlValue};
     use crate::system::SYSTEM_DDL;
     use std::cmp::Ordering;
-
-    #[test]
-    fn post_quantity_read_snapshot_releases_on_refusal_inside_transaction() {
-        let store = crate::CellStore::open_in_memory(
-            crate::Model::from_definitions(&[], &[]).expect("model"),
-        )
-        .expect("store");
-        let request = serde_json::from_value(serde_json::json!({"version":"norn.quantity.commit/2","ledgerId":"stock","balanceVersions":[],"operation":{"kind":"post","posting_id":"x","template_id":"missing","parameters":[]}})).expect("request");
-        let read = || store.read().quantity_state("main", &request);
-        assert!(matches!(
-            read(),
-            Err(crate::CellError::Quantity(
-                norn_kernel::quantity::QuantityError::InvalidContract
-            ))
-        ));
-        store
-            .conn
-            .transaction(|| {
-                assert!(matches!(
-                    read(),
-                    Err(crate::CellError::Quantity(
-                        norn_kernel::quantity::QuantityError::InvalidContract
-                    ))
-                ));
-                Ok::<(), crate::CellError>(())
-            })
-            .expect("nested read snapshot releases after refusal");
-        store
-            .conn
-            .transaction(|| Ok::<(), crate::CellError>(()))
-            .expect("read left no transaction open");
-    }
 
     #[allow(
         clippy::too_many_arguments,

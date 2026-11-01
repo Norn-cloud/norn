@@ -99,13 +99,12 @@ impl<'m, 'a> CommitModel<'m, 'a> {
     }
 
     /// The nearest declaration of `link` on `source`'s lineage (a subtype may
-    /// narrow an inherited link), including extension-added members.
+    /// narrow an inherited link).
     #[must_use]
     pub fn link(&self, source: &ObjectTypeName, link: &str) -> Option<&'a Link> {
         self.catalog.ancestry(source).into_iter().find_map(|def| {
-            self.catalog
-                .declared_links(&def.name)
-                .into_iter()
+            def.links
+                .iter()
                 .find(|declared| declared.id.as_str() == link)
         })
     }
@@ -119,9 +118,8 @@ impl<'m, 'a> CommitModel<'m, 'a> {
             .into_iter()
             .rev()
             .find_map(|def| {
-                self.catalog
-                    .declared_links(&def.name)
-                    .into_iter()
+                def.links
+                    .iter()
                     .any(|declared| declared.id.as_str() == link)
                     .then(|| def.name.clone())
             })
@@ -1841,13 +1839,7 @@ fn check_required_links<E, C, T, V: CommitView + ?Sized>(
                 .catalog
                 .ancestry(&concrete)
                 .into_iter()
-                .flat_map(|def| {
-                    model
-                        .catalog
-                        .declared_links(&def.name)
-                        .into_iter()
-                        .map(|link| link.id.as_str())
-                })
+                .flat_map(|def| def.links.iter().map(|link| link.id.as_str()))
                 .collect();
             roles
                 .into_iter()

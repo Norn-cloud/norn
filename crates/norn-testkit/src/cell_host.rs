@@ -631,9 +631,6 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<Infallible>> {
-        if proof.quantity().is_some() {
-            return Err(CommitError::ObservationAuthorization);
-        }
         self.commit_with_authorization(commit, None, Some(proof))
     }
 
@@ -1996,7 +1993,6 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
             CommitError::EventLimitExceeded { limit, actual }
         }
         CommitError::Overflow => CommitError::Overflow,
-        CommitError::Quantity(reason) => CommitError::Quantity(reason),
         CommitError::Host(error) => return Err(error),
     })
 }

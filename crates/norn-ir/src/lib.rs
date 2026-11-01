@@ -82,9 +82,8 @@ pub use access::{
 pub use action::{
     AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation, ActionCompensation,
     ActionCreateLink, ActionInputDerivation, ActionQuantityEffect, ActionQuantityOperation,
-    ActionQuantityParameter, ActionRoot, ActionStockOperation, ActionStockPost, ActionUiEffect,
-    ActionUiEffects, ActionWrite, McpTool, McpToolAnnotations, StockAccountPaths,
-    StockPartitionPaths, WriteChange,
+    ActionQuantityParameter, ActionRoot, ActionUiEffect, ActionUiEffects, ActionWrite, McpTool,
+    McpToolAnnotations, WriteChange,
 };
 pub use business_pack::{
     BusinessPackKind, BusinessPackRoot, CompositionPackKind, CompositionPackRoot,
@@ -1155,7 +1154,6 @@ define_payload_root!(ActionPayload {
     optional {
         effect_program => "effectProgram" as ActionEffectProgram,
         quantity_effect => "quantityEffect" as ActionQuantityEffect,
-        stock_post => "stockPost" as ActionStockPost,
         create_links => "createLinks" as Vec<ActionCreateLink>,
         title => "title" as String,
         description => "description" as String,

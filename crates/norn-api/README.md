@@ -88,39 +88,28 @@ cache reuse. The HTTP success/refusal matrices assert the header.
 HOST-FIXTURE-SCOPE: both authored sets compile with the same explicit scope;
 the original org_alpha golden is never adopted by the org_demo host.
 
-## Governed action transports (CP1-surface)
+## Governed action surfaces
 
-SURFACE-ACTION-1: `POST /v1/actions` and MCP `/mcp` `call_action`
-invoke `actions::call_action_in_epoch`, which resolves the installed admitted
-stock rule and invokes `commit_action`. The remote CLI discovers `call_action`
-through `tools/list`; it has no additional dispatch registry.
+SURFACE-ACTION-1: HTTP `POST /v1/actions`, MCP `call_action` and the remote
+CLI invoke the same admitted ActionIR through `commit_action`. No application
+opcode, stock schema or domain dispatch registry belongs to this host.
 
-SURFACE-ACTION-2: requests carry `actionId`, exact `input`, `version` and
-`idempotencyKey`; scope comes from `x-norn-org-id` and
-`x-norn-environment-id`. Actor identity comes from the trusted authentication
-adapter's `x-norn-actor`, never business input. Definition epochs cover
-resolution, authorization and commit. A stale revision refuses before posting.
-MCP uses the CLI's `params._meta["norn/idempotencyKey"]` as retry identity.
+SURFACE-ACTION-2: exact input, action identity, definition version and retry
+identity are bound to one definition epoch. Scope and authenticated actor are
+transport metadata. Stale revisions refuse before mutation.
 
-SURFACE-DENY-1/2: default host and kernel policies deny. The trusted server
-policy supplies current/proposed object and declared read permissions to the
-kernel. A denial cannot write facts, GL, stock events or successful-call records.
-The same kernel refusal code, category and readable message reach each adapter.
+SURFACE-DENY-1/2: host, action and declared-read policies default to deny.
+Refusals preserve kernel code, category and readable message; failed calls
+leave the complete committed dump unchanged, including call records.
 
-CP1 surface conformance requires three fresh identical cells: receive 2 @ 10
-and 3 @ 20, deliver 4 (COGS 60, quantity 1, value 20), refuse delivery of 2
-without mutation, and refuse a forbidden actor without business writes. Compare
-committed dumps and refusal envelopes across API, MCP and the real CLI process.
-This is sampled correspondence evidence, not a proof over all invocations.
+SURFACE-RETRY-IDENTITY: conflicting MCP argument and metadata identities refuse.
+SURFACE-CLOCK-PIN: turns use the persisted host clock floor.
+SURFACE-SCHEMA-1: kernel call/owned-row schemas are registered by the host;
+tenant definitions cannot replace their reserved names.
 
-Run the CP1-surface scenario on Boat after building the real CLI (the ignored
-marker keeps ordinary API unit tests independent of an external binary):
-
-```sh
-cargo build --locked -p norn-cli
-NORN_CLI="${CARGO_TARGET_DIR:-target}/debug/norn" cargo test --locked -p norn-api surface_cp1_fifo_and_surface_deny_1 -- --ignored
-```
-
-SURFACE-RETRY-IDENTITY: conflicting MCP argument and metadata retry identities
-refuse rather than silently replacing a caller identity. SURFACE-CLOCK-PIN:
-action turns use the persisted host clock floor, including after installation.
+SURFACE-ALPHA: on three fresh identical admitted alpha cells, create a customer
+and SalesOrder, submit, approve and cancel. Compare call records, complete dumps
+and refusals through HTTP, MCP and the compiled CLI. Exercise a lifecycle guard
+refusal and a forbidden actor, checking no writes for each. This is sampled
+correspondence evidence. The stock CP1 vector remains pending declared
+receipt/delivery rules; it does not qualify the generic surfaces.

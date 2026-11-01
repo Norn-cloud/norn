@@ -6,7 +6,7 @@ use crate::{
     routes::DefinitionsQuery,
 };
 use norn_cell::engine::SqlEngine;
-use norn_ir::{RuntimeObject, RuntimeValue};
+use norn_ir::RuntimeObject;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionDenial, ActionOutcome, ActionReadAuthzRequest,
     ActionReadTypeAuthzRequest, DecisionTurn, LogicalTime, Refusable, TypeCatalog, World,
@@ -52,7 +52,7 @@ impl ActionAuthorizer for Policy<'_> {
     }
 }
 
-/// Dispatch under a single definition epoch through the posting kernel.
+/// Dispatch under a single definition epoch through the governed kernel.
 ///
 /// # Errors
 /// Scope, policy, revision, argument and kernel refusals change no business state.
@@ -94,41 +94,43 @@ pub fn call_action_in_epoch<E: SqlEngine>(
     let artifacts =
         serde_json::from_str::<Vec<norn_ir::ArtifactEnvelope>>(&installed.canonical_set)
             .map_err(Refusal::host)?;
-    let rules = norn_kernel::admit_stock_rules(&artifacts).map_err(Refusal::host)?;
     let model = cell.store().model().clone();
     let catalog = TypeCatalog::new(model.object_types())
         .with_property_types(model.property_types())
-        .with_interfaces(model.interfaces())
-        .with_stock_rules(&rules);
-    let rule = catalog
-        .stock_action(&request.action_id)
-        .ok_or_else(|| Refusal::invalid("unknown admitted action"))?;
-    let id = request
-        .input
-        .get("id")
-        .and_then(RuntimeValue::as_str)
-        .filter(|id| !id.trim().is_empty())
-        .ok_or_else(|| Refusal::invalid("a nonblank voucher id is required"))?;
-    if request.input.len() != 1 {
-        return Err(Refusal::invalid("unexpected stock action arguments"));
+        .with_interfaces(model.interfaces());
+    let mut actions = Vec::new();
+    for artifact in &artifacts {
+        if let norn_ir::ArtifactPayload::Action(payload) = &artifact.payload {
+            let action: norn_ir::ActionRoot =
+                serde_json::from_value(payload.to_json_value()).map_err(Refusal::host)?;
+            actions.push((artifact, action));
+        }
     }
+    let (artifact, action) = actions
+        .iter()
+        .find(|(_, a)| a.action_id == request.action_id)
+        .ok_or_else(|| Refusal::invalid("unknown admitted action"))?;
     let now = LogicalTime::from_millis(cell.store().read().clock_floor().map_err(Refusal::host)?);
     cell.advance_to(now);
-    let invocation = rule.call(
-        id,
-        BTreeMap::from([
+    let invocation = norn_kernel::ActionCall {
+        action,
+        action_artifact_id: &artifact.artifact_id,
+        action_version: &artifact.version,
+        scope: BTreeMap::from([
             ("orgId".into(), host.scope().org_id.clone()),
             ("environmentId".into(), host.scope().environment_id.clone()),
         ]),
-        actor.into(),
-        request.idempotency_key.clone(),
-        DecisionTurn {
+        actor: actor.into(),
+        input: request.input,
+        idempotency_key: request.idempotency_key.clone(),
+        object_type: None,
+        turn: DecisionTurn {
             id: request.idempotency_key,
             now,
             world: World::Main,
             consumes: None,
         },
-    );
+    };
     let outcome = norn_kernel::commit_action(
         &mut *cell,
         &catalog,

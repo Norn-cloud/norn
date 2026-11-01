@@ -9,141 +9,9 @@
     },
     "version": "0.1.0"
   },
-  "paths": {
-    "/v1/actions": {
-      "post": {
-        "tags": [
-          "crate::actions"
-        ],
-        "summary": "Dispatch under a single definition epoch through the posting kernel.",
-        "description": "# Errors\nScope, policy, revision, argument and kernel refusals change no business state.",
-        "operationId": "call_action_in_epoch",
-        "parameters": [
-          {
-            "name": "x-norn-org-id",
-            "in": "header",
-            "description": "Explicit organization",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "x-norn-environment-id",
-            "in": "header",
-            "description": "Explicit environment",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ActionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ActionResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
+  "paths": {},
   "components": {
     "schemas": {
-      "ActionRequest": {
-        "type": "object",
-        "description": "Exact action invocation; the actor comes exclusively from the transport.",
-        "required": [
-          "actionId",
-          "input",
-          "idempotencyKey",
-          "version"
-        ],
-        "properties": {
-          "actionId": {
-            "type": "string",
-            "description": "Admitted action identity."
-          },
-          "idempotencyKey": {
-            "type": "string",
-            "description": "Stable retry identity."
-          },
-          "input": {
-            "type": "object",
-            "description": "Exact business arguments."
-          },
-          "version": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Required admitted revision pin.",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
-      "ActionResponse": {
-        "type": "object",
-        "description": "Successful committed or replayed kernel record.",
-        "required": [
-          "replayed",
-          "record"
-        ],
-        "properties": {
-          "record": {
-            "type": "object",
-            "description": "Kernel call record without transport reinterpretation."
-          },
-          "replayed": {
-            "type": "boolean",
-            "description": "Whether this was an identical retry."
-          }
-        }
-      },
       "LayoutSidecar": {
         "type": "object",
         "title": "LayoutSidecar",
@@ -1710,9 +1578,6 @@
               "$ref": "#/components/schemas/NornIrSliceDeclaration"
             }
           },
-          "stockPost": {
-            "$ref": "#/components/schemas/NornIrActionStockPost"
-          },
           "title": {
             "type": "string"
           },
@@ -1871,55 +1736,6 @@
             "description": "Scale expected by the pinned template parameter.",
             "maximum": 9007199254740992,
             "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrActionStockOperation": {
-        "type": "string",
-        "description": "Supported stock operations; templates are selected by the kernel.",
-        "enum": [
-          "receipt",
-          "delivery"
-        ],
-        "x-enumDescriptions": [
-          "Receive at the owned line's acquisition cost.",
-          "Deliver at the authoritative stock cost."
-        ]
-      },
-      "NornIrActionStockPost": {
-        "type": "object",
-        "description": "Receipt/delivery declaration; paths start at an owned voucher line.",
-        "required": [
-          "operation",
-          "collection",
-          "partition",
-          "accounts"
-        ],
-        "properties": {
-          "accounts": {
-            "$ref": "#/components/schemas/NornIrStockAccountPaths",
-            "description": "Link paths ending in text account identities on admitted masters."
-          },
-          "collection": {
-            "type": "string",
-            "description": "Authoritative owned collection, never a caller-provided line list."
-          },
-          "operation": {
-            "type": "string",
-            "description": "The closed stock operation.",
-            "enum": [
-              "receipt",
-              "delivery"
-            ],
-            "x-enumDescriptions": [
-              "Receive at the owned line's acquisition cost.",
-              "Deliver at the authoritative stock cost."
-            ]
-          },
-          "partition": {
-            "$ref": "#/components/schemas/NornIrStockPartitionPaths",
-            "description": "Link paths selecting the item and warehouse masters."
           }
         },
         "additionalProperties": false
@@ -3796,44 +3612,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "NornIrControls": {
-        "type": "object",
-        "description": "Controls belonging to the enclosing object type.",
-        "required": [
-          "format",
-          "sensitivePaths"
-        ],
-        "properties": {
-          "format": {
-            "type": "string",
-            "description": "Closed wire profile.",
-            "enum": [
-              "norn.controls/1"
-            ],
-            "x-enumDescriptions": [
-              "Alpha finite singleton-role checks."
-            ]
-          },
-          "sensitivePaths": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrSensitivePath"
-            },
-            "description": "Ordered sensitive action sequences."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrControlsFormat": {
-        "type": "string",
-        "description": "Versioned controls vocabulary.",
-        "enum": [
-          "norn.controls/1"
-        ],
-        "x-enumDescriptions": [
-          "Alpha finite singleton-role checks."
-        ]
       },
       "NornIrCorrespondenceRelation": {
         "type": "string",
@@ -8694,10 +8472,6 @@
             ],
             "description": "Marks this type's facts as GL legs for runtime balanced-posting checks.\nInherited by subtypes. Omitted for object types that are not GL legs."
           },
-          "controls": {
-            "$ref": "#/components/schemas/NornIrControls",
-            "description": "Definition-owned finite duty controls, inherited by subtypes."
-          },
           "description": {
             "type": "string"
           },
@@ -8712,10 +8486,6 @@
               "$ref": "#/components/schemas/NornIrKeySpec"
             },
             "description": "Declared keys. Each is unique among the type's live objects within one\ntenant scope and world, enforced at commit. Omitted when empty: every\nobject always has its kernel-assigned object id, and a type need not\ndeclare a business key."
-          },
-          "immutable": {
-            "type": "boolean",
-            "description": "Append-only: existing instances cannot be changed or deleted. Inherited."
           },
           "implements": {
             "type": "array",
@@ -9581,10 +9351,6 @@
               "$ref": "#/components/schemas/NornIrMarkingId"
             },
             "description": "Classification markings declared on this property. Markings from\nproperty types, interfaces, supertypes, and computed inputs are unioned\nby the checker and cannot be removed by narrowing. Omitted when empty."
-          },
-          "protected": {
-            "type": "boolean",
-            "description": "System-maintained: declared rules may write it, actions may not."
           },
           "type": {
             "$ref": "#/components/schemas/NornIrPropertyType",
@@ -11314,33 +11080,6 @@
           "semantic_only"
         ]
       },
-      "NornIrSensitivePath": {
-        "type": "object",
-        "description": "A sensitive action sequence on the enclosing object type.",
-        "required": [
-          "objectType",
-          "actions"
-        ],
-        "properties": {
-          "actions": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Exact action identities in required order."
-          },
-          "objectType": {
-            "type": "string",
-            "description": "Must equal the enclosing type, not an arbitrary external target.",
-            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
-          },
-          "requireWitness": {
-            "type": "boolean",
-            "description": "Require concrete availability evidence in addition to separation."
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrSettingPayload": {
         "allOf": [
           {
@@ -12186,64 +11925,6 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
-      },
-      "NornIrStockAccountPaths": {
-        "type": "object",
-        "description": "Account identities selected through master links, with no template override.",
-        "required": [
-          "stock",
-          "srbnb",
-          "cogs"
-        ],
-        "properties": {
-          "cogs": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Cost of goods sold account on the company."
-          },
-          "srbnb": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Stock received but not billed account on the company."
-          },
-          "stock": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Stock asset account on the warehouse."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrStockPartitionPaths": {
-        "type": "object",
-        "description": "Partition masters, resolved from each owned line.",
-        "required": [
-          "item",
-          "warehouse"
-        ],
-        "properties": {
-          "item": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Required to-one links to the item."
-          },
-          "warehouse": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Required to-one links to the warehouse."
-          }
-        },
-        "additionalProperties": false
       },
       "NornIrTemporalScope": {
         "type": "object",
@@ -15221,47 +14902,6 @@
             "description": "Pack, artifact digest and stable law member identity."
           }
         }
-      },
-      "Refusal": {
-        "type": "object",
-        "description": "A refused request.",
-        "required": [
-          "code",
-          "category",
-          "message",
-          "explanation"
-        ],
-        "properties": {
-          "category": {
-            "$ref": "#/components/schemas/RefusalCategory",
-            "description": "What the caller can do about it (the discriminant SDKs switch on)."
-          },
-          "code": {
-            "type": "string",
-            "description": "Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …)."
-          },
-          "explanation": {
-            "type": "string",
-            "description": "Why, and what would make the request admissible."
-          },
-          "message": {
-            "type": "string",
-            "description": "One-line summary."
-          }
-        }
-      },
-      "RefusalCategory": {
-        "type": "string",
-        "description": "What the caller can do about a refusal: the kernel refusal taxonomy's\nclosed category set (`norn_kernel::RefusalCategory`).",
-        "enum": [
-          "visibility",
-          "permission",
-          "precondition",
-          "conflict",
-          "invalid",
-          "limit",
-          "internal"
-        ]
       }
     }
   }

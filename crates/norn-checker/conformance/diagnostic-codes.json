@@ -79,13 +79,6 @@
       "tier": "T3"
     },
     {
-      "code": "artifact_set.action.stock_post",
-      "message": "the stock posting binding cannot resolve owned lines or typed masters",
-      "severity": "error",
-      "since": "0.1.0",
-      "tier": "T3"
-    },
-    {
       "code": "artifact_set.action.target_not_writable",
       "message": "{target} of {objectKind} is not writable by a generic action: {reason}",
       "severity": "error",
