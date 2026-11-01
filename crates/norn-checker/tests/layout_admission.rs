@@ -322,7 +322,7 @@ fn source_hash_order_is_independent_of_unicode_spelling() {
     let composed = norn_ir::RuntimeValue::from_json_text(first.canonical_json().expect("Norn1"))
         .expect("canonical source");
     let mut other = semantic;
-    other["artifactId"] = json!("test.z");
+    other["artifactId"] = json!("test.cafz");
     other["payload"]["ruleId"] = json!("test.rule.z");
     let other = norn_ir::runtime::encode(&other).expect("other source");
     let receipt = |source| {
