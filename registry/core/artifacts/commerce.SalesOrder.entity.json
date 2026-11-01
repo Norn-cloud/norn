@@ -1,25 +1,126 @@
 {
-  "irVersion": "0.1",
   "artifactId": "commerce.SalesOrder.entity",
-  "kind": "entity",
-  "namespace": "commerce",
-  "name": "SalesOrder",
-  "version": "0.1.0",
-  "lifecycle": "active",
-  "scope": {},
   "dependencies": [],
-  "provenance": {
-    "source": "system",
-    "sourcePath": "registry/core/artifacts/commerce.SalesOrder.entity.json"
-  },
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "SalesOrder",
+  "namespace": "commerce",
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "name": "commerce.SalesOrder",
       "description": "An order a customer places with the business.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "order_number"
+          ]
+        }
+      ],
       "implements": [
         "core.Order"
       ],
+      "lifecycles": [
+        {
+          "description": "ERPNext-style sales order: submit, approve or hold, invoice, complete. `amend` returns a submitted or held order to draft; ERPNext's cancel-then-amend copy is a new order linked through amended_from.",
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "completed",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "submit",
+              "to": "submitted"
+            },
+            {
+              "from": [
+                "submitted",
+                "on_hold"
+              ],
+              "id": "approve",
+              "to": "approved"
+            },
+            {
+              "from": [
+                "submitted",
+                "approved"
+              ],
+              "id": "hold",
+              "to": "on_hold"
+            },
+            {
+              "description": "Revise the order before approval.",
+              "from": [
+                "submitted",
+                "on_hold"
+              ],
+              "id": "amend",
+              "to": "draft"
+            },
+            {
+              "from": [
+                "approved"
+              ],
+              "id": "invoice",
+              "to": "invoiced"
+            },
+            {
+              "from": [
+                "invoiced"
+              ],
+              "id": "complete",
+              "to": "completed"
+            },
+            {
+              "from": [
+                "draft",
+                "submitted",
+                "on_hold",
+                "approved"
+              ],
+              "id": "cancel",
+              "to": "cancelled"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "counterparty",
+          "target": "party.Customer"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "many"
+          },
+          "id": "lines",
+          "target": "commerce.SalesOrderLine"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "description": "The order this one amends, if any.",
+          "id": "amended_from",
+          "target": "commerce.SalesOrder"
+        }
+      ],
+      "name": "commerce.SalesOrder",
       "properties": [
         {
           "id": "order_number",
@@ -50,6 +151,7 @@
           }
         },
         {
+          "default": "draft",
           "id": "status",
           "type": {
             "kind": "enum",
@@ -76,117 +178,15 @@
                 "value": "cancelled"
               }
             ]
-          },
-          "default": "draft"
-        }
-      ],
-      "links": [
-        {
-          "id": "counterparty",
-          "target": "party.Customer",
-          "cardinality": {
-            "to": "one",
-            "from": "many",
-            "required": true
           }
-        },
-        {
-          "id": "lines",
-          "target": "commerce.SalesOrderLine",
-          "cardinality": {
-            "to": "many",
-            "from": "one"
-          }
-        },
-        {
-          "id": "amended_from",
-          "description": "The order this one amends, if any.",
-          "target": "commerce.SalesOrder",
-          "cardinality": {
-            "to": "one",
-            "from": "one"
-          }
-        }
-      ],
-      "identity": [
-        {
-          "name": "primary",
-          "properties": [
-            "order_number"
-          ]
-        }
-      ],
-      "lifecycles": [
-        {
-          "property": "status",
-          "description": "ERPNext-style sales order: submit, approve or hold, invoice, complete. `amend` returns a submitted or held order to draft; ERPNext's cancel-then-amend copy is a new order linked through amended_from.",
-          "initial": [
-            "draft"
-          ],
-          "terminal": [
-            "completed",
-            "cancelled"
-          ],
-          "transitions": [
-            {
-              "id": "submit",
-              "from": [
-                "draft"
-              ],
-              "to": "submitted"
-            },
-            {
-              "id": "approve",
-              "from": [
-                "submitted",
-                "on_hold"
-              ],
-              "to": "approved"
-            },
-            {
-              "id": "hold",
-              "from": [
-                "submitted",
-                "approved"
-              ],
-              "to": "on_hold"
-            },
-            {
-              "id": "amend",
-              "from": [
-                "submitted",
-                "on_hold"
-              ],
-              "to": "draft",
-              "description": "Revise the order before approval."
-            },
-            {
-              "id": "invoice",
-              "from": [
-                "approved"
-              ],
-              "to": "invoiced"
-            },
-            {
-              "id": "complete",
-              "from": [
-                "invoiced"
-              ],
-              "to": "completed"
-            },
-            {
-              "id": "cancel",
-              "from": [
-                "draft",
-                "submitted",
-                "on_hold",
-                "approved"
-              ],
-              "to": "cancelled"
-            }
-          ]
         }
       ]
     }
-  }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/commerce.SalesOrder.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
 }

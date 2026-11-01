@@ -1,0 +1,20 @@
+{
+  "sha256": "e0acf60d7b33c39212b2f8663bacf56d7e3f2e3527737057f6555c26bafda75f",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/odoo/odoo.link.ts",
+    "registry/packs/odoo/odoo.pack.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
