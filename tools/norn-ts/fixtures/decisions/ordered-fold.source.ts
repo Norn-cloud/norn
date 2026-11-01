@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 
+export const Accumulation = Norn.type({ name: "example.Accumulation", title: "Accumulation", version: "1.0.0", properties: Schema.Struct({ id: Schema.String, total: Norn.decimal(3), count: Schema.Int }), identity: [{ name: "primary", properties: ["id"] }] })
 const Item = Schema.Struct({ id: Schema.String, amount: Schema.Finite })
 const State = Schema.Struct({ total: Schema.Finite, count: Schema.Int, ids: Schema.Array(Schema.String), segments: Schema.Array(Schema.Array(Schema.Finite)) })
 export const Step = Norn.decision({
@@ -12,7 +13,7 @@ export const Step = Norn.decision({
 export const Fold = Norn.decision({
   id: "example.fold.total", title: "Ordered total", version: "1.0.0", contract: "decide",
   input: Schema.Struct({ slice: Schema.Struct({ items: Schema.Array(Item), initial: State }), event: Schema.Struct({ kind: Schema.String }) }),
-  output: Schema.Struct({ facts: Schema.Array(Schema.Struct({})), commands: Schema.Array(Schema.Struct({ actionId: Schema.String, state: State })), timers: Schema.Array(Schema.Struct({})) }),
+  output: Schema.Struct({ facts: Schema.Array(Schema.Struct({ op: Schema.Literal("delete"), objectType: Schema.Literal("example.Accumulation"), key: Schema.String })), commands: Schema.Array(Schema.Struct({ actionId: Schema.String, state: State })), timers: Schema.Array(Schema.Struct({})) }),
   scopeRequired: ["orgId", "environmentId"],
 }, input => {
   const state = Norn.orderedFold(Step, { items: input.slice.items, initial: input.slice.initial }, {
