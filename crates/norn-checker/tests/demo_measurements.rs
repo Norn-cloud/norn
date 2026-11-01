@@ -153,17 +153,38 @@ fn d1b_catalog_not_holding_and_unresolved_references() {
     );
     for (reference, code) in [
         ("", "mapping.runtime.invalid_record"),
-        (",\"custom_shipment_ref\":null", "mapping.runtime.invalid_record"),
-        (",\"custom_shipment_ref\":\"\"", "mapping.runtime.invalid_key"),
-        (",\"custom_shipment_ref\":[\"A\",\"B\"]", "mapping.runtime.invalid_record"),
+        (
+            ",\"custom_shipment_ref\":null",
+            "mapping.runtime.invalid_record",
+        ),
+        (
+            ",\"custom_shipment_ref\":\"\"",
+            "mapping.runtime.invalid_key",
+        ),
+        (
+            ",\"custom_shipment_ref\":[\"A\",\"B\"]",
+            "mapping.runtime.invalid_record",
+        ),
     ] {
-        for (mapping, dataset, field) in [(&shopify, "Fulfillment", "id"), (&erp, "Delivery Note", "name")] {
-            let document = SourceDocument::from_json(dataset,
-                &format!("{{\"{field}\":\"SYN-UNRESOLVED\"{reference}}}"), None).expect("raw evidence");
-            let findings = mapping.apply(&[document], &recorded).expect_err("unresolved reference");
+        for (mapping, dataset, field) in [
+            (&shopify, "Fulfillment", "id"),
+            (&erp, "Delivery Note", "name"),
+        ] {
+            let document = SourceDocument::from_json(
+                dataset,
+                &format!("{{\"{field}\":\"SYN-UNRESOLVED\"{reference}}}"),
+                None,
+            )
+            .expect("raw evidence");
+            let findings = mapping
+                .apply(&[document], &recorded)
+                .expect_err("unresolved reference");
             assert_eq!(findings.len(), 1);
             assert_eq!(findings[0].code, code);
-            assert_eq!(findings[0].span, norn_checker::Span::pointer("/documents/0"));
+            assert_eq!(
+                findings[0].span,
+                Some(norn_checker::Span::pointer("/documents/0"))
+            );
         }
     }
 }
@@ -227,10 +248,17 @@ fn d1a_exact_measurements_history_and_showcase() {
         .expect("all measurements map");
     assert_eq!(records.len(), 240);
     assert_eq!(gold_inputs.len(), 64);
-    let gold_times = records.iter().filter(|record| {
-        let values = &record.invocations[0].input;
-        values["metal"].as_str() == Some("gold") && values["role"].as_str() == Some("input")
-    }).map(|record| record.invocations[0].input["occurred_at"].as_str().expect("measurement timestamp"))
+    let gold_times = records
+        .iter()
+        .filter(|record| {
+            let values = &record.invocations[0].input;
+            values["metal"].as_str() == Some("gold") && values["role"].as_str() == Some("input")
+        })
+        .map(|record| {
+            record.invocations[0].input["occurred_at"]
+                .as_str()
+                .expect("measurement timestamp")
+        })
         .collect::<Vec<_>>();
     assert_eq!(gold_times.len(), 64);
     assert!(gold_times[..48].iter().max() < gold_times[48..].iter().min());
