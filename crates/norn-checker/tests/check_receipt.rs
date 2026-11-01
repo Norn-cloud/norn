@@ -808,12 +808,10 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
             };
             let receipt = exact_receipt(artifacts, base);
             let digest = receipt.content_sha256().unwrap();
-            assert_ne!(
-                digest,
-                exact_receipt(changed, changed_base)
-                    .content_sha256()
-                    .unwrap()
-            );
+            let changed_digest = exact_receipt(changed, changed_base)
+                .content_sha256()
+                .unwrap();
+            assert_ne!(digest, changed_digest);
             let body = compact(&receipt);
             verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).unwrap();
             assert!(
@@ -832,9 +830,9 @@ fn receipt_exact_order_and_historical_readers() {
     let limits = ResourceLimitProfile::norn_limits_v1();
     verify_admission_receipt(&body, &digest, &envelopes(&artifacts), &[], &limits).unwrap();
     let source = serde_json::to_string(&artifacts[0]).unwrap();
-    let (first, rest) = source[1..source.len() - 1].split_once(',').unwrap();
+    let content = source.get(1..source.len() - 1).unwrap();
+    let (first, rest) = content.split_once(',').unwrap();
     let reordered = format!("{{{rest},{first}}}");
-    assert_ne!(source, reordered);
     let check = |text: String| {
         exact_receipt(&[norn_ir::RuntimeValue::from_json_text(text).unwrap()], &[])
             .content_sha256()

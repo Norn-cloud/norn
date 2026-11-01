@@ -388,7 +388,7 @@ fn source_refs(
             version: prepared.artifact.version.clone(),
             sha256: RECEIPT_HASH_PROFILE.hash_canonical_bytes(&bytes),
         });
-        artifacts.push(prepared.artifact);
+        artifacts.push(norn_ir::runtime::decode(source).map_err(invalid_receipt)?);
     }
     Ok((artifacts, refs))
 }
@@ -1705,7 +1705,7 @@ mod tests {
         ArtifactRef, ArtifactSetRef, CHECKER_NAME, CheckReceipt, HISTORIC_ADMISSION_PROFILES,
         HISTORICAL_IDENTIFIER_PROFILE, LEGACY_INLINE_LAYOUT_CHECKER_VERSION, LEGACY_RECEIPT_FORMAT,
         derive_type_env, diagnostics_digest_for_version, recover_legacy_admission_receipt,
-        verify_admission_receipt,
+        verify_admission_receipt_sources,
     };
     use crate::EntityArtifactSetContext;
 
@@ -1844,9 +1844,14 @@ mod tests {
             recover_legacy_admission_receipt(&expected_sha256, &artifacts, &base, &limits)
                 .expect("known historical template");
         assert_eq!(recovered, legacy_body);
-        let verified =
-            verify_admission_receipt(&recovered, &expected_sha256, &artifacts, &base, &limits)
-                .expect("old receipt verifies against original inline source");
+        let verified = verify_admission_receipt_sources(
+            &recovered,
+            &expected_sha256,
+            std::slice::from_ref(&raw),
+            &[],
+            &limits,
+        )
+        .expect("old receipt verifies against original inline source");
 
         let mut normalized_raw = raw;
         crate::layout::extract_inline_layout(&mut normalized_raw).expect("inline layout migration");
