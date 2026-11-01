@@ -690,6 +690,7 @@ mod alpha_surface {
             )
             .await;
             assert!(failed, "invoice cancellation guard refuses: {refused}");
+            assert_eq!(refused["code"], "lifecycle.guard");
             assert!(refused["message"].as_str().is_some_and(|v| !v.is_empty()));
             assert_eq!(before, dump(&host), "guard refusal has no writes");
             let (denied, failed) = invoke(
