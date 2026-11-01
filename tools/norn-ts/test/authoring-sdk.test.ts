@@ -172,3 +172,16 @@ test("FOLD-AUTHORING compiles closed step schemas and pins the helper", () => {
     source.replace('maxItems: 32', 'maxItems: input.slice.initial.count'),
   ]) expect(compile(invalid).ok).toBe(false)
 }, 60_000)
+
+test("CP3 allocation goldens come from core-aligned typed declarations", () => {
+  const fixture = join(TOOL_ROOT, "fixtures/jewelry/cp3-folds.source.ts")
+  const pack = compilePack(fixture, { scope, root, modules: [join(TOOL_ROOT, "fixtures/stock/stock.source.ts"), fixture] })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  const authored = pack.artifacts.filter(a => a !== null && typeof a === "object" && "namespace" in a && a.namespace === "jewelry")
+  expect(authored).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-decisions/tests/fixtures/jewelry-folds.json"), "utf8")))
+  if (checker) {
+    const checked = checkPack(checker, pack.artifacts, pack.baseArtifacts)
+    expect(checked.diagnostics.diagnostics.filter(d => d.severity === "error")).toEqual([])
+    expect(checked.admitted).toBe(true)
+  }
+}, 60_000)
