@@ -1356,3 +1356,29 @@ fn ambiguous_fold_namespaces_and_nested_loops_refuse_at_admission() {
         matches!(AdmittedDecision::admit(&rule(&root),&subs,binding()),Err(AdmissionError::InvalidSchema { reason,.. }) if reason.contains("ambiguous fold"))
     );
 }
+
+#[test]
+fn declared_average_cp1_and_delivery_to_transfer_identity_collision() {
+    let result = average_result(vec![
+        movement(0, "a", "receipt", 2, 20, ""),
+        movement(1, "b", "receipt", 3, 60, ""),
+        movement(2, "d", "delivery", 4, 0, ""),
+    ])
+    .unwrap();
+    assert_eq!(
+        (
+            result["quantity"].as_i64(),
+            result["value"].as_i64(),
+            result["allocation"].as_i64()
+        ),
+        (Some(1), Some(16), Some(64))
+    );
+    assert!(
+        average_result(vec![
+            movement(0, "r", "receipt", 5, 3, ""),
+            movement(1, "d", "delivery", 1, 0, ""),
+            movement(2, "d", "transfer", 1, 0, "")
+        ])
+        .is_err()
+    );
+}
