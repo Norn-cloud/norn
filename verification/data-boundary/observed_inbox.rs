@@ -1,5 +1,5 @@
 //! OBS-EVIDENCE-1: external-consumer conformance for the checked adapter/inbox port.
-use norn_api::{host::DevHost, refusal::Refusal, scope::CellScope};
+use norn_api::{host::DevHost, observe::ObservationStream, refusal::Refusal, scope::CellScope};
 use norn_cell::{CellStore, Model, StoreOptions, engine::NativeEngine};
 use norn_dataplane::ObservationDraft;
 use norn_ir::RuntimeValue;
@@ -50,13 +50,14 @@ fn dataplane_submission_enters_the_cell_only_through_observed_inbox() {
                 .map_err(Refusal::host)?,
         })
     };
+    let stream = ObservationStream {connector_instance:"erp-demo/a", partition:"measurements"};
     let called = std::cell::Cell::new(false);
     let other = CellScope {
         org_id: "other_org".into(),
         ..scope.clone()
     };
     assert!(
-        host.observe_submission(&other, || {
+        host.observe_submission(&other, stream, || {
             called.set(true);
             checked()
         })
@@ -71,7 +72,7 @@ fn dataplane_submission_enters_the_cell_only_through_observed_inbox() {
             .is_empty()
     );
     assert!(
-        host.observe_submission(&scope, checked)
+        host.observe_submission(&scope, stream, checked)
             .expect("submission")
     );
     assert!(
@@ -80,15 +81,19 @@ fn dataplane_submission_enters_the_cell_only_through_observed_inbox() {
             .expect("redelivery")
     );
     assert!(
-        host.observe_submission(&scope, || Err(Refusal::invalid(
+        host.observe_submission(&scope, stream, || Err(Refusal::invalid(
             "invalid transport framing"
         )))
         .is_err()
     );
+    assert!(host.observe_submission(&scope, ObservationStream {connector_instance:"erp-demo/b", ..stream}, checked).expect("other connector"));
+    assert!(host.observe_submission(&scope, ObservationStream {partition:"other-partition", ..stream}, checked).expect("other partition"));
     let store = read();
     let pending = store.read().pending_observations().expect("inbox");
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].observation_id, raw.observation_id());
+    assert_eq!(pending.len(), 3);
+    let ids: std::collections::BTreeSet<_> = pending.iter().map(|entry| &entry.observation_id).collect();
+    assert_eq!(ids.len(), 3);
+    assert_ne!(pending[0].observation_id, raw.observation_id());
     let observed: Observed<RuntimeValue> =
         norn_ir::runtime::decode(&pending[0].observed).expect("observed framing");
     assert_eq!(

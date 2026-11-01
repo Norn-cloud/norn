@@ -21,3 +21,6 @@ norn-cell = { path = "../norn-cell", default-features = false, features = ["nati
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+norn-testkit = { path = "../norn-testkit" }

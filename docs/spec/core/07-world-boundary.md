@@ -18,7 +18,8 @@ Functions use canonical `FunctionManifest {abi, function_id, version, input_sche
 
 For CP2 the trusted public DevHost adapter checks dataplane submissions, delivers
 them only through the Observed inbox, and leaves source mapping to norn-cell;
-there is no norn-cell dependency on norn-dataplane.
+there is no norn-cell dependency on norn-dataplane, and the inbox key binds
+trusted connector instance, partition and source event identity as a canonical tuple.
 
 ## Ingestion versus governed action
 
