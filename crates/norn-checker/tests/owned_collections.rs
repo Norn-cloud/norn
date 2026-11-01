@@ -1040,7 +1040,11 @@ fn kernel_owned_row_fields_cannot_be_protected() {
 
 #[test]
 fn owned_children_refuse_protected_declared_and_inherited_defaults() {
-    for (kind, default) in [("text", json!("")), ("integer", json!(0)), ("boolean", json!(false))] {
+    for (kind, default) in [
+        ("text", json!("")),
+        ("integer", json!(0)),
+        ("boolean", json!(false)),
+    ] {
         for inherited in [false, true] {
             let mut child = child_type("text", "integer");
             child["properties"][2] = json!({"id":"label", "type":{"kind":kind}, "constraints":{"nullable":true}, "protected":true, "default":default});
