@@ -54,6 +54,14 @@ CDC replays deduplicate by `(connector instance, partition, source event identit
 
 Canonical promotion/write-back is a separate governed action under 04/05. Its laws may **refuse** the proposed commit. Observational truth and authoritative posted truth are separate projections; source violations cannot authorize native mutations. Write-back carries causal source/operation IDs to suppress echoes without discarding independent evidence.
 
+CP2 declares error-severity direct safety laws as quarantine constraints and
+uses revalidation for recovery: an appended corrected observation is eligible
+only when every such law passes. `authoritative_object` excludes quarantined
+records; raw reads retain source truth. The quality-review projection marks
+resolved findings after a passing correction without rewriting the original.
+Capture atomically suppresses an already proven finding ID, including after
+redelivery/restart; retry normalization uses the original commit cutoff.
+
 ## Perform and recovery semantics
 
 All Functions, including ML/heavy pure computation, run behind perform and return recorded schema-checked receipts. Pin training/input snapshots, model/code/dependency digests, seeds where relevant, bounds and result blobs. ML confidence is not proof or write authority. Reconcile output with input identity/freshness/current authority and publish only through a guarded action.

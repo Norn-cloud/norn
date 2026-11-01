@@ -5141,3 +5141,63 @@ norn_testkit::proptest::proptest! {
         prop_assert_eq!(changed.ddl_hash(), model.ddl_hash());
     }
 }
+
+
+fn purity_quality_host() -> norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject> {
+    let object = json!({"name":"quality.Measurement", "properties":[{"id":"purity", "type":{"kind":"decimal", "scale":6}}]});
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_value(json!([
+        {"irVersion":"0.1", "artifactId":"quality.Measurement.entity", "kind":"entity", "namespace":"quality", "name":"Measurement", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[], "provenance":{"source":"authoring_sdk"}, "payload":{"entityVersion":"2.0", "objectType":object}},
+        {"irVersion":"0.1", "artifactId":"quality.purity.law", "kind":"law", "namespace":"quality", "name":"purity", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[{"artifactId":"quality.Measurement.entity", "kind":"entity", "version":"0.1.0", "required":true}], "provenance":{"source":"authoring_sdk"}, "payload":{
+            "lawVersion":"0.1", "id":"purity_in_range", "owner":"quality.controls", "severity":"error", "rationale":"Purity must be within zero and one", "provenance":{"source":"authoring_sdk"}, "subject":"quality.Measurement", "scope":{"root":{"kind":"entity", "id":"quality.Measurement"}, "objectTypes":["quality.Measurement"]}, "modality":{"kind":"always"}, "response":{"kind":"predicate", "expression":"self.purity >= 0 and self.purity <= 1"}
+        }}
+    ])).expect("typed synthetic declarations");
+    assert!(norn_checker::check_artifact_set(&artifacts, &norn_checker::EntityArtifactSetContext {registry:&std::collections::BTreeSet::new(), base:&[], tenant:None}).is_empty());
+    let model = Model::from_definitions(&[serde_json::from_value(object).expect("measurement")], &[]).expect("model").with_governing_laws(&artifacts).expect("laws");
+    let mut input = install_input("quality", 1, &model);
+    input.canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set")).expect("UTF8");
+    let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+    store.install_definitions(model, input, Some(0), "org_demo/dev").expect("admitted definitions");
+    norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("host")
+}
+
+fn capture_purity(cell: &mut norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject>, delivery: &str, purity: &str) {
+    use norn_kernel::{CellHost, DecisionTurn, FactKey, ObservationId, Observed, Provenance, TypeCatalog, World, load_slice};
+    use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
+    let values = BTreeMap::from([("purity".to_owned(), Value::from_json_text(purity).expect("exact decimal"))]);
+    let provenance: norn_ir::InstanceProvenance = serde_json::from_value(json!({"source":{"system":"synthetic-erpnext", "record":"Stock Entry Measurement/MEAS-1"}, "mappingVersion":"synthetic.measurements@1", "recordedAt":"2026-11-01T10:01:00Z", "sourceFields":["purity"]})).expect("source provenance");
+    let observed = Observed {id:ObservationId(delivery.to_owned()), provenance:Provenance {source:"synthetic-erpnext".into(), source_id:"Stock Entry Measurement/MEAS-1".into(), observed_at:cell.clock().expect("clock"), mapping_version:"synthetic.measurements@1".into()}, input:BTreeMap::from([("values".into(), Value::Object(values.clone())), ("provenance".into(), norn_ir::runtime::encode(&provenance).expect("provenance"))])};
+    assert!(cell.inject(&observed).expect("capture"));
+    assert!(!cell.inject(&observed).expect("same source delivery"));
+    let pending = cell.observe().expect("observe").expect("pending");
+    let model = cell.store().model().clone();
+    let catalog = TypeCatalog::new(model.object_types()).with_governing_laws(model.law_artifacts());
+    let key = FactKey::new("quality.Measurement", "MEAS-1");
+    let slice = load_slice(cell, [key.clone()]).expect("slice");
+    let turn = DecisionTurn {id:delivery.into(), now:cell.clock().expect("clock"), world:World::Main, consumes:Some(pending.consumed())};
+    commit_observed_snapshot(cell, &catalog, &slice, &turn, ObservedSnapshot {key:&key, values:&values, lifecycles:&[], provenance:&provenance}).expect("source violation remains captured");
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn data_quarantine_redelivery_persists_one_finding_and_correction_recovers(deliveries in 2usize..6, fraction in 1u16..1000) {
+        let mut cell = purity_quality_host();
+        for delivery in 0..deliveries {
+            capture_purity(&mut cell, &format!("delivery-{delivery}"), &format!("1.{fraction:03}"));
+            let reader = cell.store().read();
+            let raw = reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").expect("captured");
+            norn_testkit::proptest::prop_assert!(reader.observation_is_quarantined(&raw).expect("quarantine"));
+            norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
+            let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
+            norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+            norn_testkit::proptest::prop_assert_eq!(findings[0].status, norn_ir::DataQualityFindingStatus::Open);
+        }
+        capture_purity(&mut cell, "corrected", "0.80");
+        let reader = cell.store().read();
+        norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_some());
+        let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("review");
+        norn_testkit::proptest::prop_assert_eq!(findings[0].status, norn_ir::DataQualityFindingStatus::Resolved);
+        let persisted: Vec<_> = reader.ledger_page(0, 100).expect("ledger").into_iter().filter(|event| event.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")).collect();
+        norn_testkit::proptest::prop_assert_eq!(persisted.len(), 1);
+        norn_testkit::proptest::prop_assert_eq!(persisted[0].event.get("fact").and_then(|fact| fact.get("status")).and_then(Value::as_str), Some("open"));
+    }
+}

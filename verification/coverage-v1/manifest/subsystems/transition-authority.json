@@ -272,6 +272,7 @@
     "crates/norn-cell/src/lib.rs",
     "crates/norn-cell/src/migration.rs",
     "crates/norn-cell/src/model.rs",
+    "crates/norn-cell/src/observation_quality.rs",
     "crates/norn-cell/src/payload_storage.rs",
     "crates/norn-cell/src/reactive.rs",
     "crates/norn-cell/src/reactive_read.rs",

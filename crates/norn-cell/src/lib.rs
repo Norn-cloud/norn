@@ -37,6 +37,7 @@ mod export_journal;
 mod history;
 pub mod host;
 mod migration;
+mod observation_quality;
 pub mod model;
 mod payload_storage;
 pub mod quantity;
