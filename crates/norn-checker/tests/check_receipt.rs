@@ -60,7 +60,7 @@ const GOLDEN: &str = "tests/golden/check-receipt.retail.json";
 /// receipt's bytes changed: review the golden diff (a field or meaning change
 /// is a new `RECEIPT_FORMAT`).
 const RETAIL_RECEIPT_SHA256: &str =
-    "c4f1873c8393a5148cc6b039bcb4e01355345f45e4d921ee55d0d0c8766b803e";
+    "14ea133c9477b0218076a0afa73d87be7da5a529745f1609c67c2035520a347f";
 
 fn json_of(source: &str) -> Value {
     serde_json::from_str(source).expect("fixture should parse")
@@ -295,7 +295,7 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let stored = compact(&checked.receipt);
     let receipt_json: Value = serde_json::from_str(&stored).expect("receipt JSON");
-    assert_eq!(receipt_json["format"], "norn-checker/receipt@3");
+    assert_eq!(receipt_json["format"], "norn-checker/receipt@6");
     assert_eq!(
         receipt_json["flowSourceMap"],
         serde_json::to_value(&map).expect("typed map serializes")
@@ -843,7 +843,7 @@ fn inherited_law_enrollment_binds_pack_digest_and_stable_member() {
     let stored = String::from_utf8(receipt.canonical_json().expect("receipt")).expect("UTF8");
     let hash = receipt.content_sha256().expect("hash");
     let mut value: Value = serde_json::from_str(&stored).expect("JSON");
-    assert_eq!(value["format"], "norn-checker/receipt@4");
+    assert_eq!(value["format"], "norn-checker/receipt@7");
     assert_eq!(
         value["lawEnrollment"][0],
         receipt.law_enrollment[0].to_json_value()
