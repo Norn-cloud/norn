@@ -88,3 +88,13 @@ This schema expansion activates no reader or writer. The following P2b cut must
 fence the partition (including absence), complete adjacency and all event facts,
 validate dense history and call the shared stock fold. P3 still owns output
 protection, quantity configuration, accounting admission and atomic publication.
+
+## Authoritative history and planning (P2b)
+
+POST-HISTORY-FENCE: concrete master tuple selects the partition; authorized fact
+(including ABSENT), complete adjacency and event facts are fenced. Identity,
+count and dense ordinals agree. POST-RUNTIME-BINDINGS: masters select book/graph/
+version/currency/accounts/UOM; retained binding pin refuses configuration changes.
+CP1 templates are receipt/delivery, layer posted; plans grant no commit authority.
+`post_history_fences_and_refusal` checks absent/empty-adjacency races, event replay
+and readable over-delivery refusal without writes.
