@@ -1,4 +1,4 @@
-# Demo beat 6: Data engineering acceptance
+# Demo beat 6: Scrap-yield acceptance
 
 [Owner] Data scientists and engineers are a primary audience. The ontology is the semantic layer; declarations derive pipelines. This required [sixth beat](jewelry-demo.md) follows the [approved Lane D design](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558867021) and [coordinator ruling](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558874617). The weekly scrap-yield fixture governs CP2/CP3. Inventory-by-region is post-demo; its original contract is preserved verbatim in the appendix.
 
@@ -26,7 +26,7 @@ ERPNext owns mass/cost observations; Shopify supplies linked catalog/order/fulfi
 
 Knowledge **K1** precedes a correction recorded October 27. At **K2**, accepted linked restatement changes G2 recovered mass **73.500 → 72.000 g** and loss **1.500 → 3.000 g**, input unchanged. The later result is **292.500 / 300.000 = 97.5%**. K1 is immutable. An authenticated bad candidate with purity **1.20** is retained as observation/finding and excluded, rather than becoming a valid holding or refusing capture.
 
-## Required named scenarios (given / when / then)
+## CP2/CP3 scenarios (given / when / then)
 
 1. **DATA-INGEST:** Given the pinned gold/silver records and Shopify references, when signed capture/mapping commits, then ordinary REA objects retain source documents/cursors and the showcase accepted population has four gold Conversions, 300.000 input g and 294.000 recovered g (98%). Replay, duplicate or reversed arrivals converge without extra rows/value; shared shipment evidence has one consequence. CP2 needs one mapped ERPNext feed; both feeds are required at CP3. Missing/ambiguous identities and mapping coverage remain explicit.
 2. **DATA-FRESH:** Given complete accepted contributions and required-source heartbeats/frontiers, when replay advances, then show consumed cursors, coverage and materialization with the declared **live ≤5 s** policy. Pause a dependency beyond that bound: show stale/catching-up; exact governed-law use refuses. Resume and catch up. Shopify pause does not stale an ERPNext-only yield question. Fresh heartbeat plus quarantine/gaps is still incomplete; render time is not freshness.
