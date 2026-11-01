@@ -122,6 +122,9 @@ pub use entity::{
     EntityMutationAuthority, EntityRoot, EntityRootV1, EntityRootV2, MarkingCatalogRootV2,
     PropertyTypeCatalogRootV2, RelationCardinalityV1, RelationRoot,
 };
+pub use entity_v2::controls::{
+    ControlStatus, ControlVerdict, Controls, ControlsFormat, Reachability, SensitivePath,
+};
 pub use entity_v2::extension::{
     EXTENSION_MEMBER_SEPARATOR, EXTENSION_NAMESPACE_PATTERN, ExtensionNamespace,
     ObjectTypeExtension,
