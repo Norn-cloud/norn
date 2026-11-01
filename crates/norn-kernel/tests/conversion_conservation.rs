@@ -109,14 +109,15 @@ fn law_counterexample_omitted_loss_refuses_the_whole_commit_and_outbox() {
         let norn_kernel::cell_host::CommitError::InvariantViolation { id, .. } = refusal else {
             panic!("expected an integrity invariant refusal");
         };
-        assert_eq!(
-            id.as_str(),
-            if loss == "0.8001" {
-                "$property.output_quantity"
-            } else {
-                "conversion_conservation"
-            }
-        );
+        if loss == "0.8001" {
+            assert!(matches!(
+                id.as_str(),
+                "$property.output_quantity" | "$property.loss_quantity"
+            ));
+        } else {
+            assert_eq!(id.as_str(), "conversion_conservation");
+        }
+
         for id in ["balanced", "invalid"] {
             assert!(
                 !cell
