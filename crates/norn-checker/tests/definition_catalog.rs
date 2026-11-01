@@ -49,10 +49,16 @@ fn local_lifecycle_states_keep_inherited_property_ownership() {
     ))
     .expect("fixture");
     parent["payload"]["objectType"]["implements"] = serde_json::json!([]);
+    parent["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .expect("properties")
+        .retain(|p| p["id"] == "status");
+    parent["payload"]["objectType"]["identity"] = serde_json::json!([]);
+    parent["payload"]["objectType"]["links"] = serde_json::json!([]);
     let mut child = parent.clone();
     child["artifactId"] = "commerce.Child.entity".into();
     child["payload"]["objectType"]["name"] = "commerce.Child".into();
-    child["payload"]["objectType"]["extends"] = serde_json::json!(["commerce.SalesOrder"]);
+    child["payload"]["objectType"]["extends"] = serde_json::json!("commerce.SalesOrder");
     child["payload"]["objectType"]["properties"] = serde_json::json!([]);
     child["payload"]["objectType"]["links"] = serde_json::json!([]);
     child["payload"]["objectType"]["identity"] = serde_json::json!([]);
