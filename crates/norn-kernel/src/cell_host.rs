@@ -950,6 +950,19 @@ pub trait CellHost {
         Ok(None)
     }
 
+    /// RECEIPT-ONCE-1: consume host-authenticated evidence in the effects transaction.
+    /// Unsupported hosts refuse without writing.
+    ///
+    /// # Errors
+    /// Unknown, stale, consumed or invalid evidence, or ordinary commit refusal.
+    fn commit_accepted_receipt(
+        &mut self,
+        _commit: CellCommit<Self::Event, Self::Command, Self::Input>,
+        _reference: &crate::receipt_binding::ReceiptReference,
+    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
+        Err(CommitError::ObservationAuthorization)
+    }
+
     /// Reads the committed state of one link (not an effect verb).
     /// Temporal properties follow the same read contract as [`Self::load`].
     ///

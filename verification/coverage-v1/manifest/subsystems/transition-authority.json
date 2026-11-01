@@ -276,6 +276,7 @@
     "crates/norn-cell/src/reactive.rs",
     "crates/norn-cell/src/reactive_read.rs",
     "crates/norn-cell/src/read.rs",
+    "crates/norn-cell/src/receipt_fence.rs",
     "crates/norn-cell/src/receipt_store.rs",
     "crates/norn-cell/src/restore.rs",
     "crates/norn-cell/src/store.rs",
@@ -498,6 +499,7 @@
     "verification/kernel-l1/Audit.lean",
     "verification/kernel-l1/Reference.lean",
     "verification/kernel-l1/VersionProof.lean",
+    "verification/kernel-l1/receipt_fence_kani.rs",
     "verification/kernel-l1/version_kani.rs",
     "verification/kernel-l1/version_verus.rs"
   ]
