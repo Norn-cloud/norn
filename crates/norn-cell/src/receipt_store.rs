@@ -640,7 +640,7 @@ mod tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(16))]
         #[test]
-        fn missing_summary_members_never_publish(member in "missing_[a-z]{1,16}") {
+        fn wrong_type_or_missing_members_never_publish(member in prop_oneof![Just("confidence".to_owned()), "missing_[a-z]{1,16}"]) {
             exercise_receipt_action(&member, false);
         }
         #[test]
