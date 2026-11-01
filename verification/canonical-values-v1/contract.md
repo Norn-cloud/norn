@@ -40,3 +40,11 @@ not a universal proof or qualification of every API/CLI/MCP ingress.
 IR, codec, evaluator and storage reuse are covered separately. No new
 authoring contract, atomic zero-divisor transaction scenario, stable identity,
 calendar policy or generated arithmetic proof is established by this cut.
+
+The codec proptest generates signed 64-bit whole parts and six-digit
+fractions: numeric and string inputs must yield identical canonical storage,
+and decode/JSON round trips must preserve their exact value.
+`diagnostic_kani.rs` exhaustively checks the three production error variants
+against the canonical diagnostic adapter, including absence for malformed JSON.
+This narrow harness proves classification and absence of panic, not the
+heap-backed arbitrary-length decimal/JSON parser or evaluator arithmetic.

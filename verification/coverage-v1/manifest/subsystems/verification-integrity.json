@@ -176,6 +176,7 @@
     "crates/norn-checker/src/norm_precedence.rs",
     "crates/norn-checker/src/object_types.rs",
     "crates/norn-checker/src/obligations.rs",
+    "crates/norn-checker/src/obligations/induction.rs",
     "crates/norn-checker/src/property_codec.rs",
     "crates/norn-checker/src/property_types.rs",
     "crates/norn-checker/src/receipt.rs",
@@ -427,6 +428,7 @@
     "vendor/zen/core/types/tests/ref_ser.rs",
     "vendor/zen/core/types/tests/variable.rs",
     "vendor/zen/core/types/tests/variable_type.rs",
+    "verification/canonical-values-v1/diagnostic_kani.rs",
     "verification/coverage-v1/negative_canaries.py",
     "verification/coverage-v1/validate.py",
     "verification/coverage-v1/validate_result.py",
@@ -449,7 +451,6 @@
     "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
-    "verification/stripmine-2026-08-22/scripts/validate.sh",
-    "crates/norn-checker/src/obligations/induction.rs"
+    "verification/stripmine-2026-08-22/scripts/validate.sh"
   ]
 }

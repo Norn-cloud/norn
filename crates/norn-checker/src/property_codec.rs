@@ -28,7 +28,7 @@ pub enum PropertyCodecError {
     Runtime(RuntimeValueError),
 }
 
-/// Core 01's stable diagnostic for a refused exact-number conversion.
+/// VAL-EXACT-1: stable diagnostic for a refused exact-number conversion.
 pub const INEXACT: &str = "core.values.inexact";
 
 /// Canonical Core 01 code alongside an adapter's existing transport error.
@@ -189,6 +189,22 @@ fn is_decimal(text: &str) -> bool {
 mod tests {
     use super::{INEXACT, PropertyCodecError, encode, is_decimal, runtime_error_code};
     use norn_ir::{PropertyKind, RuntimeValue, RuntimeValueError};
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn val_exact_decimal_codec_is_idempotent(whole in any::<i64>(), fraction in 0_u32..1_000_000) {
+            let text = format!("{whole}.{fraction:06}");
+            let value = RuntimeValue::from_json_text(&text).map_err(|error| TestCaseError::fail(error.to_string()))?;
+            let stored = encode(PropertyKind::Decimal, &value).map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
+            let back = super::decode(PropertyKind::Decimal, &stored).map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
+            prop_assert_eq!(&back, &value);
+            let from_text = encode(PropertyKind::Decimal, &RuntimeValue::from(text)).map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
+            prop_assert_eq!(from_text, stored);
+            let wire = serde_json::to_string(&back).map_err(|error| TestCaseError::fail(error.to_string()))?;
+            prop_assert_eq!(RuntimeValue::from_json_text(wire).map_err(|error| TestCaseError::fail(error.to_string()))?, value);
+        }
+    }
 
     #[test]
     fn core_values_inexact_preserves_the_numeric_refusal() -> Result<(), &'static str> {
