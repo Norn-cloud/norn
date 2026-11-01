@@ -2990,18 +2990,18 @@ mod cp1_stock {
         }
         if metal {
             let mut lot = stock_output_types().remove(0);
-            lot.name = "jewelry.MetalLot".into();
-            lot.extends = Some("stock.Item".into());
+            lot.name = norn_ir::ObjectTypeName("jewelry.MetalLot".into());
+            lot.extends = Some(norn_ir::ObjectTypeName("stock.Item".into()));
             lot.immutable = false;
             let mut text = lot.properties[0].clone();
             text.protected = false;
             lot.properties.clear();
             for name in ["ownership", "metal"] {
-                text.id = name.into();
+                text.id = norn_ir::PropertyId(name.into());
                 lot.properties.push(text.clone());
             }
             for name in ["gross_micrograms", "purity_numerator", "fine_ticks"] {
-                text.id = name.into();
+                text.id = norn_ir::PropertyId(name.into());
                 text.property_type = norn_ir::PropertyType::Decimal {
                     scale: norn_ir::WholeNumber(0),
                     unit: None,
@@ -3010,8 +3010,8 @@ mod cp1_stock {
                 lot.properties.push(text.clone());
             }
             let mut owner = stock_output_types().remove(1).links.remove(0);
-            owner.id = "custody_owner".into();
-            owner.target = "stock.Party".into();
+            owner.id = norn_ir::LinkId("custody_owner".into());
+            owner.target = norn_ir::ObjectTypeName("stock.Party".into());
             owner.cardinality.to = norn_ir::Multiplicity::One;
             owner.cardinality.from = norn_ir::Multiplicity::Many;
             owner.cardinality.required = true;
@@ -3051,12 +3051,12 @@ mod cp1_stock {
                                 .iter_mut()
                                 .find(|l| l.id.as_str() == "item")
                                 .expect("typed custody fixture")
-                                .target = "jewelry.MetalLot".into();
+                                .target = norn_ir::ObjectTypeName("jewelry.MetalLot".into());
                         }
                         if ["stock.PurchaseReceipt", "stock.DeliveryNote"]
                             .contains(&ty.name.as_str())
                         {
-                            owner.id = "owner".into();
+                            owner.id = norn_ir::LinkId("owner".into());
                             ty.links.push(owner.clone());
                         }
                         artifact.payload = ArtifactPayload::Entity(
@@ -3073,9 +3073,10 @@ mod cp1_stock {
                         );
                     }
                     ArtifactPayload::Action(payload) => {
-                        let mut action: norn_ir::ActionRoot =
-                            serde_json::from_value(payload.to_json_value())
-                                .expect("typed custody fixture");
+                        let mut action: norn_ir::ActionRoot = serde_json::from_value(
+                            serde_json::to_value(payload.to_json_value()).expect("payload"),
+                        )
+                        .expect("typed custody fixture");
                         if let Some(post) = &mut action.stock_post {
                             post.operation = match post.operation {
                                 norn_ir::ActionStockOperation::Receipt => {
