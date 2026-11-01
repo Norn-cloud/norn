@@ -417,6 +417,11 @@ fn source_refs(
     let mut artifacts = Vec::with_capacity(sources.len());
     let mut refs = Vec::with_capacity(sources.len());
     for source in sources {
+        let mut semantic = source.clone();
+        let _ = crate::layout::extract_inline_layout(&mut semantic);
+        crate::layout::require_nfc_text(&semantic).map_err(|findings| {
+            invalid_receipt(format!("{}: {}", findings[0].code, findings[0].message))
+        })?;
         let (artifact, semantic_source) =
             if let Ok(prepared) = crate::layout::prepare_artifact_source(source.clone()) {
                 (prepared.artifact, prepared.source)
