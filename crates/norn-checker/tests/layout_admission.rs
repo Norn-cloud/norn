@@ -371,7 +371,7 @@ fn admitted_text_nfc_closes_semantic_identity_gap() {
 fn definition_text_nfc_paths() {
     for (field, value, pointer) in [
         ("artifactId", json!("e\u{301}"), "/artifactId"),
-        ("title", json!("e\u{301}"), "/title"),
+        ("name", json!("e\u{301}"), "/name"),
         (
             "payload",
             json!({"e\u{301}/~": true}),
