@@ -90,7 +90,7 @@ mod tests {
                 let error = q.checked_mul(i128::from(d)).expect("product")
                     .checked_sub(i128::from(n).checked_mul(FACTOR).expect("scaled numerator")).expect("difference");
                 prop_assert!(error.unsigned_abs().checked_mul(2).expect("double error") <= i128::from(d).unsigned_abs());
-                prop_assert_eq!(ratio(-i128::from(n), i128::from(d)), Some(-q));
+                prop_assert_eq!(ratio(i128::from(n).checked_neg().expect("negated i64"), i128::from(d)), q.checked_neg());
             }
         }
     }
