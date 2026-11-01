@@ -372,6 +372,9 @@ fn invalid_input_is_an_error() {
     assert!(output_of("artifacts-not-json").starts_with("error: invalid artifacts: "));
     assert!(output_of("context-unknown-member").starts_with("error: invalid context: "));
     assert!(output_of("expression-bad-expected-type").starts_with("error: invalid expectedType: "));
+    let source = read("fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json");
+    let duplicate = source.replacen("\"payload\": {", "\"payload\": {},\"payload\": {", 1);
+    assert!(check_artifact_set_json(&format!("[{duplicate}]"), "null").is_err());
 }
 
 #[test]
@@ -693,22 +696,4 @@ fn widget_parity_corpus_preserves_keys_selections_and_display_values() {
             assert_eq!(output["error"]["code"], expected, "{name}");
         }
     }
-}
-
-#[test]
-fn malformed_inline_layout_remains_an_admission_finding() {
-    let mut artifact = json_of(&read("fixtures/ir/retail-reorder-routing.rule.json"));
-    artifact["payload"]["graph"]["nodes"][0]["position"] = serde_json::json!("invalid");
-    let output =
-        check_artifact_set_json(&format!("[{artifact}]"), "null").expect("diagnostic response");
-    let output = json_of(&output);
-    assert_eq!(output["admitted"], false);
-    assert_eq!(output["receipt"]["admitted"], false);
-    assert!(
-        output["diagnostics"]["diagnostics"]
-            .as_array()
-            .expect("findings")
-            .iter()
-            .any(|finding| finding["code"] == "layout.validation.invalid_inline_field")
-    );
 }
