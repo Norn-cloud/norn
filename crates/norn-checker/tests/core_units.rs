@@ -8,6 +8,8 @@
 #[path = "../../../registry/core/src/units.rs"]
 mod units;
 
+use std::collections::BTreeSet;
+
 use norn_checker::{ArtifactValidation, entity_instance::EffectiveProperty};
 use norn_ir::{
     ArtifactPayload, Property, PropertyConstraints, PropertyId, PropertyType, PropertyTypeDef,
@@ -59,7 +61,7 @@ fn core_units_is_the_exact_generated_admitted_catalog() {
         std::fs::read_to_string(path).expect("generated catalog"),
         rendered
     );
-    assert!(norn_checker::check_property_type_defs(&catalog(), &Default::default()).is_empty());
+    assert!(norn_checker::check_property_type_defs(&catalog(), &BTreeSet::new()).is_empty());
 }
 
 #[test]

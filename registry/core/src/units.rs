@@ -24,7 +24,7 @@ pub(super) const UNITS: [(&str, &str, &str, i64, i64); 12] = [
     ("min", "min", "time", 60, 1),
     ("h", "h", "time", 3600, 1),
     ("d", "d", "time", 86400, 1),
-    ("wk", "wk", "time", 604800, 1),
+    ("wk", "wk", "time", 604_800, 1),
 ];
 
 fn enumeration(values: impl IntoIterator<Item = impl Into<String>>) -> PropertyType {
