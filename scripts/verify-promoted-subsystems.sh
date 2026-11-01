@@ -306,14 +306,16 @@ cd "$repo_root"
 # Remove only the exact manifest-owned evidence/result files and gate logs;
 # every producing gate must recreate its outputs during this invocation.
 python3 - \
-  verification/coverage-v1/coverage.json \
+  verification/coverage-v1/manifest \
   verification/coverage-v1/promoted-gates.json \
   "$result_root" <<'PY'
 import json
 import pathlib
 import sys
 
-coverage = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+sys.path.insert(0, "scripts")
+import coverage_manifest
+coverage = coverage_manifest.load(pathlib.Path(sys.argv[1]))
 gates = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))["gates"]
 result_root = pathlib.Path(sys.argv[3]).resolve()
 canonical_prefix = pathlib.PurePosixPath("target/verification-results")
@@ -754,12 +756,14 @@ run_gate fast verification-executed-test-selectors-fast \
   python3 scripts/validate-executed-test-selectors.py --profile fast
 
 mapfile -t declared_quint_results < <(
-  python3 - verification/coverage-v1/coverage.json <<'PY'
+  python3 - verification/coverage-v1/manifest <<'PY'
 import json
 import pathlib
 import sys
 
-coverage = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+sys.path.insert(0, "scripts")
+import coverage_manifest
+coverage = coverage_manifest.load(pathlib.Path(sys.argv[1]))
 artifacts = {
     artifact
     for subsystem in coverage["subsystems"]
@@ -770,12 +774,14 @@ print("\n".join(sorted(artifacts)))
 PY
 )
 mapfile -t declared_generated_evidence < <(
-  python3 - verification/coverage-v1/coverage.json <<'PY'
+  python3 - verification/coverage-v1/manifest <<'PY'
 import json
 import pathlib
 import sys
 
-coverage = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+sys.path.insert(0, "scripts")
+import coverage_manifest
+coverage = coverage_manifest.load(pathlib.Path(sys.argv[1]))
 artifacts = {
     artifact
     for subsystem in coverage["subsystems"]
@@ -786,7 +792,7 @@ print("\n".join(sorted(artifacts)))
 PY
 )
 verification_result_args=(
-  --coverage verification/coverage-v1/coverage.json
+  --coverage verification/coverage-v1/manifest
   --passed-commands "$passed_commands"
 )
 for artifact in "${declared_quint_results[@]}"; do
@@ -803,7 +809,7 @@ if [[ "$verification_profile" == "full" ]]; then
   printf '\nVerification result: %s\n' "$result_root/formal-results.json"
 else
   python3 scripts/write-verification-result.py \
-    --coverage verification/coverage-v1/coverage.json \
+    --coverage verification/coverage-v1/manifest \
     --passed-commands "$passed_commands" \
     --profile fast \
     --validate-only
