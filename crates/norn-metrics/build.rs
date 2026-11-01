@@ -1,4 +1,6 @@
+//! ANALYTICS-FUNCTION-1: pin the native compiler and Cargo configuration.
 use std::{env, error::Error, process::Command};
+#[allow(clippy::disallowed_methods, clippy::print_stdout, reason = "Cargo build metadata")]
 fn main() -> Result<(), Box<dyn Error>> {
     let compiler = Command::new(env::var("RUSTC")?).args(["-vV"]).output()?;
     if !compiler.status.success() { return Err("runtime compiler identity unavailable".into()); }
