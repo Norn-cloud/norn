@@ -36,7 +36,9 @@ compatible with quantity-ledger scale 0..18. Addition, subtraction, multiplicati
 and rescaling are checked; overflow and unrepresentable values refuse. Division
 and quantization use the declared result scale and rounding: `refuse` rejects
 nonzero remainder; `toward_zero` discards its magnitude; `half_even` selects the
-nearest value and the even coefficient at an exact midpoint, symmetrically for
+nearest value and the even coefficient at an exact midpoint;
+`half_away_from_zero` selects the nearest value and increases the absolute
+coefficient at an exact midpoint. Both nearest modes apply symmetrically to
 negative inputs. Division by zero refuses, including zero balance unless a
 rule explicitly branches before division. No f64 conversion, implicit rounding,
 ordinary ZEN division or nullable arithmetic fallback satisfies this policy.

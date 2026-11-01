@@ -550,4 +550,5 @@ pub enum FoldRounding {
     Refuse,
     TowardZero,
     HalfEven,
+    HalfAwayFromZero,
 }

@@ -661,6 +661,13 @@ fn check_node(
                 sink,
             );
             if let Some(fold) = &body.ordered_fold {
+                if body.execution_mode == Some(norn_ir::JdmExecutionMode::Loop) {
+                    sink.push(
+                        codes::ORDERED_FOLD_INVALID,
+                        "an ordered fold cannot also use independent JDM loop execution",
+                        format!("{content}.orderedFold"),
+                    );
+                }
                 check_ordered_fold(fold, &content, sink);
             }
             check_sub_decision_key(&body.key, &format!("{content}.key"), dependencies, sink);

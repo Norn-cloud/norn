@@ -3673,6 +3673,13 @@ mod tests {
                 "{member}"
             );
         }
+        let mut looped = rule.clone();
+        looped["payload"]["graph"]["nodes"][4]["content"]["executionMode"] = json!("loop");
+        assert!(has(
+            &findings(looped),
+            "rule.validation.ordered_fold_invalid",
+            "payload.graph.nodes[4].content.orderedFold"
+        ));
         let encoded = serde_json::to_string(&rule["payload"]).expect("payload serializes");
         let decoded: norn_ir::RuleRoot = serde_json::from_str(&encoded).expect("typed fold");
         let round_trip: norn_ir::RuleRoot =
