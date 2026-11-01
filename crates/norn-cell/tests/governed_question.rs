@@ -123,7 +123,7 @@ fn prepared() -> (Cell, Proposal, ActionReferenceReads) {
         "inputSchema":{"type":"object","additionalProperties":false,"properties":{"key":{"type":"string"},"value":{"type":"integer"}},"required":["key","value"]},
         "outputSchema":{"type":"object","properties":{},"additionalProperties":false},
         "slice":[{"name":"target","objectType":"example.Record","key":{"property":{"from":"input","property":"key"}}}],
-        "writes":[{"entityKind":"example.Record","change":"updated"}],
+        "writes":[{"entityKind":"example.Record","change":"modified"}],
         "effectProgram":{"kind":"upsert_input_object","objectKind":"example.Record","objectIdField":"key",
             "entityArtifactId":"example.Record.entity","entityArtifactVersion":"0.1.0","writeMode":{"kind":"upsert"}}
     })).expect("action");
