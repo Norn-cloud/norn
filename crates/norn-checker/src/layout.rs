@@ -33,6 +33,7 @@ pub struct PreparedArtifact {
 pub fn prepare_artifact_source(source: RuntimeValue) -> Result<PreparedArtifact, Vec<Diagnostic>> {
     let mut semantic_source = source;
     let layout = extract_inline_layout(&mut semantic_source)?;
+    require_nfc_text(&semantic_source)?;
     let document: serde_json::Value =
         norn_ir::runtime::decode(&semantic_source).map_err(|error| {
             vec![invalid_source_diagnostic(
@@ -53,12 +54,57 @@ pub fn prepare_artifact_source(source: RuntimeValue) -> Result<PreparedArtifact,
     })
 }
 
+pub(crate) fn require_nfc_text(source: &RuntimeValue) -> Result<(), Vec<Diagnostic>> {
+    fn visit(value: &RuntimeValue, path: &str) -> Option<String> {
+        match value {
+            RuntimeValue::String(text) if norn_canonical::nfc(text) != *text => {
+                Some(path.to_owned())
+            }
+            RuntimeValue::Array(items) => items
+                .iter()
+                .enumerate()
+                .find_map(|(i, item)| visit(item, &format!("{path}/{i}"))),
+            RuntimeValue::Object(fields) => fields.iter().find_map(|(key, value)| {
+                let pointer = format!("{path}/{}", key.replace('~', "~0").replace('/', "~1"));
+                if norn_canonical::nfc(key) != *key {
+                    Some(pointer)
+                } else {
+                    visit(value, &pointer)
+                }
+            }),
+            _ => None,
+        }
+    }
+    if let Some(path) = visit(source, "") {
+        return Err(vec![Diagnostic {
+            code: DiagnosticCode::new("definition.text.not_nfc"),
+            severity: DiagnosticSeverity::Error,
+            message: format!("definition text at {path} must already be Unicode NFC"),
+            span: Some(Span::pointer(path)),
+            artifact_id: source
+                .get("artifactId")
+                .and_then(RuntimeValue::as_str)
+                .map(str::to_owned),
+            remediation: Some(DiagnosticRemediation::FixDefinition),
+        }]);
+    }
+    Ok(())
+}
+
 /// Normalize one typed envelope for checker admission while retaining any
 /// lenient root diagnostics. Only the raw graph field is replaced: serializing
 /// the whole envelope would discard the payload root's recorded unknown keys.
 pub(crate) fn normalize_artifact(
     artifact: &ArtifactEnvelope,
 ) -> Result<(ArtifactEnvelope, LayoutSidecar), Vec<Diagnostic>> {
+    let mut source = norn_ir::runtime::encode(artifact).map_err(|error| {
+        vec![invalid_source_diagnostic(
+            Some(artifact.artifact_id.clone()),
+            &error,
+        )]
+    })?;
+    extract_inline_layout(&mut source)?;
+    require_nfc_text(&source)?;
     let ArtifactPayload::Rule(rule) = &artifact.payload else {
         return Ok((artifact.clone(), LayoutSidecar::default()));
     };
