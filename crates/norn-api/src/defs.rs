@@ -219,9 +219,10 @@ mod tests {
         .expect("authored declarations");
         for name in ["norn.ActionCall", "norn.Actioncall", "norn.OWNEDROWS"] {
             let mut artifact = artifacts.first().expect("customer").clone();
-            let mut root: norn_ir::EntityRootV2 =
-                serde_json::from_value(serde_json::to_value(&artifact.payload).expect("entity"))
-                    .expect("typed entity");
+            let mut root: norn_ir::EntityRootV2 = serde_json::from_value(
+                serde_json::to_value(artifact.payload.to_json_value()).expect("entity"),
+            )
+            .expect("typed entity");
             root.object_type.name = norn_ir::ObjectTypeName(name.into());
             artifact.payload = norn_ir::ArtifactPayload::Entity(
                 serde_json::from_value(serde_json::to_value(root).expect("entity"))
