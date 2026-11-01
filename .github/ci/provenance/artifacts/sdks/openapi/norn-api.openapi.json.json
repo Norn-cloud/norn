@@ -1,5 +1,11 @@
 {
+<<<<<<< HEAD
   "sha256": "bb089b1bb9e13c0d9b7206a7cf09077c597ef72c8787b3c65831470a296b26dc",
+||||||| 54edd5133
+  "sha256": "b18b34f9cfb26dcc621d987656db9b5e615f197f84bf035e0a49dfcf4bba9fe3",
+=======
+  "sha256": "8e67823031abb4aee32a45221bff605d9d80a61c64fc0dc54f861f363b950aef",
+>>>>>>> composition/parameter-binding
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
