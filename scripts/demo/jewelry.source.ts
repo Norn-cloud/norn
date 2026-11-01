@@ -13,7 +13,7 @@ export const Melt = Norn.type({
   }),
   identity: [{ name: "primary", properties: ["id"] }],
   defaults: { status: "draft" },
-  lifecycles: [{ property: "status", initial: ["draft"], transitions: [
+  lifecycles: [{ property: "status", initial: ["draft"], terminal: ["posted", "rejected"], immutable: ["posted"], transitions: [
     { id: "measure", from: ["draft"], to: "measured" },
     { id: "approve", from: ["measured"], to: "approved" },
     { id: "reject", from: ["measured"], to: "rejected" },
