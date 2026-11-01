@@ -60,6 +60,140 @@ fn modified(before: &str, after: &str, before_version: u64, after_version: u64) 
 }
 
 #[test]
+fn knowledge_cutoff_retains_old_inputs_after_correction_and_restart() {
+    use norn_cell::reactive::BudgetedRead;
+    use norn_kernel::{FactKey, LogicalTime};
+
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+    for (time, value) in [(100, "73.5"), (300, "72")] {
+        store
+            .commit(&CommitBatch {
+                logical_time: time,
+                ..batch(vec![put("proof.Item", "measurement", value)])
+            })
+            .expect("append measurement incarnation");
+    }
+    drop(store);
+    let store = CellStore::open(&path, model(), StoreOptions::default()).expect("restart");
+    let fact = FactKey::new("proof.Item", "measurement");
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let read = |version, cutoff| {
+        store.read().object_at_version_known_at_with_budget(
+            MAIN_WORLD,
+            &fact,
+            version,
+            LogicalTime::from_millis(cutoff),
+            &mut DecodeBudget::new(&limits),
+        )
+    };
+    for (version, cutoff, expected) in [(1, 100, "73.5"), (1, 400, "73.5"), (2, 300, "72")] {
+        let BudgetedRead::Found(record) = read(version, cutoff).expect("known input") else {
+            panic!("known incarnation missing");
+        };
+        assert_eq!(record.values["value"], Value::from(expected));
+        assert_eq!(record.version, version);
+        assert_eq!(record.scope, "org/dev");
+    }
+    for (version, cutoff) in [(1, 99), (2, 200), (2, 299)] {
+        let error = read(version, cutoff).expect_err("later knowledge refused");
+        assert!(matches!(error, CellError::TemporalLeakage));
+        assert_eq!(error.to_string(), "core.world.temporal_leakage");
+    }
+    assert!(matches!(
+        read(3, 400),
+        Err(CellError::HistoricalValueUnproven(_))
+    ));
+    assert_eq!(store.export_commit_count().expect("unchanged history"), 2);
+}
+
+#[test]
+fn knowledge_cutoff_authenticates_deletions_and_refuses_cross_world_inputs() {
+    use norn_cell::reactive::BudgetedRead;
+    use norn_kernel::{FactKey, LogicalTime};
+
+    let mut store = CellStore::open_in_memory(model()).expect("store");
+    store
+        .commit(&CommitBatch {
+            logical_time: 100,
+            ..batch(vec![put("proof.Item", "item", "known")])
+        })
+        .expect("seed");
+    store
+        .commit(&CommitBatch {
+            logical_time: 300,
+            ..batch(vec![FactWriteRow::Delete {
+                object_type: "proof.Item".into(),
+                key: "item".into(),
+            }])
+        })
+        .expect("delete");
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let fact = FactKey::new("proof.Item", "item");
+    let read = |world, cutoff| {
+        store.read().object_at_version_known_at_with_budget(
+            world,
+            &fact,
+            2,
+            LogicalTime::from_millis(cutoff),
+            &mut DecodeBudget::new(&limits),
+        )
+    };
+    assert!(matches!(
+        read(MAIN_WORLD, 200),
+        Err(CellError::TemporalLeakage)
+    ));
+    assert!(matches!(read(MAIN_WORLD, 300), Ok(BudgetedRead::Missing)));
+    assert!(matches!(
+        read("fork", 400),
+        Err(CellError::HistoricalValueUnproven(_))
+    ));
+}
+
+#[test]
+fn knowledge_cutoff_budgets_proofs_before_decoding_and_rejects_corrupt_receipts() {
+    use norn_cell::reactive::BudgetedRead;
+    use norn_kernel::{FactKey, LogicalTime};
+
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+    store
+        .commit(&CommitBatch {
+            logical_time: 300,
+            ..batch(vec![put("proof.Item", "item", "late")])
+        })
+        .expect("seed");
+    let connection = rusqlite::Connection::open(path).expect("corruption fixture");
+    connection
+        .execute("UPDATE _norn_receipt SET receipt = '{}'", [])
+        .expect("corrupt receipt");
+    let fact = FactKey::new("proof.Item", "item");
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    for byte_limit in [0, limits.max_candidate_bytes_per_commit] {
+        let result = store.read().object_at_version_known_at_with_budget(
+            MAIN_WORLD,
+            &fact,
+            1,
+            LogicalTime::from_millis(200),
+            &mut DecodeBudget::new(&ReactiveLimits {
+                max_candidate_bytes_per_commit: byte_limit,
+                ..limits
+            }),
+        );
+        if byte_limit == 0 {
+            assert!(matches!(result, Ok(BudgetedRead::Exhausted)));
+        } else {
+            assert!(
+                result.is_err(),
+                "corrupt receipt cannot supply an earlier timestamp"
+            );
+        }
+    }
+}
+
+#[test]
 fn commitments_capture_each_materialized_version_and_survive_restart() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
