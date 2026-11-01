@@ -1232,7 +1232,23 @@ pub fn prepare_observed_snapshot(
             ));
         }
     }
-    let facts = property_changes(catalog, key, &original_for_changes, values);
+    for snapshot in lifecycles {
+        if catalog
+            .effective_type(&key.object_type)
+            .and_then(|effective| effective.property(snapshot.property.as_str()))
+            .is_some_and(norn_checker::EffectiveProperty::protected)
+            && effective_original
+                .as_ref()
+                .and_then(|values| values.get(snapshot.property.as_str()))
+                != Some(&JsonValue::String(snapshot.state.clone()))
+        {
+            return Err(invalid(
+                &snapshot.property,
+                "protected lifecycle properties are writable only by rules",
+            ));
+        }
+    }
+    let facts = property_changes(key, &original_for_changes, values);
     let ordinary = prepare_observed_properties::<Infallible>(catalog, slice, turn, &facts)
         .map_err(|error| ObservationRefusal::Properties(Box::new(error)))?;
     let mut current = effective_original.clone().unwrap_or_default();
@@ -1673,26 +1689,12 @@ fn tombstone_values(
     ]))
 }
 
-fn property_changes(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    original: &FactState,
-    values: &JsonObject,
-) -> Vec<FactChange> {
+fn property_changes(key: &FactKey, original: &FactState, values: &JsonObject) -> Vec<FactChange> {
     let Some(existing) = &original.values else {
-        let mut initial = values.clone();
-        for lifecycle in catalog.lifecycles(&key.object_type).into_values() {
-            if let [state] = lifecycle.initial.as_slice() {
-                initial.insert(
-                    lifecycle.property.as_str().to_owned(),
-                    JsonValue::String(state.clone()),
-                );
-            }
-        }
         return vec![FactChange::Create {
             object_type: key.object_type.clone(),
             key: key.key.clone(),
-            values: initial,
+            values: values.clone(),
         }];
     };
     values
