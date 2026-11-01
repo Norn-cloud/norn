@@ -2215,7 +2215,7 @@ fn validate_setting_typed_value(
             if let Err(error) = norn_ir::SettingValue::decimal(value) {
                 diagnostics.push(invalid_diagnostic(
                     "core.values.inexact",
-                    &error.to_string(),
+                    error.to_string(),
                     "payload.value",
                     artifact_id,
                 ));
