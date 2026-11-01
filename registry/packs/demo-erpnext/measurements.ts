@@ -31,7 +31,7 @@ export const Source = Norn.sourceSchema({
   id: "demo.erpnext.measurements.source", title: "Synthetic ERPNext custom measurement profile", version: "0.1.0",
   source: { system: "synthetic-erpnext", instance: "demo", version: "16-custom-measurements-v1" },
   observedAt: "2026-10-25T23:59:59Z", adapter: { name: "synthetic-feed-replay", version: "0.1.0" },
-  rawMetadata: { uri: "https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558867021", sha256: "91385b57e376c46d0b3b53db6f746a5f0ab7891a37d5046a6a568edf8234ddaa" },
+  rawMetadata: { uri: "evidence://demo-erpnext/contract-v1", sha256: "91385b57e376c46d0b3b53db6f746a5f0ab7891a37d5046a6a568edf8234ddaa" },
   datasets: [{ id: "Stock Entry Measurement", nativeName: "Synthetic Stock Entry custom measurement row", kind: "child_document" }],
   fields: [
     { dataset: "Stock Entry Measurement", name: "name", ordinal: 0, nativeType: "Data", typeCandidate: { type: "string", origin: "declared" }, required: true },
@@ -53,7 +53,7 @@ export const Source = Norn.sourceSchema({
 
 export const Mapping = Norn.mapping({
   id: "demo.erpnext.measurements.mapping", title: "Synthetic ERPNext measurement evidence mapping", version: "0.1.0",
-  source: { schemaId: "demo.erpnext.measurements.source", version: "0.1.0", sha256: "5fcb06b5dccda0b547fc854cb0056ef618d0ec68d6f312cfd1928026ad2e9fce" },
+  source: { schemaId: "demo.erpnext.measurements.source", version: "0.1.0", sha256: "0000000000000000000000000000000000000000000000000000000000000000" },
   sourceContract: { kind: "generic" }, interfaces: [Measurement],
   maps: [{
     id: "measurement", source: { dataset: "Stock Entry Measurement" }, target: { type: StockEntryMeasurement, interface: Measurement },

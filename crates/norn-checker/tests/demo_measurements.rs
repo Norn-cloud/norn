@@ -67,15 +67,15 @@ fn compiled() -> CompiledMapping {
 fn row(week: i64, batch: i64, role: &str, fine_milligrams: i64, purity: &str) -> SourceDocument {
     let metal = if batch == 4 { "silver" } else { "gold" };
     // July 6 through October 19 are consecutive Mondays in UTC.
-    let day = 6 + week * 7;
+    let day = week.checked_mul(7).and_then(|offset| offset.checked_add(6)).expect("bounded week");
     let (month, date) = if day <= 31 {
         (7, day)
     } else if day <= 62 {
-        (8, day - 31)
+        (8, day.checked_sub(31).expect("August"))
     } else if day <= 92 {
-        (9, day - 62)
+        (9, day.checked_sub(62).expect("September"))
     } else {
-        (10, day - 92)
+        (10, day.checked_sub(92).expect("October"))
     };
     let occurred_at = format!("2026-{month:02}-{date:02}T12:00:00Z");
     let grams = format!("{}.{:03}", fine_milligrams / 1000, fine_milligrams % 1000);
@@ -122,7 +122,7 @@ fn d1a_exact_measurements_history_and_showcase() {
     assert_eq!(gold_inputs.len(), 64);
     assert_eq!(gold_inputs[..48].len(), 48);
     assert_eq!(gold_inputs[48..].len(), 16);
-    assert!(gold_inputs.iter().min() != gold_inputs.iter().max());
+    assert_ne!(gold_inputs.iter().min(), gold_inputs.iter().max());
     assert!(residuals.len() > 1);
     let showcase = mapping
         .apply(
