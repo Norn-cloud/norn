@@ -2793,10 +2793,17 @@ fn timer<X>(
 
 #[cfg(test)]
 mod field_authority_tests {
-    use super::*;
+    use super::{
+        AdmissionOrigin, BTreeMap, BTreeSet, FactChange, FactKey, FactSlice, FactVersion,
+        JsonObject, JsonValue, ObjectTypeDef, TypeCatalog, Working, apply_change,
+    };
 
     #[test]
-    #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    #[allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "test fixtures and assertions require successful setup and existing keys"
+    )]
     fn protected_delete_then_recreate_is_refused() {
         let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
             "name": "test.Counter", "properties": [{ "id": "total",
