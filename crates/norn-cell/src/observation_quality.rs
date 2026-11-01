@@ -1,5 +1,10 @@
 //! OBS-EVIDENCE-1: persist one proven finding per identity across redelivery.
-use crate::{CellError, CommitBatch, StoreReader, engine::{SqlEngine, params}, read::to_i64, system::LEDGER};
+use crate::{
+    CellError, CommitBatch, StoreReader,
+    engine::{SqlEngine, params},
+    read::to_i64,
+    system::LEDGER,
+};
 use norn_ir::{DataQualityFinding, RuntimeValue};
 use std::collections::BTreeSet;
 impl<E: SqlEngine> StoreReader<'_, E> {
