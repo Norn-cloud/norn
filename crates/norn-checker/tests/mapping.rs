@@ -251,7 +251,8 @@ fn distinct_target_contract(
     pack.artifacts
         .first_mut()
         .expect("entity reference")
-        .artifact_id = target.artifact_id.clone();
+        .artifact_id
+        .clone_from(&target.artifact_id);
     layer.payload = norn_ir::ArtifactPayload::from_kind_json(
         &norn_ir::ArtifactKind::BusinessPack,
         serde_json::from_value(serde_json::to_value(pack).expect("pack wire")).expect("tree"),
@@ -265,7 +266,7 @@ fn distinct_target_contract(
             | Member::Property { type_name, .. }
             | Member::Link { type_name, .. }
             | Member::State { type_name, .. }
-            | Member::Transition { type_name, .. } => *type_name = "toy.Order".to_owned(),
+            | Member::Transition { type_name, .. } => "toy.Order".clone_into(type_name),
             Member::Artifact {} | Member::ObjectMap { .. } | Member::Law { .. } => {
                 panic!("not a contract member")
             }
