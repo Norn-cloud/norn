@@ -791,9 +791,12 @@ fn receipt_exact_key_order() {
     let (first, rest) = content.split_once(',').expect("receipt fixture");
     let reordered = format!("{{{rest},{first}}}");
     let check = |text: String| {
-        exact_receipt(&[norn_ir::RuntimeValue::from_json_text(text).expect("receipt fixture")], &[])
-            .content_sha256()
-            .expect("receipt fixture")
+        exact_receipt(
+            &[norn_ir::RuntimeValue::from_json_text(text).expect("receipt fixture")],
+            &[],
+        )
+        .content_sha256()
+        .expect("receipt fixture")
     };
     assert_eq!(check(source), check(reordered));
 }
@@ -1049,17 +1052,19 @@ fn typed_historical_verification_cannot_authorize_lossy_rechecks() {
             (&typed[..], &[][..])
         };
         let mut historical = exact_receipt(candidate, base);
-        historical.artifact_set = ArtifactSetRef::of(artifacts, installed).expect("receipt fixture");
+        historical.artifact_set =
+            ArtifactSetRef::of(artifacts, installed).expect("receipt fixture");
         historical.identifier_profile = "norn-identifiers/legacy".to_owned();
-        let mut value: Value = serde_json::from_str(&compact(&historical)).expect("receipt fixture");
+        let mut value: Value =
+            serde_json::from_str(&compact(&historical)).expect("receipt fixture");
         value["format"] = json!("norn-checker/receipt@2");
         let body = compact_value(&value);
         let digest = admission_receipt_sha256(&body).expect("receipt fixture");
         let () =
             norn_checker::verify_admission_receipt(&body, &digest, artifacts, installed, &limits)
                 .expect("receipt fixture");
-        let version =
-            verify_admission_receipt_sources(&body, &digest, candidate, base, &limits).expect("receipt fixture");
+        let version = verify_admission_receipt_sources(&body, &digest, candidate, base, &limits)
+            .expect("receipt fixture");
         let sources = norn_checker::ReceiptSources::new(candidate, base).expect("receipt fixture");
         let context = EntityArtifactSetContext {
             registry: &BTreeSet::new(),
@@ -1162,9 +1167,11 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
                 base: &installed,
                 tenant: None,
             };
-            let sources = norn_checker::ReceiptSources::new(artifacts, base).expect("receipt fixture");
+            let sources =
+                norn_checker::ReceiptSources::new(artifacts, base).expect("receipt fixture");
             let version =
-                verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).expect("receipt fixture");
+                verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits)
+                    .expect("receipt fixture");
             let map = FlowSourceMap {
                 format: FlowSourceMapFormat::V1,
                 flows: vec![],
@@ -1193,7 +1200,8 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
                 matches!(norn_checker::verify_admission_receipt(&body, &digest, &candidates, &installed, &limits),
                 Err(norn_checker::ReceiptError::InvalidStoredReceipt { detail }) if detail == "new receipt verification requires retained exact sources")
             );
-            let substituted = norn_checker::ReceiptSources::new(changed, changed_base).expect("receipt fixture");
+            let substituted =
+                norn_checker::ReceiptSources::new(changed, changed_base).expect("receipt fixture");
             let changed_installed = changed_base
                 .iter()
                 .map(|v| norn_ir::runtime::decode(v).expect("receipt fixture"))
@@ -1203,13 +1211,12 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
                 ..context
             };
             assert!(recheck(&substituted, &changed_context, &limits, &version).is_err());
-            let changed_install =
-                install(&substituted, &changed_context, &limits, Some(&version)).expect("receipt fixture");
+            let changed_install = install(&substituted, &changed_context, &limits, Some(&version))
+                .expect("receipt fixture");
             assert_ne!(changed_install.receipt.artifact_set, receipt.artifact_set);
         }
     }
 }
-
 
 proptest::proptest! {
     #[test]
@@ -1222,5 +1229,8 @@ proptest::proptest! {
 }
 
 fn decoded_sources(sources: &[norn_ir::RuntimeValue]) -> Vec<ArtifactEnvelope> {
-    sources.iter().map(|source| norn_ir::runtime::decode(source).expect("receipt fixture")).collect()
+    sources
+        .iter()
+        .map(|source| norn_ir::runtime::decode(source).expect("receipt fixture"))
+        .collect()
 }
