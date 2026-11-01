@@ -574,10 +574,8 @@ fn verbatim_source_preserves_existing_json_and_ordinary_receipt_refusals() {
     let costly = format!("[{}]", vec!["1e400"; 22_000].join(","));
     for (text, error) in [("{}", NotAdmitted), (costly.as_str(), Limit)] {
         for (candidate, base) in [(text, "[]"), ("[]", text)] {
-            assert_eq!(
-                DefinitionSource::parse(candidate, base).err(),
-                Some(error.clone())
-            );
+            let refusal = DefinitionSource::parse(candidate, base).err();
+            assert_eq!(refusal, Some(error.clone()));
         }
     }
     let mut documents = pool();
