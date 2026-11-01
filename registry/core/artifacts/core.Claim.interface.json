@@ -64,7 +64,8 @@
             "name": "iso8601.date"
           }
         }
-      ]
+      ],
+      "role": "thing"
     }
   },
   "provenance": {
