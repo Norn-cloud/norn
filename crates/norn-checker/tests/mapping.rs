@@ -107,9 +107,10 @@ fn pinned_interpretation() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
 #[test]
 fn map_pins_and_multi_retain_independent_edges_without_granting_conformance() {
     let (first, base) = pinned_interpretation();
-    let mut document: norn_ir::mapping::LawInterpretationIr =
-        serde_json::from_value(serde_json::to_value(&first.payload).expect("payload"))
-            .expect("interpretation");
+    let mut document: norn_ir::mapping::LawInterpretationIr = serde_json::from_value(
+        serde_json::to_value(first.payload.to_json_value()).expect("payload"),
+    )
+    .expect("interpretation");
     let third = ArtifactRef::of(base.get(2).expect("third layer")).expect("pack identity");
     document.target_layer = norn_ir::mapping::InterpretationEndpoint {
         artifact_id: third.artifact_id,
@@ -134,9 +135,10 @@ fn map_pins_and_multi_retain_independent_edges_without_granting_conformance() {
 #[test]
 fn map_pins_refuse_stale_versions_and_mismatched_hashes() {
     let (candidate, base) = pinned_interpretation();
-    let document: norn_ir::mapping::LawInterpretationIr =
-        serde_json::from_value(serde_json::to_value(&candidate.payload).expect("payload"))
-            .expect("interpretation");
+    let document: norn_ir::mapping::LawInterpretationIr = serde_json::from_value(
+        serde_json::to_value(candidate.payload.to_json_value()).expect("payload"),
+    )
+    .expect("interpretation");
     for case in 0..3 {
         let mut changed = document.clone();
         match case {
