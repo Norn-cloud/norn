@@ -227,14 +227,17 @@ fn map_members_total_contract_leaves_semantic_preservation_unsupported() {
 }
 
 /// LAYERS-EDGE-CHAIN-1: each layer is checked before its receipt supplies authority.
-fn edge_layered_retained(base: Vec<ArtifactEnvelope>) -> norn_checker::obligations::RetainedLayers {
+fn edge_layered_retained(
+    base: Vec<ArtifactEnvelope>,
+    target: &str,
+) -> norn_checker::obligations::RetainedLayers {
     use norn_checker::obligations::{DefinitionSource, RetainedLayer, RetainedLayers};
     let extension = |namespace: &str| {
         envelope(
             &format!("{namespace}.Customer.extension"),
             "entity",
             &json!({"entityVersion":"2.0", "objectTypeExtension":{
-                "namespace":namespace, "target":"party.Customer",
+                "namespace":namespace, "target":target,
                 "properties":[{"id":format!("{namespace}__checked"), "type":{"kind":"boolean"}}]
             }}),
         )
@@ -293,9 +296,19 @@ fn edge_fixture() -> (
     norn_checker::obligations::RetainedLayers,
     Vec<ArtifactEnvelope>,
 ) {
+    edge_fixture_for("party.Customer")
+}
+
+fn edge_fixture_for(
+    target: &str,
+) -> (
+    norn_checker::obligations::ApprovedContract,
+    norn_checker::obligations::RetainedLayers,
+    Vec<ArtifactEnvelope>,
+) {
     use norn_checker::obligations::{ApprovedContract, DefinitionSource};
     let (_, base) = complete_member_interpretation();
-    let retained = edge_layered_retained(base);
+    let retained = edge_layered_retained(base, target);
     let raw = serde_json::to_string(retained.artifacts()).expect("base");
     let fixture: Vec<Value> =
         serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("fixture");
@@ -347,6 +360,63 @@ fn edge_source(
         &json!(retained.artifacts()).to_string(),
     )
     .expect("source")
+}
+
+/// LAYERS-EDGE-PROPERTY-1: totality includes members introduced by retained extensions.
+#[test]
+fn layers_edge_extension_properties_require_explicit_effective_bindings() {
+    use norn_ir::definition_catalog::{Member, MemberRef};
+    let (approved, retained, mut candidate) = edge_fixture_for("commerce.SalesOrder");
+    let (mut document, _) = complete_member_interpretation();
+    for namespace in ["toy", "other"] {
+        let source = MemberRef {
+            artifact_id: "commerce.SalesOrder.entity".to_owned(),
+            version: "0.1.0".to_owned(),
+            member: Member::Property {
+                type_name: "commerce.SalesOrder".to_owned(),
+                property: format!("{namespace}__checked"),
+            },
+        };
+        document
+            .members
+            .push(norn_ir::mapping::MemberInterpretation {
+                target: source.clone(),
+                source,
+                transform: None,
+            });
+    }
+    let (mut edge, _) = pinned_interpretation();
+    let bind = |document: &norn_ir::mapping::LawInterpretationIr| {
+        norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Mapping,
+            serde_json::from_value(serde_json::to_value(document).expect("edge")).expect("tree"),
+        )
+        .expect("payload")
+    };
+    edge.payload = bind(&document);
+    candidate.push(edge);
+    let plan = approved
+        .interpretation_challenge(&edge_source(&candidate, &retained), &retained)
+        .expect("all effective extension members are explicitly bound");
+    assert_eq!(plan.body()["assessment"], json!("unknown"));
+    for namespace in ["toy", "other"] {
+        let mut omitted = document.clone();
+        omitted.members.retain(|binding| {
+            !matches!(&binding.source.member,
+            Member::Property { property, .. } if property == &format!("{namespace}__checked"))
+        });
+        assert!(
+            member_findings(&omitted, retained.artifacts())
+                .iter()
+                .any(|finding| finding.code == "core.composition.mapping_gap")
+        );
+        candidate.last_mut().expect("edge").payload = bind(&omitted);
+        assert!(
+            approved
+                .interpretation_challenge(&edge_source(&candidate, &retained), &retained)
+                .is_err()
+        );
+    }
 }
 
 #[test]
