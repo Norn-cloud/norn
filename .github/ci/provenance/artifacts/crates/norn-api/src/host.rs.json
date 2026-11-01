@@ -1,5 +1,17 @@
 {
+<<<<<<< HEAD
   "sha256": "5ddd3ae5ee6d3de0927ebf94fee5ed73459fdf2c824cc13f9293d3b9736b2384",
+||||||| 353074427
+  "sha256": "04c4a6a628016b55c875ffdc659d83423d65659bd70b2a64cd998ef64c83661d",
+=======
+<<<<<<< HEAD
+  "sha256": "04c4a6a628016b55c875ffdc659d83423d65659bd70b2a64cd998ef64c83661d",
+||||||| 70be955a1
+  "sha256": "0bfb9b51a96590f36a8a0882215bd58082e3e8186012c5f6148dbb0a6df6b8af",
+=======
+  "sha256": "fb0861ff71317b3068aae9e322080e533fb6b958c051f42bc9fa6d0bbe1ad0c9",
+>>>>>>> surface/cp1-action-transports
+>>>>>>> surface/cp1-stock-fixture
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",
