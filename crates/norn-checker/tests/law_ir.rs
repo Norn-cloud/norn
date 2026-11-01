@@ -421,6 +421,78 @@ fn law_tighten_is_conjunctive_and_weakening_or_stale_containment_refuses() {
     );
 }
 
+fn update_instances(
+    base: &mut [ArtifactEnvelope],
+    edit: impl FnOnce(&mut Vec<norn_ir::PackInstance>),
+) {
+    let owner = base
+        .iter_mut()
+        .find(|a| a.artifact_id == "toy.instances")
+        .expect("holder");
+    let mut root: norn_ir::CompositionPackRoot =
+        serde_json::from_value(serde_json::to_value(owner.payload.to_json_value()).expect("wire"))
+            .expect("root");
+    edit(root.instances.as_mut().expect("instances"));
+    owner.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::BusinessPack,
+        serde_json::from_value(serde_json::to_value(root).expect("root")).expect("tree"),
+    )
+    .expect("payload");
+}
+
+#[test]
+fn law_contained_same_pack_instances_remain_distinct_applications() {
+    let (law, mut base) = membership_case();
+    update_instances(&mut base, |nodes| {
+        let mut other = nodes[3].clone();
+        other.instance_id = "other-leaf".to_owned();
+        nodes[1].instances = vec![norn_ir::PackInstanceRef {
+            instance_id: other.instance_id.clone(),
+            pack: other.pack.clone(),
+        }];
+        nodes.push(other);
+    });
+    let instances = projected(&law, &base);
+    assert_eq!(instances.len(), 2);
+    assert_eq!(instances[0].subject, instances[1].subject);
+    assert_ne!(instances[0].instance_paths, instances[1].instance_paths);
+}
+
+#[test]
+fn law_contained_empty_scoped_implementation_is_not_non_vacuity() {
+    let (mut law, mut base) = membership_case();
+    update_instances(&mut base, |nodes| {
+        let mut empty = nodes[0].clone();
+        empty.instance_id = "empty-app".to_owned();
+        empty.imports.clear();
+        empty.instances.clear();
+        nodes.push(empty);
+    });
+    let mut declaration: norn_ir::LawIR =
+        serde_json::from_value(serde_json::to_value(law.payload.to_json_value()).expect("wire"))
+            .expect("law");
+    declaration.scope.root = norn_ir::LawRoot::App("empty-app".to_owned());
+    declaration.id = "toy.empty_scope".to_owned();
+    law.artifact_id = "toy.empty_scope.law".to_owned();
+    law.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Law,
+        serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
+    )
+    .expect("payload");
+    assert!(projected(&law, &base).is_empty());
+    assert!(
+        norn_checker::verification::retained_law_membership(
+            &law,
+            &base,
+            Budget {
+                max_steps: 0,
+                ..RETAINED_TEST_BUDGET
+            }
+        )
+        .is_err()
+    );
+}
+
 const RETAINED_TEST_BUDGET: Budget = Budget {
     max_nodes: 128,
     max_edges: 1024,
