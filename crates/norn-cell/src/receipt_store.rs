@@ -108,7 +108,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             let command = reader.object(MAIN_WORLD, "norn.FunctionCommand", &dispatched.invocation.command_id)?.ok_or_else(|| refused("state"))?;
             let state: CommandState = norn_ir::runtime::decode(command.values.get("state").ok_or_else(|| refused("state"))?).map_err(|_invalid| refused("state"))?;
             let context = ReconcileContext { tenant: &scope, world: MAIN_WORLD, now, policy: ReconcilePolicy::DEFAULT };
-            let Reconciliation::Accepted(mut acceptance) = reconcile(&context, dispatched, &state, completion, checks, &ReceiptView(reader)).map_err(|_invalid| refused("reconciliation"))? else { return Err(refused("not_authenticated")); };
+            let Reconciliation::Accepted(mut acceptance) = reconcile(&context, dispatched, &state, completion, checks, &ReceiptView(reader)).map_err(|_invalid| refused("reconciliation"))? else { return Err(refused("not_accepted")); };
             acceptance.reads.push(norn_kernel::FactExpectation { key: FactKey::new("norn.FunctionCommand", &dispatched.invocation.command_id), expected: FactVersion(command.version) });
             let source = reader.next_commit_seq()?;
             let frontier = source.checked_add(1).ok_or_else(|| refused("frontier"))?;
