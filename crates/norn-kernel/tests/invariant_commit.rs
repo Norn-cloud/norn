@@ -2837,7 +2837,8 @@ fn observed_snapshot_commits_versioned_finding_with_deterministic_provenance() {
                 invariant_id: InvariantId("other_invariant".to_owned()),
                 version: match &fact.rule_ref {
                     DataQualityRuleRef::Invariant { version, .. } => version.clone(),
-                    DataQualityRuleRef::Builtin { .. } | DataQualityRuleRef::Law { .. } => unreachable!(),
+                    DataQualityRuleRef::Builtin { .. } | DataQualityRuleRef::Law { .. } =>
+                        unreachable!(),
                 },
             })
             .expect("wrong invariant id resolves as unverified"),
