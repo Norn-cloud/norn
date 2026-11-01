@@ -247,7 +247,17 @@ fn edge_layered_retained(base: Vec<ArtifactEnvelope>) -> norn_checker::obligatio
             DefinitionSource::parse(&json!(artifacts).to_string(), &json!(installed).to_string())
                 .expect("exact layer");
         let checked = norn_checker::check_artifact_set_with_receipt(
-            &artifacts,
+            &norn_checker::ReceiptSources::new(
+                &artifacts
+                    .iter()
+                    .map(|a| norn_ir::runtime::encode(a).expect("native source"))
+                    .collect::<Vec<_>>(),
+                &installed
+                    .iter()
+                    .map(|a| norn_ir::runtime::encode(a).expect("native base"))
+                    .collect::<Vec<_>>(),
+            )
+            .expect("receipt sources"),
             &EntityArtifactSetContext {
                 registry: &BTreeSet::new(),
                 base: &installed,

@@ -847,6 +847,14 @@ fn verbatim_profiles_still_enforce_retained_byte_and_json_safety_limits() {
 
 #[test]
 fn verbatim_source_preserves_existing_json_and_ordinary_receipt_refusals() {
+    use ChallengeError::{Limit, NotAdmitted};
+    let costly = format!("[{}]", vec!["1e400"; 22_000].join(","));
+    for (text, error) in [("{}", NotAdmitted), (costly.as_str(), Limit)] {
+        for (candidate, base) in [(text, "[]"), ("[]", text)] {
+            let refusal = DefinitionSource::parse(candidate, base).err();
+            assert_eq!(refusal, Some(error.clone()));
+        }
+    }
     let mut documents = pool();
     documents[0]["payload"]["extensions"] = json!({"test.unicode/0.1.0":{"é":"value"}});
     let raw = serde_json::to_string(&documents).expect("source");
@@ -1140,7 +1148,17 @@ fn retained_fixture() -> Vec<LayerFixture> {
                 DefinitionSource::parse(&json!(candidate).to_string(), &json!(base).to_string())
                     .expect("exact");
             let checked = norn_checker::check_artifact_set_with_receipt(
-                &artifacts,
+                &norn_checker::ReceiptSources::new(
+                    &artifacts
+                        .iter()
+                        .map(|a| norn_ir::runtime::encode(a).expect("native source"))
+                        .collect::<Vec<_>>(),
+                    &base
+                        .iter()
+                        .map(|a| norn_ir::runtime::encode(a).expect("native base"))
+                        .collect::<Vec<_>>(),
+                )
+                .expect("receipt sources"),
                 &norn_checker::EntityArtifactSetContext {
                     registry: &BTreeSet::new(),
                     base: &base,
