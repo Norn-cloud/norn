@@ -1,5 +1,8 @@
 //! Result/frontier contracts; producing evaluators must qualify their snapshot pins.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Receipt-driven query maintenance.
+pub mod ivm;
 
 use crate::{
     CellError, CellStore, LedgerHead, ObjectRecord,
@@ -54,6 +57,8 @@ pub struct QueryContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Engine {
+    /// Exact maintained contribution totals.
+    Ivm,
     /// Exact cell snapshot.
     Cell,
 }
@@ -141,6 +146,16 @@ impl<E: SqlEngine> CellStore<E> {
         context: QueryContext,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<QueryResult, CellError> {
+        self.question_snapshot(plan, context, &mut visible)
+            .map(|snapshot| snapshot.result)
+    }
+
+    fn question_snapshot(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<Snapshot, CellError> {
         self.conn.transaction(|| {
             if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
                 return Err(refused(UNSUPPORTED_ENGINE));
@@ -169,6 +184,7 @@ impl<E: SqlEngine> CellStore<E> {
                 return Err(refused("core.compute.bound_exceeded"));
             }
             let mut contributions = BTreeMap::new();
+            let mut members = BTreeSet::new();
             for (id, _) in ids {
                 let BudgetedRead::Found(record) = reader.object_with_budget(
                     &context.world,
@@ -182,6 +198,7 @@ impl<E: SqlEngine> CellStore<E> {
                 if record.scope != context.scope {
                     return Err(refused("core.compute.stale_input"));
                 }
+                members.insert(id.clone());
                 if !visible(&record)? || context.exclusions.contains_key(&id) {
                     continue;
                 }
@@ -206,16 +223,27 @@ impl<E: SqlEngine> CellStore<E> {
                 plan.max_items(),
                 "norn.query/1",
             ))?;
-            materialize(
+            let result = materialize(
                 plan,
                 context,
                 revision,
                 query_pin,
                 definition_pin,
                 &contributions,
-            )
+            )?;
+            Ok(Snapshot {
+                result,
+                contributions,
+                members,
+            })
         })
     }
+}
+
+struct Snapshot {
+    result: QueryResult,
+    contributions: Contributions,
+    members: BTreeSet<String>,
 }
 
 #[derive(Clone, Default)]

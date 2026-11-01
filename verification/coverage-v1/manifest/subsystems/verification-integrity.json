@@ -102,6 +102,7 @@
     "Differential refinement is uneven: rules and accounting have finite/reference comparisons and two predicates are extracted, while most retained Rust state machines still have independent formal references rather than machine-checked implementation correspondence."
   ],
   "sourceFiles": [
+    "crates/norn-cell/tests/incremental_question.rs",
     "crates/norn-authz/tests/compile.rs",
     "crates/norn-canonical/tests/legacy_fixtures.rs",
     "crates/norn-canonical/tests/map_order.rs",

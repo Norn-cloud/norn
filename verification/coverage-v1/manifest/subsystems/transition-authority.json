@@ -253,6 +253,7 @@
     "Kernel L1 adds a single-object mathematical reference and a checked-successor correspondence fragment only. VersionProof does not prove stale-CAS admission, durable persistence, or whole-kernel refinement; no evidence status is promoted by its enrollment."
   ],
   "sourceFiles": [
+    "crates/norn-cell/src/compute/ivm.rs",
     "Cargo.toml",
     "crates/norn-api/Cargo.toml",
     "crates/norn-api/src/contracts.rs",
