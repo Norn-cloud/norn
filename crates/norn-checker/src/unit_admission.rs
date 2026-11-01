@@ -106,10 +106,10 @@ fn pinned_codes(
     if definitions.next().is_some() {
         return None;
     }
-    match definition.property_type {
-        PropertyType::Enum { values } => Some(values),
-        _ => None,
-    }
+    let PropertyType::Enum { values } = definition.property_type else {
+        return None;
+    };
+    Some(values)
 }
 
 fn visit(
@@ -149,6 +149,15 @@ fn visit(
                 );
             }
         }
-        _ => {}
+        PropertyType::Text { .. }
+        | PropertyType::Integer { .. }
+        | PropertyType::Decimal { unit: None, .. }
+        | PropertyType::Boolean { .. }
+        | PropertyType::Timestamp { .. }
+        | PropertyType::Date { .. }
+        | PropertyType::Duration { .. }
+        | PropertyType::Enum { .. }
+        | PropertyType::JsonExt { .. }
+        | PropertyType::Ref { .. } => {}
     }
 }
