@@ -155,3 +155,32 @@ conformance scenario for this join; surface acceptance is separate.
 POST-STORE-BIND-BEFORE-FIRST-COMMIT pins scope before draft setup so every export record has one identity. POST-CP1-ENGINE: file-backed commit_action receives 2 @ 10 + 3 @ 20 (Dr stock 80 / Cr SRBNB 80), delivers 4 (Dr COGS 60 / Cr stock 60), leaving 1 worth 20; POST-QUANTITY reads the committed quantity.
 POST-OVERDELIVERY refuses 2 with a readable reason and POST-NO-WRITES. POST-RETRY / POST-CONFLICTING-RETRY check identical and changed calls; POST-RETRY-READ-AUTHZ checks current authorization.
 POST-REOPEN preserves state/chain. POST-REAL-REPLAY rebuilds the export through typed restore and compares complete state and ledger head. These are tested execution claims; surface parity is separate.
+
+## Atomic partition posting contract (CP2)
+
+A posting plan is an ordered list of partition postings. Each entry binds its
+partition witness, complete history/link reads, quantity request and derived
+stock effects. One sealed plan supplies the complete business output (including
+zero or many GL legs), commands, loss records and one action receipt to the
+existing guarded cell transaction. Transfer and refining use this same join.
+
+- POST-ATOMIC-PARTITIONS / JEWELRY-ATOMIC-PARTITIONS: every quantity request and
+  business effect commits together. A refusal in the last partition preserves
+  every earlier partition, receipt, history, outbox and ledger head.
+- POST-PARTITION-FENCES: fence all facts, complete adjacency sets and quantity
+  balances, including absent output witnesses and balances at revision zero.
+  Overlapping deliveries cannot both consume the same available quantity.
+- POST-GROUP-IDENTITY: retain the complete ordered intent and all results in one
+  hash-bound receipt. Identical retries replay the whole group; changed, omitted
+  or reordered entries conflict. Duplicate ledger entries refuse before writes.
+- POST-GROUP-REPLAY: native reopen/export/restore reconstruct every request and
+  result in order. Missing, extra or changed transitions/results refuse.
+- POST-GROUP-AUTHORITY: the public plan carries no write authority. Only the
+  checker-admitted rule seals the complete proposal; unsupported hosts refuse.
+
+These are execution/conformance obligations, not implementation proofs. The
+shared join does not establish owner identity, fine-metal conservation or loss
+valuation: the jewelry rules must enforce JEWELRY-OWNER-IDENTITY,
+JEWELRY-FINE-COMMIT, JEWELRY-LOSS-VALUE and JEWELRY-DECLARED-OPERATIONS before
+sealing. Custody may supply no GL; company refining supplies its loss record and
+balanced GL. Neither operation may commit its partitions independently.

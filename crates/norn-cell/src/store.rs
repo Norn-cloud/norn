@@ -1518,6 +1518,46 @@ pub struct WrittenRow {
     pub version: u64,
 }
 
+/// Ordered atomic intents/results. A singleton retains its canonical scalar encoding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuantityBatch<T>(
+    /// Intents or their corresponding results in declared order.
+    pub Vec<T>,
+);
+impl<T> std::ops::Deref for QuantityBatch<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        &self.0
+    }
+}
+impl<T> From<T> for QuantityBatch<T> {
+    fn from(value: T) -> Self {
+        Self(vec![value])
+    }
+}
+impl<T: Serialize> Serialize for QuantityBatch<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0.as_slice() {
+            [one] => one.serialize(serializer),
+            many => many.serialize(serializer),
+        }
+    }
+}
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for QuantityBatch<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Shape<T> {
+            One(T),
+            Many(Vec<T>),
+        }
+        Ok(Self(match Shape::deserialize(deserializer)? {
+            Shape::One(one) => vec![one],
+            Shape::Many(many) => many,
+        }))
+    }
+}
+
 /// The hashed body of a receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1568,6 +1608,20 @@ pub struct ReceiptBody {
     pub enqueued: Vec<String>,
     /// Timer ids scheduled.
     pub scheduled: Vec<String>,
+}
+impl ReceiptBody {
+    pub(crate) fn quantity_requests(&self) -> &[norn_ir::quantity_ledger::QuantityRequest] {
+        self.quantity.as_slice()
+    }
+    pub(crate) fn quantity_result(
+        &self,
+        ledger: &str,
+    ) -> Option<&norn_kernel::quantity::QuantityResult> {
+        self.quantity_requests()
+            .iter()
+            .find(|request| request.ledger_id == ledger)?;
+        self.quantity_result.as_ref()
+    }
 }
 
 #[allow(
