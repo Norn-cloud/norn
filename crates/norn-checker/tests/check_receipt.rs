@@ -981,9 +981,20 @@ fn exact_receipt(
     base: &[norn_ir::RuntimeValue],
 ) -> CheckReceipt {
     let sources = norn_checker::ReceiptSources::new(artifacts, base).expect("receipt fixture");
-    let installed = base.iter().map(|source| norn_ir::runtime::decode(source).expect("receipt fixture")).collect::<Vec<ArtifactEnvelope>>();
-    let context = EntityArtifactSetContext { registry: &BTreeSet::new(), base: &installed, tenant: None };
-    let checked = check_artifact_set_with_receipt(&sources, &context, &ResourceLimitProfile::norn_limits_v1())
+    let installed = base
+        .iter()
+        .map(|source| norn_ir::runtime::decode(source).expect("receipt fixture"))
+        .collect::<Vec<ArtifactEnvelope>>();
+    let context = EntityArtifactSetContext {
+        registry: &BTreeSet::new(),
+        base: &installed,
+        tenant: None,
+    };
+    let checked = check_artifact_set_with_receipt(
+        &sources,
+        &context,
+        &ResourceLimitProfile::norn_limits_v1(),
+    )
     .expect("receipt fixture");
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     checked.receipt
@@ -1021,7 +1032,8 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
                 .expect("receipt fixture");
             assert_ne!(digest, changed_digest);
             let body = compact(&receipt);
-            verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).expect("receipt fixture");
+            verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits)
+                .expect("receipt fixture");
             assert!(
                 verify_admission_receipt_sources(&body, &digest, changed, changed_base, &limits)
                     .is_err()
@@ -1029,7 +1041,6 @@ fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
         }
     }
 }
-
 
 proptest::proptest! {
     #[test]
