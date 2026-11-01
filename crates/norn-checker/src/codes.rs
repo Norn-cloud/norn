@@ -137,11 +137,6 @@ const fn warning_introduced(
 /// Every diagnostic code the checker can emit, sorted by code.
 pub static REGISTRY: &[CodeEntry] = &[
     entry(
-        "definition.text.not_nfc",
-        Tier::T0,
-        "definition text at {path} must already be Unicode NFC",
-    ),
-    entry(
         "action.validation.command_environment_underivable",
         Tier::T2,
         "outbound command expressions require an object input schema with a derivable expression environment",
@@ -484,6 +479,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "customization.validation.retired_boundary",
         Tier::T2,
         "executable boundary \"{boundary}\" is retired: inline custom execution is not admitted; move the code into a pool Function invoked through perform",
+    ),
+    entry(
+        "definition.text.not_nfc",
+        Tier::T0,
+        "definition text at {path} must already be Unicode NFC",
     ),
     entry(
         "derived.validation.incremental_not_supported",
