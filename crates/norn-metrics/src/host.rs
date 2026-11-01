@@ -79,10 +79,10 @@ pub struct ForecastSummary {
     pub latest_training_label_ms: i64,
     /// Non-forward outcomes, retained as refusal evidence.
     pub non_forward_outcome_count: u32,
-    /// Host-resolved source frontier lag.
-    pub frontier_age_ms: u64,
     /// Whether every computed library diagnostic passed.
     pub diagnostics_passed: bool,
+    /// Source cursor lag in milliseconds.
+    pub frontier_age_ms: u64,
     /// UCUM outcome code; 1 denotes a dimensionless integer column.
     pub error_unit: String,
     /// Ontology-resolved outcome unit, including dimensionless/unknown absence.
@@ -118,6 +118,8 @@ pub fn implementation_digest() -> Result<Digest, CanonicalJsonError> {
         ("src/producer.rs", include_str!("producer.rs")),
         ("src/temporal.rs", include_str!("temporal.rs")),
         ("workspace/Cargo.lock", include_str!("../../../Cargo.lock")),
+        ("workspace/Cargo.toml", include_str!("../../../Cargo.toml")),
+        ("workspace/.cargo/config.toml", include_str!("../../../.cargo/config.toml")),
     ];
     norn_ir::canonical::domain_hash_hex(b"norn.metrics.host-source.v1\0", &sources)
         .map(|hex| Digest::from_hex(&hex))
@@ -160,7 +162,7 @@ pub fn manifest() -> Result<FunctionManifest, CanonicalJsonError> {
         function_id: "core.analytics.ols_forecast".into(),
         version: 2,
         input_schema: schema::<ForecastInput>("core.analytics.ForecastInput", 1)?,
-        output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary", 2)?,
+        output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary", 3)?,
         error_schema: schema::<ForecastFailure>("core.analytics.ForecastFailure", 1)?,
         implementation: Implementation {
             format: ImplementationFormat::Host,
