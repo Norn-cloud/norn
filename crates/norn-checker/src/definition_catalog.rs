@@ -408,21 +408,6 @@ impl Rows {
         }
     }
 
-    fn finish(self) -> DefinitionCatalog {
-        DefinitionCatalog {
-            format: CatalogFormat::V1,
-            artifacts: self.artifacts.into_iter().collect(),
-            types: self.types.into_iter().collect(),
-            properties: self.properties.into_iter().collect(),
-            links: self.links.into_iter().collect(),
-            transitions: self.transitions.into_iter().collect(),
-            writes: self.writes.into_iter().collect(),
-            depends_on: self.depends_on.into_iter().collect(),
-            mappings: self.mappings.into_iter().collect(),
-            laws: self.laws.into_iter().collect(),
-        }
-    }
-
     fn action(&mut self, artifact: &ArtifactEnvelope, admission: &Admission<'_>) {
         let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact)) else {
             return;
