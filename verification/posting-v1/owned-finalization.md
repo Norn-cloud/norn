@@ -67,3 +67,9 @@ validation. A source with a required extension role refuses creation without
 a target and removal of its last target, on base types and subtypes alike.
 `required_extension_links_refuse_missing_or_removed_last_targets` exercises
 both refusals.
+
+## Authoritative preparation reads (P2a)
+
+POST-READ-ORIGIN: `prepare_stock_snapshot` reads manifest-ordered owned lines and declared master/account paths. Complete parent links must agree with the manifest. Facts and complete link sets survive as fences. Type authorization precedes manifest/adjacency reads; object authorization precedes disclosure, retaining the action-authorized parent snapshot. `post_read_origin_denied_reads_preserve_business_state` checks denied-read no-write behavior. The API grants no write authority.
+
+POST-MASTER-PARTITION: warehouses belong to the voucher company; master kinds follow admitted type lineage, including subtypes. CP1 requires FIFO. POST-EXACT-INPUT: quantities/rates become integer millionths without rounding or negative values (`post_value_exact_millionths`). History/fold planning follows in P2b; atomic commit and alpha acceptance in P3/P4.

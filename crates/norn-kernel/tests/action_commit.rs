@@ -4065,3 +4065,34 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
             .exists()
     );
 }
+
+#[test]
+fn post_read_origin_denied_reads_preserve_business_state() {
+    let types = order_types();
+    let catalog = TypeCatalog::new(&types);
+    let mut action = approve();
+    action.stock_post = Some(
+        serde_json::from_value(json!({
+            "operation": "receipt", "collection": "lines",
+            "partition": {"item": ["item"], "warehouse": ["destination"]},
+            "accounts": {"stock": ["destination", "stock_account"],
+                "srbnb": ["destination", "company", "srbnb_account"],
+                "cogs": ["destination", "company", "cogs_account"]}
+        }))
+        .unwrap(),
+    );
+    let mut cell = Cell::new(|_: &Command<JsonObject>| JsonObject::new());
+    let target = seed(&mut cell, ORDER, "SO-1", "draft");
+    let before = cell.load(&target).unwrap();
+    let ledger_len = cell.ledger().len();
+    let error = norn_kernel::action_commit::stock::prepare_stock_snapshot(
+        &cell,
+        &catalog,
+        &call(&action, "SO-1", "stock"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "action.target_not_found");
+    assert_eq!(cell.load(&target).unwrap(), before);
+    assert_eq!(cell.ledger().len(), ledger_len);
+}
