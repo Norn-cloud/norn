@@ -2792,7 +2792,7 @@
         },
         {
           "id": "INV-CORE-ESCROW-NON-NEGATIVE",
-          "runtime": "tested",
+          "runtime": "partial",
           "model": "bounded_model_checked",
           "proof": "reference_proved",
           "evidence": {
@@ -2828,7 +2828,7 @@
               }
             ]
           },
-          "residual": "The cell quantity ledger refuses a reservation or post that would spend held or absent quantity and refuses hold overflow (tested). The reference proof covers one balance partition and every workflow of receive, issue, reserve, release and consume steps."
+          "residual": "The cited runtime selectors cover ordinary posts exceeding available quantity, hold overflow and funding-policy cases (partial). PostReservation can spend held quantity. The selectors do not exercise releasing more than is held or quota-use paths. The reference proof covers one balance partition and every workflow of receive, issue, reserve, release and consume steps."
         },
         {
           "id": "INV-CORE-COMMITMENT-COMPLETION",
