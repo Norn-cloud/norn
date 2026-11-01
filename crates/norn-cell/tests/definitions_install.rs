@@ -5604,7 +5604,7 @@ fn instance_source_provenance_rechecks_bundle_and_disclosure_for_exact_version()
     let reader = cell.store().read();
     let instance = reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("instance").expect("captured");
     let fact = norn_ir::FactRef::new("quality.Measurement", "MEAS-1", instance.version);
-    let budget = || DecodeBudget::new(&ReactiveLimits {max_scan:100, max_candidate_bytes_per_commit:10_000_000, ..ReactiveLimits::default()});
+    let budget = || DecodeBudget::new(&ReactiveLimits {max_scan:100, max_candidate_bytes_per_commit:10_000_000, ..ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1())});
     assert!(reader.instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(false)).expect("withheld").is_none());
     let evidence = reader.instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true)).expect("checked source lineage").expect("bundle");
     assert_eq!(id, format!("mapping-bundle:{}", evidence.bundle_digest));
@@ -5615,6 +5615,6 @@ fn instance_source_provenance_rechecks_bundle_and_disclosure_for_exact_version()
     assert_eq!(evidence.mapping_pin.version, "1.0.0");
     assert!(!evidence.field_provenance.is_empty());
     assert!(reader.instance_source_provenance("other-world", &fact, &mut budget(), |_| panic!("no disclosure of an unproven world")).is_err());
-    let unknown = norn_ir::FactRef {version:fact.version + 1, ..fact};
+    let unknown = norn_ir::FactRef {version:fact.version.checked_add(1).expect("next version"), ..fact};
     assert!(reader.instance_source_provenance(MAIN_WORLD, &unknown, &mut budget(), |_| panic!("no disclosure of an unproven version")).is_err());
 }
