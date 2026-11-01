@@ -50,11 +50,17 @@ if (checker) test("POST-BINDING: unresolved, mistyped and open declarations refu
     ['"collection":"lines"', '"collection":"missing"'],
     ['"operation":"receipt"', '"operation":"transfer"'],
     ['"operation":"receipt"', '"operation":"receipt","templateId":"caller"'],
-    ['"stockPost":{', '"stockPost":null,"unused":{'],
   ] satisfies ReadonlyArray<readonly [string, string]>) {
     const changed = original.replace(before, after)
     expect(changed).not.toBe(original)
     const result = checker.checkArtifactSet(JSON.parse(changed))
     expect(result.admitted).toBe(false)
   }
+  const nullPost = compiled.artifacts.map(artifact => {
+    if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) return artifact
+    const payload = artifact.payload
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || !("stockPost" in payload)) return artifact
+    return { ...artifact, payload: { ...payload, stockPost: null } }
+  })
+  expect(checker.checkArtifactSet(nullPost).admitted).toBe(false)
 })
