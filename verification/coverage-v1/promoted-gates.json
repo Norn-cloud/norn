@@ -679,10 +679,6 @@
     },
     {
       "id": "jewelry-refining-typecheck",
-      "profiles": [
-        "fast",
-        "full"
-      ],
       "command": "quint typecheck verification/jewelry-v1/refining.qnt",
       "evidenceKind": "command",
       "role": "typecheck",
@@ -693,14 +689,11 @@
         }
       ],
       "resultArtifacts": [],
-      "generatedArtifacts": []
+      "generatedArtifacts": [],
+      "profile": "fast"
     },
     {
       "id": "jewelry-refining-quint",
-      "profiles": [
-        "fast",
-        "full"
-      ],
       "command": "quint verify verification/jewelry-v1/refining.qnt --backend apalache --invariants nonnegative fineConserved lossValued recordsAligned custodyIsolated refusedIsNoop --max-steps 4",
       "evidenceKind": "command",
       "role": "claim-evidence",
@@ -713,14 +706,11 @@
       "resultArtifacts": [
         "target/verification-results/jewelry-refining-quint.json"
       ],
-      "generatedArtifacts": []
+      "generatedArtifacts": [],
+      "profile": "fast"
     },
     {
       "id": "jewelry-refining-canaries",
-      "profiles": [
-        "fast",
-        "full"
-      ],
       "command": "quint test verification/jewelry-v1/refining.qnt --backend rust --match .*Test --max-samples 1 --seed 1",
       "evidenceKind": "command",
       "role": "supporting-check",
@@ -731,7 +721,8 @@
         }
       ],
       "resultArtifacts": [],
-      "generatedArtifacts": []
+      "generatedArtifacts": [],
+      "profile": "fast"
     },
     {
       "id": "quantity-batch-quint-typecheck",
