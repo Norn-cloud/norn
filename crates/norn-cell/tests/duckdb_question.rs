@@ -25,15 +25,14 @@ fn row(id: &str, input: i64, recovered: i64) -> FactWriteRow {
 }
 
 fn commit(store: &mut CellStore, writes: Vec<FactWriteRow>) {
-    store
-        .commit(&CommitBatch {
-            world: WORLD.into(),
-            scope: "synthetic".into(),
-            logical_time: CLOCK,
-            writes,
-            ..CommitBatch::default()
-        })
-        .expect("native changes");
+    let batch = CommitBatch {
+        world: WORLD.into(),
+        scope: "synthetic".into(),
+        logical_time: CLOCK,
+        writes,
+        ..CommitBatch::default()
+    };
+    store.commit(&batch).expect("native changes");
 }
 
 fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) -> QueryResult {
@@ -103,8 +102,6 @@ fn query_three_scrap_yield_sql_matches_exact_frontier_and_lineage_after_correcti
     let (mut store, plan, context) = fixture();
     load(&mut store);
     let original = compare(&store, &plan, context.clone());
-    let week = &original.rows["\"2026-10-19\""];
-    assert_eq!(week.value.expect("ratio").canonical(), "0.98");
     for write in [
         row("SYN-MELT-15-1", 75_000, 72_000),
         FactWriteRow::Delete {

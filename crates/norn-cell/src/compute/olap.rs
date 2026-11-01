@@ -1,5 +1,9 @@
 //! QUERY-ENGINE-1: lower admitted keyed aggregates over an exact contribution table.
-use super::*;
+use super::{
+    BTreeMap, CellError, CellStore, Contributions, Decimal, Engine, Member, ObjectRecord,
+    QueryContext, QueryResult, QueryRow, QuestionPlan, SqlEngine, UNSUPPORTED_ENGINE, bucket_key,
+    decimal, refused,
+};
 use duckdb::{Connection, params};
 use norn_checker::entity_instance::EffectiveKind;
 use norn_ir::PropertyType;
@@ -40,7 +44,9 @@ impl<E: SqlEngine> CellStore<E> {
 fn scale(sum: &norn_checker::metric::compute::KeyedSum) -> Result<u64, CellError> {
     match &sum.property.kind {
         EffectiveKind::Base(PropertyType::Decimal { scale, .. }) if scale.0 <= 6 => Ok(scale.0),
-        _ => Err(refused(UNSUPPORTED_ENGINE)),
+        EffectiveKind::Base(_) | EffectiveKind::Registry(_) | EffectiveKind::Unresolved => {
+            Err(refused(UNSUPPORTED_ENGINE))
+        }
     }
 }
 
