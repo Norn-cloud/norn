@@ -181,7 +181,7 @@ pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
         Customization => !matches!(to, BusinessPack),
         BusinessPack => true,
         SourceSchema => false,
-        Mapping => matches!(to, Entity | SourceSchema),
+        Mapping => matches!(to, Entity | SourceSchema | BusinessPack),
         Law => matches!(
             to,
             Entity

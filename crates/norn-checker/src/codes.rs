@@ -1344,6 +1344,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "transition {id} is not a transition of the inherited lifecycle; a subtype may only drop transitions",
     ),
     introduced(
+        "mapping.interpretation.invalid_endpoint",
+        Tier::T3,
+        "interpretation endpoint {artifactId} requires one retained business pack, an exact required dependency and matching version/content identity",
+        "0.2.0",
+    ),
+    introduced(
         "mapping.interpretation.unsupported",
         Tier::T3,
         "law interpretations require member conformance and preservation obligations",

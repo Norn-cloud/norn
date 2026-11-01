@@ -23,8 +23,15 @@ fields and round-trip retention. `mapping::map_roles_*` covers admission and
 record-compilation refusal using a synthetic capacity/credit interpretation.
 These are structural tests, not proofs of preservation.
 
-Remaining B1 conformance scenarios: MAP-PINS (retained identities and required
-dependencies), MAP-MULTI (independent edges), MAP-MEMBERS (source-derived
+MAP-PINS additionally resolves each endpoint uniquely in retained base artifacts
+as a business pack, with a matching Norn1 digest and exact semantic version.
+Exactly one required dependency must name that same pack/version/kind.
+Missing, stale, ambiguous, same-version edited or candidate-only endpoints
+refuse; an optional dependency cannot confer authority. MAP-MULTI checks two
+independently identified edges without a singleton layer field. Successful pin
+checks still leave admission unsupported pending member and law conformance.
+
+Remaining B1 conformance scenarios: MAP-MEMBERS (source-derived
 totality), MAP-UNITS (dimension/unit/scale), EVENT-MULTI (event identity and
 distinct object links). Missing required members, unsupported transforms or
 incompatible relations must refuse. Source observations confer no mutation
