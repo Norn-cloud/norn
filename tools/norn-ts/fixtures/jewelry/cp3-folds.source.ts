@@ -3,7 +3,7 @@ import { Norn } from "@norn/authoring"
 import { Holding } from "../stock/stock.source"
 
 export const MetalHolding = Norn.type({ name: "jewelry.FoldHolding", title: "Measured metal holding", version: "1.0.0", extends: Holding,
-  properties: Schema.Struct({ gross_quantity: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }), purity: Norn.decimal(0, { unit: { system: "ucum", code: "[ppth]" } }), valuation_currency: Norn.ref("iso4217.currency_code"), book_value: Norn.decimal(2, { currency: "valuation_currency" }) }),
+  properties: Schema.Struct({ gross_quantity: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }), purity: Norn.decimal(0, { unit: { system: "ucum", code: "[ppth]" } }), valuation_currency: Schema.Literal("USD"), book_value: Norn.decimal(2, { currency: "valuation_currency" }) }),
 })
 const ReceiptItem = Schema.Struct({ resource_code: Schema.String, gross: Schema.Finite, purity: Schema.Int, value: Schema.Finite, unit: Schema.Literal("g"), currency: Schema.Literal("USD") })
 const ReceiptState = Schema.Struct({ fine: Schema.Finite, gross: Schema.Finite, value: Schema.Finite, eligible: Schema.Boolean, sources: Schema.Array(Schema.String) })
