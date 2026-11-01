@@ -153,3 +153,15 @@ declared schema/output guards; none is a privileged evaluator condition.
 FOLD-CLOSURE-WORK: check each call site once and memoize helper-graph validation
 by artifact key and deepest checked depth. Check depth before the memo and bound
 its size by the existing closure limit. Equal payload rule IDs never alias.
+
+## Core specification correspondence
+
+`docs/spec/core/03-query-compute.md` COMPUTE-DETERMINISTIC-1, FOLD-ORDER-1
+and FOLD-BOUNDS-1 correspond to FOLD-SCHEDULE, FOLD-ORDER, FOLD-STATE,
+FOLD-ARITHMETIC and FOLD-NO-PARTIAL above. FOLD-ALLOCATE and
+COMPLETE-ALLOCATE use the retained CP1 FIFO declaration; FOLD-CAPACITY
+and COMPLETE-ALLOCATE also run grants 2 and 3, demand 4, allocations 2 and 2,
+residual 1, under both input enumerations through the same evaluator.
+The core spec's diagnostic identifiers are target contracts; this cut retains
+existing typed admission/evaluation errors and `rule.validation.ordered_fold_invalid`.
+Three-engine queries, freshness envelopes and commit effects remain outside A2.

@@ -915,6 +915,22 @@ fn declared_capacity_allocation_uses_order_and_preserves_residuals() {
     }
 }
 
+#[test]
+fn fold_capacity_complete_allocate_matches_the_core_spec() {
+    let rules = capacity_fold();
+    let initial = json!({"demand":4,"residual":0,"allocated":[]});
+    let expected = norn_decisions::value_to_runtime(&value(
+        &json!({"demand":0,"residual":1,"allocated":[2,2]}),
+    ))
+    .unwrap();
+    for items in [
+        json!([{"id":"a","capacity":2},{"id":"b","capacity":3}]),
+        json!([{"id":"b","capacity":3},{"id":"a","capacity":2}]),
+    ] {
+        assert_eq!(folded(&rules, initial.clone(), items).unwrap(), expected);
+    }
+}
+
 fn fifo_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
     let layer = closed(
         &json!({"id":{"type":"string"},"quantity":{"type":"integer"},"value":{"type":"integer"}}),
