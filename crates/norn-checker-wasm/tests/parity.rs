@@ -279,7 +279,7 @@ fn clean_set_issues_the_pinned_receipt() {
         "norn-checker/diagnostics@1"
     );
     assert_eq!(output["diagnostics"]["diagnostics"], serde_json::json!([]));
-    assert_eq!(output["receipt"]["format"], "norn-checker/receipt@2");
+    assert_eq!(output["receipt"]["format"], "norn-checker/receipt@4");
     assert_eq!(output["receiptSha256"], RETAIL_RECEIPT_SHA256);
 }
 
@@ -567,7 +567,7 @@ fn version_names_the_formats() {
     let version = json_of(&output_of("version"));
     assert_eq!(version["abi"], "norn-checker-abi/1");
     assert_eq!(version["diagnosticsFormat"], "norn-checker/diagnostics@1");
-    assert_eq!(version["receiptFormat"], "norn-checker/receipt@2");
+    assert_eq!(version["receiptFormat"], "norn-checker/receipt@4");
     assert_eq!(version["exprProfile"], "norn-zen/6");
 }
 
@@ -693,4 +693,25 @@ fn widget_parity_corpus_preserves_keys_selections_and_display_values() {
             assert_eq!(output["error"]["code"], expected, "{name}");
         }
     }
+}
+
+#[test]
+fn exact_source_receipts_distinguish_adjacent_literals_through_the_abi() {
+    let source = read("fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json");
+    let source = source.replacen(
+        "\"payload\": {",
+        "\"payload\": {\"extensions\": {\"test/1.0.0\": 0.1234567890123456789012345678},",
+        1,
+    );
+    let first = check_artifact_set_json(&format!("[{source}]"), "null").expect("first receipt");
+    let changed = source.replace(
+        "0.1234567890123456789012345678",
+        "0.1234567890123456789012345679",
+    );
+    let second = check_artifact_set_json(&format!("[{changed}]"), "null").expect("second receipt");
+    let first: Value = serde_json::from_str(&first).expect("first JSON");
+    let second: Value = serde_json::from_str(&second).expect("second JSON");
+    assert_eq!(first["admitted"], true, "{first}");
+    assert_eq!(second["admitted"], true, "{second}");
+    assert_ne!(first["receiptSha256"], second["receiptSha256"]);
 }

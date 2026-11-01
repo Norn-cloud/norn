@@ -1,5 +1,6 @@
 #![allow(
     clippy::expect_used,
+    clippy::unwrap_used,
     clippy::indexing_slicing,
     missing_docs,
     reason = "integration-test crate"
@@ -287,7 +288,7 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let stored = compact(&checked.receipt);
     let receipt_json: Value = serde_json::from_str(&stored).expect("receipt JSON");
-    assert_eq!(receipt_json["format"], "norn-checker/receipt@3");
+    assert_eq!(receipt_json["format"], "norn-checker/receipt@5");
     assert_eq!(
         receipt_json["flowSourceMap"],
         serde_json::to_value(&map).expect("typed map serializes")
@@ -754,4 +755,124 @@ fn retained_warning_evidence_verifies_but_unreconstructable_legacy_hash_is_refus
     // Artifact-set admission does not emit the BAC deprecation warning. A
     // hash alone cannot recover that historical finding, so it fails closed.
     assert!(recover_legacy_admission_receipt(&digest, &artifacts, &base, &limits).is_err());
+}
+
+fn exact_setting(number: &str) -> norn_ir::RuntimeValue {
+    norn_ir::RuntimeValue::from_json_text(format!(
+        r#"{{"irVersion":"0.1","artifactId":"test.setting","kind":"setting","namespace":"test","name":"Setting","version":"0.1.0","lifecycle":"draft","scope":{{"orgId":"org_demo","environmentId":"dev"}},"dependencies":[],"provenance":{{"source":"authoring_sdk"}},"payload":{{"settingVersion":"0.1","settingKey":"test.value","valueType":"number","value":{number},"effectiveFrom":"2026-01-01T00:00:00Z","review":{{"state":"approved","reviewedBy":"reviewer","reviewedAt":"2026-01-01T00:00:00Z","reason":"synthetic"}},"scopeRequired":["orgId","environmentId"]}}}}"#
+    )).expect("exact setting")
+}
+
+#[test]
+fn receipt_exact_integer_decimal_literal_and_verification_conformance() {
+    use norn_checker::receipt::{
+        check_artifact_sources_with_receipt, verify_admission_receipt_sources,
+    };
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    for (left, right) in [
+        ("9007199254740992", "9007199254740993"),
+        (
+            "0.1234567890123456789012345678",
+            "0.1234567890123456789012345679",
+        ),
+        ("25", "26"),
+    ] {
+        let first = [exact_setting(left)];
+        let second = [exact_setting(right)];
+        assert_ne!(
+            first[0].canonical_json().unwrap(),
+            second[0].canonical_json().unwrap()
+        );
+        for in_base in [false, true] {
+            let (artifacts, base) = if in_base {
+                (&[][..], first.as_slice())
+            } else {
+                (first.as_slice(), &[][..])
+            };
+            let (changed, changed_base) = if in_base {
+                (&[][..], second.as_slice())
+            } else {
+                (second.as_slice(), &[][..])
+            };
+            let check = |a: &[norn_ir::RuntimeValue], b: &[norn_ir::RuntimeValue]| {
+                let checked = check_artifact_sources_with_receipt(
+                    a,
+                    b,
+                    &BTreeSet::new(),
+                    None,
+                    &limits,
+                    None,
+                )
+                .unwrap();
+                assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+                checked.receipt
+            };
+            let receipt = check(artifacts, base);
+            let digest = receipt.content_sha256().unwrap();
+            assert_ne!(
+                digest,
+                check(changed, changed_base).content_sha256().unwrap()
+            );
+            let body = compact(&receipt);
+            verify_admission_receipt_sources(&body, &digest, artifacts, base, &limits).unwrap();
+            assert!(
+                verify_admission_receipt_sources(&body, &digest, changed, changed_base, &limits)
+                    .is_err()
+            );
+        }
+    }
+}
+
+#[test]
+fn receipt_exact_order_and_historical_readers() {
+    use norn_checker::receipt::verify_admission_receipt_sources;
+    let artifacts = registry_layer();
+    let current = receipt(&artifacts);
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let sources: Vec<_> = artifacts
+        .iter()
+        .map(|a| norn_ir::RuntimeValue::from_json_text(serde_json::to_string(a).unwrap()).unwrap())
+        .collect();
+    for format in ["norn-checker/receipt@2", RECEIPT_FORMAT] {
+        let mut wire = json_of(&compact(&current));
+        wire["format"] = json!(format);
+        let body = compact_value(&wire);
+        let digest = admission_receipt_sha256(&body).unwrap();
+        verify_admission_receipt_sources(&body, &digest, &sources, &[], &limits).unwrap();
+        if format != RECEIPT_FORMAT {
+            assert_eq!(
+                recover_legacy_admission_receipt(&digest, &envelopes(&artifacts), &[], &limits)
+                    .unwrap(),
+                body
+            );
+        }
+    }
+    let source = serde_json::to_string(&artifacts[0]).unwrap();
+    let reordered = format!(
+        "{{{}}}",
+        artifacts[0]
+            .as_object()
+            .unwrap()
+            .iter()
+            .rev()
+            .map(|(k, v)| format!("{}:{}", json!(k), v))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    assert_ne!(source, reordered);
+    let check = |text: String| {
+        norn_checker::receipt::check_artifact_sources_with_receipt(
+            &[norn_ir::RuntimeValue::from_json_text(text).unwrap()],
+            &[],
+            &BTreeSet::new(),
+            None,
+            &limits,
+            None,
+        )
+        .unwrap()
+        .receipt
+        .content_sha256()
+        .unwrap()
+    };
+    assert_eq!(check(source), check(reordered));
 }
