@@ -10,7 +10,7 @@ one retry identity. The primitive has no application or valuation semantics.
 - POST-GROUP-IDENTITY: hash-bind every ordered input/result to one receipt;
   exact retries replay; changed/reordered inputs or duplicate ledgers refuse.
 - POST-GROUP-REPLAY: reopen/export/restore reproduce every request and result;
-  missing/extra/altered transitions or results refuse. Singleton bytes persist.
+  missing/extra/altered transitions or results refuse. Singleton canonical bytes persist.
 - POST-GROUP-AUTHORITY: proposals grant no permission. Existing kernel
   admission/current authorization govern writes; unsupported hosts refuse.
 
