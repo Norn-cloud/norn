@@ -605,8 +605,8 @@ fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
         "scope": {}, "dependencies": [], "provenance": { "source": "system" },
         "payload": {
             "actionId": "shop.approve_rush", "scopeRequired": ["orgId"], "idempotent": false,
-            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] },
-            "outputSchema": { "type": "object", "properties": {} },
+            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"], "additionalProperties": false },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "writes": [{ "entityKind": "shop.RushRequest", "change": "modified" }],
             "effectProgram": {
                 "kind": "fire_transition", "objectIdField": "id",
