@@ -34,15 +34,11 @@ Evidence is finite model evidence, never a temporal proof or a live-runtime clai
 
 ## Action-order adapter
 
-The alpha adapter forgets lifecycle state, data guards and cross-object effects,
-retaining every action as a self edge. This is a complete overapproximation of
-ordering, so singleton-role separation remains sound. Role conjuncts intersect;
-permit rules union. Resource restrictions and non-role conjuncts are erased.
-Generic grants, unbounded role grants, unsupported policy forms and undecodable
-inputs yield unknown rather than an incomplete graph.
-
-Only the closed, empty-schema, effect-free action fragment on a property-free,
-link-free, lifecycle-free object supplies concrete witnesses. Other collisions
-remain unknown. Required witnesses fail closed outside this fragment. Inherited
-controls are checked for every subtype against the full base plus candidate pool,
+The alpha adapter forgets lifecycle state, data guards and cross-object effects, retaining every
+ action as a self edge. This complete overapproximation preserves singleton-role separation.
+Role conjuncts intersect; permit rules union. Resource restrictions and non-role conjuncts are erased.
+Generic or unbounded role grants, unsupported policies and undecodable inputs yield unknown.
+Only empty-schema, effect-free actions on a property-free, link-free, lifecycle-free object supply
+ concrete witnesses. Other collisions remain unknown; required witnesses then fail admission.
+Inherited controls are checked on every subtype against the full base plus candidate pool,
 including when a candidate adds grants without editing the controlled entity.
