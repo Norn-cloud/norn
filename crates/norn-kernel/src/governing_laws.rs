@@ -1,5 +1,5 @@
-use crate::decision_commit::DataQualityRuleClassification;
 //! Direct governing-law resolution and evaluation on the shared metered expression engine.
+use crate::decision_commit::DataQualityRuleClassification;
 use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
 use norn_expr::{EvaluationBudget, Expression, Value};
 use norn_ir::{
@@ -43,14 +43,16 @@ impl LawEvaluationError {
 /// One evaluated law violation; findings retain the actual law pin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LawFailure {
+    /// Whether the retained declaration refuses native writes.
+    pub refuses_native: bool,
+    /// Exact evaluation outcome retained with observation evidence.
+    pub outcome: DataQualityOutcome,
     /// Exact governing declaration identity.
     pub rule_ref: DataQualityRuleRef,
     /// Declared severity, independent of proof classification.
     pub severity: DataQualitySeverity,
     /// Declared explanation.
     pub message: String,
-    /// Runtime evidence for the violation.
-    pub outcome: DataQualityOutcome,
 }
 fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvaluationError> {
     let decoded: Result<LawIR, serde::de::value::Error> =
@@ -66,7 +68,7 @@ impl TypeCatalog<'_> {
         &self,
         object_type: &ObjectTypeName,
     ) -> Result<Vec<&ArtifactEnvelope>, LawEvaluationError> {
-        if !self.contains(object_type) {
+        if !self.contains(object_type) && !self.law_artifacts.is_empty() {
             return Err(LawEvaluationError::Invalid(object_type.as_str().to_owned()));
         }
         let is_a = |name: &str| {
@@ -134,7 +136,7 @@ pub(crate) fn classify(
     }
     DataQualityRuleClassification::Unverified
 }
-/// OBS-EVIDENCE-1 / LAW-SUPPORTED-1: evaluate retained direct laws, never caller payloads.
+/// LAW-COMMIT-1 / OBS-EVIDENCE-1: evaluate retained direct laws, never caller payloads.
 ///
 /// # Errors
 /// Incomplete scope, unsupported semantics, invalid context or exhausted fuel.
@@ -182,13 +184,14 @@ pub fn evaluate(
         };
         if let Err(outcome) = result {
             failures.push(LawFailure {
+                refuses_native: law.severity == LawSeverity::Error,
+                outcome,
                 rule_ref: pin(artifact, &law)?,
                 severity: match law.severity {
                     LawSeverity::Error => DataQualitySeverity::Error,
                     LawSeverity::Warning => DataQualitySeverity::Warning,
                 },
                 message: format!("{}: {}", law.id, law.rationale),
-                outcome,
             });
         }
     }
@@ -222,7 +225,11 @@ fn boolean(
         }),
         Ok(result) => match result.value() {
             Value::Bool(value) => Ok(*value),
-            other @ (Value::Null | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => Err(DataQualityOutcome::NonBoolean {
+            other @ (Value::Null
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_)
+            | Value::Object(_)) => Err(DataQualityOutcome::NonBoolean {
                 actual: format!("{other:?}"),
             }),
         },

@@ -157,7 +157,9 @@ const fn law_category(reason: &crate::governing_laws::LawEvaluationError) -> Ref
     match reason {
         Law::Violated(_) => RefusalCategory::Precondition,
         Law::BudgetExceeded => RefusalCategory::Limit,
-        Law::UnsupportedUntilB2(_) | Law::Unsupported(_) | Law::Invalid(_) => RefusalCategory::Invalid,
+        Law::UnsupportedUntilB2(_) | Law::Unsupported(_) | Law::Invalid(_) => {
+            RefusalCategory::Invalid
+        }
     }
 }
 
@@ -498,11 +500,12 @@ impl<X> DecisionRefusal<X> {
     }
 
     fn lifecycle_reason(&self) -> Option<RefusalReason> {
-        self.lifecycle_reason_parts().map(|(law, key, values)| RefusalReason {
-            law: law.to_owned(),
-            subject: key.to_string(),
-            values,
-        })
+        self.lifecycle_reason_parts()
+            .map(|(law, key, values)| RefusalReason {
+                law: law.to_owned(),
+                subject: key.to_string(),
+                values,
+            })
     }
 }
 
