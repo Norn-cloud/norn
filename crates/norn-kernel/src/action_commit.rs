@@ -319,6 +319,11 @@ pub struct ActionInputPreparation<'a> {
 }
 
 impl ActionInputPreparation<'_> {
+    fn recorded_effective_input(&self) -> Option<JsonObject> {
+        (!self.action.derive.is_empty() || self.effective_input != *self.raw_input)
+            .then(|| self.effective_input.clone())
+    }
+
     fn matches_call(&self, call: &ActionCall<'_>) -> bool {
         self.action == call.action
             && self.raw_input == &call.input
@@ -421,8 +426,7 @@ impl ActionCallRecord {
             effect_kind: Some("fire_transition".to_owned()),
             object: target.clone(),
             input: call.input.clone(),
-            effective_input: (!action.derive.is_empty())
-                .then(|| preparation.effective_input.clone()),
+            effective_input: preparation.recorded_effective_input(),
             derived_values: preparation.derived_values.clone(),
             precondition_outcomes: Vec::new(),
             actor: call.actor.clone(),
@@ -1225,7 +1229,7 @@ where
         effect_kind: Some("upsert_input_object".to_owned()),
         object: target.clone(),
         input: call.input.clone(),
-        effective_input: (!action.derive.is_empty()).then(|| preparation.effective_input.clone()),
+        effective_input: preparation.recorded_effective_input(),
         derived_values: preparation.derived_values.clone(),
         precondition_outcomes: Vec::new(),
         actor: call.actor.clone(),
@@ -1711,6 +1715,7 @@ fn validate_stored_patch<X>(
             });
         };
         if declared.computed
+            || declared.protected()
             || type_series(catalog, object_type)
                 .is_some_and(|series| series.key_properties.contains(&declared.id))
         {
@@ -2153,7 +2158,7 @@ where
                             .properties
                             .iter()
                             .find(|candidate| candidate.id == *property)
-                            .is_none_or(|candidate| candidate.computed)
+                            .is_none_or(|candidate| candidate.computed || candidate.protected())
                 })
             })
         })
@@ -2333,8 +2338,7 @@ where
         effect_kind: Some(ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS.to_owned()),
         object: target.clone(),
         input: call.input.clone(),
-        effective_input: (!call.action.derive.is_empty())
-            .then(|| preparation.effective_input.clone()),
+        effective_input: preparation.recorded_effective_input(),
         derived_values: preparation.derived_values.clone(),
         precondition_outcomes: Vec::new(),
         actor: call.actor.clone(),
@@ -2474,7 +2478,10 @@ where
             })?;
             let lifecycle_properties = catalog.lifecycle_properties(&object_type);
             let touch = effective_type.properties.iter().find_map(|property| {
-                if property.computed || lifecycle_properties.contains(&property.id) {
+                if property.computed
+                    || property.protected()
+                    || lifecycle_properties.contains(&property.id)
+                {
                     None
                 } else {
                     current_values
@@ -3998,7 +4005,8 @@ fn precondition_read_refusal<X>(
             .iter()
             .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
             .cloned(),
-        CommitError::OwnedRowsProtected { .. }
+        CommitError::ImmutableObject { .. }
+        | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::DuplicateLink { .. }
@@ -4030,7 +4038,8 @@ fn precondition_read_refusal<X>(
         | CommitError::UnsupportedLinkRead { source_key, link } => {
             Some((source_key.clone(), link.clone()))
         }
-        CommitError::OwnedRowsProtected { .. }
+        CommitError::ImmutableObject { .. }
+        | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::Conflict { .. }
@@ -4146,7 +4155,8 @@ where
             message,
             outcome,
         } => (key, owner, id, message, outcome),
-        error @ (CommitError::OwnedRowsProtected { .. }
+        error @ (CommitError::ImmutableObject { .. }
+        | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::Conflict { .. }
@@ -4507,21 +4517,46 @@ pub fn prepare_action_input_for_call<'a, X>(
     )
 }
 
+fn normalize_action_input<X>(
+    action: &ActionRoot,
+    raw_input: &JsonObject,
+) -> Result<JsonObject, ActionRefusal<X>> {
+    let schema = norn_expr::schema::Schema::parse_action(
+        &norn_ir::JsonValue::Object(action.input_schema.clone()),
+        "$input",
+    )
+    .map_err(|violation| ActionRefusal::InvalidInput {
+        field: violation.path,
+    })?;
+    let normalized = schema
+        .decode_action_input(RuntimeValue::Object(raw_input.clone()), "$input")
+        .map_err(|violation| ActionRefusal::InvalidInput {
+            field: violation.path,
+        })?;
+    let RuntimeValue::Object(normalized) = normalized else {
+        return Err(ActionRefusal::InvalidInput {
+            field: "$input".to_owned(),
+        });
+    };
+    Ok(normalized)
+}
+
 fn prepare_action_input_inner<'a, X>(
     action: &'a ActionRoot,
     raw_input: &'a JsonObject,
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
+    let normalized = normalize_action_input::<X>(action, raw_input)?;
     let profile = ResourceLimitProfile::norn_limits_v1();
-    if !has_action_preparation_features(action) {
-        validate_action_input(action, raw_input)?;
+    if !has_action_preparation_features(action) && normalized == *raw_input {
+        validate_action_input(action, &normalized)?;
         return Ok(ActionInputPreparation {
             action,
             raw_input,
             action_artifact_id,
             action_version,
-            effective_input: raw_input.clone(),
+            effective_input: normalized,
             derived_values: Vec::new(),
             remaining_fuel: profile.turn.fuel_units,
             receipt_evidence_bytes: 0,
@@ -4540,7 +4575,7 @@ fn prepare_action_input_inner<'a, X>(
             max_bytes: max_receipt_bytes,
         });
     }
-    let mut effective_input = raw_input.clone();
+    let mut effective_input = normalized;
     for derivation in &action.derive {
         if derivation.input_required && !raw_input.contains_key(&derivation.field) {
             return Err(ActionRefusal::InvalidInput {
@@ -4552,8 +4587,8 @@ fn prepare_action_input_inner<'a, X>(
         }
     }
     check_canonical_object_bound::<X>("effective input", &effective_input, max_input_bytes)?;
-    let effective_bytes = if action.derive.is_empty() {
-        0 // The receipt retains only raw input when no derivation ran.
+    let effective_bytes = if action.derive.is_empty() && effective_input == *raw_input {
+        0 // Raw input already describes the exact execution value.
     } else {
         canonical_object_bytes::<X>(&effective_input)?
     };
@@ -4755,6 +4790,12 @@ fn check_action_record_size<X>(
     // Existing actions without the new preparation phases retain their
     // admitted input/receipt behavior, including command-only actions.
     if !has_action_preparation_features(action)
+        && !record.effective_input.as_ref().is_some_and(|effective| {
+            record
+                .input
+                .iter()
+                .any(|(key, value)| effective.get(key).is_some_and(|current| current != value))
+        })
         && !matches!(
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
@@ -5596,6 +5637,48 @@ mod reference_lineage_tests {
         reason = "kernel proof assertions"
     )]
     use super::*;
+
+    #[test]
+    fn decimal_input_preparation_keeps_wire_text_and_exact_execution_value() {
+        let mut action: ActionRoot = serde_json::from_str(
+            r#"{
+          "actionId":"test.decimal", "scopeRequired":["orgId","environmentId"],
+          "idempotent":true, "ledgered":true,
+          "inputSchema":{"type":"object","properties":{"amount":{"type":"decimal","scale":2}},
+            "required":["amount"],"additionalProperties":false},
+          "outputSchema":{"type":"object","properties":{},"additionalProperties":false}
+        }"#,
+        )
+        .expect("action");
+        action.derive.clear();
+        action.slice.clear();
+        action.preconditions.clear();
+        let raw = JsonObject::from([(
+            "amount".to_owned(),
+            RuntimeValue::String("9007199254740993.25".to_owned()),
+        )]);
+        let prepared = prepare_action_input::<()>(&action, &raw).expect("exact input");
+        assert_eq!(prepared.raw_input, &raw);
+        assert_eq!(
+            prepared.recorded_effective_input(),
+            Some(prepared.effective_input.clone())
+        );
+        assert!(prepared.receipt_evidence_bytes > 0);
+        assert_eq!(
+            prepared.effective_input.get("amount"),
+            Some(&RuntimeValue::Number(
+                Decimal::parse("9007199254740993.25").expect("decimal")
+            ))
+        );
+        let number = JsonObject::from([(
+            "amount".to_owned(),
+            RuntimeValue::Number(Decimal::from(1_u64)),
+        )]);
+        assert!(matches!(
+            prepare_action_input::<()>(&action, &number),
+            Err(ActionRefusal::InvalidInput { .. })
+        ));
+    }
 
     #[test]
     fn reference_proof_rejects_changed_outputs_and_keeps_added_guards_full() {

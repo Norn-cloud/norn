@@ -445,6 +445,19 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
         }
     }
     check_versions(commit, model, view)?;
+    for write in &commit.writes {
+        let concrete = view
+            .concrete(&model.canonical(&write.key))
+            .map_err(CommitError::Host)?;
+        if concrete
+            .as_ref()
+            .is_some_and(|concrete| model.catalog.immutable(concrete))
+        {
+            return Err(CommitError::ImmutableObject {
+                key: write.key.clone(),
+            });
+        }
+    }
     check_link_authority(commit, model, view, authorization)?;
     let links = live_links_after(commit, model, view)?;
     check_endpoints(commit, model, view, &links)?;

@@ -746,6 +746,7 @@ fn decide_output(rule: &RuleRoot) -> Result<Schema, AdmissionError> {
             | Schema::String(_)
             | Schema::Integer
             | Schema::Number
+            | Schema::Decimal(_)
             | Schema::Boolean
             | Schema::Null
             | Schema::Json

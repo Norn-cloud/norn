@@ -81,6 +81,7 @@ pub fn lower_entity_v1(v1: &EntityRootV1) -> EntityRootV2 {
     EntityRootV2 {
         entity_version: EntityIrVersion::V2_0,
         object_type: ObjectTypeDef {
+            immutable: false,
             name: ObjectTypeName(v1.object_kind.clone()),
             description: None,
             status: norn_ir::ResourceStatus::default(),
@@ -98,6 +99,7 @@ pub fn lower_entity_v1(v1: &EntityRootV1) -> EntityRootV2 {
             invariants: Vec::new(),
             lifecycles: Vec::new(),
             accounting_leg: None,
+            controls: None,
         },
         mutation_authority: v1.mutation_authority,
         extensions: v1.extensions.clone(),
@@ -108,6 +110,7 @@ pub fn lower_entity_v1(v1: &EntityRootV1) -> EntityRootV2 {
 #[must_use]
 pub fn lower_field_v1(name: &str, field: &EntityFieldV1) -> Property {
     Property {
+        protected: false,
         id: PropertyId(name.to_owned()),
         description: None,
         property_type: lower_field_type_v1(field),

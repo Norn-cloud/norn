@@ -470,6 +470,24 @@ pub static REGISTRY: &[CodeEntry] = &[
         "{relation} can never hold a tuple: from {witness} the rules [{rules}] force {left} = {right}",
         "0.2.0",
     ),
+    introduced(
+        "controls.validation.invalid_path",
+        Tier::T3,
+        "Invalid sensitive path declaration",
+        "0.2.0",
+    ),
+    introduced(
+        "controls.validation.refuted",
+        Tier::T3,
+        "Finite-model duty separation counterexample",
+        "0.2.0",
+    ),
+    introduced(
+        "controls.validation.witness_required",
+        Tier::T3,
+        "Kernel availability witness required",
+        "0.2.0",
+    ),
     entry(
         "customization.validation.invalid_payload",
         Tier::T2,
@@ -1973,6 +1991,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "object_type.validation.override_widens_nullability",
         Tier::T3,
         "property {property} is nullable, but the property {owner} declares is not; an override may only narrow",
+    ),
+    introduced(
+        "object_type.validation.protected_owned_row_field",
+        Tier::T3,
+        "kernel-owned row metadata cannot be protected: {detail}",
+        "0.2.0",
     ),
     entry(
         "object_type.validation.redundant_key",

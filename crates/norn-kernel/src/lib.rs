@@ -68,6 +68,7 @@ mod observations;
 pub mod quantity;
 pub mod refusal;
 pub mod result_reconciliation;
+mod rule_authority;
 pub mod snapshot_observe;
 mod version_check;
 // Hosts and the dependency-bounded reference harness share the input codec
@@ -121,3 +122,8 @@ pub use observations::{CommitId, Entropy, LogicalTime, Observations, World, Worl
 pub use refusal::{INTERNAL_MESSAGE, NOT_FOUND_MESSAGE, Refusable, Refusal, RefusalCategory};
 
 mod action_quantity;
+
+pub use rule_authority::{
+    AdmittedRule, RuleAdmissionError, RuleDecision, commit_rule_decision, evaluate_rule,
+    prepare_rule_decision,
+};

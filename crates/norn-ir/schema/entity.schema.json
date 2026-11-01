@@ -90,6 +90,38 @@
         }
       ]
     },
+    "Controls": {
+      "description": "Controls belonging to the enclosing object type.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "Closed wire profile.",
+          "$ref": "#/$defs/ControlsFormat"
+        },
+        "sensitivePaths": {
+          "description": "Ordered sensitive action sequences.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SensitivePath"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "sensitivePaths"
+      ]
+    },
+    "ControlsFormat": {
+      "description": "Versioned controls vocabulary.",
+      "oneOf": [
+        {
+          "description": "Alpha finite singleton-role checks.",
+          "type": "string",
+          "const": "norn.controls/1"
+        }
+      ]
+    },
     "DecimalLiteral": {
       "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
       "type": "string",
@@ -1196,6 +1228,10 @@
             }
           ]
         },
+        "controls": {
+          "description": "Definition-owned finite duty controls, inherited by subtypes.",
+          "$ref": "#/$defs/Controls"
+        },
         "description": {
           "type": "string"
         },
@@ -1209,6 +1245,10 @@
           "items": {
             "$ref": "#/$defs/KeySpec"
           }
+        },
+        "immutable": {
+          "description": "Append-only: existing instances cannot be changed or deleted. Inherited.",
+          "type": "boolean"
         },
         "implements": {
           "description": "Interfaces the type implements, in addition to those its supertypes\nimplement. Omitted when empty.",
@@ -1382,6 +1422,10 @@
           "items": {
             "$ref": "#/$defs/MarkingId"
           }
+        },
+        "protected": {
+          "description": "System-maintained: declared rules may write it, actions may not.",
+          "type": "boolean"
         },
         "type": {
           "description": "The value kind: inline, or a shared property type through `ref`.",
@@ -1840,6 +1884,32 @@
             "since"
           ]
         }
+      ]
+    },
+    "SensitivePath": {
+      "description": "A sensitive action sequence on the enclosing object type.",
+      "type": "object",
+      "properties": {
+        "actions": {
+          "description": "Exact action identities in required order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "objectType": {
+          "description": "Must equal the enclosing type, not an arbitrary external target.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "requireWitness": {
+          "description": "Require concrete availability evidence in addition to separation.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "actions"
       ]
     },
     "TextFormat": {

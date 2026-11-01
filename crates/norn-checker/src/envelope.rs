@@ -1650,6 +1650,19 @@ pub(crate) fn validate_closed_schema(
         ));
         return;
     };
+    if schema_type == "decimal" && matches!(profile.unions, ClosedSchemaUnions::ActionInput) {
+        if let Err(violation) =
+            norn_expr::schema::Schema::parse_action(&JsonValue::Object(schema.clone()), path)
+        {
+            diagnostics.push(invalid_diagnostic(
+                code,
+                violation.reason,
+                violation.path,
+                artifact_id,
+            ));
+        }
+        return;
+    }
     if !matches!(
         schema_type,
         "object" | "array" | "string" | "integer" | "number" | "boolean" | "null"

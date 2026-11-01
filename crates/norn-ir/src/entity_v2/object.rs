@@ -52,7 +52,7 @@ use super::invariant::Invariant;
 use super::lifecycle::Lifecycle;
 use super::link::{Link, LinkId};
 use super::naming_series::NamingSeriesIR;
-use super::property::{PROPERTY_TYPE_NAME_PATTERN, PropertyConstraints, PropertyType};
+use super::property::{PROPERTY_TYPE_NAME_PATTERN, PropertyConstraints, PropertyType, is_false};
 use super::status::ResourceStatus;
 use crate::members::{WholeNumber, present_non_null};
 use crate::posting::AccountingLegDeclaration;
@@ -144,6 +144,9 @@ impl KeyName {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ObjectTypeDef {
+    /// Append-only: existing instances cannot be changed or deleted. Inherited.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub immutable: bool,
     /// Unique name, across object types and interfaces, within the artifact
     /// set and against every installed base type.
     pub name: ObjectTypeName,
@@ -207,6 +210,14 @@ pub struct ObjectTypeDef {
     /// Inherited by subtypes. Omitted for object types that are not GL legs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accounting_leg: Option<AccountingLegDeclaration>,
+    /// Definition-owned finite duty controls, inherited by subtypes.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "super::controls::Controls")]
+    pub controls: Option<super::controls::Controls>,
 }
 
 /// A declared, parent-owned ordered collection of child objects.
@@ -231,6 +242,9 @@ pub struct OwnedChildCollection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Property {
+    /// System-maintained: declared rules may write it, actions may not.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub protected: bool,
     /// Unique id within the object type.
     pub id: PropertyId,
     #[serde(

@@ -1,0 +1,81 @@
+//! Closed controls wire contract and independent evidence axes.
+use norn_ir::ObjectTypeDef;
+use norn_ir::entity_v2::controls::{ControlStatus, ControlVerdict, Reachability};
+use serde_json::json;
+
+#[test]
+fn controls_are_optional_but_never_null() -> Result<(), serde_json::Error> {
+    let omitted: ObjectTypeDef = serde_json::from_value(json!({"name": "demo.Order"}))?;
+    assert!(omitted.controls.is_none());
+    assert!(
+        serde_json::from_value::<ObjectTypeDef>(json!({
+            "name": "demo.Order", "controls": null
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ObjectTypeDef>(json!({
+            "name": "demo.Order", "controls": {"format": "norn.controls/2", "sensitivePaths": []}
+        }))
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn verdict_wire_preserves_both_evidence_axes() -> Result<(), serde_json::Error> {
+    for verdict in [
+        ControlStatus::Proven,
+        ControlStatus::Refuted,
+        ControlStatus::Unknown,
+    ] {
+        for reachability in [
+            Reachability::Witnessed,
+            Reachability::Unknown,
+            Reachability::Unreachable,
+        ] {
+            let value = ControlVerdict {
+                object_type: norn_ir::ObjectTypeName("demo.Order".into()),
+                actions: vec!["demo.approve".into()],
+                verdict: verdict.clone(),
+                trace: if reachability == Reachability::Witnessed {
+                    vec![norn_ir::entity_v2::controls::ControlStep {
+                        role: "reviewer".into(),
+                        action: "demo.approve".into(),
+                    }]
+                } else {
+                    vec![]
+                },
+                reachability,
+                explanation: "finite model".into(),
+            };
+            assert_eq!(
+                serde_json::from_value::<ControlVerdict>(serde_json::to_value(&value)?)?,
+                value
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn witnessed_verdict_requires_trace_on_decode() {
+    assert!(
+        serde_json::from_value::<ControlVerdict>(json!({
+            "objectType":"demo.Order", "actions":["demo.approve"], "verdict":"unknown",
+            "reachability":"witnessed", "trace":[], "explanation":"finite model"
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn witnessed_verdict_requires_trace_on_encode() -> Result<(), serde_json::Error> {
+    let mut value: ControlVerdict = serde_json::from_value(json!({
+        "objectType":"demo.Order", "actions":["demo.approve"], "verdict":"unknown",
+        "reachability":"unknown", "trace":[], "explanation":"finite model"
+    }))?;
+    value.reachability = Reachability::Witnessed;
+    assert!(serde_json::to_value(&value).is_err());
+    Ok(())
+}
