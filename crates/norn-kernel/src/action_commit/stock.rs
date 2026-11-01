@@ -18,6 +18,8 @@ use crate::stock_posting::{
 pub struct StockPartitionInput {
     /// Authoritative company, item and warehouse identities.
     pub masters: [FactKey; 3],
+    /// Stock, SRBNB and COGS identities selected by the declared paths.
+    pub accounts: [String; 3],
     /// Quantity and acquisition cost read from owned lines, in millionths.
     pub lines: Vec<StockPostLine>,
     /// Fenced partition identity, including an absent first-post witness.
@@ -350,12 +352,12 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
             reader.account(&key, &binding.accounts.srbnb)?,
             reader.account(&key, &binding.accounts.cogs)?,
         ];
+        let uom = text::<H::Error>(&reader.fact(&item)?, "uom")?;
         let masters = [company.clone(), item, warehouse];
         let witness =
             partition_key(&masters).map_err(|_encoding| invalid("invalid partition identity"))?;
         let company_values = reader.fact(&company)?;
         let bindings = runtime_bindings(&company_values, &accounts, call)?;
-        let uom = text::<H::Error>(&reader.fact(&masters[1])?, "uom")?;
         let binding_pin = norn_ir::canonical::domain_hash_hex(
             b"norn.stock-bindings/1\0",
             &(
@@ -371,6 +373,7 @@ pub fn prepare_stock_snapshot<H: CellHost + ?Sized>(
             .entry(masters.clone())
             .or_insert(StockPartitionInput {
                 masters,
+                accounts,
                 lines: vec![],
                 witness,
                 history: vec![],
@@ -463,7 +466,10 @@ fn runtime_bindings<X>(
 }
 
 /// Lower the authorized snapshot; refusals disclose only authorized identities.
-pub(super) fn plan_stock_partition<X>(
+///
+/// # Errors
+/// Returns typed valuation refusals without writes.
+pub fn plan_stock_partition<X>(
     partition: &StockPartitionInput,
     operation: StockPostOperation,
     posting_id: &str,
@@ -659,6 +665,7 @@ mod tests {
             runtime_bindings::<std::convert::Infallible>(&company, &accounts, &call).unwrap();
         let p = StockPartitionInput {
             masters,
+            accounts,
             binding_pin: "pin".into(),
             witness: partition,
             history,
