@@ -408,30 +408,30 @@ mod tests {
         Model::from_definitions(&definitions, &[]).expect("model")
     }
     fn tombstone_dependency(store: &mut CellStore, scope: &str) {
-            for write in [
-                FactWriteRow::Put {
-                    object_type: "test.ReceiptTarget".into(),
-                    key: "ghost".into(),
-                    values: norn_ir::RuntimeObject::from([(
-                        "id".into(),
-                        RuntimeValue::String("ghost".into()),
-                    )]),
-                },
-                FactWriteRow::Delete {
-                    object_type: "test.ReceiptTarget".into(),
-                    key: "ghost".into(),
-                },
-            ] {
-                store
-                    .commit(&CommitBatch {
-                        world: MAIN_WORLD.into(),
-                        scope: scope.to_owned(),
-                        logical_time: 1_790_000_000_000,
-                        writes: vec![write],
-                        ..CommitBatch::default()
-                    })
-                    .expect("tombstone");
-            }
+        for write in [
+            FactWriteRow::Put {
+                object_type: "test.ReceiptTarget".into(),
+                key: "ghost".into(),
+                values: norn_ir::RuntimeObject::from([(
+                    "id".into(),
+                    RuntimeValue::String("ghost".into()),
+                )]),
+            },
+            FactWriteRow::Delete {
+                object_type: "test.ReceiptTarget".into(),
+                key: "ghost".into(),
+            },
+        ] {
+            store
+                .commit(&CommitBatch {
+                    world: MAIN_WORLD.into(),
+                    scope: scope.to_owned(),
+                    logical_time: 1_790_000_000_000,
+                    writes: vec![write],
+                    ..CommitBatch::default()
+                })
+                .expect("tombstone");
+        }
     }
     fn setup(path: &std::path::Path) -> (Cell, DispatchedCommand, FunctionReceipt, Checks, Model) {
         setup_with_pin(path, false)
@@ -520,7 +520,9 @@ mod tests {
                 ..CommitBatch::default()
             })
             .expect("enqueue");
-        if pin_absence { tombstone_dependency(&mut store, &dispatched.invocation.tenant); }
+        if pin_absence {
+            tombstone_dependency(&mut store, &dispatched.invocation.tenant);
+        }
         let result = receipt.clone();
         let mut cell = Cell::new(store, dispatched.invocation.tenant.clone(), move |_| {
             norn_ir::runtime::encode(&result)
