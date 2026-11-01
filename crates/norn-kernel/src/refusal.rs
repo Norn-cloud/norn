@@ -392,10 +392,29 @@ fn lifecycle_guard(
 
 impl<X> DecisionRefusal<X> {
     fn lifecycle_guard_reason(&self) -> Option<RefusalReason> {
-        let (key, transition, guard, error, diagnostic) = if let Self::GuardFalse { key, transition, guard, diagnostic } = self {
+        let (key, transition, guard, error, diagnostic) = if let Self::GuardFalse {
+            key,
+            transition,
+            guard,
+            diagnostic,
+        } = self
+        {
             (key, transition, guard, None, diagnostic)
-        } else if let Self::GuardError { key, transition, guard, reason, diagnostic } = self {
-            (key.as_ref(), transition, guard, Some(reason.as_str()), diagnostic)
+        } else if let Self::GuardError {
+            key,
+            transition,
+            guard,
+            reason,
+            diagnostic,
+        } = self
+        {
+            (
+                key.as_ref(),
+                transition,
+                guard,
+                Some(reason.as_str()),
+                diagnostic,
+            )
         } else {
             return None;
         };
@@ -405,7 +424,8 @@ impl<X> DecisionRefusal<X> {
             ("lifecycle.guard", "decision.guard_false")
         };
         Some(RefusalReason {
-            law: law.to_owned(), subject: key.to_string(),
+            law: law.to_owned(),
+            subject: key.to_string(),
             values: lifecycle_guard(transition, guard, error, diagnostic.map(|_| underlying)),
         })
     }
@@ -467,7 +487,9 @@ impl<X> DecisionRefusal<X> {
                     ("transition", RuntimeValue::String(transition.clone())),
                 ]),
             )),
-            Self::GuardFalse { .. } | Self::GuardError { .. } => return self.lifecycle_guard_reason(),
+            Self::GuardFalse { .. } | Self::GuardError { .. } => {
+                return self.lifecycle_guard_reason();
+            }
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
