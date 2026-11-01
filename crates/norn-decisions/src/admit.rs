@@ -123,7 +123,10 @@ impl AdmittedDecision {
         let mut checked = BTreeMap::new();
         let mut stack = vec![(root.rule_id.as_str(), root_graph, 0_usize)];
         while let Some((rule_id, graph, depth)) = stack.pop() {
-            for content in sub_decision_calls(graph) {
+            for node in &graph.nodes {
+                let JdmNode::DecisionNode { content, .. } = node else {
+                    continue;
+                };
                 let key = content.key.as_str();
                 let child_depth = depth.saturating_add(1);
                 let sub = sub_decisions.get(key).ok_or_else(|| {
@@ -289,9 +292,9 @@ fn decision_graph(rule: &RuleRoot, contract: RuleContractV2) -> Result<&JdmGraph
     Ok(graph)
 }
 
-fn sub_decision_calls(graph: &JdmGraph) -> impl Iterator<Item = &JdmSubDecisionContent> {
+fn sub_decision_keys(graph: &JdmGraph) -> impl Iterator<Item = &str> {
     graph.nodes.iter().filter_map(|node| match node {
-        JdmNode::DecisionNode { content, .. } => Some(content),
+        JdmNode::DecisionNode { content, .. } => Some(content.key.as_str()),
         JdmNode::InputNode { .. }
         | JdmNode::OutputNode { .. }
         | JdmNode::ExpressionNode { .. }
@@ -892,15 +895,9 @@ fn refuse_nested_folds(
             "unsupported nested step graph",
         ));
     }
-    for content in sub_decision_calls(graph) {
-        if let Some(child) = closure.get(&content.key) {
-            refuse_nested_folds(
-                &content.key,
-                child,
-                closure,
-                depth.saturating_add(1),
-                checked,
-            )?;
+    for key in sub_decision_keys(graph) {
+        if let Some(child) = closure.get(key) {
+            refuse_nested_folds(key, child, closure, depth.saturating_add(1), checked)?;
         }
     }
     Ok(())
