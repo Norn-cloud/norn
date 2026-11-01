@@ -250,7 +250,7 @@ fn post_value_rejects_balanced_misvaluation_and_event_mismatch() {
         },
         Candidate {
             counterpart: 0,
-            ..c.clone()
+            ..c
         },
     ] {
         assert_eq!(s.submit(&bad, true, None), Outcome::Refused);
