@@ -176,7 +176,6 @@
     "crates/norn-checker/src/norm_precedence.rs",
     "crates/norn-checker/src/object_types.rs",
     "crates/norn-checker/src/obligations.rs",
-    "crates/norn-checker/src/obligations/induction.rs",
     "crates/norn-checker/src/property_codec.rs",
     "crates/norn-checker/src/property_types.rs",
     "crates/norn-checker/src/receipt.rs",
@@ -451,6 +450,9 @@
     "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
-    "verification/stripmine-2026-08-22/scripts/validate.sh"
+    "verification/stripmine-2026-08-22/scripts/validate.sh",
+    "tools/norn-ts/fixtures/stock/stock.source.ts",
+    "tools/norn-ts/test/stock-definitions.test.ts",
+    "crates/norn-checker/src/obligations/induction.rs"
   ]
 }
