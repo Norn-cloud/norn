@@ -6,8 +6,7 @@
 //! The function is expected to populate a list of output values.
 //!
 //! The output can change at times that are joins of input times, not only at input times themselves,
-//! and the operator must determine at which times to re-evaluate the reduction. A machine-checked
-//! account of which times suffice lives in `formal/Differential/Coverage.lean`.
+//! and the operator must determine at which times to re-evaluate the reduction.
 
 use crate::Data;
 
@@ -820,16 +819,14 @@ mod cursors {
     }
 }
 
-/// A second [`ReduceTactic`], written directly from the incremental model in
-/// `formal/Differential/Model.lean`.
+/// A second [`ReduceTactic`] using separate determination and application phases.
 ///
 /// Per key it runs two phases over one cursor walk. Phase 1 (determination) computes the
-/// interesting times as the truncated join-closure over {input, output, seeds} — the model's
-/// `Reached` — advancing by meets so the synthetic set stays bounded. Phase 2 (application) walks
+/// interesting times as the truncated join-closure over {input, output, seeds},
+/// advancing by meets so the synthetic set stays bounded. Phase 2 (application) walks
 /// exactly those times in order, maintaining tight input/output accumulations by meets, and emits
-/// the corrections — the model's `emit_correct`. Determination never consults the output produced
-/// this round (it finishes first), so this tactic embodies the proven algorithm exactly and is the
-/// clean subject for differential testing against [`cursors::CursorTactic`].
+/// the corrections. Determination never consults the output produced this round (it finishes
+/// first), allowing differential testing against [`cursors::CursorTactic`].
 pub(crate) mod reference {
 
     use super::*;
@@ -1059,7 +1056,7 @@ pub(crate) mod reference {
     /// The two-phase per-key engine.
     ///
     /// Phase 1 (determination) reads the input/output/seed *times* and closes them into `active`
-    /// (the interesting times) and the pended set — Model.lean's `Reached`, directly. Phase 2
+    /// (the interesting times) and the pended set. Phase 2
     /// (application) walks the same, still-loaded histories for *values* and emits corrections.
     pub struct ReferenceThinker<V1, V2, V, T, D1, D2> {
         input_history: ValueHistory<V1, T, D1>,
