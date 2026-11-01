@@ -367,3 +367,47 @@ fn source_hash_order_is_independent_of_unicode_spelling() {
         composed.content_sha256().expect("hash")
     );
 }
+
+#[test]
+fn verbatim_execution_requires_more_than_the_norn1_artifact_hash() {
+    let mut hashes = Vec::new();
+    let mut results = Vec::new();
+    for literal in ["é", "e\u{301}"] {
+        let expression = format!("len('{literal}')");
+        let mut document = valid_rule();
+        document["payload"]["outputSchema"]["properties"]["band"] = json!({"type":"integer"});
+        document["payload"]["graph"]["nodes"][4]["content"]["expressions"][1]["value"] =
+            json!(expression);
+        let source = norn_ir::runtime::encode(&document).expect("source");
+        let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
+            &[source],
+            &[],
+            &BTreeSet::new(),
+            None,
+            &ResourceLimitProfile::norn_limits_v1(),
+            None,
+        )
+        .expect("receipt");
+        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+        hashes.push(checked.receipt.artifact_set.artifacts[0].sha256.clone());
+        results.push(
+            norn_expr::Expression::compile(&expression)
+                .expect("expression")
+                .evaluate(
+                    &norn_expr::Value::Null,
+                    norn_expr::EvaluationBudget::new(100),
+                )
+                .expect("evaluation")
+                .value()
+                .clone(),
+        );
+    }
+    assert_eq!(
+        hashes[0], hashes[1],
+        "the existing Norn1 profile is preserved"
+    );
+    assert_eq!(
+        results,
+        vec![norn_expr::Value::from(2), norn_expr::Value::from(3)]
+    );
+}
