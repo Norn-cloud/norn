@@ -41,7 +41,7 @@ use norn_ir::identifier_limits::HISTORICAL_IDENTIFIER_PROFILE;
 pub use norn_ir::identifier_limits::IDENTIFIER_ADMISSION_PROFILE;
 use norn_ir::{
     ArtifactEnvelope, DiagnosticRemediation, DiagnosticSeverity, FlowSourceMap, LimitProfileRef,
-    PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
+    PropertyTypeDef, PropertyTypeName, ResourceLimitProfile, RuntimeValue,
 };
 
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
@@ -367,6 +367,28 @@ pub fn check_artifact_set_with_receipt(
         IDENTIFIER_ADMISSION_PROFILE,
         None,
     )
+}
+
+/// Check retained exact semantic sources and bind their Norn1 bytes.
+/// Inline editor layout is extracted by the existing admission boundary.
+///
+/// # Errors
+/// Invalid source/envelope, canonicalization, or receipt construction fails.
+pub fn check_artifact_sources_with_receipt(
+    artifacts: &[RuntimeValue],
+    base: &[RuntimeValue],
+    registry: &BTreeSet<PropertyTypeName>,
+    tenant: Option<crate::TenantLayer<'_>>,
+    limits: &ResourceLimitProfile,
+    flow_source_map: Option<&FlowSourceMap>,
+) -> Result<CheckedArtifactSet, ReceiptError> {
+    let sources = ReceiptSources::new(artifacts, base)?;
+    let context = EntityArtifactSetContext {
+        registry,
+        base: &sources.base,
+        tenant,
+    };
+    check_artifact_set_with_flow_source_map(&sources, &context, limits, flow_source_map)
 }
 
 /// Check a candidate artifact set and bind an optional non-executable flow
