@@ -123,7 +123,7 @@ Run the sampled three-surface acceptance with the compiled CLI:
 
 ```sh
 cargo build --locked -p norn-cli
-NORN_CLI="${CARGO_TARGET_DIR:-target}/debug/norn" cargo test --locked -p norn-api surface_alpha_parity_and_no_write_refusals -- --ignored
+NORN_CLI="$(cd "${CARGO_TARGET_DIR:-target}" && pwd)/debug/norn" cargo test --locked -p norn-api surface_alpha_parity_and_no_write_refusals -- --ignored
 ```
 
 The cancellation guard vector starts from an approved order with a trusted
