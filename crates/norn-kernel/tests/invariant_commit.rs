@@ -39,6 +39,20 @@ use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
 
 const ITEM: &str = "invariant.Item";
+
+#[test]
+fn obs_evidence_unbound_law_pin_cannot_claim_verified_classification() {
+    let catalog = TypeCatalog::new(&[]);
+    let pin = DataQualityRuleRef::Law {
+        artifact_id: "demo.purity.law".into(),
+        law_id: "purity_in_range".into(),
+        version: "sha256:definition-v1".into(),
+    };
+    assert_eq!(
+        catalog.classify_data_quality_rule(&pin).expect("classification"),
+        norn_kernel::DataQualityRuleClassification::Unverified,
+    );
+}
 const SUBTYPE: &str = "invariant.SpecialItem";
 const INTERFACE: &str = "invariant.Named";
 const FUEL_ITEM: &str = "invariant.FuelItem";

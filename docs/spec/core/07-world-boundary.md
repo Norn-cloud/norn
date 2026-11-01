@@ -16,6 +16,15 @@ Reuse `ConnectorRoot`, `SourceSchemaIr`, `MappingIr`, mapping evidence/gaps, `Fu
 
 Functions use canonical `FunctionManifest {abi, function_id, version, input_schema, output_schema, error_schema, implementation, dependency_closure, runtime, platform, capabilities, determinism, bounds, cache, retention, steps}`. Admission rejects a missing `dependency_closure` and requires its declared digest to equal the digest computed from its entries. WIT/language bindings must agree; opaque scoped secret handles resolve only inside authorized performers, never the pure evaluator.
 
+The checker also refuses duplicate or out-of-order `dependency_closure.entries`;
+the declared order is canonical, not silently sorted or deduplicated. An
+`OciImage` implementation with an empty dependency closure refuses admission.
+
+OBS-EVIDENCE-1 findings may reference a law by its artifact ID, stable LawIR ID
+and canonical declaration digest. A law pin records identity; it does not prove
+evaluation, authorize promotion or inherit an invariant's verified classification.
+The observation evaluator must bind that pin to the retained governing law.
+
 ## Ingestion versus governed action
 
 [Owner] Imported events already happened. Validate their framing/provenance; durably capture representable source observations and advance the cursor atomically with capture. Mapping/law violations produce **findings + quarantine**, not a refused source fact. Quarantined rows retain raw evidence and stay out of authoritative aggregates unless an explicit observed-data question includes them with quality labels. Invalid transport/authentication is still a boundary failure; it is not a business-law refusal of an external occurrence.

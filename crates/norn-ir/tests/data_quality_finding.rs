@@ -25,6 +25,51 @@ fn invariant_rule(version: &str) -> DataQualityRuleRef {
     }
 }
 
+#[test]
+fn obs_evidence_law_pin_round_trips_and_refuses_unknown_members() {
+    let law = DataQualityRuleRef::Law {
+        artifact_id: "demo.purity.law".into(), law_id: "purity_in_range".into(),
+        version: "sha256:definition-v1".into(),
+    };
+    let value = serde_json::to_value(&law).expect("law pin encodes");
+    assert_eq!(value["kind"], "law");
+    assert_eq!(value["lawId"], "purity_in_range");
+    assert_eq!(serde_json::from_value::<DataQualityRuleRef>(value.clone()).expect("law pin decodes"), law);
+    let mut unknown = value;
+    unknown["proved"] = true.into();
+    assert!(serde_json::from_value::<DataQualityRuleRef>(unknown).is_err());
+}
+
+proptest::proptest! {
+    #[test]
+    fn obs_evidence_law_identity_survives_redelivery(
+        law_id in "[a-z][a-z0-9_]{0,30}", version in "[a-f0-9]{64}",
+        delivery in "[a-z0-9]{1,40}",
+    ) {
+        let original = finding("initial", "2026-10-01T09:30:00Z", "2026-10-01T09:30:00Z",
+            "2026-10-01T09:30:01Z", DataQualityFindingStatus::Open, DataQualitySeverity::Error);
+        let make = |pin: DataQualityRuleRef, observation: &str| DataQualityFinding::v2(
+            pin, original.subjects.clone(), original.severity, original.message.clone(),
+            original.outcome.clone(), vec![lineage("2026-10-01T09:30:01Z", &[observation])],
+            original.first_seen.clone(), original.last_seen.clone(), original.status,
+        ).expect("finding encodes");
+        let pin = DataQualityRuleRef::Law {
+            artifact_id: "demo.purity.law".into(), law_id: law_id.clone(), version: version.clone(),
+        };
+        let first = make(pin.clone(), "initial");
+        let replay = make(pin, &delivery);
+        proptest::prop_assert_eq!(&first.id, &replay.id);
+        proptest::prop_assert_eq!(&first.dedupe_key, &replay.dedupe_key);
+        let changed = make(DataQualityRuleRef::Law {
+            artifact_id: "demo.purity.law".into(), law_id, version: format!("changed:{version}"),
+        }, &delivery);
+        proptest::prop_assert_ne!(first.id, changed.id);
+        let encoded = serde_json::to_value(&replay).expect("finding serializes");
+        let decoded: DataQualityFinding = serde_json::from_value(encoded).expect("finding decodes");
+        proptest::prop_assert_eq!(decoded, replay);
+    }
+}
+
 fn lineage(recorded_at: &str, observation_ids: &[&str]) -> DataQualityLineage {
     DataQualityLineage::new(
         InstanceProvenance {
