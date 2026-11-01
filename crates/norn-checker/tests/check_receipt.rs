@@ -775,7 +775,7 @@ fn retained_warning_evidence_verifies_but_unreconstructable_legacy_hash_is_refus
 
 fn exact_setting(number: &str) -> norn_ir::RuntimeValue {
     norn_ir::RuntimeValue::from_json_text(format!(
-        r#"{{"irVersion":"0.1","artifactId":"test.setting","kind":"setting","namespace":"test","name":"Setting","version":"0.1.0","lifecycle":"draft","scope":{{"orgId":"org_demo","environmentId":"dev"}},"dependencies":[],"provenance":{{"source":"authoring_sdk"}},"payload":{{"settingVersion":"0.1","settingKey":"test.value","valueType":"number","value":{number},"effectiveFrom":"2026-01-01T00:00:00Z","review":{{"state":"approved","reviewedBy":"reviewer","reviewedAt":"2026-01-01T00:00:00Z","reason":"synthetic"}},"scopeRequired":["orgId","environmentId"]}}}}"#
+        r#"{{"irVersion":"0.1","artifactId":"test.cafe\u0301","kind":"setting","namespace":"test","name":"Setting","version":"0.1.0","lifecycle":"draft","scope":{{"orgId":"org_demo","environmentId":"dev"}},"dependencies":[],"provenance":{{"source":"authoring_sdk"}},"payload":{{"settingVersion":"0.1","settingKey":"test.value","valueType":"number","value":{number},"effectiveFrom":"2026-01-01T00:00:00Z","review":{{"state":"approved","reviewedBy":"reviewer","reviewedAt":"2026-01-01T00:00:00Z","reason":"synthetic"}},"scopeRequired":["orgId","environmentId"]}}}}"#
     )).expect("exact setting")
 }
 
@@ -1095,12 +1095,9 @@ fn fixture_sources(
     base: &[norn_ir::ArtifactEnvelope],
 ) -> norn_checker::receipt::ReceiptSources {
     let candidates = norn_ir::runtime::encode(artifacts).unwrap();
-    let installed = norn_ir::runtime::encode(base).unwrap();
-    norn_checker::receipt::ReceiptSources::new(
-        candidates.as_array().unwrap(),
-        installed.as_array().unwrap(),
-    )
-    .unwrap()
+    let base = norn_ir::runtime::encode(base).unwrap();
+    norn_checker::ReceiptSources::new(candidates.as_array().unwrap(), base.as_array().unwrap())
+        .unwrap()
 }
 
 fn verify_admission_receipt(
