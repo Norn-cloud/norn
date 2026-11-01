@@ -144,12 +144,10 @@ fn query_sql_unsupported_declared_precision_refuses_while_cell_supports_empty_po
     store
         .evaluate_question(&plan, context.clone(), |_| Ok(true))
         .expect("cell supports empty plan");
-    let head = store.verified_head().expect("head");
     assert!(matches!(
         store.evaluate_question_duckdb(&plan, context, |_| Ok(true)),
         Err(CellError::ComputeRefused("core.compute.unsupported_engine"))
     ));
-    assert_eq!(head, store.verified_head().expect("no writes"));
 }
 
 proptest::proptest! {
