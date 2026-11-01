@@ -250,29 +250,39 @@ pub(crate) fn verify<S: SqlEngine>(
             return Err(QuantityError::Corrupt.into());
         }
         floor = body.logical_time;
-        if let Some(request) = &body.quantity {
-            replay.request(
-                body,
-                request,
-                body.quantity_result
-                    .as_ref()
-                    .ok_or(QuantityError::Corrupt)?,
-            )?;
-            let expected_timer = body
+        if let Some(requests) = &body.quantity {
+            let results = body
                 .quantity_result
                 .as_ref()
-                .ok_or(QuantityError::Corrupt)?
-                .reservation
-                .as_ref()
-                .filter(|(_, value)| value.status == "open")
-                .map(|(id, _)| super::expiry_timer_id(&body.world, &request.ledger_id, id))
-                .transpose()?;
+                .ok_or(QuantityError::Corrupt)?;
+            if requests.is_empty()
+                || requests.len() > 100
+                || requests.len() != results.len()
+                || requests
+                    .iter()
+                    .map(|request| &request.ledger_id)
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    != requests.len()
+            {
+                return Err(QuantityError::Corrupt.into());
+            }
+            let mut timers = Vec::new();
+            for (request, result) in requests.iter().zip(results.iter()) {
+                replay.request(body, request, result)?;
+                if let Some((id, value)) = &result.reservation
+                    && value.status == "open"
+                {
+                    timers.push(super::expiry_timer_id(&body.world, &request.ledger_id, id)?);
+                }
+            }
             let scheduled: Vec<_> = body
                 .scheduled
                 .iter()
                 .filter(|id| id.starts_with(super::EXPIRY_TIMER_PREFIX))
+                .cloned()
                 .collect();
-            if scheduled != expected_timer.as_ref().into_iter().collect::<Vec<_>>() {
+            if scheduled != timers {
                 return Err(QuantityError::Corrupt.into());
             }
         }

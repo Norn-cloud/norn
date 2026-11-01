@@ -172,7 +172,7 @@ fn first_quantity_upgrade_rolls_back_at_every_write_seam_and_replays_lost_reply(
     let batch = CommitBatch {
         world: "main".into(),
         scope: "tenant/dev".into(),
-        quantity: Some(define()),
+        quantity: Some((define()).into()),
         idempotency_key: Some("define".into()),
         ..CommitBatch::default()
     };
@@ -242,7 +242,7 @@ fn quantity_boundary_projection_cannot_be_shifted_or_removed() {
             .commit_fenced(&CommitBatch {
                 world: "main".into(),
                 scope: "tenant/dev".into(),
-                quantity: Some(define()),
+                quantity: Some((define()).into()),
                 idempotency_key: Some("define".into()),
                 ..CommitBatch::default()
             })
@@ -255,7 +255,7 @@ fn quantity_boundary_projection_cannot_be_shifted_or_removed() {
                 .commit_fenced(&CommitBatch {
                     world: "main".into(),
                     scope: "tenant/dev".into(),
-                    quantity: Some(post(1, "fund", "fund", 20)),
+                    quantity: Some((post(1, "fund", "fund", 20)).into()),
                     idempotency_key: Some("fund".into()),
                     ..CommitBatch::default()
                 })
@@ -280,7 +280,7 @@ fn immutable_quantity_boundary_refuses_coordinated_legacy_downgrade_and_redefini
             .commit_fenced(&CommitBatch {
                 world: "main".into(),
                 scope: "tenant/dev".into(),
-                quantity: Some(define()),
+                quantity: Some((define()).into()),
                 idempotency_key: Some("define".into()),
                 ..CommitBatch::default()
             })
@@ -314,7 +314,7 @@ fn immutable_quantity_boundary_refuses_coordinated_legacy_downgrade_and_redefini
             store.commit_fenced(&CommitBatch {
                 world: "main".into(),
                 scope: "tenant/dev".into(),
-                quantity: Some(replacement),
+                quantity: Some((replacement).into()),
                 idempotency_key: Some("redefine-at-zero".into()),
                 ..CommitBatch::default()
             }),
@@ -343,7 +343,7 @@ fn legacy_open_handle_observes_another_handles_immutable_quantity_upgrade() {
         .commit_fenced(&CommitBatch {
             world: "main".into(),
             scope: "tenant/dev".into(),
-            quantity: Some(define()),
+            quantity: Some((define()).into()),
             idempotency_key: Some("define".into()),
             ..CommitBatch::default()
         })
@@ -352,7 +352,7 @@ fn legacy_open_handle_observes_another_handles_immutable_quantity_upgrade() {
         .commit_fenced(&CommitBatch {
             world: "main".into(),
             scope: "tenant/dev".into(),
-            quantity: Some(post(1, "fund", "fund", 20)),
+            quantity: Some((post(1, "fund", "fund", 20)).into()),
             idempotency_key: Some("fund".into()),
             ..CommitBatch::default()
         })
@@ -768,7 +768,7 @@ fn caller_quantity_intent_cannot_hide_changed_combined_inputs() {
         world: "main".into(),
         scope: "tenant/dev".into(),
         idempotency_key: Some("combined".into()),
-        quantity: Some(define()),
+        quantity: Some((define()).into()),
         quantity_intent: Some("caller-controlled".into()),
         writes: vec![FactWriteRow::Put {
             object_type: "fixture.Marker".into(),
@@ -793,6 +793,9 @@ fn caller_quantity_intent_cannot_hide_changed_combined_inputs() {
         .quantity
         .as_mut()
         .expect("quantity")
+        .0
+        .first_mut()
+        .expect("single")
         .operation
     {
         *account_limit += 1;
@@ -878,6 +881,8 @@ fn exact_retry_survives_time_and_state_changes_but_changed_input_conflicts() {
         .quantity
         .as_ref()
         .expect("original request")
+        .first()
+        .expect("single")
         .balance_versions;
     for fence in &mut stale.balance_versions {
         if let Some(old) = original.iter().find(|old| {
@@ -1034,7 +1039,7 @@ async fn reopen_restore_replay_preserve_heads_holds_history_and_receipts() {
         restored.commit(&CommitBatch {
             world: "main".into(),
             scope: "tenant/dev".into(),
-            quantity: Some(regressed),
+            quantity: Some((regressed).into()),
             idempotency_key: Some("regressed".into()),
             ..CommitBatch::default()
         }),
@@ -1073,7 +1078,7 @@ fn crash_before_commit_rolls_back_and_lost_reply_replays_once() {
     let mut batch = CommitBatch {
         world: "main".into(),
         scope: "tenant/dev".into(),
-        quantity: Some(req.clone()),
+        quantity: Some((req.clone()).into()),
         idempotency_key: Some("fault".into()),
         ..CommitBatch::default()
     };
@@ -1083,13 +1088,20 @@ fn crash_before_commit_rolls_back_and_lost_reply_replays_once() {
     for (id, req) in [("define", define()), ("fund", post(1, "fund", "fund", 20))] {
         store
             .commit_fenced(&CommitBatch {
-                quantity: Some(req),
+                quantity: Some((req).into()),
                 idempotency_key: Some(id.into()),
                 ..batch.clone()
             })
             .expect("setup");
     }
-    batch.quantity.as_mut().expect("quantity").balance_versions = store
+    batch
+        .quantity
+        .as_mut()
+        .expect("quantity")
+        .0
+        .first_mut()
+        .expect("single")
+        .balance_versions = store
         .read()
         .quantity_balance_versions("main", &req)
         .expect("fences");
@@ -1225,7 +1237,7 @@ fn quantity_scope_must_match_the_file_binding() {
     let batch = CommitBatch {
         world: "main".into(),
         scope: "another/dev".into(),
-        quantity: Some(define()),
+        quantity: Some((define()).into()),
         idempotency_key: Some("define".into()),
         ..CommitBatch::default()
     };
@@ -1821,10 +1833,10 @@ impl QuantityFixture for SqliteCell<String, String, String> {
             .receipt_by_idempotency_key("main", key)
             .map_err(norn_kernel::CommitError::Host)?
         {
-            if let Some(original) = prior.body.quantity.as_ref() {
+            if let Some(original) = prior.body.quantity {
                 request
                     .balance_versions
-                    .clone_from(&original.balance_versions);
+                    .clone_from(&original.first().expect("single").balance_versions);
             }
         } else {
             request.balance_versions = self
@@ -1847,10 +1859,10 @@ impl QuantityFixture for SqliteCell<String, String, String> {
             .read()
             .receipt_by_idempotency_key("main", key)?
         {
-            if let Some(original) = prior.body.quantity.as_ref() {
+            if let Some(original) = prior.body.quantity {
                 request
                     .balance_versions
-                    .clone_from(&original.balance_versions);
+                    .clone_from(&original.first().expect("single").balance_versions);
             }
         } else if request.balance_versions.is_empty()
             && let Ok(fences) = self
@@ -1869,10 +1881,12 @@ trait QuantityStoreFixture {
 impl QuantityStoreFixture for CellStore {
     fn commit_fenced(&mut self, batch: &CommitBatch) -> Result<CommitOutcome, CellError> {
         let mut batch = batch.clone();
-        if let Some(request) = &mut batch.quantity
-            && let Ok(fences) = self.read().quantity_balance_versions(&batch.world, request)
-        {
-            request.balance_versions = fences;
+        if let Some(requests) = &mut batch.quantity {
+            for request in &mut requests.0 {
+                if let Ok(fences) = self.read().quantity_balance_versions(&batch.world, request) {
+                    request.balance_versions = fences;
+                }
+            }
         }
         self.commit(&batch)
     }
@@ -2085,7 +2099,7 @@ fn concurrent_retry_reconciles_transaction_timestamp_without_changing_identity()
         .commit_fenced(&CommitBatch {
             world: "main".into(),
             scope: "tenant/dev".into(),
-            quantity: Some(define()),
+            quantity: Some((define()).into()),
             idempotency_key: Some("define".into()),
             ..CommitBatch::default()
         })
@@ -2098,7 +2112,7 @@ fn concurrent_retry_reconciles_transaction_timestamp_without_changing_identity()
     let mut first = CommitBatch {
         world: "main".into(),
         scope: "tenant/dev".into(),
-        quantity: Some(quantity),
+        quantity: Some((quantity).into()),
         idempotency_key: Some("same".into()),
         logical_time: 5,
         ..CommitBatch::default()
@@ -2110,8 +2124,14 @@ fn concurrent_retry_reconciles_transaction_timestamp_without_changing_identity()
         receipt.receipt()
     );
     let before = store.read().dump().expect("dump");
-    if let QuantityOperation::Post { parameters, .. } =
-        &mut first.quantity.as_mut().expect("quantity").operation
+    if let QuantityOperation::Post { parameters, .. } = &mut first
+        .quantity
+        .as_mut()
+        .expect("quantity")
+        .0
+        .first_mut()
+        .expect("single")
+        .operation
     {
         *parameters = quantity_support::parameters(21);
     }
@@ -2146,7 +2166,7 @@ fn clock_floor_is_cell_wide_and_restart_and_fork_keep_independent_floors() {
             world: "main".into(),
             scope: "tenant/dev".into(),
             logical_time: 99,
-            quantity: Some(other.clone()),
+            quantity: Some((other.clone()).into()),
             idempotency_key: Some("other".into()),
             ..CommitBatch::default()
         }),

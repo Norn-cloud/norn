@@ -235,7 +235,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             scope: self.scope.clone(),
             logical_time,
             idempotency_key: Some(idempotency_key.to_owned()),
-            quantity: Some(request.clone()),
+            quantity: Some(request.clone().into()),
             ..CommitBatch::default()
         })
     }
@@ -297,7 +297,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
                 timer_id: id,
                 incarnation: pending.commit_seq,
             }),
-            quantity: Some(request),
+            quantity: Some(request.into()),
             ..CommitBatch::default()
         })?;
         Ok(true)
@@ -1366,7 +1366,7 @@ where
             .retain(|read| !property_reads.iter().any(|(source, _)| source == read));
         batch.marking_derived_properties = derived.to_vec();
         if let Some((request, key)) = quantity {
-            batch.quantity = Some(request.clone());
+            batch.quantity = Some(request.clone().into());
             batch.idempotency_key = Some(key.to_owned());
             if let Some(receipt) = self
                 .store
