@@ -445,7 +445,10 @@ fn a_transition_action_names_its_transition_in_meta() {
     });
     let bound: ActionRoot = serde_json::from_value(bound.clone()).expect("receipt effect decodes");
     let projected = serde_json::to_value(action_tool(&bound).expect("projects")).expect("encodes");
-    assert_eq!(projected["_meta"]["norn/transition"]["acceptReceipt"], serde_json::to_value(bound).expect("encodes")["effectProgram"]["acceptReceipt"]);
+    assert_eq!(
+        projected["_meta"]["norn/transition"]["acceptReceipt"],
+        serde_json::to_value(bound).expect("encodes")["effectProgram"]["acceptReceipt"]
+    );
     // An action without a transition effect has no `_meta`.
     assert_eq!(
         action_tool(&fixture_action())
