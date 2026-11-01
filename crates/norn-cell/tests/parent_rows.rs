@@ -2991,10 +2991,10 @@ mod cp1_stock {
         let mut definitions: Vec<ObjectTypeDef> = artifacts
             .iter()
             .filter_map(|a| match &a.payload {
-                ArtifactPayload::Entity(p) => p
-                    .object_type
-                    .as_value()
-                    .map(|v| serde_json::from_value(v.to_json_value()).expect("type")),
+                ArtifactPayload::Entity(p) => p.object_type.as_value().map(|v| {
+                    serde_json::from_str(&serde_json::to_string(v).expect("exact type"))
+                        .expect("type")
+                }),
                 _ => None,
             })
             .collect();
@@ -3194,7 +3194,7 @@ mod cp1_stock {
                 unrestricted_accounts: vec!["external-source".into()],
             },
         };
-        cell.commit_quantity_fenced(&quantity, "configure")
+        cell.commit_quantity(&quantity, "configure")
             .expect("define quantity pack");
         let ActionOutcome::Committed {
             receipt: received, ..
@@ -3229,6 +3229,20 @@ mod cp1_stock {
                 norn_ir::Decimal::parse("20").expect("twenty")
             ))
         );
+        let balance = cell
+            .store()
+            .read()
+            .quantity_balance(
+                "main",
+                &quantity.ledger_id,
+                &norn_kernel::quantity::QuantityKey {
+                    account: "stock".into(),
+                    unit: "ea".into(),
+                    layer: "posted".into(),
+                },
+            )
+            .expect("quantity balance");
+        assert_eq!(balance.posted, "1000000", "POST-QUANTITY");
         let before = cell.store().read().dump().expect("dump");
         let over = invoke(&catalog, "stock.delivery.submit", "over", "oversell");
         let error =
