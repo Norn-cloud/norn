@@ -80,6 +80,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         definitions_version: u64,
         object_type: &str,
     ) -> Result<Vec<norn_ir::ArtifactEnvelope>, CellError> {
+        self.retained_definition_model(definitions_version)?.governing_laws(object_type)
+    }
+
+    fn retained_definition_model(&self, definitions_version: u64) -> Result<Model, CellError> {
         let installed = self
             .installed_definitions(Some(definitions_version))?
             .ok_or_else(unproven_event)?;
@@ -94,7 +98,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Err(unproven_event());
         }
         model.check_governing_laws(&installed.canonical_set)?;
-        model.governing_laws(object_type)
+        Ok(model)
     }
 
     fn proven_snapshot(
@@ -1361,15 +1365,24 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(snapshot) = candidates.next() else {
             return Ok(None);
         };
-        if candidates.next().is_some() || snapshot.model_hash != self.model().model_hash() {
+        let receipt = self.receipt_at(entry.commit_seq)?.ok_or_else(unproven_event)?;
+        let historical;
+        let model = if receipt.body.definitions_version == 0 {
+            self.model()
+        } else {
+            historical = self.retained_definition_model(receipt.body.definitions_version)?;
+            &historical
+        };
+        if candidates.next().is_some() || snapshot.model_hash != model.model_hash() {
             return Ok(None);
         }
         let Some(values) = snapshot.values else {
             return Ok(None);
         };
-        let definitions = self.model().object_types().cloned().collect::<Vec<_>>();
-        let catalog =
-            norn_kernel::TypeCatalog::new(&definitions).with_interfaces(self.model().interfaces());
+        let catalog = norn_kernel::TypeCatalog::new(model.object_types())
+            .with_interfaces(model.interfaces())
+            .with_property_types(model.property_types())
+            .with_governing_laws(model.law_artifacts());
         if !norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &values, &finding)
             .unwrap_or(false)
         {

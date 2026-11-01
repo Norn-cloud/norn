@@ -8,8 +8,8 @@ use norn_checker::{
     EffectiveLink, EffectiveObjectType, EntityContext, EntityModel, effective_object_types,
 };
 use norn_ir::{
-    ArtifactEnvelope, ArtifactKind, InterfaceDef, LawIR, LawRoot, Lifecycle, Link, ObjectTypeDef,
-    Property, PropertyKind, PropertyTypeDef,
+    ArtifactEnvelope, ArtifactKind, InterfaceDef, LawIR, Lifecycle, Link, ObjectTypeDef, Property,
+    PropertyKind, PropertyTypeDef,
 };
 use norn_projections::sqlite_ddl::{
     ID_COLUMN, SCOPE_COLUMN, TYPE_COLUMN, WORLD_COLUMN, quote_identifier,
@@ -496,28 +496,17 @@ impl Model {
     /// Unknown type, malformed law, or applicable inherited/effective scope unsupported until B2.
     pub fn governing_laws(&self, object_type: &str) -> Result<Vec<ArtifactEnvelope>, CellError> {
         self.entry(object_type)?;
-        let mut direct = Vec::new();
-        for artifact in &self.law_artifacts {
-            let law: LawIR =
-                serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
-            let applicable = self.is_a(object_type, &law.subject)
-                || law
-                    .scope
-                    .object_types
-                    .iter()
-                    .any(|ty| self.is_a(object_type, ty));
-            if !applicable {
-                continue;
-            }
-            if law.subject != object_type
-                || !matches!(&law.scope.root, LawRoot::Entity(name) if name == object_type)
-                || law.scope.object_types != [object_type]
-            {
-                return Err(CellError::UnsupportedLawScope { law_id: law.id });
-            }
-            direct.push(artifact.clone());
-        }
-        Ok(direct)
+        norn_kernel::TypeCatalog::new(self.object_types())
+            .with_interfaces(self.interfaces())
+            .with_governing_laws(&self.law_artifacts)
+            .governing_laws(&norn_ir::ObjectTypeName(object_type.to_owned()))
+            .map(|laws| laws.into_iter().cloned().collect())
+            .map_err(|error| match error {
+                norn_kernel::governing_laws::LawEvaluationError::UnsupportedUntilB2(law_id) => {
+                    CellError::UnsupportedLawScope { law_id }
+                }
+                other => CellError::DefinitionReceiptInvalid(other.to_string()),
+            })
     }
 
     /// The projected schema.

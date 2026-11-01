@@ -1,7 +1,6 @@
 //! Direct governing-law resolution and evaluation on the shared metered expression engine.
-use crate::{
-    FactKey, TypeCatalog, cell_host::JsonObject,
-};
+use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
+use crate::decision_commit::DataQualityRuleClassification;
 use norn_expr::{EvaluationBudget, Expression, Value};
 use norn_ir::{
     ArtifactEnvelope, DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, LawIR,
@@ -111,6 +110,29 @@ fn pin(artifact: &ArtifactEnvelope, law: &LawIR) -> Result<DataQualityRuleRef, L
             norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
         ),
     })
+}
+pub(crate) fn classify(
+    catalog: &TypeCatalog<'_>,
+    rule_ref: &DataQualityRuleRef,
+) -> DataQualityRuleClassification {
+    for artifact in &catalog.law_artifacts {
+        let Ok(law) = decode(artifact) else {
+            continue;
+        };
+        if !supported(&law) || pin(artifact, &law).as_ref() != Ok(rule_ref) {
+            continue;
+        }
+        if catalog
+            .governing_laws(&ObjectTypeName(law.subject.clone()))
+            .is_ok()
+        {
+            return match law.severity {
+                LawSeverity::Error => DataQualityRuleClassification::Integrity,
+                LawSeverity::Warning => DataQualityRuleClassification::Quality,
+            };
+        }
+    }
+    DataQualityRuleClassification::Unverified
 }
 /// OBS-EVIDENCE-1 / LAW-SUPPORTED-1: evaluate retained direct laws, never caller payloads.
 ///

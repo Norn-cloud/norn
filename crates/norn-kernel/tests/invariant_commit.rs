@@ -3088,3 +3088,40 @@ norn_testkit::proptest::proptest! {
         prop_assert!(budget < EvaluationBudget::default().units());
     }
 }
+
+#[test]
+fn obs_evidence_direct_law_violation_persists_its_governing_pin() {
+    let laws = vec![direct_amount_law()];
+    let (types, interfaces) = definitions();
+    let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
+    let key = FactKey::new(ITEM, "direct-law");
+    let values = object(json!({"item_id":"direct-law", "amount":101, "status":"draft"}));
+    let mut observed = observation_cell().with_governing_laws(laws.clone());
+    let slice = load_slice(&observed, [key.clone()]).expect("slice");
+    commit_observed_snapshot(
+        &mut observed,
+        &catalog,
+        &slice,
+        &turn("direct-law"),
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &[],
+            provenance: &source_provenance(),
+        },
+    )
+    .expect("capture");
+    let findings: Vec<_> = observed
+        .ledger()
+        .iter()
+        .filter_map(|entry| match &entry.event {
+            ObservationEvent::DataQualityFinding { fact } => Some(fact),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(findings.len(), 1);
+    assert!(
+        matches!(&findings[0].rule_ref, DataQualityRuleRef::Law {law_id, ..} if law_id == "amount_bounded")
+    );
+    assert_eq!(findings[0].outcome, DataQualityOutcome::NotSatisfied);
+}

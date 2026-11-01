@@ -563,7 +563,7 @@ impl<'a> TypeCatalog<'a> {
         rule_ref: &DataQualityRuleRef,
     ) -> Result<DataQualityRuleClassification, norn_ir::canonical::CanonicalJsonError> {
         match rule_ref {
-            DataQualityRuleRef::Law { .. } => Ok(DataQualityRuleClassification::Unverified),
+            DataQualityRuleRef::Law { .. } => Ok(crate::governing_laws::classify(self, rule_ref)),
             DataQualityRuleRef::Builtin { id, version } => {
                 Ok(if is_supported_builtin_rule(id, version) {
                     DataQualityRuleClassification::Builtin
