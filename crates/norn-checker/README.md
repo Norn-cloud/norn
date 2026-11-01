@@ -22,23 +22,18 @@ Retained definition receipts are verified against their recorded checker/profile
 ### Exact-source receipt identity (HOST-RECEIPT)
 
 RECEIPT-EXACT: receipt identity is injective over exact canonical source
-(subject to SHA-256 collision resistance). Candidate and base artifacts bind
-their retained semantic source bytes under the existing Norn1 profile, after
-inline editor layout extraction. Neither may pass through an f64 envelope
-before hashing. Typed-only entry points bind their serialized typed input;
-callers retaining raw definitions must use the source-aware entry points.
+(subject to SHA-256 collision resistance). Candidate and base identities hash
+retained semantic source under Norn1 after inline layout extraction, before f64
+decoding. Typed inputs bind their serialized projection; raw admission callers
+must use `check_artifact_sources_with_receipt` and `verify_admission_receipt_sources`.
 
-Permanent conformance vectors are EXACT-INTEGER (`9007199254740992` versus
-`9007199254740993`) and EXACT-DECIMAL (`0.1234567890123456789012345678`
-versus `0.1234567890123456789012345679`): each pair is admitted, has distinct
-canonical source and distinct receipts, in both candidate and base positions.
-EXACT-ORDER requires reordered object keys to retain identity. EXACT-LITERAL
-requires a changed ordinary literal to change identity. EXACT-VERIFY requires
-a receipt to refuse substitution of the other member of either pair.
+Permanent vectors: EXACT-INTEGER (`9007199254740992` / `9007199254740993`),
+EXACT-DECIMAL (`0.1234567890123456789012345678` / `0.1234567890123456789012345679`)
+and EXACT-LITERAL (`25` / `26`) are admitted with distinct receipts in candidate
+and base positions. EXACT-VERIFY refuses substitutions; EXACT-ORDER preserves
+receipt identity when keys are reordered. The tests are in `tests/check_receipt.rs`.
 
-The second source-identity generation uses receipt@5 (mapless), receipt@6
-(with flow source map), and receipt@7 (law origins); @1–@4 already name persisted formats. Writers emit
-@5/@6/@7. Readers temporarily accept @1–@4 with their historical hash semantics,
-including hash-only recovery; removing those readers is a separate contract
-change. No old receipt attests exact source. New source receipts are verified
-against the supplied exact source, never against a reconstructed f64 document.
+The second identity generation writes receipt@5 (mapless), @6 (flow map), @7
+(law origins); @1–@4 already name persisted formats. Readers temporarily accept
+@1–@4 with historical hash semantics, including hash-only recovery. Their removal
+is a separate contract change. Historical receipts do not attest exact source.

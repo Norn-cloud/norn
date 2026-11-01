@@ -849,17 +849,8 @@ fn receipt_exact_order_and_historical_readers() {
         }
     }
     let source = serde_json::to_string(&artifacts[0]).unwrap();
-    let reordered = format!(
-        "{{{}}}",
-        artifacts[0]
-            .as_object()
-            .unwrap()
-            .iter()
-            .rev()
-            .map(|(k, v)| format!("{}:{}", json!(k), v))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
+    let (first, rest) = source[1..source.len() - 1].split_once(',').unwrap();
+    let reordered = format!("{{{rest},{first}}}");
     assert_ne!(source, reordered);
     let check = |text: String| {
         norn_checker::receipt::check_artifact_sources_with_receipt(
