@@ -227,11 +227,11 @@ fn d1a_exact_measurements_history_and_showcase() {
         .expect("all measurements map");
     assert_eq!(records.len(), 240);
     assert_eq!(gold_inputs.len(), 64);
-    let gold_times = records.iter().filter_map(|record| {
+    let gold_times = records.iter().filter(|record| {
         let values = &record.invocations[0].input;
-        (values["metal"].as_str() == Some("gold") && values["role"].as_str() == Some("input"))
-            .then(|| values["occurred_at"].as_str().expect("measurement timestamp"))
-    }).collect::<Vec<_>>();
+        values["metal"].as_str() == Some("gold") && values["role"].as_str() == Some("input")
+    }).map(|record| record.invocations[0].input["occurred_at"].as_str().expect("measurement timestamp"))
+        .collect::<Vec<_>>();
     assert_eq!(gold_times.len(), 64);
     assert!(gold_times[..48].iter().max() < gold_times[48..].iter().min());
     assert_ne!(gold_inputs.iter().min(), gold_inputs.iter().max());
