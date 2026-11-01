@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 /// An action edge in the effective, single-object lifecycle graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DutyEdge {
-    /// Exact ActionIR identity.
+    /// Exact `ActionIR` identity.
     pub action: String,
     /// State indices in the supplied graph.
     pub from: usize,
@@ -94,17 +94,15 @@ pub fn check_duties(graph: &DutyGraph, sequence: &[String], budget: usize) -> Du
     let roles: BTreeSet<_> = graph.grants.values().flatten().cloned().collect();
     // An unrestricted search checks structural non-vacuity. Every node is
     // finite (state × sequence progress); guards remain the adapter's concern.
-    let unrestricted = match search(graph, sequence, None, &mut remaining) {
-        Ok((_, end)) => end,
-        Err(()) => return DutyCheck::Exhausted,
+    let Ok((_, unrestricted)) = search(graph, sequence, None, &mut remaining) else {
+        return DutyCheck::Exhausted;
     };
     if unrestricted.is_none() {
         return DutyCheck::Unreachable;
     }
     for role in &roles {
-        let (parents, end) = match search(graph, sequence, Some(role), &mut remaining) {
-            Ok(result) => result,
-            Err(()) => return DutyCheck::Exhausted,
+        let Ok((parents, end)) = search(graph, sequence, Some(role), &mut remaining) else {
+            return DutyCheck::Exhausted;
         };
         if let Some(end) = end {
             let Some((trace, sensitive_start)) = trace(&parents, end) else {

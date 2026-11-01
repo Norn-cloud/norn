@@ -1,4 +1,4 @@
-//! SalesOrder duty separation, including unrestricted creation/submission.
+//! `SalesOrder` duty separation, including unrestricted creation/submission.
 use norn_checker::duties::{DutyCheck, DutyEdge, DutyGraph, check_duties};
 use std::collections::{BTreeMap, BTreeSet};
 
