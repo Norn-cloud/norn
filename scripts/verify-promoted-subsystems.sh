@@ -600,6 +600,26 @@ run_gate fast quantity-unit-dimension-lean \
   command \
   lean -DwarningAsError=true \
     verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean
+run_gate fast core-value-ledger-quint-typecheck \
+  "quint typecheck verification/core-physics-v1/models/core-value-ledger.qnt" \
+  command \
+  quint typecheck \
+    verification/core-physics-v1/models/core-value-ledger.qnt
+run_gate fast core-value-ledger-quint \
+  "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4" \
+  command \
+  quint verify \
+    verification/core-physics-v1/models/core-value-ledger.qnt \
+    --backend apalache \
+    --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact \
+      reversedAtMostOnce \
+    --max-steps 4 \
+    --out "$result_root/core-value-ledger-quint.json"
+run_gate fast core-value-ledger-lean \
+  "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean" \
+  command \
+  lean -DwarningAsError=true \
+    verification/core-physics-v1/proofs/CoreValueLedger.lean
 run_gate full quantity-kani \
   "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs" \
   command \
