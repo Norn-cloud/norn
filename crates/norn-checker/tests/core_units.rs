@@ -150,7 +150,7 @@ fn unit_findings(
     artifact: &norn_ir::ArtifactEnvelope,
     base: &[norn_ir::ArtifactEnvelope],
 ) -> Vec<norn_checker::Diagnostic> {
-    norn_checker::check_entity_artifacts(
+    norn_checker::check_artifact_set(
         std::slice::from_ref(artifact),
         &norn_checker::EntityArtifactSetContext {
             registry: &BTreeSet::new(),

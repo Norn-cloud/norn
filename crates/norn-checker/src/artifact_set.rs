@@ -361,6 +361,10 @@ pub fn check_artifact_set(
         Err(resolution) => normalized_artifacts
             .iter()
             .flat_map(crate::check_artifact)
+            .chain(crate::unit_admission::check(
+                &normalized_artifacts,
+                &normalized_base,
+            ))
             .chain(crate::markings::check_references(
                 &normalized_artifacts,
                 &normalized_base,
