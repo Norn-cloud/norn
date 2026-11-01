@@ -482,52 +482,7 @@ impl Rows {
         let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact)) else {
             return;
         };
-        let mut concepts: BTreeSet<_> = action
-            .writes
-            .iter()
-            .filter_map(|write| admission.named(&write.entity_kind))
-            .map(|target| PinnedType::of(target).type_ref())
-            .collect();
-        if let Some(target) = action
-            .effect_program
-            .as_ref()
-            .and_then(|program| admission.effect_target(program))
-        {
-            concepts.insert(PinnedType::of(target).type_ref());
-        }
-        for concept in concepts {
-            self.facets.insert(ConceptFacetRow {
-                concept: concept.clone(),
-                facet: ConceptFacet::Actions,
-                member: at(artifact, Member::Artifact {}),
-            });
-            if let Some(access) = &action.access {
-                let version = access.version.as_deref().or_else(|| {
-                    artifact
-                        .dependencies
-                        .iter()
-                        .find(|d| d.artifact_id == access.artifact_id && d.required)
-                        .and_then(|d| d.version.as_deref())
-                });
-                for policy in self.artifacts.iter().filter(|a| {
-                    a.artifact_id == access.artifact_id
-                        && Some(a.version.as_str()) == version
-                        && a.kind == ArtifactKind::Policy
-                }) {
-                    for facet in [ConceptFacet::Policies, ConceptFacet::Access] {
-                        self.facets.insert(ConceptFacetRow {
-                            concept: concept.clone(),
-                            facet,
-                            member: MemberRef {
-                                artifact_id: policy.artifact_id.clone(),
-                                version: policy.version.clone(),
-                                member: Member::Artifact {},
-                            },
-                        });
-                    }
-                }
-            }
-        }
+        self.action_facets(artifact, &action, admission);
         let Some(program) = &action.effect_program else {
             return;
         };
@@ -579,6 +534,60 @@ impl Rows {
                 target,
                 via,
             });
+        }
+    }
+
+    fn action_facets(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        action: &ActionRoot,
+        admission: &Admission<'_>,
+    ) {
+        let mut concepts: BTreeSet<_> = action
+            .writes
+            .iter()
+            .filter_map(|write| admission.named(&write.entity_kind))
+            .map(|target| PinnedType::of(target).type_ref())
+            .collect();
+        if let Some(target) = action
+            .effect_program
+            .as_ref()
+            .and_then(|program| admission.effect_target(program))
+        {
+            concepts.insert(PinnedType::of(target).type_ref());
+        }
+        for concept in concepts {
+            self.facets.insert(ConceptFacetRow {
+                concept: concept.clone(),
+                facet: ConceptFacet::Actions,
+                member: at(artifact, Member::Artifact {}),
+            });
+            if let Some(access) = &action.access {
+                let version = access.version.as_deref().or_else(|| {
+                    artifact
+                        .dependencies
+                        .iter()
+                        .find(|d| d.artifact_id == access.artifact_id && d.required)
+                        .and_then(|d| d.version.as_deref())
+                });
+                for policy in self.artifacts.iter().filter(|a| {
+                    a.artifact_id == access.artifact_id
+                        && Some(a.version.as_str()) == version
+                        && a.kind == ArtifactKind::Policy
+                }) {
+                    for facet in [ConceptFacet::Policies, ConceptFacet::Access] {
+                        self.facets.insert(ConceptFacetRow {
+                            concept: concept.clone(),
+                            facet,
+                            member: MemberRef {
+                                artifact_id: policy.artifact_id.clone(),
+                                version: policy.version.clone(),
+                                member: Member::Artifact {},
+                            },
+                        });
+                    }
+                }
+            }
         }
     }
 
