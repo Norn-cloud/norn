@@ -97,7 +97,8 @@ impl<H: CellHost + ?Sized> Reader<'_, '_, '_, H> {
         start: &FactKey,
         path: &[String],
     ) -> Result<FactKey, ActionRefusal<H::Error>> {
-        if path.is_empty() || path.len() > 4 {
+        let depth = u32::try_from(path.len()).unwrap_or(u32::MAX);
+        if depth == 0 || depth > self.limits.max_relation_depth {
             return Err(invalid("invalid master path"));
         }
         let mut key = start.clone();
@@ -309,8 +310,7 @@ mod tests {
     use super::{JsonObject, JsonValue, millionths};
     use norn_ir::Decimal;
     #[test]
-    fn post_value_exact_millionths_never_round_or_accept_negative()
-    -> Result<(), norn_ir::runtime::RuntimeValueError> {
+    fn post_value_exact_millionths() -> Result<(), norn_ir::RuntimeValueError> {
         for (input, expected) in [
             ("1.000001", Some(1_000_001)),
             ("-1", None),
