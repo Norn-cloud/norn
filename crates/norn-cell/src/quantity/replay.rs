@@ -36,33 +36,36 @@ fn put(rows: &mut Rows, count: usize, row: Vec<SqlValue>) -> Result<(), CellErro
     Ok(())
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "one startup fold covers every normalized quantity cache"
-)]
-pub(crate) fn verify<S: SqlEngine>(
-    engine: &S,
-    receipts: impl IntoIterator<Item = Result<Receipt, CellError>>,
-) -> Result<(), CellError> {
-    super::clock_floor(engine)?;
-    let mut ledgers = BTreeMap::<(String, String), Ledger>::new();
-    let mut heads = Rows::new();
-    let mut balances = Rows::new();
-    let mut history = Rows::new();
-    let mut reservations = Rows::new();
-    let mut postings = Rows::new();
-    let mut timers = Rows::new();
-    let mut floor = 0;
-    for receipt in receipts {
-        let receipt = receipt?;
-        if receipt.body.logical_time < floor {
-            return Err(QuantityError::Corrupt.into());
-        }
-        floor = receipt.body.logical_time;
-        let body = &receipt.body;
-        let Some(request) = &body.quantity else {
-            continue;
-        };
+#[derive(Default)]
+struct Replay {
+    ledgers: BTreeMap<(String, String), Ledger>,
+    heads: Rows,
+    balances: Rows,
+    history: Rows,
+    reservations: Rows,
+    postings: Rows,
+    timers: Rows,
+}
+impl Replay {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one ruled request updates its complete derived projections"
+    )]
+    fn request(
+        &mut self,
+        body: &crate::store::ReceiptBody,
+        request: &super::QuantityRequest,
+        result: &norn_kernel::quantity::QuantityResult,
+    ) -> Result<(), CellError> {
+        let Self {
+            ledgers,
+            heads,
+            balances,
+            history,
+            reservations,
+            postings,
+            timers,
+        } = self;
         let world = &body.world;
         let id = &request.ledger_id;
         let ledger = ledgers.entry((world.clone(), id.clone())).or_default();
@@ -109,28 +112,14 @@ pub(crate) fn verify<S: SqlEngine>(
         // Reuse the ruled pure kernel: no SQL projection participates in admission.
         let plan = prepare_quantity(request, state, body.logical_time)
             .map_err(|_invalid_history| QuantityError::Corrupt)?;
-        if body.quantity_result.as_ref()
-            != Some(&norn_kernel::quantity::QuantityResult {
+        if result
+            != &(norn_kernel::quantity::QuantityResult {
                 version: plan.version,
                 balance_keys: plan.balances.keys().cloned().collect(),
                 reservation: plan.reservation.clone(),
                 posting: plan.posting.clone(),
             })
         {
-            return Err(QuantityError::Corrupt.into());
-        }
-        let expected_timer = plan
-            .reservation
-            .as_ref()
-            .filter(|(_, value)| value.status == "open")
-            .map(|(id, _)| super::expiry_timer_id(world, &request.ledger_id, id))
-            .transpose()?;
-        let scheduled: Vec<_> = body
-            .scheduled
-            .iter()
-            .filter(|id| id.starts_with(super::EXPIRY_TIMER_PREFIX))
-            .collect();
-        if scheduled != expected_timer.as_ref().into_iter().collect::<Vec<_>>() {
             return Err(QuantityError::Corrupt.into());
         }
         let version = to_i64(plan.version, "quantity version")?;
@@ -149,7 +138,7 @@ pub(crate) fn verify<S: SqlEngine>(
         }
         state.version = plan.version;
         put(
-            &mut heads,
+            heads,
             2,
             vec![
                 world.into(),
@@ -171,7 +160,7 @@ pub(crate) fn verify<S: SqlEngine>(
                 value.held.clone().into(),
                 to_i64(value.version, "quantity balance version")?.into(),
             ];
-            put(&mut balances, 5, row.clone())?;
+            put(balances, 5, row.clone())?;
             // History's primary key includes the revision (column 7).
             row.push(seq.into());
             let mut history_key = key(&row, 5)?;
@@ -185,7 +174,7 @@ pub(crate) fn verify<S: SqlEngine>(
                 .get(&reservation_id)
                 .map_or(seq, |(_, created)| *created);
             put(
-                &mut reservations,
+                reservations,
                 3,
                 vec![
                     world.into(),
@@ -200,7 +189,7 @@ pub(crate) fn verify<S: SqlEngine>(
             let timer_id = super::expiry_timer_id(world, id, &reservation_id)?;
             if value.status == "open" {
                 put(
-                    &mut timers,
+                    timers,
                     1,
                     vec![
                         timer_id.into(),
@@ -222,7 +211,7 @@ pub(crate) fn verify<S: SqlEngine>(
         }
         if let Some((posting_id, value)) = plan.posting {
             put(
-                &mut postings,
+                postings,
                 3,
                 vec![
                     world.into(),
@@ -239,7 +228,64 @@ pub(crate) fn verify<S: SqlEngine>(
             }
             ledger.postings.insert(posting_id, value);
         }
+        Ok(())
     }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "compare every normalized projection against immutable receipt replay"
+)]
+pub(crate) fn verify<S: SqlEngine>(
+    engine: &S,
+    receipts: impl IntoIterator<Item = Result<Receipt, CellError>>,
+) -> Result<(), CellError> {
+    super::clock_floor(engine)?;
+    let mut replay = Replay::default();
+    let mut floor = 0;
+    for receipt in receipts {
+        let receipt = receipt?;
+        let body = &receipt.body;
+        if body.logical_time < floor {
+            return Err(QuantityError::Corrupt.into());
+        }
+        floor = body.logical_time;
+        if let Some(request) = &body.quantity {
+            replay.request(
+                body,
+                request,
+                body.quantity_result
+                    .as_ref()
+                    .ok_or(QuantityError::Corrupt)?,
+            )?;
+            let expected_timer = body
+                .quantity_result
+                .as_ref()
+                .ok_or(QuantityError::Corrupt)?
+                .reservation
+                .as_ref()
+                .filter(|(_, value)| value.status == "open")
+                .map(|(id, _)| super::expiry_timer_id(&body.world, &request.ledger_id, id))
+                .transpose()?;
+            let scheduled: Vec<_> = body
+                .scheduled
+                .iter()
+                .filter(|id| id.starts_with(super::EXPIRY_TIMER_PREFIX))
+                .collect();
+            if scheduled != expected_timer.as_ref().into_iter().collect::<Vec<_>>() {
+                return Err(QuantityError::Corrupt.into());
+            }
+        }
+    }
+    let Replay {
+        heads,
+        balances,
+        history,
+        reservations,
+        postings,
+        mut timers,
+        ..
+    } = replay;
     let limit = to_i64(
         u64::try_from(timers.len())
             .map_err(|_range| QuantityError::Corrupt)?
