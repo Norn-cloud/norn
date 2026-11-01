@@ -591,7 +591,7 @@ fn envelope_kind_selects_its_closed_payload_root() {
             ArtifactKind::Mapping => assert!(matches!(payload, ArtifactPayload::Mapping(_))),
             ArtifactKind::Law => assert!(matches!(payload, ArtifactPayload::Law(_))),
             ArtifactKind::DefinedConcept => {
-                assert!(matches!(payload, ArtifactPayload::DefinedConcept(_)))
+                assert!(matches!(payload, ArtifactPayload::DefinedConcept(_)));
             }
         }
     }
