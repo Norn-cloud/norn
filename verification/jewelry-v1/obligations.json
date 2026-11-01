@@ -1,0 +1,38 @@
+{
+  "registry_version": "norn.verification.obligations.v1",
+  "obligations": [
+    {
+      "id": "INV-JEWELRY-FINE-CONSERVATION",
+      "domain": "jewelry",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "For each metal and owner, fine input equals fine outputs plus explicitly recorded loss.",
+      "assumptions": [
+        "Fine amounts are exact normalized integer ticks; purity parsing and checked i128 representation remain unbound."
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-JEWELRY-CUSTODY",
+      "domain": "jewelry",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "Custody metal retains its owner and cannot be sold as company stock; custody operations have no company asset or ledger effect.",
+      "assumptions": [
+        "One metal and one fixed custody owner; no title-transfer action."
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-JEWELRY-REFUSAL-ATOMIC",
+      "domain": "jewelry",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "A refused operation preserves the entire stock, ledger and event state.",
+      "assumptions": [
+        "Publication selects the old reference state on refusal; runtime atomic persistence remains unbound."
+      ],
+      "status": "modeled"
+    }
+  ]
+}

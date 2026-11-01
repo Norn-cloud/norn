@@ -123,6 +123,16 @@ theorem custody_return_preserves_assets (s : State) (amount : Nat) :
   simp only [publish, apply]
   split <;> simp
 
+theorem company_refining_preserves_custody (s : State) (input output loss : Nat) :
+    (publish s (.refine false input output loss)).custody = s.custody := by
+  simp only [publish, apply, Bool.false_eq_true, ↓reduceIte]
+  split <;> simp
+
+theorem company_sale_preserves_custody (s : State) (amount : Nat) :
+    (publish s (.sell false amount)).custody = s.custody := by
+  simp only [publish, apply]
+  split <;> simp
+
 theorem history_preserves (actions : List Action) (s : State) (old : valid s) :
     valid (actions.foldl publish s) := by
   induction actions generalizing s with

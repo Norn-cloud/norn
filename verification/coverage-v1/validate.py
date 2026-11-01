@@ -35,6 +35,12 @@ REQUIRED_CORE_PHYSICS_OBLIGATION_IDS = frozenset([
     "INV-CORE-QUANTITY-CONSERVATION",
     "INV-CORE-VALUE-CONSERVATION",
 ])
+JEWELRY_OBLIGATIONS = ROOT / "verification/jewelry-v1/obligations.json"
+REQUIRED_JEWELRY_OBLIGATION_IDS = frozenset([
+    "INV-JEWELRY-FINE-CONSERVATION",
+    "INV-JEWELRY-CUSTODY",
+    "INV-JEWELRY-REFUSAL-ATOMIC",
+])
 KERNEL_OBLIGATIONS = ROOT / "verification/archive/kernel-v1/obligations.json"
 KERNEL_OBLIGATIONS_SCHEMA = (
     ROOT / "verification/archive/kernel-v1/schemas/obligations.schema.json"
@@ -809,15 +815,24 @@ def validate(
         f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_ids)}, "
         f"unexpected={sorted(core_physics_ids - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
     )
+    jewelry_registry = load(JEWELRY_OBLIGATIONS)
+    jewelry_ids = obligation_ids(jewelry_registry)
+    require(
+        len(jewelry_registry.get("obligations", [])) == len(REQUIRED_JEWELRY_OBLIGATION_IDS)
+        and jewelry_ids == REQUIRED_JEWELRY_OBLIGATION_IDS,
+        "jewelry obligation registry must contain exactly the approved law closure",
+    )
     known_obligations = (
         central_ids
         | obligation_ids(phase1_registry)
         | core_physics_ids
+        | jewelry_ids
     )
     p0_obligations = (
         p0_obligation_ids(central_registry)
         | p0_obligation_ids(kernel_registry, default_priority="P0")
         | p0_obligation_ids(core_physics_registry)
+        | p0_obligation_ids(jewelry_registry)
     )
 
     subsystems = coverage.get("subsystems")
