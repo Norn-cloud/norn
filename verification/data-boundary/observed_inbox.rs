@@ -77,7 +77,7 @@ fn dataplane_submission_enters_the_cell_only_through_observed_inbox() {
     );
     assert!(
         !host
-            .observe_submission(&scope, checked)
+            .observe_submission(&scope, stream, checked)
             .expect("redelivery")
     );
     assert!(
