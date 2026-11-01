@@ -133,3 +133,12 @@ or canonical state, exhausted shared fuel, malformed helper contracts, a late
 step schema failure, zero division and unsupported numeric functions return no
 decision. Later success cannot refund or conceal an exhausted meter. Named
 correspondence tests exercise these boundaries after earlier successful steps.
+
+FOLD-PREFLIGHT: parse and retain helper/item/state schemas once at admission.
+Evaluation checks values against those exact retained contracts; it does not
+reparse declaration schemas outside the caller's meter on every invocation.
+FOLD-NAMESPACE: effective fold owner/node identities must be unambiguous across
+the reachable closure; an internal-plan collision refuses before evaluation.
+FOLD-ORDER-FUEL: sorting charges both key vectors before each comparison (one
+per integer, one plus UTF-8 bytes per string). Inserting canonical identity n
+charges n times one plus its bytes, conservatively bounding identity searches.
