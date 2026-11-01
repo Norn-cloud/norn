@@ -20,6 +20,14 @@ Transport adapters map `Refusal.status` to their response.
 Correspondence: `tests/host_perimeter.rs`. Denial-before-read and default-deny
 belong to host wiring; the perimeter performs no IO.
 
+## Host target and base contracts
+
+HOST-TARGET: native targets enable the native cell adapter; Wasm uses the portable
+cell implementation. Default library builds and the fixture command need no flags.
+HOST-BASE: admission accepts a complete standalone tenant artifact set with no
+external base catalog. Extensions requiring a separate trusted base refuse; the
+host never infers base authority from submitted definitions.
+
 ## Host admission epoch (slice 1b)
 
 HOST-ADMISSION: `DevHost::new` checks a full source array before initializing a

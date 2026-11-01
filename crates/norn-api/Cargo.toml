@@ -7,13 +7,10 @@ publish.workspace = true
 description = "Generated core IR and checker API contracts"
 
 [features]
-default = ["native", "http-host"]
+default = ["http-host"]
 http-host = ["dep:axum", "dep:tokio"]
-native = ["norn-cell/native"]
 
 [dependencies]
-tokio = { version = "1.53.1", features = ["rt"], optional = true }
-axum = { version = "0.8.8", default-features = false, features = ["http1", "json", "query", "tokio"], optional = true }
 norn-cell = { path = "../norn-cell", default-features = false }
 norn-checker = { path = "../norn-checker" }
 norn-kernel = { path = "../norn-kernel" }
@@ -23,13 +20,18 @@ serde = "1.0.228"
 serde_json = "1.0.150"
 utoipa = "5.4.0"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
+tokio = { version = "1.53.1", features = ["rt"], optional = true }
+axum = { version = "0.8.8", default-features = false, features = ["http1", "json", "query", "tokio"], optional = true }
+
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }
 
 [[example]]
 name = "fixture-server"
-required-features = ["native", "http-host"]
+required-features = ["http-host"]
 
 [lints]
 workspace = true
