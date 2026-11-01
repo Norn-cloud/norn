@@ -105,14 +105,14 @@ pub struct ForecastFailure {
     pub message: String,
 }
 
-/// Digest of the implementing crate's production sources and locked dependencies.
-/// This is a source identity, not binary attestation or sandbox qualification.
+/// Source identity of the crate and locked dependencies; no binary attestation.
 ///
 /// # Errors
 /// The source bundle cannot be canonically represented.
 pub fn implementation_digest() -> Result<Digest, CanonicalJsonError> {
     let sources = [
         ("Cargo.toml", include_str!("../Cargo.toml")),
+        ("build.rs", include_str!("../build.rs")),
         ("src/analysis.rs", include_str!("analysis.rs")),
         ("src/host.rs", include_str!("host.rs")),
         ("src/lib.rs", include_str!("lib.rs")),
@@ -182,7 +182,9 @@ pub fn manifest() -> Result<FunctionManifest, CanonicalJsonError> {
         runtime: RuntimeIdentity {
             id: env!("CARGO_PKG_NAME").into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            digest: implementation,
+            digest: norn_ir::canonical::domain_hash_hex(b"norn.metrics.runtime-build.v1\0",
+                &(&implementation, env!("NORN_NATIVE_RUNTIME_BUILD")))
+                .map(|hex| Digest::from_hex(&hex))?,
         },
         platform: Platform {
             os: std::env::consts::OS.into(),
@@ -215,6 +217,7 @@ mod tests {
     #[test]
     fn host_manifest_is_admitted_and_refuses_a_changed_source_locator() {
         let mut declaration = manifest().expect("manifest");
+        assert_ne!(declaration.runtime.digest, declaration.implementation.digest);
         norn_checker::function::admit_function_manifest(&declaration).expect("admitted");
         declaration.implementation.locator = Some("norn-metrics/mutable".into());
         assert!(norn_checker::function::admit_function_manifest(&declaration).is_err());
