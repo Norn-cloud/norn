@@ -154,7 +154,7 @@ fn d1b_catalog_not_holding_and_unresolved_references() {
     for (reference, code) in [
         ("", "mapping.runtime.invalid_record"),
         (",\"custom_shipment_ref\":null", "mapping.runtime.invalid_record"),
-        (",\"custom_shipment_ref\":\"\"", "mapping.runtime.invalid_key_value"),
+        (",\"custom_shipment_ref\":\"\"", "mapping.runtime.invalid_key"),
         (",\"custom_shipment_ref\":[\"A\",\"B\"]", "mapping.runtime.invalid_record"),
     ] {
         for (mapping, dataset, field) in [(&shopify, "Fulfillment", "id"), (&erp, "Delivery Note", "name")] {
