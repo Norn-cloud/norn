@@ -74,7 +74,6 @@ fn definitions() -> (Vec<ObjectTypeDef>, Vec<ActionRoot>) {
             actions.push(serde_json::from_value(payload).expect("action"));
         }
     }
-    // The host's receipt storage schema is infrastructure, expressed in typed Rust.
     let receipt = ObjectTypeDef {
         name: norn_ir::ObjectTypeName(ACTION_CALL_TYPE.into()),
         description: None,
