@@ -20,6 +20,12 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// CP2 cannot resolve an applicable inherited/effective law without B2.
+    #[error("core.laws.unsupported_semantics: law {law_id} scope unsupported until B2")]
+    UnsupportedLawScope {
+        /// Retained law whose complete scope cannot yet be resolved.
+        law_id: String,
+    },
     /// Missing or mismatched independent historical value proof.
     #[error("historical value proof refused: {0}")]
     HistoricalValueUnproven(String),

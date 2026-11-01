@@ -70,6 +70,30 @@ fn materialize_historical_values(
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// OBS-EVIDENCE-1: resolve governing laws from the exact retained definition version.
+    /// Never falls back to current definitions or accepts caller-provided laws.
+    ///
+    /// # Errors
+    /// Missing/corrupt retained version, mismatched snapshot, or scope unsupported until B2.
+    pub fn governing_laws_at(
+        &self,
+        definitions_version: u64,
+        object_type: &str,
+    ) -> Result<Vec<norn_ir::ArtifactEnvelope>, CellError> {
+        let installed = self.installed_definitions(Some(definitions_version))?
+            .ok_or_else(unproven_event)?;
+        let record = crate::export_journal::read_record(self.conn, installed.commit_seq)?
+            .ok_or_else(unproven_event)?;
+        let installation = record.definition_install.ok_or_else(unproven_event)?;
+        let model = Model::from_snapshot(&installation.model)?;
+        if installation.installed != installed || model.model_hash() != installed.model_hash
+            || self.receipt_at(installed.commit_seq)?.as_ref() != Some(&record.receipt) {
+            return Err(unproven_event());
+        }
+        model.check_governing_laws(&installed.canonical_set)?;
+        model.governing_laws(object_type)
+    }
+
     fn proven_snapshot(
         &self,
         world: &str,

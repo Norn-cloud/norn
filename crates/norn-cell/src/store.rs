@@ -1792,6 +1792,7 @@ fn preflight_definition_install<E: SqlEngine>(
     } else if let Some(receipt) = &install.input.admission_receipt {
         verify_admission_receipt(receipt, &install.input.receipt_sha256)?;
     }
+    install.candidate_model.check_governing_laws(&install.input.canonical_set)?;
     let migration = crate::migration::preflight_model_migration(
         engine,
         previous_model,
@@ -2176,6 +2177,7 @@ impl<E: SqlEngine> CellStore<E> {
                     installation.readmission.as_ref(),
                 )?;
                 let installed_model = Model::from_snapshot(&installation.model)?;
+                installed_model.check_governing_laws(&version.canonical_set)?;
                 let entries =
                     reader.ledger_page(receipt.body.first_event_seq.saturating_sub(1), 1)?;
                 if installation.installed != *version

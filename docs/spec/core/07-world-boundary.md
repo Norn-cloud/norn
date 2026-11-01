@@ -27,6 +27,13 @@ OBS-EVIDENCE-1 findings may reference a law by its artifact ID, stable LawIR ID
 and canonical declaration digest. A law pin records identity; it does not prove
 evaluation, authorize promotion or inherit an invariant's verified classification.
 The observation evaluator must bind that pin to the retained governing law.
+Definition snapshots retain exact `lawArtifacts` envelopes, canonicalized by
+artifact ID and included in the model hash; installation checks them against
+the canonical admitted set. Historical lookup uses the pinned definition version.
+CP2 resolves only exact entity-root laws directly attached to the observed type.
+Applicable inherited or effective-instance scope refuses with
+`core.laws.unsupported_semantics` and an `unsupported until B2` detail, preserving
+LAW-COMPLETE-1 / LAW-SUPPORTED-1 rather than omitting governing constraints.
 
 ## Ingestion versus governed action
 
