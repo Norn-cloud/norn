@@ -92,7 +92,10 @@ pub enum Type {
         unit: Option<UnitRef>,
     },
     /// An interface Decimal whose unit and scale must be bound before use.
-    DecimalBinding { group: String },
+    DecimalBinding {
+        /// Interface-local same-unit/scale group.
+        group: String,
+    },
     /// Any exact decimal number (no declared scale).
     Number,
     /// An RFC 3339 instant with an explicit offset (a string on the wire).

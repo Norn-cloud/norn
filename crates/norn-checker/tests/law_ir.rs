@@ -1102,7 +1102,7 @@ fn decimal_binding_findings(
     .expect("bound contract");
     let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
         "name":"toy.Melt", "implements":["core.Conversion"],
-        "properties": names.into_iter().zip(scales).map(|(id, scale)| {
+        "properties": names.into_iter().zip(scales).zip(units).map(|((id, scale), unit)| {
             let mut kind = json!({"kind":"decimal", "scale":scale});
             if let Some(unit) = unit { kind["unit"] = json!({"system":"ucum","code":unit}); }
             json!({"id":id, "type":kind})
