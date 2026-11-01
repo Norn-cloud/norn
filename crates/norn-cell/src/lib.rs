@@ -38,6 +38,7 @@ mod history;
 pub mod host;
 mod migration;
 mod observation_quality;
+pub use observation_quality::AuthoritativePage;
 pub mod model;
 mod payload_storage;
 pub mod quantity;

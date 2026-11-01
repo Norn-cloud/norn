@@ -5143,7 +5143,7 @@ norn_testkit::proptest::proptest! {
 }
 
 
-fn purity_quality_host() -> norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject> {
+fn purity_quality_host(path: &std::path::Path) -> norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject> {
     let object = json!({"name":"quality.Measurement", "properties":[{"id":"purity", "type":{"kind":"decimal", "scale":6}}]});
     let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_value(json!([
         {"irVersion":"0.1", "artifactId":"quality.Measurement.entity", "kind":"entity", "namespace":"quality", "name":"Measurement", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[], "provenance":{"source":"authoring_sdk"}, "payload":{"entityVersion":"2.0", "objectType":object}},
@@ -5153,9 +5153,9 @@ fn purity_quality_host() -> norn_cell::SqliteCell<norn_kernel::ObservationEvent,
     ])).expect("typed synthetic declarations");
     assert!(norn_checker::check_artifact_set(&artifacts, &norn_checker::EntityArtifactSetContext {registry:&std::collections::BTreeSet::new(), base:&[], tenant:None}).is_empty());
     let model = Model::from_definitions(&[serde_json::from_value(object).expect("measurement")], &[]).expect("model").with_governing_laws(&artifacts).expect("laws");
-    let mut input = install_input("quality", 1, &model);
+    let mut input = install_input("quality", 1_793_527_260_000, &model);
     input.canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set")).expect("UTF8");
-    let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+    let mut store = CellStore::open(path, model.clone(), StoreOptions::default()).expect("store");
     store.install_definitions(model, input, Some(0), "org_demo/dev").expect("admitted definitions");
     norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("host")
 }
@@ -5180,13 +5180,23 @@ fn capture_purity(cell: &mut norn_cell::SqliteCell<norn_kernel::ObservationEvent
 norn_testkit::proptest::proptest! {
     #[test]
     fn data_quarantine_redelivery_persists_one_finding_and_correction_recovers(deliveries in 2usize..6, fraction in 1u16..1000) {
-        let mut cell = purity_quality_host();
+        for purity in ["1.20".to_owned(), format!("1.{fraction:03}")] {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("quality.sqlite");
+        let mut cell = purity_quality_host(&path);
         for delivery in 0..deliveries {
-            capture_purity(&mut cell, &format!("delivery-{delivery}"), &format!("1.{fraction:03}"));
+            capture_purity(&mut cell, &format!("delivery-{delivery}"), &purity);
+            let model = cell.store().model().clone();
+            drop(cell);
+            cell = norn_cell::SqliteCell::open(&path, model, StoreOptions::default(), "org_demo/dev", |_| BTreeMap::new()).expect("restart");
             let reader = cell.store().read();
             let raw = reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").expect("captured");
             norn_testkit::proptest::prop_assert!(reader.observation_is_quarantined(&raw).expect("quarantine"));
             norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
+            let page = reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("authoritative projection");
+            norn_testkit::proptest::prop_assert!(page.records.is_empty());
+            norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
+            norn_testkit::proptest::prop_assert_eq!(page.scanned_through.as_deref(), Some("MEAS-1"));
             let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
             norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
             norn_testkit::proptest::prop_assert_eq!(findings[0].status, norn_ir::DataQualityFindingStatus::Open);
@@ -5199,5 +5209,22 @@ norn_testkit::proptest::proptest! {
         let persisted: Vec<_> = reader.ledger_page(0, 100).expect("ledger").into_iter().filter(|event| event.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")).collect();
         norn_testkit::proptest::prop_assert_eq!(persisted.len(), 1);
         norn_testkit::proptest::prop_assert_eq!(persisted[0].event.get("fact").and_then(|fact| fact.get("status")).and_then(Value::as_str), Some("open"));
+        }
     }
+}
+
+#[test]
+fn obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses() {
+    use norn_kernel::{CellHost, CellCommit, FactKey, FactWrite, FactMutation, FactVersion};
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = purity_quality_host(&directory.path().join("quality.sqlite"));
+    let mut native = CellCommit::empty();
+    native.writes.push(FactWrite {key:FactKey::new("quality.Measurement", "MEAS-1"), expected:FactVersion::ABSENT, mutation:FactMutation::Put {values:BTreeMap::from([("purity".into(), Value::from_json_text("1.20").expect("decimal"))])}});
+    let refusal = cell.commit(native).expect_err("native invalid purity");
+    assert_eq!(refusal.code(), "core.laws.violated");
+    assert!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").is_none());
+    capture_purity(&mut cell, "purity-120", "1.20");
+    let findings = cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("persisted findings");
+    assert_eq!(findings.len(), 1);
+    assert!(matches!(&findings[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range"));
 }
