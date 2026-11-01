@@ -571,12 +571,12 @@ fn param_fallthrough_boundaries_ambiguity_and_explicit_default() {
     };
     assert!(std::ptr::eq(
         resolve_parameter(&candidates, &context, None).expect("June"),
-        &candidates[0]
+        std::ptr::from_ref(&candidates[0])
     ));
     context.effective_at = "2026-07-01T00:00:00Z";
     assert!(std::ptr::eq(
         resolve_parameter(&candidates, &context, None).expect("fallthrough"),
-        &candidates[1]
+        std::ptr::from_ref(&candidates[1])
     ));
     context.revision = 1;
     assert_eq!(
@@ -587,7 +587,7 @@ fn param_fallthrough_boundaries_ambiguity_and_explicit_default() {
     let default = candidate(&second, &broad, 2);
     assert!(std::ptr::eq(
         resolve_parameter(&[], &context, Some(&default)).expect("explicit default"),
-        &default
+        std::ptr::from_ref(&default)
     ));
     let duplicate = [candidate(&second, &broad, 1), candidate(&second, &broad, 2)];
     assert_eq!(
