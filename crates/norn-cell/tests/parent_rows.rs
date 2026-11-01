@@ -328,7 +328,12 @@ fn owned_row_finalization_and_quantity_intent_share_one_commit() {
     let catalog = entity_catalog(&definitions);
     let mut declared = action();
     let mut schema = input_schema();
-    schema["properties"]["versions"] = json!({"type": "array", "items": {"type": "object"}});
+    schema["properties"]["versions"] = json!({"type": "array", "items": {
+        "type": "object", "properties": {
+            "account": {"type": "string"}, "unit": {"type": "string"},
+            "layer": {"type": "string"}, "version": {"type": "integer"}
+        }, "required": ["account", "unit", "layer", "version"], "additionalProperties": false
+    }});
     schema["properties"]["reservation"] = json!({"type": "string"});
     schema["properties"]["amount"] = json!({"type": "string"});
     declared.input_schema = serde_json::from_value(schema).expect("quantity input schema");
@@ -373,7 +378,10 @@ fn owned_row_finalization_and_quantity_intent_share_one_commit() {
             .quantity_reservation("main", "stock", "hold")
             .expect("reservation");
         if amount == 5 {
-            assert!(matches!(outcome, Ok(ActionOutcome::Committed { .. })));
+            assert!(
+                matches!(outcome, Ok(ActionOutcome::Committed { .. })),
+                "{outcome:?}"
+            );
             assert!(hold.is_some());
             assert_eq!(
                 reader.quantity_version("main", "stock").expect("version"),

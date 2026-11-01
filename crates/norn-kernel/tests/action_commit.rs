@@ -3403,7 +3403,12 @@ fn owned_quantity_intent_refuses_hosts_without_combined_admission() {
     let catalog = TypeCatalog::new(&definitions);
     let mut action = owned_series_action();
     let mut schema = serde_json::to_value(&action.input_schema).unwrap();
-    schema["properties"]["versions"] = json!({"type": "array", "items": {"type": "object"}});
+    schema["properties"]["versions"] = json!({"type": "array", "items": {
+        "type": "object", "properties": {
+            "account": {"type": "string"}, "unit": {"type": "string"},
+            "layer": {"type": "string"}, "version": {"type": "integer"}
+        }, "required": ["account", "unit", "layer", "version"], "additionalProperties": false
+    }});
     schema["properties"]["reservation"] = json!({"type": "string"});
     schema["properties"]["posting"] = json!({"type": "string"});
     action.input_schema = serde_json::from_value(schema).unwrap();

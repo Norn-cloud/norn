@@ -16,6 +16,8 @@ join directly; it does not claim an admitted stock action or alpha surface.
   refuses before publishing owned rows; it cannot silently discard the intent.
 - POST-IDENTITY / SHARED-QUANTITY-KEY: ordinary and owned actions derive the
   same identity from action ID and idempotency key; exact retry replays once.
+- QUANTITY-FENCE-SCHEMA: balance fences use closed account/unit/layer/version
+  records; incomplete nested object schemas refuse before finalization.
 - EXPAND-PARITY: existing actions without quantity intent retain their original
   route, proof, authorization, fences, accounting admission and receipt.
 
