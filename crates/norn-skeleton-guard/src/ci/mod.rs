@@ -391,12 +391,11 @@ fn entry_obligations(directory: &Path) -> Result<BTreeSet<String>, String> {
         return Err("missing subsystem obligations entry field".to_owned());
     }
     let folder = directory.join("obligations");
-    if !folder
-        .symlink_metadata()
-        .map_err(|e| e.to_string())?
-        .is_dir()
-    {
-        return Err("obligations is not a regular directory".to_owned());
+    match folder.symlink_metadata() {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err("obligations is not a regular directory".to_owned()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(error) => return Err(error.to_string()),
     }
     let mut result = BTreeSet::new();
     for entry in std::fs::read_dir(folder).map_err(|e| e.to_string())? {

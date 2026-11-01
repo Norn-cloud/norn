@@ -124,7 +124,7 @@ def load(directory: Path = COVERAGE) -> dict[str, Any]:
     if "subsystems" in document:
         raise InvalidCoverageLayout(f"{INDEX} must not list subsystems; each has its own file")
     subsystems = []
-    for entry in sorted((directory / SUBSYSTEMS).iterdir()):
+    for entry in sorted((directory / SUBSYSTEMS).iterdir(), key=lambda path: path.name + ".json"):
         body = _subsystem(entry)
         if "id" in body:
             raise InvalidCoverageLayout(f"{entry.name}: file name is the subsystem id; drop the id field")
@@ -150,9 +150,13 @@ def write(document: dict[str, Any], directory: Path) -> None:
     for identity, body in bodies.items():
         target = directory / SUBSYSTEMS / identity
         target.mkdir()
+        fields = set()
         def split(value, parts):
             if isinstance(value, list):
                 field = ".".join(parts)
+                if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*", field) or field in fields:
+                    raise InvalidCoverageLayout(f"invalid or duplicate entry field {field}")
+                fields.add(field)
                 folder = target / field
                 folder.mkdir()
                 seen = set()
