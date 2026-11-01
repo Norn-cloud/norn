@@ -402,6 +402,158 @@ fn extension_members_bind_to_the_extension_that_declares_them() {
     assert_eq!(tier.target.artifact_id, "acme.Order.extension");
     assert!(catalog.contains(&tier.target));
 }
+
+#[test]
+fn a_map_with_no_member_rules_is_still_a_member() {
+    let order = entity(
+        "shop.Order.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.Order", "properties": [{ "id": "id", "type": { "kind": "text" } }]
+        }}),
+    );
+    let mapping = toy_mapping(&json!([{
+        "id": "order", "source": { "dataset": "orders" },
+        "target": { "entity": "shop.Order.entity", "interface": "shop.Order.entity" },
+        "subject": "input.id", "sourceRecord": "input.id"
+    }]));
+    let catalog = catalog(&[order, mapping], &[]);
+    assert!(catalog.contains(&MemberRef {
+        artifact_id: "shop.orders.mapping".to_owned(),
+        version: "1.0.0".to_owned(),
+        member: Member::ObjectMap {
+            map: "order".to_owned()
+        },
+    }));
+}
+
+#[test]
+fn a_parent_row_mutation_writes_its_child_types() {
+    let parent = entity(
+        "shop.Order.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.Order",
+            "properties": [{ "id": "id", "type": { "kind": "text" } }],
+            "links": [{ "id": "lines", "target": "shop.OrderLine",
+                "cardinality": { "to": "many", "from": "one" } }],
+            "ownedCollections": [{ "id": "lines", "childType": "shop.OrderLine",
+                "rowIdProperty": "row_id", "orderingKey": "idx",
+                "cascadeOnParentDelete": true, "maxRows": 20 }]
+        }}),
+    );
+    let child = entity(
+        "shop.OrderLine.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.OrderLine",
+            "properties": [
+                { "id": "row_id", "type": { "kind": "text" } },
+                { "id": "idx", "type": { "kind": "integer" } }
+            ]
+        }}),
+    );
+    let action = envelope(json!({
+        "irVersion": "0.1", "artifactId": "shop.edit_order.action", "kind": "action",
+        "namespace": "shop", "name": "edit", "version": "1.0.0", "lifecycle": "draft",
+        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "actionId": "shop.edit_order", "scopeRequired": [], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object" },
+            "outputSchema": { "type": "object" },
+            "effectProgram": {
+                "kind": "mutate_parent_with_rows", "objectIdField": "id",
+                "objectKind": "shop.Order", "entityArtifactId": "shop.Order.entity",
+                "entityArtifactVersion": "1.0.0", "parentValuesField": "values",
+                "rowOpsField": "rows", "parentVersionField": "version",
+                "collections": [{ "id": "lines" }]
+            }
+        }
+    }));
+    // The child type is installed and reached only through the owned
+    // collection; it is projected and pinned like any other reference.
+    let catalog = catalog(&[parent, action], &[child]);
+    assert!(catalog.artifact("shop.OrderLine.entity", "1.0.0").is_some());
+    let targets: Vec<String> = catalog
+        .writes
+        .iter()
+        .map(|row| {
+            assert_eq!(row.via, WriteVia::MutateRows);
+            format!("{} {}", row.target.artifact_id, row.target.member.id())
+        })
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            "shop.Order.entity type:shop.Order",
+            "shop.OrderLine.entity type:shop.OrderLine"
+        ]
+    );
+}
+
+#[test]
+fn installed_dependencies_of_installed_artifacts_are_projected() {
+    // A candidate pack ships an installed action; the action's entity is
+    // installed too and only the action references it.
+    let pack = envelope(json!({
+        "irVersion": "0.1", "artifactId": "commerce.invoicing.pack", "kind": "business_pack",
+        "namespace": "commerce", "name": "Invoicing", "version": "0.1.0", "lifecycle": "draft",
+        "scope": { "orgId": "org_demo", "environmentId": "dev" },
+        "dependencies": [], "provenance": { "source": "system" },
+        "payload": {
+            "packId": "commerce.invoicing", "packVersion": "0.1.0", "packKind": "composition",
+            "artifacts": [{
+                "artifactId": "commerce.sales_order.submit_invoice.action",
+                "kind": "action", "version": "0.1.0"
+            }]
+        }
+    }));
+    let catalog = catalog(&[pack], &[submit_invoice(), sales_order()]);
+    let order = catalog
+        .artifact("commerce.SalesOrder.entity", "0.1.0")
+        .expect("the action's installed entity is pinned");
+    assert!(!order.candidate);
+    assert!(catalog.contains(&catalog.writes[0].target));
+    assert_eq!(catalog.writes[0].target, invoice_transition());
+}
+
+fn request_types() -> [ArtifactEnvelope; 2] {
+    let parent = entity(
+        "shop.Request.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.Request",
+            "properties": [{ "id": "status", "type": { "kind": "enum",
+                "values": [{ "value": "open" }, { "value": "approved" }] }, "default": "open" }],
+            "lifecycles": [{ "property": "status", "initial": ["open"], "terminal": ["approved"],
+                "transitions": [{ "id": "approve", "from": ["open"], "to": "approved" }] }]
+        }}),
+    );
+    let child = entity(
+        "shop.RushRequest.entity",
+        &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "shop.RushRequest", "extends": "shop.Request", "properties": []
+        }}),
+    );
+    [parent, child]
+}
+
+#[test]
+fn a_law_on_an_inherited_transition_binds_the_declaring_supertype() {
+    let [parent, child] = request_types();
+    let Value::Array(laws) = read_json("fixtures/law-ir/laws.json") else {
+        panic!("laws.json is a list");
+    };
+    let mut law = laws[0].clone();
+    law["dependencies"] = json!([]);
+    law["payload"]["subject"] = json!("shop.RushRequest");
+    law["payload"]["response"] = json!({
+        "kind": "transition", "objectType": "shop.RushRequest",
+        "property": "status", "transitionId": "approve"
+    });
+    let catalog = catalog(&[parent, child, envelope(law)], &[]);
+    let Some(LawBinding::Transition { target }) = &catalog.laws[0].binds else {
+        panic!("the law binds a transition");
+    };
+    assert_eq!(target.artifact_id, "shop.Request.entity");
+    assert!(catalog.contains(target));
+}
 #[test]
 fn entity_projection_preserves_identity_declarations_and_order() {
     let artifact: ArtifactEnvelope = serde_json::from_str(include_str!(
