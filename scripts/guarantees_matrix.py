@@ -91,7 +91,7 @@ def project(coverage: dict, statements: dict, pins: dict, checked: dict | None) 
             tested = claim.get("runtime") in {"tested", "tested-under-simulation", "partial"} and supported(
                 system["id"], "runtime", links.get("runtime", []))
             rows.append({
-                "law": statement.get("law"), "obligation": identity,
+                "subsystem": system["id"], "law": statement.get("law"), "obligation": identity,
                 "statement": statement.get("statement", "Unknown statement"),
                 "level": "proved" if proved and proof == "implementation_proved" else "tested" if tested and claim.get("runtime") != "partial" else "unknown",
                 "proof": {"level": "proved" if proved else "unknown", "scope": proof if proved else None},
@@ -126,13 +126,20 @@ def main() -> None:
     parser.add_argument("--challenge", type=Path, help="generated Challenge JSON; unsupported evidence stays unknown")
     args = parser.parse_args()
     coverage, statements, pins = inputs()
-    document = project(coverage, statements, pins, checked_result(args.result, pins))
+    source = collect_git_identity(ROOT)
+    checked = checked_result(args.result, pins)
+    if checked and checked["git"] != source:
+        checked = None
+    document = project(coverage, statements, pins, checked)
+    document["sourceIdentity"] = source
+    binding = {"inputs": pins, "source": source}
+    document["inputDigest"] = digest(binding)
     if args.challenge:
         raw = sys.stdin.buffer.read() if str(args.challenge) == "-" else args.challenge.read_bytes()
         challenge = json.loads(raw)
         challenge_digest = hashlib.sha256(raw).hexdigest()
         document["challengeDigest"] = challenge_digest
-        document["inputDigest"] = digest({"inputs": pins, "challenge": challenge_digest})
+        document["inputDigest"] = digest({**binding, "challenge": challenge_digest})
         document["generatedObligations"] = challenge_rows(challenge)
     os.set_blocking(sys.stdout.fileno(), True)
     print(json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2))
