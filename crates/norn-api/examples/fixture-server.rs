@@ -1,6 +1,6 @@
 //! Loopback fixture host for renderer and transport integration.
 
-use std::{error::Error, sync::Arc};
+use std::{error::Error, io::Write, sync::Arc};
 
 use axum::{extract::Request, middleware::Next};
 use norn_api::{
@@ -80,7 +80,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let source = String::from_utf8(RuntimeValue::Array(artifacts).canonical_json()?)?;
     let app = router(&source, token).map_err(|refusal| refusal.message)?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:4174").await?;
-    println!("Fixture definitions: http://127.0.0.1:4174/v1/defs?orgId=org_demo&environmentId=dev");
+    writeln!(
+        std::io::stdout(),
+        "Fixture definitions: http://127.0.0.1:4174/v1/defs?orgId=org_demo&environmentId=dev"
+    )?;
     axum::serve(listener, app).await?;
     Ok(())
 }
