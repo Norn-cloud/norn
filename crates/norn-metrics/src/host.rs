@@ -106,7 +106,6 @@ pub struct ForecastFailure {
 }
 
 /// Source identity of the crate and locked dependencies; no binary attestation.
-///
 /// # Errors
 /// The source bundle cannot be canonically represented.
 pub fn implementation_digest() -> Result<Digest, CanonicalJsonError> {
@@ -134,7 +133,6 @@ fn schema<T: JsonSchema>(id: &str, version: u32) -> Result<SchemaRef, CanonicalJ
 }
 
 /// Declare the host forecast boundary; execution needs authenticated inputs and a meter.
-///
 /// # Errors
 /// A source, schema or dependency digest cannot be computed.
 pub fn manifest() -> Result<FunctionManifest, CanonicalJsonError> {
