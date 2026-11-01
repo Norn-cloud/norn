@@ -1162,6 +1162,16 @@ fn receipt_changes<H: CellHost + ?Sized>(
         &values,
         &declaration.reference_field,
     )?;
+    let effective = catalog.effective_type(&target.object_type).ok_or_else(invalid)?;
+    for (property, value) in &mut values {
+        let declared = effective.property(property).ok_or_else(invalid)?;
+        declared.check_runtime_value(value).map_err(|error| {
+            ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                reason: format!("receipt result property {property}: {error}"),
+            })
+        })?;
+        *value = declared.canonical_runtime_value(value);
+    }
     let changes = values
         .into_iter()
         .map(|(property, value)| FactChange::Set {

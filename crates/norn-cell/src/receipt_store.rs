@@ -307,7 +307,7 @@ mod tests {
         let mut definitions = vec![definition];
         let mut target: norn_ir::ObjectTypeDef = serde_json::from_value(json!({"name":"test.ReceiptTarget", "properties":[
             {"id":"id","type":{"kind":"text"}}, {"id":"digest","type":{"kind":"text"},"default":""},
-            {"id":"intent","type":{"kind":"text"},"default":""},
+            {"id":"intent","type":{"kind":"text"},"default":""}, {"id":"confidence","type":{"kind":"text"},"default":""},
             {"id":"status","type":{"kind":"enum","values":[{"value":"proposed"},{"value":"published"}]},"default":"proposed"}
         ],"identity":[{"name":"primary","properties":["id"]}],"lifecycles":[{"property":"status","initial":["proposed"],"terminal":["published"],"transitions":[{"id":"publish","from":["proposed"],"to":"published","guards":["self.intent == \"order.modify\""]}]}]})).expect("target");
         definitions.push(target.clone());
@@ -555,7 +555,7 @@ mod tests {
             "actionId":"test.accept", "title":"Accept", "scopeRequired":["orgId"], "idempotent":false,"ledgered":true,"ledgerCategory":"test",
             "inputSchema":{"type":"object","properties":{"id":{"type":"string"},"receipt":{"type":"string"}},"required":["id","receipt"],"additionalProperties":false},
             "outputSchema":{"type":"object"},"preconditions":[], "writes":[{"entityKind":"test.ReceiptTarget","change":"modified"}],
-            "effectProgram":{"kind":"fire_transition","objectIdField":"id","objectKind":"test.ReceiptTarget","entityArtifactId":"test.target","entityArtifactVersion":"0.1.0","lifecycle":"status","transition":"publish", "acceptReceipt":{"referenceField":"receipt","manifestDigest":receipt.manifest.0,"digestProperty":"digest","resultBindings":{"intent":member}}}
+            "effectProgram":{"kind":"fire_transition","objectIdField":"id","objectKind":"test.ReceiptTarget","entityArtifactId":"test.target","entityArtifactVersion":"0.1.0","lifecycle":"status","transition":"publish", "acceptReceipt":{"referenceField":"receipt","manifestDigest":receipt.manifest.0,"digestProperty":"digest","resultBindings":{"intent":"intent","confidence":member}}}
         })).expect("action");
         let catalog = TypeCatalog::new(model.object_types());
         let mut request = ActionCall {
@@ -591,7 +591,10 @@ mod tests {
             .input
             .insert("receipt".into(), RuntimeValue::String(digest.0));
         if !accepts {
-            assert!(commit_action(&mut cell, &catalog, &request, &ActionAllow).is_err());
+            let error = commit_action(&mut cell, &catalog, &request, &ActionAllow).expect_err("refusal");
+            if member == "confidence" {
+                assert!(matches!(error, norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::InvalidOutput { ref reason }) if reason.contains("receipt result property confidence")));
+            }
             assert_eq!(cell.store().verified_head().expect("head"), before);
             assert!(
                 cell.resolve_accepted_receipt(
