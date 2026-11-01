@@ -537,7 +537,7 @@ impl ApprovedContract {
         {
             return Err(ChallengeError::LawChanged);
         }
-        self.build_challenge(source, context, Some(receipt), None)
+        self.build_challenge(source, context, Some(receipt.as_str()), None)
     }
 
     /// EDGE-GOALS-1: generate an unknown proposal for structurally conforming edges.
@@ -599,15 +599,15 @@ impl ApprovedContract {
         if edges.is_empty() {
             return Err(ChallengeError::NotAdmitted);
         }
-        self.build_challenge(source, &context, None, Some(edges))
+        self.build_challenge(source, &context, None, Some(edges.as_slice()))
     }
 
     fn build_challenge(
         &self,
         source: &DefinitionSource,
         context: &EntityArtifactSetContext<'_>,
-        receipt: Option<String>,
-        edges: Option<Vec<Value>>,
+        receipt: Option<&str>,
+        edges: Option<&[Value]>,
     ) -> Result<Challenge, ChallengeError> {
         let artifacts = &source.artifacts;
         let pool: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
@@ -646,7 +646,7 @@ impl ApprovedContract {
         preflight_goal_bytes(&self.laws, &writers, &boundaries)?;
         let mut induction =
             induction::build(&pool, &self.laws, &writers, &boundaries, context.registry)?;
-        if let Some(edges) = &edges {
+        if let Some(edges) = edges {
             append_edge_goals(&mut induction.goals, edges)?;
         }
         let mut body = json!({
@@ -666,11 +666,14 @@ impl ApprovedContract {
             "obligations": induction.goals,
         });
         if edges.is_some() {
-            body["generator"] = json!("norn.interpretation-goals/1");
-            body["admitted"] = json!(false);
-            body["assessment"] = json!("unknown");
-            body["admissionFindings"] =
-                crate::diagnostics_to_json(&crate::check_artifact_set(artifacts, context));
+            let fields = body.as_object_mut().ok_or(ChallengeError::Closure)?;
+            fields.insert("generator".to_owned(), json!("norn.interpretation-goals/1"));
+            fields.insert("admitted".to_owned(), json!(false));
+            fields.insert("assessment".to_owned(), json!("unknown"));
+            fields.insert(
+                "admissionFindings".to_owned(),
+                crate::diagnostics_to_json(&crate::check_artifact_set(artifacts, context)),
+            );
         }
         finish_challenge(body, writers)
     }
