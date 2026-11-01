@@ -444,3 +444,267 @@ mod defs_read {
         );
     }
 }
+
+#[cfg(all(test, feature = "native", feature = "http-host"))]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::too_many_lines,
+    missing_docs,
+    reason = "alpha surface correspondence scenario"
+)]
+mod alpha_surface {
+    use super::*;
+    use crate::{
+        authz::{AccessRequest, Authorizer, DenyAll},
+        routes::router,
+    };
+    use norn_cell::engine::NativeEngine;
+    use norn_kernel::{
+        ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
+    };
+    use serde_json::{Value, json};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+    struct Demo;
+    impl Authorizer for Demo {
+        fn authorize(&self, r: &AccessRequest<'_>) -> Result<(), Refusal> {
+            if r.actor == Some("demo") {
+                Ok(())
+            } else {
+                DenyAll.authorize(r)
+            }
+        }
+        fn action(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+        fn action_read(&self, _: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+        fn action_read_type(&self, _: &ActionReadTypeAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+    }
+    fn host() -> DevHost<NativeEngine> {
+        DevHost::new(
+            NativeEngine::open_in_memory().expect("engine"),
+            include_str!("../../../fixtures/engine-alpha/sales-order.definitions.json"),
+            CellScope {
+                org_id: "org_alpha".into(),
+                environment_id: "dev".into(),
+            },
+            LogicalTime::EPOCH,
+        )
+        .expect("admitted alpha")
+        .with_authorizer(Demo)
+    }
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "conformance invokes the real CLI process"
+    )]
+    async fn invoke(
+        app: &axum::Router,
+        surface: &str,
+        url: &str,
+        actor: &str,
+        action: &str,
+        input: Value,
+        key: &str,
+    ) -> (Value, bool) {
+        let args = json!({"actionId":action,"input":input,"version":1,"idempotencyKey":key});
+        if surface == "cli" {
+            let url = format!("{url}/mcp");
+            let actor = actor.to_owned();
+            let key = key.to_owned();
+            let result = tokio::task::spawn_blocking(move || {
+                use std::io::Write;
+                let mut child = std::process::Command::new(
+                    std::env::var("NORN_CLI").expect("NORN_CLI compiled binary"),
+                )
+                .args([
+                    "remote",
+                    "--url",
+                    &url,
+                    "--org",
+                    "org_alpha",
+                    "--env",
+                    "dev",
+                    "--dev-actor",
+                    &actor,
+                    "call",
+                    "call_action",
+                    "--idempotency-key",
+                    &key,
+                ])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .expect("CLI");
+                child
+                    .stdin
+                    .take()
+                    .expect("stdin")
+                    .write_all(args.to_string().as_bytes())
+                    .expect("write");
+                let output = child.wait_with_output().expect("CLI exit");
+                (
+                    serde_json::from_slice::<Value>(&output.stdout).expect("CLI JSON"),
+                    !output.status.success(),
+                )
+            })
+            .await
+            .expect("CLI process");
+            return (result.0["result"]["structuredContent"].clone(), result.1);
+        }
+        let body = if surface == "api" {
+            args
+        } else {
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"call_action","arguments":args,"_meta":{"norn/idempotencyKey":key}}})
+        };
+        let request = http::Request::builder()
+            .method("POST")
+            .uri(if surface == "api" {
+                "/v1/actions"
+            } else {
+                "/mcp"
+            })
+            .header("x-norn-org-id", "org_alpha")
+            .header("x-norn-environment-id", "dev")
+            .header("x-norn-actor", actor)
+            .body(axum::body::Body::from(body.to_string()))
+            .expect("request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        let failed = !response.status().is_success();
+        let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
+            .await
+            .expect("response body");
+        let value: Value = serde_json::from_slice(&bytes).expect("JSON");
+        if surface == "api" || failed {
+            (value, failed)
+        } else {
+            (
+                value["result"]["structuredContent"].clone(),
+                value["result"]["isError"] == true,
+            )
+        }
+    }
+    fn dump(host: &DevHost<NativeEngine>) -> BTreeMap<String, Vec<String>> {
+        host.cell()
+            .expect("cell")
+            .store()
+            .read()
+            .dump()
+            .expect("dump")
+    }
+    #[tokio::test]
+    #[ignore = "requires NORN_CLI compiled binary"]
+    async fn surface_alpha_parity_and_no_write_refusals() {
+        let mut states = Vec::new();
+        let mut results = Vec::new();
+        for surface in ["api", "mcp", "cli"] {
+            let host = Arc::new(host());
+            let app = router(Arc::clone(&host));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("listener");
+            let url = format!("http://{}", listener.local_addr().expect("address"));
+            let server_app = app.clone();
+            let server =
+                tokio::spawn(
+                    async move { axum::serve(listener, server_app).await.expect("serve") },
+                );
+            let mut records = Vec::new();
+            for (action, input, key) in [
+                (
+                    "alpha.customer.create",
+                    json!({"id":"customer","name":"Example"}),
+                    "customer",
+                ),
+                (
+                    "alpha.order.create",
+                    json!({"id":"order","order_number":"SO-1","order_date":"2026-11-01","currency":"USD","counterparty":"customer","total_amount":"10.00"}),
+                    "create",
+                ),
+                ("alpha.order.submit", json!({"id":"order"}), "submit"),
+                ("alpha.order.approve", json!({"id":"order"}), "approve"),
+                ("alpha.order.cancel", json!({"id":"order"}), "cancel"),
+            ] {
+                let (result, failed) =
+                    invoke(&app, surface, &url, "demo", action, input, key).await;
+                assert!(!failed, "{surface}: {result}");
+                records.push(result);
+            }
+            {
+                // Trusted fixture setup supplies a folded invoice count for the guard vector.
+                let mut cell = host.cell().expect("cell");
+                let mut values = cell
+                    .store()
+                    .read()
+                    .object("main", "alpha.SalesOrder", "order")
+                    .expect("read")
+                    .expect("order")
+                    .values;
+                values.insert(
+                    "status".into(),
+                    norn_ir::RuntimeValue::String("approved".into()),
+                );
+                values.insert(
+                    "invoice_count".into(),
+                    norn_ir::RuntimeValue::from_json(json!(1)).expect("count"),
+                );
+                cell.store_mut()
+                    .commit(&norn_cell::CommitBatch {
+                        world: "main".into(),
+                        scope: "org_alpha/dev".into(),
+                        writes: vec![norn_cell::FactWriteRow::Put {
+                            object_type: "alpha.SalesOrder".into(),
+                            key: "order".into(),
+                            values,
+                        }],
+                        ..Default::default()
+                    })
+                    .expect("guard fixture");
+            }
+            let before = dump(&host);
+            let (refused, failed) = invoke(
+                &app,
+                surface,
+                &url,
+                "demo",
+                "alpha.order.cancel",
+                json!({"id":"order"}),
+                "guard",
+            )
+            .await;
+            assert!(failed, "invoice cancellation guard refuses: {refused}");
+            assert!(refused["message"].as_str().is_some_and(|v| !v.is_empty()));
+            assert_eq!(before, dump(&host), "guard refusal has no writes");
+            let (denied, failed) = invoke(
+                &app,
+                surface,
+                &url,
+                "forbidden",
+                "alpha.order.create",
+                json!({"id":"forbidden"}),
+                "denied",
+            )
+            .await;
+            assert!(failed);
+            assert_eq!(denied["code"], "authz.denied");
+            assert_eq!(before, dump(&host), "actor denial has no writes");
+            results.push((records, refused, denied));
+            states.push(dump(&host));
+            server.abort();
+        }
+        assert!(
+            states.windows(2).all(|pair| pair[0] == pair[1]),
+            "committed state parity"
+        );
+        assert!(
+            results.windows(2).all(|pair| pair[0] == pair[1]),
+            "records/refusals parity"
+        );
+    }
+}
