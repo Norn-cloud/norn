@@ -328,6 +328,7 @@ pub fn stock_output_types() -> Vec<norn_ir::ObjectTypeDef> {
     };
     let object = |name: &str, immutable, properties| ObjectTypeDef {
         immutable,
+        controls: None,
         name: ObjectTypeName(name.into()),
         description: None,
         status: norn_ir::ResourceStatus::default(),

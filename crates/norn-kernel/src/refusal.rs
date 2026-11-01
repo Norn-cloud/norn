@@ -484,6 +484,7 @@ impl<X> DecisionRefusal<X> {
             | Self::InvariantBudgetExceeded { .. }
             | Self::TraversalLimitExceeded { .. }
             | Self::Overflow
+            | Self::Quantity(_)
             | Self::Host(_) => None,
         };
         reason.map(|(law, key, values)| RefusalReason {

@@ -141,6 +141,8 @@
   "sourceFiles": [
     "crates/norn-cli/src/eval.rs",
     "crates/norn-kernel/src/lib.rs",
+    "crates/norn-kernel/src/rule_authority.rs",
+    "crates/norn-kernel/tests/rule_authority.rs",
     "crates/norn-projections/Cargo.toml",
     "crates/norn-projections/src/cedar.rs",
     "crates/norn-projections/src/interop.rs",
@@ -158,6 +160,7 @@
     "crates/norn-testkit/src/model.rs",
     "crates/norn-testkit/src/runner.rs",
     "crates/norn-testkit/src/strategy.rs",
+    "verification/field-authority-v1/models/field-authority.qnt",
     "verification/kernel-v2/generate.py",
     "verification/kernel-v2/models/commit-admission.qnt",
     "verification/kernel-v2/models/projection-trust.qnt",
