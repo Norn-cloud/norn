@@ -192,7 +192,7 @@ impl<E: SqlEngine> CellStore<E> {
             let definition_pin = match reader.active_definitions_version()? {
                 Some(version) => {
                     reader
-                        .installed_definitions(version)?
+                        .installed_definitions(Some(version))?
                         .ok_or_else(|| refused("core.compute.stale_input"))?
                         .receipt_sha256
                 }
