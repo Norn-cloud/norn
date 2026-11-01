@@ -1108,6 +1108,21 @@
       ],
       "resultArtifacts": [],
       "generatedArtifacts": []
+    },
+    {
+      "id": "jewelry-fine-metal-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/jewelry-v1/FineMetal.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "jewelry",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
     }
   ]
 }

@@ -561,6 +561,9 @@ run_gate fast quantity-reservation-lean \
   command \
   lean -DwarningAsError=true \
     verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean
+run_gate fast jewelry-fine-metal-lean \
+  "lean -DwarningAsError=true verification/jewelry-v1/FineMetal.lean" command \
+  lean -DwarningAsError=true verification/jewelry-v1/FineMetal.lean
 run_gate fast quantity-batch-quint-typecheck \
   "quint typecheck verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt" \
   command \

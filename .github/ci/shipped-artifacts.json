@@ -18421,7 +18421,7 @@
     },
     {
       "path": "scripts/verify-promoted-subsystems.sh",
-      "sha256": "af640ee1b4375c7d1f797bcd899e05185a2e0b23d385a1b4c9c6dd05084d0764",
+      "sha256": "9a51bbb6434cfc824c62fa8a6c0d32d0c8bc3cd11f491f21b512e1123b66c56b",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29467,7 +29467,7 @@
     },
     {
       "path": "verification/coverage-v1/coverage.json",
-      "sha256": "2b228a329a022f89d949f24b5bfd0c8803c23c02bbe059bc66a849f372132638",
+      "sha256": "c2c15deca026e8373ac0b6ecf548e4dd540dade4af01b051bea1e43d309cc956",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29503,7 +29503,7 @@
     },
     {
       "path": "verification/coverage-v1/promoted-gates.json",
-      "sha256": "511ef4ff64c10febee94065c33b3b08920844271eb03a79bffbc357ac92fdf95",
+      "sha256": "a26ff3f4472b0f2d71defb76a4ed3328375fa49492df8d5316a61ae3f3595fe3",
       "origin": "authored",
       "category": "code",
       "license": "Apache-2.0",
@@ -29578,6 +29578,24 @@
       "sha256": "888839f82cc3b2e7d96d794e5c0d9743d584ac2383b9d030ef2c2b4397d10a12",
       "origin": "authored",
       "category": "code",
+      "license": "Apache-2.0",
+      "sources": [],
+      "analyzed_sources": [],
+      "parents": [],
+      "rights_evidence": [
+        {
+          "path": "NOTICE",
+          "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+        }
+      ],
+      "notices": [],
+      "connector": null
+    },
+    {
+      "path": "verification/jewelry-v1/FineMetal.lean",
+      "sha256": "098413caf68b2f85cffc18e6a9b9adae51544a8ef5afcb52c30388c174cd0cf0",
+      "origin": "authored",
+      "category": "generic-proof",
       "license": "Apache-2.0",
       "sources": [],
       "analyzed_sources": [],
