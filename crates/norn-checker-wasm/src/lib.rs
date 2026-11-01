@@ -220,7 +220,7 @@ fn has_errors(diagnostics: &[Diagnostic]) -> bool {
 /// Returns `{"format", "admitted", "diagnostics", "receipt",
 /// "receiptSha256"}`: `diagnostics` is the `norn-checker/diagnostics@1`
 /// document, `receipt` the `norn-checker/receipt@5` document when the map is
-/// absent and `@3` when present. When an artifact is not a decodable envelope,
+/// absent and `@6` when present. When an artifact is not a decodable envelope,
 /// `diagnostics` holds the decode findings and `receipt`/`receiptSha256` are
 /// `null` (fail closed).
 ///
