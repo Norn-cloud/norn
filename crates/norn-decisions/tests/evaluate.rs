@@ -1673,6 +1673,22 @@ fn cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations() {
     let mut bad_unit = input.clone();
     bad_unit["opening"]["unit"] = json!("kg");
     assert!(evaluate(&bad_unit).is_err());
+    let mut bad_opening = input.clone();
+    bad_opening["opening"]["purity"] = json!(1100);
+    assert_eq!(evaluate(&bad_opening).unwrap().output.commands[0]["complete"].as_bool(), Some(false));
+    let mut inexact_ratio = input.clone();
+    inexact_ratio["opening"]["quantity"] = json!(2);
+    inexact_ratio["opening"]["gross_quantity"] = json!(2);
+    inexact_ratio["opening"]["book_value"] = json!(2);
+    inexact_ratio["sell_quantity"] = json!(1);
+    inexact_ratio["scrap"]["gross"] = json!(2);
+    inexact_ratio["scrap"]["purity"] = json!(1000);
+    inexact_ratio["scrap"]["value"] = json!(2);
+    inexact_ratio["products"] = json!([
+        {"resource_code":"a-output","gross":2,"purity":1000,"kind":"output","unit":"g","currency":"USD"},
+        {"resource_code":"b-loss","gross":1,"purity":1000,"kind":"loss","unit":"g","currency":"USD"}
+    ]);
+    assert!(evaluate(&inexact_ratio).is_err());
     let mut bad_purity = input.clone();
     bad_purity["scrap"]["purity"] = json!(1100);
     if let Ok(result) = evaluate(&bad_purity) {

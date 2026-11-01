@@ -263,6 +263,9 @@ The compiled TypeScript declarations execute in the generic Rust evaluator:
 funding is 100 fine g, 105 gross g and 980; output 99.2/972.16 plus loss 0.8/7.84
 and non-fine byproduct 5/0 exhausts all three balances. Reordered output enumeration
 produces the same plan. Loss ratio 0.008 exceeds 0.005; exactly 0.005 does not.
+The ratio is computed inside the declared exact fold profile; an inexact 1/3
+ratio refuses instead of using ordinary unprofiled division. Holding quantities
+are checked against their declared gross mass and purity within that profile.
 
 These are pure allocation fixtures. `complete` and `needs_approval` are derived
 data for the admitted action/law bridge, not authorization or approval evidence.
