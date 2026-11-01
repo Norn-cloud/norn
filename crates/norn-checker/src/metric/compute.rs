@@ -118,7 +118,7 @@ pub fn admit(
         .iter()
         .find(|m| m.name == selection.metric)
         .ok_or_else(refuse)?;
-    let bound = bind_metric(definition).map_err(|_| refuse())?;
+    let bound = bind_metric(definition).map_err(|_checked_binding| refuse())?;
     let names = match &bound.measure {
         BoundMeasure::Property { .. } => vec![bound.name.as_str()],
         BoundMeasure::Ratio {
@@ -158,7 +158,7 @@ fn lower_sum(
     catalog: &EffectiveCatalog,
 ) -> Result<KeyedSum, Vec<Diagnostic>> {
     let refuse = || refusal(UNSUPPORTED_ENGINE);
-    let metric = bind_metric(definition).map_err(|_| refuse())?;
+    let metric = bind_metric(definition).map_err(|_checked_binding| refuse())?;
     let BoundMeasure::Property {
         object_type,
         aggregate: MeasureAggregate::Sum,
