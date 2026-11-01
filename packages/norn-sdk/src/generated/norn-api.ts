@@ -1610,6 +1610,8 @@ export interface components {
             bindings: {
                 [key: string]: components["schemas"]["NornIrMemberRef"];
             };
+            /** @description LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope. */
+            instancePaths: components["schemas"]["NornIrPackInstanceRef"][][];
             /** @description Original law artifact/version and stable law member ID. */
             law: components["schemas"]["NornIrMemberRef"];
             /** @description Norn1 identity of the unchanged law artifact. */

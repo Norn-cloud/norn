@@ -58,6 +58,7 @@ fn pinned_interpretation() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
                 pack_version: "0.1".to_owned(),
                 pack_kind: None,
                 provides: None,
+                instances: None,
                 extensions: None,
                 artifacts: vec![PackArtifactRef {
                     artifact_id: entity.artifact_id.clone(),
