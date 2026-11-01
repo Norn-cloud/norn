@@ -5604,7 +5604,7 @@ fn instance_source_provenance_rechecks_bundle_and_disclosure_for_exact_version()
     let reader = cell.store().read();
     let instance = reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("instance").expect("captured");
     let fact = norn_ir::FactRef::new("quality.Measurement", "MEAS-1", instance.version);
-    let budget = || DecodeBudget::new(100, 10_000_000);
+    let budget = || DecodeBudget::new(&ReactiveLimits {max_scan:100, max_candidate_bytes_per_commit:10_000_000, ..ReactiveLimits::default()});
     assert!(reader.instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(false)).expect("withheld").is_none());
     let evidence = reader.instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true)).expect("checked source lineage").expect("bundle");
     assert_eq!(id, format!("mapping-bundle:{}", evidence.bundle_digest));
