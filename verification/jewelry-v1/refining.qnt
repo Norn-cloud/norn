@@ -80,27 +80,32 @@ module jewelry_refining {
       and book.delivered[0] == before.delivered[0] and book.ledgerVersion == before.ledgerVersion)
   def refusedIsNoop = reason == "" or book == before
 
+  action check(condition: bool): bool = all {
+    assert(condition and nonnegative and fineConserved and lossValued
+      and recordsAligned and custodyIsolated and refusedIsNoop),
+    book' = book, before' = before, reason' = reason, customerAction' = customerAction,
+  }
   run livePathTest = init.then(receiveCustody).then(refine(1, 1, 6, 5, 1, true, false))
-    .then(returnCustody(5)).then(assert(book.stock == [6, 0] and book.lost == [0, 1]
+    .then(returnCustody(5)).then(check(book.stock == [6, 0] and book.lost == [0, 1]
       and book.delivered == [0, 5] and book.assets == 6 and book.ledgerVersion == 0
       and book.events == ["custody_receipt", "refine", "custody_return"] and book.receipts == [1, 2, 3]))
   run companyLossTest = init.then(refine(0, 0, 6, 5, 1, true, true))
-    .then(assert(book.assets == 5 and book.processLoss == 1 and book.ledgerVersion == 1))
+    .then(check(book.assets == 5 and book.processLoss == 1 and book.ledgerVersion == 1))
   run oneUnitMismatchTest = init.then(refine(0, 0, 6, 4, 1, true, true))
-    .then(assert(reason == "fine_mismatch" and book == initial))
+    .then(check(reason == "fine_mismatch" and book == initial))
   run missingLossTest = init.then(refine(0, 0, 6, 5, 0, true, true))
-    .then(assert(reason == "fine_mismatch" and book == initial))
+    .then(check(reason == "fine_mismatch" and book == initial))
   run excessOutputTest = init.then(refine(0, 0, 6, 6, 1, true, true))
-    .then(assert(reason == "fine_mismatch" and book == initial))
+    .then(check(reason == "fine_mismatch" and book == initial))
   run custodySaleTest = init.then(receiveCustody).then(sell(1, 2))
-    .then(assert(reason == "custody_sale" and book == before))
+    .then(check(reason == "custody_sale" and book == before))
   run reassignmentTest = init.then(receiveCustody).then(refine(1, 0, 6, 5, 1, true, true))
-    .then(assert(reason == "title_reassignment" and book == before))
+    .then(check(reason == "title_reassignment" and book == before))
   run undocumentedLossTest = init.then(refine(0, 0, 6, 5, 1, false, true))
-    .then(assert(reason == "missing_loss_reason" and book == initial))
+    .then(check(reason == "missing_loss_reason" and book == initial))
   run missingAccountTest = init.then(refine(0, 0, 6, 5, 1, true, false))
-    .then(assert(reason == "missing_process_loss_account" and book == initial))
+    .then(check(reason == "missing_process_loss_account" and book == initial))
   run refusedAfterCommitTest = init.then(refine(0, 0, 6, 5, 1, true, true))
     .then(refine(0, 0, 5, 4, 0, true, true))
-    .then(assert(reason == "fine_mismatch" and book == before and book.receipts == [1]))
+    .then(check(reason == "fine_mismatch" and book == before and book.receipts == [1]))
 }
