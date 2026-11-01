@@ -116,7 +116,10 @@ pub fn implementation_digest() -> Result<Digest, CanonicalJsonError> {
         ("src/temporal.rs", include_str!("temporal.rs")),
         ("workspace/Cargo.lock", include_str!("../../../Cargo.lock")),
         ("workspace/Cargo.toml", include_str!("../../../Cargo.toml")),
-        ("workspace/.cargo/config.toml", include_str!("../../../.cargo/config.toml")),
+        (
+            "workspace/.cargo/config.toml",
+            include_str!("../../../.cargo/config.toml"),
+        ),
     ];
     norn_ir::canonical::domain_hash_hex(b"norn.metrics.host-source.v1\0", &sources)
         .map(|hex| Digest::from_hex(&hex))
