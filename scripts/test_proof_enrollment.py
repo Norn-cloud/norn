@@ -194,6 +194,21 @@ class CoverageLayoutTests(unittest.TestCase):
                     with self.assertRaisesRegex(coverage_manifest.InvalidCoverageLayout, expected):
                         coverage_manifest.load(target)
 
+    def test_entry_field_validation(self):
+        for body in ({"../escaped": []}, {"a": {"b": []}, "a.b": []}):
+            with tempfile.TemporaryDirectory() as temporary:
+                target = Path(temporary) / "manifest"
+                with self.assertRaisesRegex(coverage_manifest.InvalidCoverageLayout, "entry field"):
+                    coverage_manifest.write({"subsystems": [{"id": "toy", **body}]}, target, split_entries=True)
+                self.assertFalse((target / "subsystems/escaped").exists())
+        for declaration in ([], {"$entries": "elsewhere"}, {"$entries": "sourceFiles", "extra": True}):
+            with tempfile.TemporaryDirectory() as temporary:
+                target = Path(temporary) / "manifest"
+                coverage_manifest.write({"subsystems": [{"id": "toy", "sourceFiles": []}]}, target, split_entries=True)
+                (target / "subsystems/toy/index.json").write_text(json.dumps({"sourceFiles": declaration}))
+                with self.assertRaises(coverage_manifest.InvalidCoverageLayout):
+                    coverage_manifest.load(target)
+
     def test_entry_identity_and_envelope_refusals(self):
         for change in ("identity", "unknown", "order", "directory"):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:

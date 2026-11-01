@@ -164,9 +164,13 @@ def write(document: dict[str, Any], directory: Path, *, split_entries: bool = Fa
             continue
         target = directory / SUBSYSTEMS / identity
         target.mkdir()
+        fields = set()
         def split(value, parts):
             if isinstance(value, list):
                 field = ".".join(parts)
+                if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*", field) or field in fields:
+                    raise InvalidCoverageLayout(f"invalid or duplicate entry field {field}")
+                fields.add(field)
                 folder = target / field
                 folder.mkdir()
                 seen = set()
