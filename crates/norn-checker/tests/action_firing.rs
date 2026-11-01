@@ -149,7 +149,8 @@ fn submit_invoice_before_approval_is_an_undeclared_write() {
 
 #[test]
 fn receipt_effect_admits_reference_and_writer_closure_but_refuses_invalid_bindings() {
-    let entity = read_json(&fixtures().join("ir/entity-v2/artifact-set/commerce-sales-order.entity.json"));
+    let mut entity = read_json(&fixtures().join("ir/entity-v2/artifact-set/commerce-sales-order.entity.json"));
+    entity["payload"]["objectType"]["properties"].as_array_mut().expect("properties").push(serde_json::json!({"id":"customer", "type":{"kind":"text"}}));
     let mut action = read_json(&fixtures().join("ir/commerce-sales-order-submit-invoice.action.json"));
     action["payload"]["inputSchema"]["properties"]["receipt"] = serde_json::json!({"type":"string"});
     action["payload"]["inputSchema"]["required"].as_array_mut().expect("required").push(serde_json::json!("receipt"));
