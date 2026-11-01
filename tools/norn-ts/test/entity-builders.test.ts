@@ -395,3 +395,11 @@ test("acyclic authoring compiles and extracts canonical IR with false omitted", 
   expect(canonicalJson(compiled.artifacts)).toBe(canonicalJson([built.artifact]))
   if (checker) expect(checker.checkArtifactSet(compiled.artifacts).admitted).toBe(true)
 })
+
+
+test("receipt acceptance remains explicit in the authoring builder", () => {
+  const binding = { referenceField: "receipt", manifestDigest: `sha256:${"a".repeat(64)}`, digestProperty: "receipt_digest", resultBindings: { score: "score" } }
+  expect(A.fireTransition({ name: "core.Analysis", version: "0.1.0" }, "id", "status", "publish", binding)).toMatchObject({
+    kind: "fire_transition", acceptReceipt: binding,
+  })
+})

@@ -4018,3 +4018,29 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
             .exists()
     );
 }
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn receipt_effect_declaration_never_commits_without_atomic_consumption(reference in "[a-zA-Z0-9:{}]{0,80}") {
+        let mut payload = serde_json::to_value(approve()).unwrap();
+        payload["inputSchema"]["properties"]["receipt"] = json!({"type":"string"});
+        payload["inputSchema"]["required"].as_array_mut().unwrap().push(json!("receipt"));
+        payload["effectProgram"]["acceptReceipt"] = json!({
+            "referenceField":"receipt", "manifestDigest":format!("sha256:{}", "a".repeat(64)),
+            "digestProperty":"so_number", "resultBindings":{"customer":"customer"}
+        });
+        let action: ActionRoot = serde_json::from_value(payload).unwrap();
+        let types = order_types(); let catalog = TypeCatalog::new(&types);
+        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+        let mut request = call(&action, "SO-1", "receipt-effect");
+        request.input.insert("receipt".to_owned(), JsonValue::String(reference));
+        let reference = norn_kernel::receipt_binding::ReceiptReference::parse(&JsonValue::String(format!("sha256:{}", "a".repeat(64)))).unwrap();
+        proptest::prop_assert!(cell.resolve_accepted_receipt(&reference, &norn_ir::function::Digest(format!("sha256:{}", "b".repeat(64)))).unwrap().is_none());
+        proptest::prop_assert!(matches!(commit_action(&mut cell, &catalog, &request, &Allow), Err(ActionRefusal::UnsupportedEffect { .. })));
+        proptest::prop_assert!(cell.ledger().is_empty());
+        request.input.insert("receipt".to_owned(), JsonValue::Object(JsonObject::new()));
+        proptest::prop_assert!(commit_action(&mut cell, &catalog, &request, &Allow).is_err());
+        proptest::prop_assert!(cell.ledger().is_empty());
+    }
+}

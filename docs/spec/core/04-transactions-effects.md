@@ -58,3 +58,15 @@ Present: `crates/norn-ir/src/{decision_output,fact_change,action}.rs`, `crates/n
 4. Add definition/settings/authorization conflict pins and stale-intent diagnostics with 05/06; TXN-APPROVAL/CROSS.
 5. Qualify host/surfaces #270, #308–#312, #317 against exact same generic actions/refusals; no transport-local permissions.
 6. Lane C receipt/delivery, then transfers/returns/corrections as declared rules after 03 folds and 05 safety; retain ERPNext oracle vectors.
+
+### RECEIPT-EFFECT-1 — reference-only receipt effects
+
+A declared transition may carry `acceptReceipt`: a required string reference input,
+an immutable Function manifest digest, a writable digest property and typed result
+property bindings. The action JSON never supplies the receipt body or result.
+Admission rejects unknown, computed, reserved and lifecycle binding targets, and
+requires the normal exact writer closure. Catalogs preserve the declaration.
+Only the cell host may resolve authenticated, scoped evidence. An unsupported host
+refuses. Declaration admission does not grant completed acceptance: execution is
+fail-closed until the receipt's single-use consumption and all action effects can
+be fenced in one transaction, with no partial persistence on refusal.

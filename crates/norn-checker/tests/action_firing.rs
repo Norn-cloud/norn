@@ -146,3 +146,29 @@ fn submit_invoice_before_approval_is_an_undeclared_write() {
         Vec::<Vec<String>>::new()
     );
 }
+
+#[test]
+fn receipt_effect_admits_reference_and_writer_closure_but_refuses_invalid_bindings() {
+    let entity = read_json(&fixtures().join("ir/entity-v2/artifact-set/commerce-sales-order.entity.json"));
+    let mut action = read_json(&fixtures().join("ir/commerce-sales-order-submit-invoice.action.json"));
+    action["payload"]["inputSchema"]["properties"]["receipt"] = serde_json::json!({"type":"string"});
+    action["payload"]["inputSchema"]["required"].as_array_mut().expect("required").push(serde_json::json!("receipt"));
+    action["payload"]["effectProgram"]["acceptReceipt"] = serde_json::json!({
+        "referenceField":"receipt", "manifestDigest":format!("sha256:{}", "a".repeat(64)),
+        "digestProperty":"so_number", "resultBindings":{"customer":"customer"}
+    });
+    let check = |action: &Value| {
+        let artifacts = [serde_json::from_value(entity.clone()).expect("entity"), serde_json::from_value(action.clone()).expect("action")];
+        check_artifact_set(&artifacts, &EntityArtifactSetContext { registry: &BTreeSet::new(), base: &[], tenant: None })
+    };
+    assert!(check(&action).is_empty(), "{:?}", check(&action));
+    for target in ["status", "missing", "_norn_private", "so_number"] {
+        let mut invalid = action.clone();
+        invalid["payload"]["effectProgram"]["acceptReceipt"]["resultBindings"] = serde_json::json!({target:"customer"});
+        assert!(check(&invalid).iter().any(|finding| finding.code.as_str() == "action.validation.target_not_writable"));
+    }
+    let mut body = action.clone(); body["payload"]["inputSchema"]["properties"]["receipt"] = serde_json::json!({"type":"object", "properties":{}, "additionalProperties":false});
+    assert!(!check(&body).is_empty());
+    let mut open = action.clone(); open["payload"]["writes"] = serde_json::json!([]);
+    assert!(!check(&open).is_empty());
+}
