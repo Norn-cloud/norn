@@ -698,7 +698,7 @@ pub enum InvariantEvaluationError {
     MissingInterface(String),
 }
 
-/// Evaluate every implicit temporal property check and effective invariant of
+/// Evaluate every implicit temporal/decimal property check and effective invariant of
 /// `key` over the exact complete final values using one cumulative per-commit
 /// budget. The caller shares `remaining` across all object writes in the
 /// commit.
@@ -719,7 +719,7 @@ pub fn evaluate_invariants(
     evaluate_invariants_for_class(catalog, key, values, remaining, None)
 }
 
-/// Evaluate only integrity invariants and intrinsic temporal property checks.
+/// Evaluate only integrity invariants and intrinsic temporal/decimal property checks.
 ///
 /// Command admission uses this path so quality expectations consume no
 /// dispatch or expression fuel. Observation preparation continues to call
@@ -760,7 +760,7 @@ fn evaluate_invariants_for_class(
         invariants.retain(|effective| effective.invariant.classification == class);
     }
 
-    let mut failures = evaluate_temporal_properties(catalog, key, &values, remaining)?;
+    let mut failures = evaluate_typed_properties(catalog, key, &values, remaining)?;
     if invariants.is_empty() {
         return Ok(failures);
     }
@@ -864,7 +864,8 @@ fn evaluate_invariants_for_class(
     Ok(failures)
 }
 
-fn evaluate_temporal_properties(
+/// VAL-DECIMAL-SCALE-1: apply the shared runtime decimal domain check before commit.
+fn evaluate_typed_properties(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
@@ -878,7 +879,11 @@ fn evaluate_temporal_properties(
             !property.computed
                 && matches!(
                     &property.kind,
-                    EffectiveKind::Base(PropertyType::Date {} | PropertyType::Timestamp { .. })
+                    EffectiveKind::Base(
+                        PropertyType::Date {}
+                            | PropertyType::Timestamp { .. }
+                            | PropertyType::Decimal { .. }
+                    )
                 )
         })
         .collect::<Vec<_>>();
@@ -894,6 +899,10 @@ fn evaluate_temporal_properties(
             let value = values.get(property.id.as_str())?;
             property.check_runtime_value(value).err().map(|_| {
                 let (kind, reason) = match &property.kind {
+                    EffectiveKind::Base(PropertyType::Decimal { .. }) => (
+                        "decimal",
+                        "must satisfy its declared decimal scale and bounds",
+                    ),
                     EffectiveKind::Base(PropertyType::Date {}) => {
                         ("date", "must be a valid calendar date in YYYY-MM-DD form")
                     }
@@ -910,7 +919,11 @@ fn evaluate_temporal_properties(
                     message: format!("property `{}` must be a valid {kind}", property.id.as_str()),
                     outcome: DataQualityOutcome::NotSatisfied,
                     classification: ConstraintClass::Integrity,
-                    finding_outcome: Some(DataQualityOutcome::InvalidTemporalObservation {
+                    finding_outcome: (!matches!(
+                        &property.kind,
+                        EffectiveKind::Base(PropertyType::Decimal { .. })
+                    ))
+                    .then(|| DataQualityOutcome::InvalidTemporalObservation {
                         property: property.id.clone(),
                         value: value
                             .as_str()

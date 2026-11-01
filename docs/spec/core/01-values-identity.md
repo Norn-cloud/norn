@@ -64,3 +64,5 @@ At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `ru
 3. Enforce key/alias history and reference fences at commit; add concurrent collision/tombstone tests.
 4. Add temporal/calendar/content-reference pins and TIME-DST/BLOB-MISSING tests; align 06/08 temporal lookup.
 5. Add governed merge/split plans after 04/06 migration checks; prove old-reference preservation with ID-RENAME extensions.
+
+**VAL-DECIMAL-SCALE-1:** The shared commit integrity check applies the existing resolved Decimal runtime value validator, including declared scale and bounds, before any proposed writes/events/outbox effects become visible. Balanced values `100 = 99.1999 + 0.8001` refuse at scale 3; exact representable values and insignificant trailing zeros admit. Generated balanced decimal partitions check this boundary independently of conservation arithmetic.
