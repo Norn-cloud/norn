@@ -116,3 +116,14 @@ does not permit flat multilayer challenges or grant proof/runtime authority.
 LAYERS-CHAIN/FORGED/EXACT tests and generated receipt alterations check the
 production constructor. Kani cannot execute its allocated JSON/admission/hash
 pipeline; bounded cardinality and byte limits are checked before construction.
+
+LAYER-CHALLENGE-1 consumes checked retained authority instead of flattening
+its layers into independently admissible definitions. Approval and reconstruction
+bind the retained source/receipt identity and require the candidate's exact base
+to match. A changed authority requires new approval. The generator profile
+changes to bind that authority in every challenge; flat callers retain their
+existing admission refusals. Every writer still comes from the reconstructed
+whole set. Worker-supplied goals/proof flags cannot supply authority or omit goals.
+Named LAYERS/WRITER tests and generated candidate source spellings check challenge
+identity. Kani remains infeasible for full allocated admission and induction
+construction; solver evidence is unknown unless independently checked.

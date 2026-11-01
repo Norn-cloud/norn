@@ -15,10 +15,9 @@ use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 mod induction;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
-/// Profile 8 admits verbatim Unicode and binds exact source/expression bytes
-/// and induction statements; profile 7 is the distinct inventory-only format.
-/// Profiles 5/6 required NFC at proof ingress.
-pub const GENERATOR_PROFILE: &str = "norn.application-obligations/8";
+/// Profile 9 also binds verified retained-layer authority; profile 8 bound
+/// verbatim source/expression bytes and induction statements without layers.
+pub const GENERATOR_PROFILE: &str = "norn.application-obligations/9";
 
 /// Why a fixed challenge could not be reconstructed or a submission was rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -390,6 +389,7 @@ fn contains_number(value: &norn_canonical::JsonValue) -> bool {
 /// must obtain it through an explicit approval operation, never from worker output.
 #[derive(Debug, Clone)]
 pub struct ApprovedContract {
+    retained: Option<String>,
     laws: BTreeMap<String, String>,
     reference_contracts: BTreeMap<String, String>,
     semantics: Value,
@@ -416,13 +416,45 @@ impl ApprovedContract {
         assumptions: Value,
         assurance: Value,
     ) -> Result<Self, ChallengeError> {
+        Self::approve_checked(source, registry, None, semantics, assumptions, assurance)
+    }
+
+    /// LAYER-CHALLENGE-1: approve only against independently checked retained input.
+    /// The host authorizes and retains this contract outside candidate control.
+    /// # Errors
+    /// Refuses a mismatched base, failed admission, unsafe profiles or law identity.
+    pub fn approve_retained(
+        source: &DefinitionSource,
+        retained: &RetainedLayers,
+        semantics: Value,
+        assumptions: Value,
+        assurance: Value,
+    ) -> Result<Self, ChallengeError> {
+        Self::approve_checked(
+            source,
+            retained.registry(),
+            Some(retained),
+            semantics,
+            assumptions,
+            assurance,
+        )
+    }
+
+    fn approve_checked(
+        source: &DefinitionSource,
+        registry: &BTreeSet<norn_ir::PropertyTypeName>,
+        retained: Option<&RetainedLayers>,
+        semantics: Value,
+        assumptions: Value,
+        assurance: Value,
+    ) -> Result<Self, ChallengeError> {
         let artifacts = &source.artifacts;
         let context = &EntityArtifactSetContext {
             registry,
             base: &source.base,
             tenant: None,
         };
-        admit(artifacts, context)?;
+        admit_with_authority(source, context, retained)?;
         for profile in [&semantics, &assumptions, &assurance] {
             if profile.as_object().is_none_or(serde_json::Map::is_empty) {
                 return Err(ChallengeError::MissingProfile);
@@ -438,6 +470,7 @@ impl ApprovedContract {
                 .map_err(|_error| ChallengeError::LossyInput)?;
         }
         Ok(Self {
+            retained: retained.map(|r| r.exact_digest.clone()),
             laws: law_refs(artifacts, context.base)?,
             reference_contracts: reference_contracts(artifacts, context.base)?,
             semantics,
@@ -460,13 +493,36 @@ impl ApprovedContract {
         source: &DefinitionSource,
         registry: &BTreeSet<norn_ir::PropertyTypeName>,
     ) -> Result<Challenge, ChallengeError> {
+        self.challenge_checked(source, registry, None)
+    }
+
+    /// Reconstruct all goals from the approved retained authority and candidate.
+    /// # Errors
+    /// Refuses changed retained identity, base substitution, stale laws or admission.
+    pub fn challenge_retained(
+        &self,
+        source: &DefinitionSource,
+        retained: &RetainedLayers,
+    ) -> Result<Challenge, ChallengeError> {
+        self.challenge_checked(source, retained.registry(), Some(retained))
+    }
+
+    fn challenge_checked(
+        &self,
+        source: &DefinitionSource,
+        registry: &BTreeSet<norn_ir::PropertyTypeName>,
+        retained: Option<&RetainedLayers>,
+    ) -> Result<Challenge, ChallengeError> {
+        if self.retained.as_deref() != retained.map(RetainedLayers::exact_digest) {
+            return Err(ChallengeError::InvalidSubmission);
+        }
         let artifacts = &source.artifacts;
         let context = &EntityArtifactSetContext {
             registry,
             base: &source.base,
             tenant: None,
         };
-        let receipt = admit(artifacts, context)?;
+        let receipt = admit_with_authority(source, context, retained)?;
         if law_refs(artifacts, context.base)? != self.laws
             || reference_contracts(artifacts, context.base)? != self.reference_contracts
         {
@@ -510,6 +566,7 @@ impl ApprovedContract {
         let body = json!({
             "generator": GENERATOR_PROFILE,
             "admissionReceipt": receipt,
+            "retainedLayers": self.retained,
             "exactSourceDigest": source.exact_digest,
             "closure": closure.as_ref().map(|c| &c.content_digests),
             "writers": writers.iter().map(crate::verification::LawWriter::to_json).collect::<Vec<_>>(),
@@ -604,6 +661,40 @@ fn admit(
             return Err(ChallengeError::NotAdmitted);
         }
     }
+    admit_candidate(artifacts, context)
+}
+
+fn admit_with_authority(
+    source: &DefinitionSource,
+    context: &EntityArtifactSetContext<'_>,
+    retained: Option<&RetainedLayers>,
+) -> Result<String, ChallengeError> {
+    if let Some(retained) = retained {
+        if exact_set(&source.base)? != exact_set(retained.artifacts())?
+            || context.registry != retained.registry()
+        {
+            return Err(ChallengeError::NotAdmitted);
+        }
+        crate::verification::effective_law_instances(
+            &source.artifacts,
+            context,
+            Budget {
+                max_nodes: 16_384,
+                max_edges: 131_072,
+                max_steps: 1_048_576,
+            },
+        )
+        .map_err(|_error| ChallengeError::Closure)?;
+        admit_candidate(&source.artifacts, context)
+    } else {
+        admit(&source.artifacts, context)
+    }
+}
+
+fn admit_candidate(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+) -> Result<String, ChallengeError> {
     let checked = check_artifact_set_with_receipt(
         artifacts,
         context,
