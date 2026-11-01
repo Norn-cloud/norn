@@ -206,6 +206,33 @@ impl AdmittedStockRule {
         }
     }
 
+    /// Build a receipt/delivery invoke with the admitted artifact identity.
+    /// Pass the result to `commit_action`; authorization and sealing remain there.
+    #[must_use]
+    pub fn call<'a>(
+        &'a self,
+        voucher_id: &str,
+        scope: BTreeMap<String, String>,
+        actor: String,
+        idempotency_key: String,
+        turn: DecisionTurn,
+    ) -> crate::ActionCall<'a> {
+        crate::ActionCall {
+            action: &self.action,
+            action_artifact_id: &self.artifact_id,
+            action_version: &self.version,
+            scope,
+            actor,
+            input: BTreeMap::from([(
+                "id".into(),
+                norn_ir::RuntimeValue::String(voucher_id.into()),
+            )]),
+            idempotency_key,
+            turn,
+            object_type: None,
+        }
+    }
+
     /// The admitted action; this immutable view grants no rule seal.
     #[must_use]
     pub const fn action(&self) -> &norn_ir::ActionRoot {
