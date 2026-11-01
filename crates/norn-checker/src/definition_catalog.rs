@@ -46,19 +46,27 @@ pub fn project(
     registry: &BTreeSet<PropertyTypeName>,
 ) -> Result<DefinitionCatalog, CatalogError> {
     let all: Vec<&ArtifactEnvelope> = artifacts.iter().chain(base).collect();
-    let mut layer = crate::entity_artifacts::Layer::default();
-    for (index, artifact) in all.iter().enumerate() {
-        if let Decoded::Root(root) = decode_v2(artifact) {
-            layer.push(index, *root);
+    let mut rows = Rows::default();
+    for artifact in &all {
+        let mut layer = crate::entity_artifacts::Layer::default();
+        let context = std::iter::once(*artifact).chain(
+            all.iter()
+                .copied()
+                .filter(|other| other.artifact_id != artifact.artifact_id),
+        );
+        for (index, artifact) in context.enumerate() {
+            if let Decoded::Root(root) = decode_v2(artifact) {
+                layer.push(index, *root);
+            }
         }
+        rows.roles.insert(
+            key(artifact),
+            crate::concept_roles::resolve(layer.as_model(), crate::EntityModel::EMPTY)
+                .into_iter()
+                .filter_map(|(name, role)| role.ok().map(|role| (name, role)))
+                .collect(),
+        );
     }
-    let mut rows = Rows {
-        roles: crate::concept_roles::resolve(layer.as_model(), crate::EntityModel::EMPTY)
-            .into_iter()
-            .filter_map(|(name, role)| role.ok().map(|role| (name, role)))
-            .collect(),
-        ..Rows::default()
-    };
     for (artifact, candidate) in artifacts
         .iter()
         .map(|a| (a, true))
@@ -139,7 +147,10 @@ struct Rows {
     artifacts: BTreeSet<CatalogArtifact>,
     types: BTreeSet<TypeRow>,
     facets: BTreeSet<ConceptFacetRow>,
-    roles: std::collections::BTreeMap<String, norn_ir::ConceptRole>,
+    roles: std::collections::BTreeMap<
+        ArtifactKey,
+        std::collections::BTreeMap<String, norn_ir::ConceptRole>,
+    >,
     properties: BTreeSet<PropertyRow>,
     links: BTreeSet<LinkRow>,
     transitions: BTreeSet<TransitionRow>,
@@ -249,7 +260,8 @@ impl Rows {
                     kind: TypeKind::Interface,
                     role: self
                         .roles
-                        .get(&name)
+                        .get(&key(artifact))
+                        .and_then(|roles| roles.get(&name))
                         .copied()
                         .unwrap_or(norn_ir::ConceptRole::Thing),
                     extends: root
@@ -302,7 +314,8 @@ impl Rows {
             kind: TypeKind::ObjectType,
             role: self
                 .roles
-                .get(&name)
+                .get(&key(artifact))
+                .and_then(|roles| roles.get(&name))
                 .copied()
                 .unwrap_or(norn_ir::ConceptRole::Thing),
             extends: def.extends.iter().map(|n| n.as_str().to_owned()).collect(),
@@ -389,6 +402,24 @@ impl Rows {
         });
     }
 
+    fn concept_for(&self, member: &MemberRef, type_name: &str) -> Option<MemberRef> {
+        let exact = MemberRef {
+            member: Member::Type {
+                type_name: type_name.to_owned(),
+            },
+            ..member.clone()
+        };
+        if self.types.iter().any(|row| row.at == exact) {
+            return Some(exact);
+        }
+        let mut owners = self
+            .types
+            .iter()
+            .filter(|row| row.at.member == exact.member);
+        let first = owners.next()?;
+        owners.next().is_none().then(|| first.at.clone())
+    }
+
     fn finish(mut self) -> DefinitionCatalog {
         let members = self
             .properties
@@ -409,13 +440,11 @@ impl Rows {
             else {
                 continue;
             };
+            let Some(concept) = self.concept_for(member, type_name) else {
+                continue;
+            };
             self.facets.insert(ConceptFacetRow {
-                concept: MemberRef {
-                    member: Member::Type {
-                        type_name: type_name.clone(),
-                    },
-                    ..member.clone()
-                },
+                concept,
                 facet,
                 member: member.clone(),
             });

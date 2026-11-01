@@ -405,6 +405,12 @@ fn extension_members_bind_to_the_extension_that_declares_them() {
         .expect("the extension property is mapped");
     assert_eq!(tier.target.artifact_id, "acme.Order.extension");
     assert!(catalog.contains(&tier.target));
+    assert!(
+        catalog
+            .facets
+            .iter()
+            .all(|row| catalog.contains(&row.concept) && catalog.contains(&row.member))
+    );
 }
 
 #[test]
@@ -1230,6 +1236,19 @@ fn graph_catalog_roles_follow_declarations_not_lifecycle_shape() {
     assert_eq!(
         catalog(std::slice::from_ref(&parent), &[]).types[0].role,
         norn_ir::ConceptRole::Thing
+    );
+    let mut old = serde_json::to_value(&parent).expect("parent");
+    old["payload"]["objectType"]["role"] = json!("happening");
+    let mut new = serde_json::to_value(&parent).expect("parent");
+    new["version"] = json!("2.0.0");
+    let versions = catalog(&[], &[envelope(old), envelope(new)]);
+    assert_eq!(
+        versions
+            .types
+            .iter()
+            .map(|row| row.role)
+            .collect::<Vec<_>>(),
+        [norn_ir::ConceptRole::Happening, norn_ir::ConceptRole::Thing]
     );
     let marker = entity(
         "shop.Marker.interface",
