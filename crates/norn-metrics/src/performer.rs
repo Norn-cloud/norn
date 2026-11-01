@@ -277,7 +277,7 @@ mod tests {
         assert!(perform_forecast(&wrong, &export(&plan, &rows, &digest, version), "unit-host", 10_000).is_err());
         let store = enqueue(&invocation);
         let mut cell: SqliteCell<RuntimeValue, RuntimeValue, FunctionReceipt> =
-            SqliteCell::new(store, tenant, move |command| {
+            SqliteCell::new(store, tenant, move |command: &Command<RuntimeValue>| {
                 let actual: FunctionInvocation = norn_ir::runtime::decode(
                     command.payload.get("invocation").expect("host envelope"),
                 )
