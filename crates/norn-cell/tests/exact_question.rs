@@ -5,7 +5,7 @@
     reason = "native query conformance"
 )]
 mod query_support;
-use norn_cell::{CommitBatch, compute::Freshness};
+use norn_cell::{CellError, CommitBatch, compute::Freshness};
 use query_support::*;
 
 #[test]
@@ -17,13 +17,8 @@ fn scrap_yield_live_revisions_use_the_real_cell_evaluator_and_result_frontier() 
         .expect("cell query");
     assert_eq!(first.rows.len(), 16);
     let week = first.rows.get("\"2026-10-19\"").expect("showcase week");
-    assert_eq!(
-        week.totals
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>(),
-        ["294", "300"]
-    );
+    assert_eq!(week.totals[0].canonical(), "294");
+    assert_eq!(week.totals[1].canonical(), "300");
     assert_eq!(week.value.expect("ratio").canonical(), "0.98");
     assert_eq!(week.members.len(), 4);
     assert_eq!(first.freshness, Freshness::Exact);
@@ -81,35 +76,28 @@ fn query_eligibility_and_visibility_do_not_change_the_quarantine_authority() {
         .expect("excluded");
     assert_eq!(result.freshness, Freshness::Incomplete);
     assert!(!result.complete);
-    assert_eq!(
-        result
-            .rows
-            .get("\"2026-10-19\"")
-            .expect("week")
-            .members
-            .len(),
-        3
-    );
+    assert_eq!(result.rows["\"2026-10-19\""].members.len(), 3);
     context.exclusions.clear();
     context.population_pin = "fixture-without-G2".into();
     context.authorization_epoch = 2;
     let hidden = store
         .evaluate_question(&plan, context, |row| Ok(row.id != "SYN-MELT-15-1"))
         .expect("authorized population");
-    assert_eq!(
-        hidden
-            .rows
-            .get("\"2026-10-19\"")
-            .expect("week")
-            .members
-            .len(),
-        3
-    );
+    assert_eq!(hidden.rows["\"2026-10-19\""].members.len(), 3);
 }
 
 #[test]
-fn query_zero_input_is_unavailable_and_scope_refusal_writes_nothing() {
+fn query_zero_input_is_unavailable_and_even_empty_scope_refusal_writes_nothing() {
     let (mut store, plan, mut context) = fixture();
+    store.bind("scope", "synthetic").expect("bound scope");
+    let head = store.verified_head().expect("empty head");
+    context.scope = "other".into();
+    assert!(matches!(
+        store.evaluate_question(&plan, context.clone(), |_| Ok(true)),
+        Err(CellError::ComputeRefused("core.compute.stale_input"))
+    ));
+    assert_eq!(head, store.verified_head().expect("unchanged empty head"));
+    context.scope = "synthetic".into();
     store
         .commit(&CommitBatch {
             world: WORLD.into(),
@@ -127,9 +115,7 @@ fn query_zero_input_is_unavailable_and_scope_refusal_writes_nothing() {
     context.scope = "other".into();
     assert!(matches!(
         store.evaluate_question(&plan, context, |_| Ok(true)),
-        Err(norn_cell::CellError::ComputeRefused(
-            "core.compute.stale_input"
-        ))
+        Err(CellError::ComputeRefused("core.compute.stale_input"))
     ));
     assert_eq!(head, store.verified_head().expect("same head"));
 }
