@@ -66,12 +66,12 @@ impl RequirementView {
         if law.timing.is_some()
             || !matches!(law.modality, LawModality::Always {} | LawModality::Never {})
         {
-            return Err("requirement.timing.unsupported");
+            return Err("law.validation.unsupported_temporal");
         }
         if matches!(r.norm.modality, DeonticModality::Prohibition)
             != matches!(law.modality, LawModality::Never {})
         {
-            return Err("requirement.modality.mismatch");
+            return Err("law.validation.invalid_document");
         }
         let w = &r.wording;
         let isolate = |text: &str| format!("\u{2068}{text}\u{2069}");
@@ -112,7 +112,7 @@ impl RequirementView {
                 invariant_id,
             } => format!("{object_type}.{invariant_id}"),
             LawResponse::Action { .. } | LawResponse::Transition { .. } => {
-                return Err("requirement.response.unsupported");
+                return Err("law.validation.invalid_document");
             }
         };
         let grade = match r.norm.modality {
