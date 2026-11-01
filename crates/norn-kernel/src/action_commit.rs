@@ -1097,6 +1097,11 @@ where
     )
 }
 
+struct ReceiptChanges {
+    reference: Option<crate::receipt_binding::ReceiptReference>,
+    facts: Vec<FactChange>,
+}
+
 /// RECEIPT-EFFECT-1: only a host-authenticated binding supplies effect values.
 fn receipt_changes<H: CellHost + ?Sized>(
     host: &H,
@@ -1104,19 +1109,13 @@ fn receipt_changes<H: CellHost + ?Sized>(
     call: &ActionCall<'_>,
     input: &JsonObject,
     target: &FactKey,
-) -> Result<
-    (
-        Option<crate::receipt_binding::ReceiptReference>,
-        Vec<FactChange>,
-    ),
-    ActionRefusal<H::Error>,
-> {
+) -> Result<ReceiptChanges, ActionRefusal<H::Error>> {
     let Some(ActionEffectProgram::FireTransition {
         accept_receipt: Some(declaration),
         ..
     }) = &call.action.effect_program
     else {
-        return Ok((None, Vec::new()));
+        return Ok(ReceiptChanges { reference: None, facts: Vec::new() });
     };
     let invalid = || ActionRefusal::InvalidInput {
         field: declaration.reference_field.clone(),
@@ -1161,7 +1160,7 @@ fn receipt_changes<H: CellHost + ?Sized>(
             value,
         })
         .collect();
-    Ok((Some(reference), changes))
+    Ok(ReceiptChanges { reference: Some(reference), facts: changes })
 }
 
 fn upsert_stored_input(
