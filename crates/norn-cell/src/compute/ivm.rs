@@ -81,12 +81,11 @@ impl IncrementalQuestion {
         Ok(&self.result)
     }
 
-    fn apply<E: SqlEngine>(
-        &mut self,
+    fn check_binding<E: SqlEngine>(
+        &self,
         store: &CellStore<E>,
-        context: QueryContext,
-        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
-    ) -> Result<(), CellError> {
+        context: &QueryContext,
+    ) -> Result<String, CellError> {
         let old = &self.result.context;
         let stale = || refused("core.compute.stale_input");
         if (
@@ -119,6 +118,19 @@ impl IncrementalQuestion {
         if definition_pin != self.result.definition_pin {
             return Err(stale());
         }
+        Ok(definition_pin)
+    }
+
+    fn apply<E: SqlEngine>(
+        &mut self,
+        store: &CellStore<E>,
+        context: QueryContext,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<(), CellError> {
+        let definition_pin = self.check_binding(store, &context)?;
+        let old = &self.result.context;
+        let stale = || refused("core.compute.stale_input");
+        let reader = store.read();
         let head = store.verified_head()?;
         let mut changed = BTreeSet::new();
         if head != self.result.revision {
