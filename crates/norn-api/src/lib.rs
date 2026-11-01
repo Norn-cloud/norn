@@ -9,3 +9,6 @@ pub mod openapi;
 pub mod refusal;
 /// Explicit cell and request scope perimeter.
 pub mod scope;
+
+/// Trusted checked-adapter submission into the durable observation inbox.
+pub mod observe;
