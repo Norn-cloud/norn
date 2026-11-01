@@ -112,3 +112,12 @@ Run generated traces through `run.py`, then `python3 lifecycle.py results.json`
 on the disposable fork. Moving-average rounding cases, refusal reason
 normalization, duplicate/race replay and integration with the real Norn driver
 remain later units; this witness alone never claims full moving-average parity.
+
+- **CP2-acceptance-selection:** `boat.py --acceptance lifecycle` selects the
+  20-checkpoint checker; the default remains the two-step smoke checker. Both
+  require native accepted effects; selecting a checker never waives failures.
+- **CP2-cold-bootstrap:** a fresh fork observed native ERPNext installation at
+  39% when the controller's 600-second execution limit expired. Timeout is
+  incomplete evidence, never a pass. A bounded continuation on the same owned
+  VM must first confirm native ERPNext installation before replay. Bootstrap
+  budget qualification remains necessary for unattended lifecycle batches.

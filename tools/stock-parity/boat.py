@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--source', type=pathlib.Path, required=True, help='Committed source archive')
     parser.add_argument('--traces', type=pathlib.Path, required=True, help='Validated stock-trace/1 JSON array')
     parser.add_argument('--output', type=pathlib.Path, required=True)
+    parser.add_argument('--acceptance', choices=('smoke', 'lifecycle'), default='smoke')
     args = parser.parse_args()
     limits = json.loads(boat('limits', '--json'))
     if not limits['canStart'] or limits['starts']['day']['remaining'] < 1:
@@ -56,8 +57,9 @@ PY
 bash /home/user/parity-source/tools/stock-parity/boot.sh
 cd /home/user/parity-source/tools/stock-parity
 python3 run.py /home/user/traces.json /home/user/results.json
-python3 check_smoke.py /home/user/results.json
-'''.replace('DIGEST', digest)
+python3 CHECKER /home/user/results.json
+'''.replace('DIGEST', digest).replace('CHECKER', {'smoke': 'check_smoke.py',
+            'lifecycle': 'lifecycle.py'}[args.acceptance])
         result = json.loads(boat('exec', vm, '--json', '--timeout', '600', '--', 'bash', '-lc', command))
         if not result.get('success'):
             raise RuntimeError('Oracle batch incomplete; inspect disposable VM logs before cleanup')
