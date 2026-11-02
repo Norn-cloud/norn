@@ -6,6 +6,7 @@
 //! GRAPH-LINK-1 and GRAPH-DRAFT: one transaction validates the final graph.
 
 use norn_ir::ObjectTypeDef;
+use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     CellCommit, CellHost, CommitError, Effect, FactKey, FactMutation, FactVersion, FactWrite,
     LinkKey, LinkMutation, LinkWrite,
@@ -49,7 +50,7 @@ fn put(ty: &str, id: &str) -> FactWrite {
         key: FactKey::new(ty, id),
         expected: FactVersion::ABSENT,
         mutation: FactMutation::Put {
-            values: Default::default(),
+            values: JsonObject::default(),
         },
     }
 }
@@ -64,7 +65,7 @@ fn edge(ty: &str, id: &str, role: &str, target: &str, add: bool) -> LinkWrite {
         expected: FactVersion::ABSENT,
         mutation: if add {
             LinkMutation::Add {
-                values: Default::default(),
+                values: JsonObject::default(),
             }
         } else {
             LinkMutation::Remove
