@@ -91,8 +91,14 @@ async fn refuse_semantic_change(changed: Model, transition: bool) {
     for input in &inputs {
         let expected = store.commit(input).expect("original commit");
         let actual = altered.commit(input).expect("changed commit");
-        assert_eq!(actual.receipt().body.request_hash, expected.receipt().body.request_hash);
-        assert_ne!(actual.receipt().body.written, expected.receipt().body.written);
+        assert_eq!(
+            actual.receipt().body.request_hash,
+            expected.receipt().body.request_hash
+        );
+        assert_ne!(
+            actual.receipt().body.written,
+            expected.receipt().body.written
+        );
         assert_ne!(actual.receipt().hash, expected.receipt().hash);
     }
     let original_object = store
