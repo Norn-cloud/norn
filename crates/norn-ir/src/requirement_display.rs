@@ -90,6 +90,7 @@ impl RequirementView {
         let root = match &law.scope.root {
             LawRoot::Company(id) => format!("{} {}", self.word("company", "شركة"), isolate(id)),
             LawRoot::App(id) => format!("{} {}", self.word("application", "تطبيق"), isolate(id)),
+            LawRoot::Pack(id) => format!("{} {}", self.word("pack", "حزمة"), isolate(id)),
             LawRoot::Cell(id) => format!("{} {}", self.word("cell", "خلية"), isolate(id)),
             LawRoot::Entity(id) => format!("{} {}", self.word("entity", "كيان"), isolate(id)),
         };
