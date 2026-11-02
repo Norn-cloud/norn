@@ -6104,3 +6104,17 @@ fn mapping_bundle_refuses_mismatched_delivery_identity_without_consumption() {
             .is_none()
     );
 }
+
+#[test]
+fn source_event_lookup_matches_canonical_inbox_text_without_rewriting_rows() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&dir.path().join("unicode-lookup.sqlite"));
+    let mut raw = bundle_raw("MEAS-1", "0.90");
+    raw.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from("e\u{301}"));
+    raw.input.as_object_mut().expect("raw").insert("event_id".into(), Value::from("e\u{301}"));
+    let mut input = bundle_input(); input.partition = "e\u{301}".into();
+    store.inject_mapping_bundle(&raw, &input).expect("capture");
+    let found = store.read().source_event_mapping_bundles("demo", "e\u{301}", "synthetic-erpnext", "e\u{301}", "e\u{301}").expect("canonical lookup");
+    assert_eq!(found.len(), 1);
+    assert_eq!(store.read().retained_mapping_root(found[0].definitions_version, "quality.Measurement").expect("retained root"), "quality.Measurement");
+}
