@@ -6234,14 +6234,35 @@ fn source_event_lookup_matches_canonical_inbox_text_without_rewriting_rows() {
     let dir = tempfile::tempdir().expect("directory");
     let mut store = mapping_bundle_store(&dir.path().join("unicode-lookup.sqlite"));
     let mut raw = bundle_raw("MEAS-1", "0.90");
-    raw.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from("é"));
-    raw.input.as_object_mut().expect("raw").insert("event_id".into(), Value::from("é"));
-    let mut input = bundle_input(); input.partition = "é".into();
+    raw.input
+        .as_object_mut()
+        .expect("raw")
+        .insert("source_id".into(), Value::from("é"));
+    raw.input
+        .as_object_mut()
+        .expect("raw")
+        .insert("event_id".into(), Value::from("é"));
+    let mut input = bundle_input();
+    input.partition = "é".into();
     store.inject_mapping_bundle(&raw, &input).expect("capture");
-    let found = store.read().source_event_mapping_bundles("demo", "e\u{301}", "synthetic-erpnext", "e\u{301}", "e\u{301}").expect("canonical lookup");
+    let found = store
+        .read()
+        .source_event_mapping_bundles(
+            "demo",
+            "e\u{301}",
+            "synthetic-erpnext",
+            "e\u{301}",
+            "e\u{301}",
+        )
+        .expect("canonical lookup");
     assert_eq!(found.len(), 1);
-    assert_eq!(store.read().retained_mapping_root(found[0].definitions_version, "quality.Measurement").expect("retained root"), "quality.Measurement");
-
+    assert_eq!(
+        store
+            .read()
+            .retained_mapping_root(found[0].definitions_version, "quality.Measurement")
+            .expect("retained root"),
+        "quality.Measurement"
+    );
 }
 
 // OBS-EVIDENCE-1: NFC lookup equivalence cannot merge distinct source spelling bytes.
@@ -6300,19 +6321,41 @@ fn identity_guard_keeps_spelling_bytes_and_refuses_an_altered_finding() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("guard.sqlite");
     let mut store = mapping_bundle_store(&path);
-    let mut input = bundle_input(); input.partition = "e\u{301}".into();
-    let (id, _) = store.inject_mapping_bundle(&bundle_raw("MEAS-1", "0.90"), &input).expect("guard");
+    let mut input = bundle_input();
+    input.partition = "e\u{301}".into();
+    let (id, _) = store
+        .inject_mapping_bundle(&bundle_raw("MEAS-1", "0.90"), &input)
+        .expect("guard");
     let pending = store.read().pending_observations().expect("inbox");
     assert_eq!(pending.len(), 1);
-    let captured: norn_kernel::Observed<Value> = norn_ir::runtime::decode(&pending[0].observed).expect("guard envelope");
+    let captured: norn_kernel::Observed<Value> =
+        norn_ir::runtime::decode(&pending[0].observed).expect("guard envelope");
     let proof = serde_json::to_value(&captured.input).expect("JSON proof");
     assert_eq!(proof["identity"][1], json!([101, 204, 129]));
     assert_eq!(proof["bundle"]["input"]["partition"], "é");
     let mut altered = captured;
     altered.id.0.push_str("-forged");
-    altered.input.as_object_mut().expect("input").get_mut("finding").expect("finding").as_object_mut().expect("object").insert("status".into(), Value::from("resolved"));
-    store.inject(&altered.id.0, &norn_ir::runtime::encode(&altered).expect("encode")).expect("untrusted inbox evidence");
-    assert!(matches!(store.read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1"), Err(CellError::MappingBundleMismatch)));
+    altered
+        .input
+        .as_object_mut()
+        .expect("input")
+        .get_mut("finding")
+        .expect("finding")
+        .as_object_mut()
+        .expect("object")
+        .insert("status".into(), Value::from("resolved"));
+    store
+        .inject(
+            &altered.id.0,
+            &norn_ir::runtime::encode(&altered).expect("encode"),
+        )
+        .expect("untrusted inbox evidence");
+    assert!(matches!(
+        store
+            .read()
+            .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1"),
+        Err(CellError::MappingBundleMismatch)
+    ));
     assert!(id.starts_with("mapping-identity:"));
 }
 
@@ -6320,10 +6363,33 @@ fn identity_guard_keeps_spelling_bytes_and_refuses_an_altered_finding() {
 fn retained_mapping_root_survives_removal_of_an_unapplied_type() {
     let dir = tempfile::tempdir().expect("directory");
     let mut store = mapping_bundle_store(&dir.path().join("retained-root.sqlite"));
-    let previous = store.read().installed_definitions(None).expect("definitions").expect("installed");
-    let model = model_from_json(vec![item_type(vec![json!({"id":"name", "type":{"kind":"text"}})])]);
-    let installation = install_input("without-quality", previous.installed_at.checked_add(1).expect("epoch"), &model);
-    store.install_definitions(model, installation, Some(previous.version), "org_demo/dev").expect("remove empty type");
-    assert!(store.read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").is_err());
-    assert_eq!(store.read().retained_mapping_root(previous.version, "quality.Measurement").expect("retained subject"), "quality.Measurement");
+    let previous = store
+        .read()
+        .installed_definitions(None)
+        .expect("definitions")
+        .expect("installed");
+    let model = model_from_json(vec![item_type(vec![
+        json!({"id":"name", "type":{"kind":"text"}}),
+    ])]);
+    let installation = install_input(
+        "without-quality",
+        previous.installed_at.checked_add(1).expect("epoch"),
+        &model,
+    );
+    store
+        .install_definitions(model, installation, Some(previous.version), "org_demo/dev")
+        .expect("remove empty type");
+    assert!(
+        store
+            .read()
+            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .read()
+            .retained_mapping_root(previous.version, "quality.Measurement")
+            .expect("retained subject"),
+        "quality.Measurement"
+    );
 }

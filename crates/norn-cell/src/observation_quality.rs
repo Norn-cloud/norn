@@ -30,9 +30,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         record: &ObjectRecord,
     ) -> Result<bool, CellError> {
-        if world == crate::MAIN_WORLD && (!self
+        if world == crate::MAIN_WORLD
+            && (!self
                 .source_conflict_findings(&record.object_type, &record.id)?
-                .is_empty() || !self.identity_findings(&record.object_type, &record.id)?.is_empty())
+                .is_empty()
+                || !self
+                    .identity_findings(&record.object_type, &record.id)?
+                    .is_empty())
         {
             return Ok(true);
         }

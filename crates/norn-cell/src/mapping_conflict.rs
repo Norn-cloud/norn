@@ -148,7 +148,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let related = self.source_event_bundles(&conflict.incoming)?;
             for bundle in related.iter().chain(std::iter::once(&conflict.incoming)) {
                 for subject in &bundle.records {
-                    if subject.key == key && self.retained_mapping_root(bundle.definitions_version, subject.object_type.as_str())? == root {
+                    if subject.key == key
+                        && self.retained_mapping_root(
+                            bundle.definitions_version,
+                            subject.object_type.as_str(),
+                        )? == root
+                    {
                         affected = true;
                     }
                 }
