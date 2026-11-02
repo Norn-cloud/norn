@@ -70,7 +70,12 @@ pub fn admit_wording(wording: &LawWordingArtifact, law: &ArtifactEnvelope, env: 
     } else { None };
     let bound = wording.law_artifact_id == pin.artifact_id && wording.law_sha256 == pin.sha256
         && current.as_ref() == Some(&wording.requirement.norm.law);
-    if bound { check_requirement(&wording.requirement, env).map_err(WordingError::Requirement)?; }
+    match check_requirement(&wording.requirement, env) {
+        Ok(()) => {},
+        // A stale requirement may refer to members absent from the new law's environment.
+        Err(crate::deontic::RequirementRefusal::PredicateType) if !bound => {},
+        Err(error) => return Err(WordingError::Requirement(error)),
+    }
     Ok(AdmittedWording { binding: if bound { WordingBinding::Bound } else { WordingBinding::Unverified }, view })
 }
 
