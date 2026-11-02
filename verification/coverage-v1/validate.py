@@ -417,7 +417,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
             admitted.add(merge_runner)
         require(isinstance(job.get("runs-on"), str) and job["runs-on"] in admitted,
                 f"{name}: runner must preserve merge-only opt-in, run binding and hosted fallback")
-    cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache"}
+    cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
+                 "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
     job_env = {
         "core": cache_env,
         "plan": {},
@@ -454,6 +455,10 @@ echo "$plan"''',
         {"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
          "with": {"path": "~/.bun/install/cache",
                   "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}"}},
+        # Digest-pinned interop schemas: erpnext_runtime.py re-verifies every cached file.
+        {"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+         "with": {"path": "~/.cache/norn-interop",
+                  "key": "norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}"}},
     ]
     cleanup = {"name": "Reclaim runner disk space",
                "if": "${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",

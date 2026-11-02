@@ -25,6 +25,7 @@ jobs:
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
+      NORN_INTEROP_CACHE: ~/.cache/norn-interop
     runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
     timeout-minutes: 110
     steps:
@@ -63,6 +64,11 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}
+      # Pinned interop schemas; erpnext_runtime.py re-checks every digest.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/norn-interop
+          key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
       - run: bash scripts/ci/core.sh cheap
   # The full gate: `core.sh all` split into parallel jobs. The plan comes from
   # core.sh itself, so CI runs exactly its shards and phases (all but formal).
@@ -92,6 +98,7 @@ jobs:
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
+      NORN_INTEROP_CACHE: ~/.cache/norn-interop
       NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}
       NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}
     runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
@@ -136,6 +143,11 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}
+      # Pinned interop schemas; erpnext_runtime.py re-checks every digest.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/norn-interop
+          key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest@0.9.150
@@ -152,6 +164,7 @@ jobs:
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
+      NORN_INTEROP_CACHE: ~/.cache/norn-interop
       # Shrink-only baselines compare against the commit this one lands on
       # (main for a manual run).
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
@@ -193,6 +206,11 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}
+      # Pinned interop schemas; erpnext_runtime.py re-checks every digest.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/norn-interop
+          key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest@0.9.150
