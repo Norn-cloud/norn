@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -17,8 +18,8 @@ class MigrationTests(unittest.TestCase):
 
     def test_real_approved_prs(self):
         fixture = json.loads((Path(__file__).parent / "fixtures/registry-prs.json").read_text())
-        for case in fixture["cases"]:
-            with self.subTest(pr=case["pr"]), tempfile.TemporaryDirectory() as temporary:
+        for case, reverse in [(case, reverse) for case in fixture["cases"] for reverse in (False, True)]:
+            with self.subTest(pr=case["pr"], reverse=reverse), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 def git(*args):
                     return migration.git(root, *args).stdout.decode().strip()
@@ -51,9 +52,9 @@ class MigrationTests(unittest.TestCase):
                 helpers = "const fn entry(" + raw.decode().split("pub static REGISTRY: &[CodeEntry] = &[\n")[0].split("const fn entry(", 1)[1]
                 (root / migration.RUST).write_bytes(migration.rust_projection(root, base, raw, old, helpers))
                 main = commit()
-                git("checkout", "-q", head)
-                migration.git(root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "merge", "--no-edit", main, check=False)
-                migration.migrate(root, base, head)
+                git("checkout", "-q", main if reverse else head)
+                migration.git(root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "merge", "--no-edit", head if reverse else main, check=False)
+                subprocess.run([sys.executable, migration.__file__, base, head], cwd=root, check=True, capture_output=True)
                 self.assertNotIn(b"<<<<<<< ", (root / migration.RUST).read_bytes())
                 for path in migration.git(root, "diff", "--name-only", base, head, "--", migration.COVERAGE).stdout.decode().splitlines():
                     (root / path).unlink(missing_ok=True)

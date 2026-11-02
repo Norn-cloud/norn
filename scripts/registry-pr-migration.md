@@ -1,5 +1,5 @@
 After merging the migrated main into an old-layout PR, retain the pre-merge PR
-head and its merge base with main. Run:
+head and its merge base with main. Run from the merged worktree:
 
 ```sh
 python3 scripts/migrate_registry_pr.py "$base" "$approved_head"

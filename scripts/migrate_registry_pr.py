@@ -125,6 +125,9 @@ def migrate(root, base, head):
     head = git(root, "rev-parse", "--verify", "--end-of-options", head + "^{commit}").stdout.decode().strip()
     git(root, "merge-base", "--is-ancestor", base, head)
     changed = git(root, "diff", "--name-only", "--no-renames", base, head, "--", COVERAGE, DIAGNOSTICS + ".json", RUST).stdout.decode().splitlines()
+    for line in git(root, "diff", "--raw", "--no-renames", base, head, "--", *changed).stdout.decode().splitlines() if changed else []:
+        if any(mode.lstrip(":") not in ("000000", "100644") for mode in line.split()[:2]):
+            raise ValueError("registry file modes cannot be mapped")
     if any(p.startswith(COVERAGE + "/") and not re.fullmatch(COVERAGE + r"/subsystems/[a-z0-9][a-z0-9-]*\.json", p) for p in changed):
         raise ValueError("only legacy subsystem deltas can be mapped")
     plan = {}
@@ -134,6 +137,13 @@ def migrate(root, base, head):
         if stages:
             if not path.startswith(RECORDS) and path != RUST:
                 raise ValueError(f"conflicted new-layout entry {path}")
+            selected = read(root, ":3", path)
+            if path == RUST:
+                sides = [read(root, f":{stage}", path) for stage in (2, 3)]
+                migrated = [s for s in sides if s is not MISSING and b'include!(concat!(env!("OUT_DIR"), "/diagnostic_registry.rs"))' in s]
+                if len(migrated) != 1:
+                    raise ValueError("no unambiguous migrated Rust side")
+                selected = migrated[0]
             if path.startswith(RECORDS):
                 sides = [read(root, f":{stage}", path) for stage in (2, 3)]
                 if any(s is MISSING for s in sides) or any(
@@ -141,7 +151,7 @@ def migrate(root, base, head):
                     != {k: v for k, v in object_bytes(s).items() if k != "sha256"} for s in sides[1:]):
                     raise ValueError(f"non-hash provenance conflict {path}")
             raw = target.read_bytes() if target.exists() else b""
-            return read(root, ":3", path) if re.search(rb"^<<<<<<< ", raw, re.M) else raw
+            return selected if re.search(rb"^<<<<<<< ", raw, re.M) else raw
         if target.is_symlink() or (target.exists() and not target.is_file()):
             raise ValueError(f"not a regular file {path}")
         return target.read_bytes() if target.exists() else MISSING
@@ -204,6 +214,8 @@ def migrate(root, base, head):
                 raise ValueError("diagnostic target has not migrated")
             apply(*maps, DIAGNOSTICS + "/", template)
             inputs = [current(RUST), *projections]
+            if b'include!(concat!(env!("OUT_DIR"), "/diagnostic_registry.rs"))' not in inputs[0]:
+                raise ValueError("Rust target has not migrated")
             paths = [temporary / str(i) for i in range(3)]
             for path, content in zip(paths, inputs):
                 path.write_bytes(content)
@@ -260,6 +272,7 @@ if __name__ == "__main__":
     parser.add_argument("head")
     args = parser.parse_args()
     try:
-        print("\n".join(migrate(coverage.ROOT, args.base, args.head)))
+        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").stdout.decode().strip())
+        print("\n".join(migrate(root, args.base, args.head)))
     except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"needs-human: {error}\n")
