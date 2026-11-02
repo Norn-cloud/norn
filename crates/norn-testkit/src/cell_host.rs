@@ -750,6 +750,7 @@ pub fn law_object_types() -> Vec<ObjectTypeDef> {
         invariants: Vec::new(),
         lifecycles: Vec::new(),
         accounting_leg: None,
+        controls: None,
     };
     vec![
         object_type(
@@ -2144,6 +2145,7 @@ pub fn override_object_types() -> Vec<ObjectTypeDef> {
         invariants: Vec::new(),
         lifecycles: Vec::new(),
         accounting_leg: None,
+        controls: None,
     };
     vec![
         object_type(

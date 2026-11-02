@@ -2769,6 +2769,38 @@
         "value"
       ]
     },
+    "Controls": {
+      "description": "Controls belonging to the enclosing object type.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "Closed wire profile.",
+          "$ref": "#/$defs/ControlsFormat"
+        },
+        "sensitivePaths": {
+          "description": "Ordered sensitive action sequences.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SensitivePath"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "sensitivePaths"
+      ]
+    },
+    "ControlsFormat": {
+      "description": "Versioned controls vocabulary.",
+      "oneOf": [
+        {
+          "description": "Alpha finite singleton-role checks.",
+          "type": "string",
+          "const": "norn.controls/1"
+        }
+      ]
+    },
     "CorrespondenceRelation": {
       "description": "How a source term relates to its target terms.",
       "oneOf": [
@@ -6796,6 +6828,10 @@
             }
           ]
         },
+        "controls": {
+          "description": "Definition-owned finite duty controls, inherited by subtypes.",
+          "$ref": "#/$defs/Controls"
+        },
         "description": {
           "type": "string"
         },
@@ -9276,6 +9312,32 @@
       "type": "string",
       "enum": [
         "semantic_only"
+      ]
+    },
+    "SensitivePath": {
+      "description": "A sensitive action sequence on the enclosing object type.",
+      "type": "object",
+      "properties": {
+        "actions": {
+          "description": "Exact action identities in required order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "objectType": {
+          "description": "Must equal the enclosing type, not an arbitrary external target.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "requireWitness": {
+          "description": "Require concrete availability evidence in addition to separation.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "actions"
       ]
     },
     "SettingPayload": {

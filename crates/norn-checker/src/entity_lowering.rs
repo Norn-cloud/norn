@@ -98,6 +98,7 @@ pub fn lower_entity_v1(v1: &EntityRootV1) -> EntityRootV2 {
             invariants: Vec::new(),
             lifecycles: Vec::new(),
             accounting_leg: None,
+            controls: None,
         },
         mutation_authority: v1.mutation_authority,
         extensions: v1.extensions.clone(),
