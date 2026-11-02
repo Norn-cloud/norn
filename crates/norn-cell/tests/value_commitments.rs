@@ -1819,3 +1819,65 @@ fn exact_fact_receipt_admits_both_proofs_before_decoding() {
     assert!(budget.remaining_bytes() < limits.max_candidate_bytes_per_commit);
     assert_eq!(budget.remaining_rows(), limits.max_scan - 2);
 }
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+    #[test]
+    fn joint_snapshot_and_colocated_hash_edits_never_replace_receipt_commitments(
+        original in any::<u64>(), bit in 0u32..64, tombstone in any::<bool>(),
+    ) {
+        let directory=tempfile::tempdir().expect("directory"); let path=directory.path().join("cell.sqlite");
+        let mut store=CellStore::open(&path,model(),StoreOptions::default()).expect("store");
+        store.commit(&batch(vec![put("proof.Item","item",&original.to_string())])).expect("create");
+        if tombstone {store.commit(&batch(vec![FactWriteRow::Delete{object_type:"proof.Item".into(),key:"item".into()}])).expect("tombstone");}
+        let version=if tombstone {2} else {1};
+        let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        let evidence=store.read().fact_version_evidence_with_budget(MAIN_WORLD,"proof.Item","item",version,&mut DecodeBudget::new(&limits)).expect("bound proof").expect("budget");
+        prop_assert_eq!(evidence.receipt().body.written[0].snapshot_sha256.as_deref(),Some(evidence.snapshot_sha256()));
+        let mut forged=serde_json::to_value(evidence.snapshot()).expect("snapshot");
+        forged["values"]=json!({"value":(original ^ (1u64 << bit)).to_string()});
+        let encoded=serde_json::to_string(&forged).expect("forged preimage");
+        let hash=norn_ir::canonical::HashProfile::Norn1.hash_json(&encoded).expect("coordinated forged hash");
+        let connection=rusqlite::Connection::open(&path).expect("corruption seam");
+        connection.execute("UPDATE _norn_fact_values SET snapshot=?1,hash=?2 WHERE id='item' AND version=?3",rusqlite::params![encoded,hash,i64::try_from(version).expect("version")]).expect("joint tamper");
+        prop_assert!(matches!(store.read().object_at_version(MAIN_WORLD,"proof.Item","item",version),Err(CellError::HistoricalValueUnproven(_))));
+        prop_assert!(matches!(store.read().object_at_version_with_budget(MAIN_WORLD,"proof.Item","item",version,&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))));
+        prop_assert!(matches!(store.read().fact_version_evidence_with_budget(MAIN_WORLD,"proof.Item","item",version,&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))));
+        prop_assert!(matches!(store.read().receipt_for_fact_version(MAIN_WORLD,"proof.Item","item",version),Err(CellError::HistoricalValueUnproven(_))));
+        prop_assert_eq!(store.read().receipt_at(version).expect("receipt unchanged").expect("receipt"),evidence.receipt().clone());
+        drop(store);drop(connection);
+        prop_assert!(matches!(CellStore::open(&path,model(),StoreOptions::default()),Err(CellError::HistoricalValueUnproven(_))));
+    }
+}
+
+#[test]
+fn unbound_legacy_receipt_refuses_even_when_its_body_hash_is_valid() {
+    let directory=tempfile::tempdir().expect("directory");let path=directory.path().join("cell.sqlite");
+    let mut store=CellStore::open(&path,model(),StoreOptions::default()).expect("store");
+    let mut receipt=store.commit(&batch(vec![put("proof.Item","item","original")])).expect("commit").receipt().clone();
+    receipt.body.written[0].snapshot_sha256=None;
+    let encoded=serde_json::to_string(&receipt.body).expect("legacy receipt");
+    receipt.hash=norn_ir::canonical::HashProfile::Norn1.hash_json(&encoded).expect("valid legacy hash");
+    let connection=rusqlite::Connection::open(path).expect("legacy seam");
+    connection.execute("UPDATE _norn_receipt SET receipt=?1,receipt_hash=?2",rusqlite::params![encoded,receipt.hash]).expect("legacy entry");
+    assert_eq!(store.read().receipt_at(1).expect("receipt").expect("present"),receipt);
+    assert!(matches!(store.read().object_at_version(MAIN_WORLD,"proof.Item","item",1),Err(CellError::HistoricalValueUnproven(_))));
+    assert!(matches!(store.read().receipt_for_fact_version(MAIN_WORLD,"proof.Item","item",1),Err(CellError::HistoricalValueUnproven(_))));
+}
+
+#[test]
+fn each_intermediate_incarnation_and_tombstone_is_bound_before_receipt_hashing() {
+    let directory=tempfile::tempdir().expect("directory");let path=directory.path().join("cell.sqlite");
+    let mut store=CellStore::open(&path,model(),StoreOptions::default()).expect("store");
+    let outcome=store.commit(&batch(vec![put("proof.Item","item","first"),put("proof.Item","item","second"),FactWriteRow::Delete{object_type:"proof.Item".into(),key:"item".into()},FactWriteRow::Delete{object_type:"proof.Item".into(),key:"item".into()}])).expect("atomic versions");
+    let receipt=outcome.receipt(); assert_eq!(receipt.body.written.len(),4);
+    let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    for row in &receipt.body.written {
+        let proof=store.read().fact_version_evidence_with_budget(MAIN_WORLD,"proof.Item","item",row.version,&mut DecodeBudget::new(&limits)).expect("proof").expect("budget");
+        assert_eq!(row.snapshot_sha256.as_deref(),Some(proof.snapshot_sha256()));
+        assert_eq!(proof.receipt(),receipt);
+    }
+    drop(store);let store=CellStore::open(&path,model(),StoreOptions::default()).expect("restart");
+    assert_eq!(store.read().object_at_version(MAIN_WORLD,"proof.Item","item",1).expect("first").expect("live").values["value"],Value::from("first"));
+    assert!(store.read().object_at_version(MAIN_WORLD,"proof.Item","item",4).expect("tombstone").is_none());
+}

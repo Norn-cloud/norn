@@ -280,7 +280,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             let changed = self.write_changed_properties(write)?;
             let derived = self.derived_properties(write);
             let lineage_properties = changed.union(&derived).cloned().collect();
-            let row = self.write(write)?;
+            let mut row = self.write(write)?;
             Self::record_changed_properties(
                 &mut changed_properties,
                 write.target().0,
@@ -325,7 +325,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             {
                 records.push(record);
             }
-            self.capture_value_commitment(&row)?;
+            row.snapshot_sha256 = Some(self.capture_value_commitment(&row)?);
             written.push(row);
         }
         for fact in &self.batch.facts {
@@ -340,7 +340,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             let concrete_before = self.live(object_type, key)?;
             self.apply_fact(fact)?;
             Self::record_changed_properties(&mut changed_properties, object_type, key, &changed);
-            let row = self.canonical_written_row(object_type, key, concrete_before)?;
+            let mut row = self.canonical_written_row(object_type, key, concrete_before)?;
             if changed.is_empty() && matches!(fact, FactChange::Set { .. }) {
                 self.apply_occurrence_lineage_to_version(
                     &row.object_type,
@@ -363,7 +363,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     records.push(record);
                 }
             }
-            self.capture_value_commitment(&row)?;
+            row.snapshot_sha256 = Some(self.capture_value_commitment(&row)?);
             written.push(row);
         }
         // All snapshots were captured before later mutations.
@@ -466,6 +466,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                             self.reader().root_type(object_type)?,
                             key,
                             version,
+                            self.commit_seq,
                         )?)
                     }
                 };
@@ -495,6 +496,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             object_type,
             key: key.to_owned(),
             version,
+            snapshot_sha256: None,
         })
     }
 
@@ -714,6 +716,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             object_type: concrete_type,
             key: key.to_owned(),
             version,
+            snapshot_sha256: None,
         })
     }
 
@@ -2079,7 +2082,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
     /// markings. Action calls inherit target labels at enqueue; command tasks
     /// inherit the attributed call's immutable snapshot. Unscoped rule and
     /// observation detail is unknown.
-    fn capture_value_commitment(&self, row: &WrittenRow) -> Result<(), CellError> {
+    fn capture_value_commitment(&self, row: &WrittenRow) -> Result<String, CellError> {
         let root = self.reader().root_type(&row.object_type)?.to_owned();
         let record = self
             .reader()
@@ -2099,6 +2102,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     &root,
                     &row.key,
                     row.version.saturating_sub(1),
+                    self.commit_seq,
                 )?,
             },
             version: row.version,
@@ -2106,7 +2110,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         };
         let hash = hash_json(&snapshot)?;
         self.conn.execute(&format!("INSERT INTO \"{}\" (\"world\", \"root_type\", \"object_type\", \"id\", \"version\", \"commit_seq\", \"snapshot\", \"hash\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", crate::system::FACT_VALUES), params![self.world, root, row.object_type, row.key, to_i64(row.version, "fact version")?, self.commit_seq_sql()?, canonical_json(&snapshot)?, hash])?;
-        Ok(())
+        Ok(hash)
     }
 
     #[allow(
@@ -2261,6 +2265,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 object_type: object_type.clone(),
                 key: key.clone(),
                 version,
+                snapshot_sha256: None,
             }])?;
         }
         Ok(())

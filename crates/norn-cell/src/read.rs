@@ -2903,6 +2903,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 object_type: object_type.to_owned(),
                 key: key.to_owned(),
                 version,
+                snapshot_sha256: None,
             });
         }
         if written.is_empty() {
