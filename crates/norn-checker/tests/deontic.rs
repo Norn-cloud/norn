@@ -448,3 +448,49 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
         assert_eq!(view.slots(), Err("law.validation.unsupported_temporal"));
     }
 }
+
+#[allow(clippy::expect_used, reason = "typed wording fixture")]
+fn wording_fixture(minimum: i32) -> (norn_ir::ArtifactEnvelope, norn_checker::law_wording::LawWordingArtifact) {
+    let mut requirement = requirement();
+    requirement.norm.law.response = norn_ir::LawResponse::Predicate { expression: norn_ir::ZenExpression(format!("input.quantity >= {minimum}")) };
+    let law: norn_ir::ArtifactEnvelope = serde_json::from_value(json!({
+        "irVersion":"0.1", "artifactId":"toy.requirement.law", "kind":"law", "namespace":"toy", "name":"Requirement", "version":"1.0.0", "lifecycle":"draft", "scope":{}, "dependencies":[], "provenance":{"source":"authoring_sdk"}, "payload": requirement.norm.law
+    })).expect("law envelope");
+    let wording = norn_checker::law_wording::LawWordingArtifact {
+        format:"norn.law_wording/1".into(), artifact_id:format!("{}.wording", requirement.norm.law.id),
+        law_artifact_id:law.artifact_id.clone(), law_sha256:norn_checker::ArtifactRef::of(&law).expect("pin").sha256, requirement,
+    };
+    (law, wording)
+}
+
+// LAW-WORDING-PIN-1: changed executable law values never retain a wording binding.
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn wording_pin_changes_to_unverified_without_changing_semantic_ids(minimum in 1i32..100) {
+        use norn_checker::law_wording::{admit_wording, WordingBinding};
+        use norn_ir::requirement_display::RequirementLocale;
+        let (law, wording) = wording_fixture(minimum);
+        let en = admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En).expect("bound English");
+        let ar = admit_wording(&wording, &law, &requirement_env(), RequirementLocale::Ar).expect("bound Arabic");
+        norn_testkit::proptest::prop_assert_eq!(en.binding, WordingBinding::Bound);
+        norn_testkit::proptest::prop_assert_eq!(ar.binding, WordingBinding::Bound);
+        norn_testkit::proptest::prop_assert_eq!(en.view.requirement, ar.view.requirement);
+        norn_testkit::proptest::prop_assert_eq!(ar.view.direction(), "rtl");
+        let (changed, _) = wording_fixture(minimum.checked_add(1).expect("bounded threshold"));
+        let stale = admit_wording(&wording, &changed, &requirement_env(), RequirementLocale::Ar).expect("unverified view");
+        norn_testkit::proptest::prop_assert_eq!(stale.binding, WordingBinding::Unverified);
+        norn_testkit::proptest::prop_assert_eq!(stale.view.requirement, wording.requirement);
+    }
+}
+
+#[test]
+#[allow(clippy::expect_used, reason = "wording refusal assertions")]
+fn wording_admission_refuses_missing_templates_and_malformed_pins() {
+    use norn_checker::law_wording::{admit_wording, WordingError};
+    use norn_ir::requirement_display::RequirementLocale;
+    let (law, mut wording) = wording_fixture(0);
+    wording.requirement.wording.response.ar.clear();
+    assert!(matches!(admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En), Err(WordingError::Requirement(_))));
+    wording.law_sha256 = "not-a-digest".into();
+    assert!(matches!(admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En), Err(WordingError::Document)));
+}

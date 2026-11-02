@@ -16,6 +16,7 @@ import type { CheckResult, CheckerAbi } from "./checker-abi.ts"
 import { FLOW_SOURCE_MAP_DRAFT_FORMAT, FLOW_SOURCE_MAP_FORMAT, type FlowSourceMap, type FlowSourceMapDraft, type FlowSourceMapFlow } from "./flow-source-map.ts"
 import { type DefinitionSource, compileDefinitionFiles } from "./compiler/definitions.ts"
 import { compileFile } from "./compiler/index.ts"
+import { wordingArtifacts } from "./builder/law.ts"
 import type { FlowDef } from "./builder/flow.ts"
 import { TOOL_ROOT, loadProfile } from "./profile.ts"
 
@@ -51,6 +52,7 @@ export type PackResult =
       readonly ok: true
       /** Compiled artifacts (module order, then declaration order), then imported ones. */
       readonly artifacts: ReadonlyArray<Json>
+      readonly wordingArtifacts: ReadonlyArray<Json>
       /** artifactId → the module (or imported file) it came from. */
       readonly sources: ReadonlyMap<string, string>
       readonly sourceMap: ReadonlyArray<DefinitionSource>
@@ -149,6 +151,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
   const results = compileDefinitionFiles(modules, envelope, {}, { allowEmpty: true })
   const failures: PackModuleFailure[] = []
   const artifacts: Json[] = []
+  const wordings: Json[] = []
   const sources = new Map<string, string>()
   const flows: PackFlow[] = []
   const sourceMap: DefinitionSource[] = []
@@ -168,6 +171,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     sourceMap.push(...result.sourceMap.map((s) => ({ ...s, at: { ...s.at, file: posix(relative(root, resolve(TOOL_ROOT, s.at.file))) } })))
     warnings.push(...result.warnings.map((warning) => ({ ...warning, file })))
     for (const artifact of result.artifacts) add(artifact, file)
+    for (const def of result.definitions) if (def._tag === "Law") wordings.push(...wordingArtifacts(def))
     if (result.flows > 0) {
       // A flow lowers through the syntax compiler to its Run type and decide rule (T7-EFX-2).
       const flow = compileFile(path, { ...envelope(path), sourceRoot: root })
@@ -197,7 +201,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
   const flowSourceMap = flows.length > 0
     ? { format: FLOW_SOURCE_MAP_DRAFT_FORMAT, flows: flows.map((flow) => flow.flowSourceMap) }
     : undefined
-  return { ok: true, artifacts, sources, sourceMap, warnings, flows, baseArtifacts, profile, ...(flowSourceMap ? { flowSourceMap } : {}) }
+  return { ok: true, artifacts, wordingArtifacts: wordings, sources, sourceMap, warnings, flows, baseArtifacts, profile, ...(flowSourceMap ? { flowSourceMap } : {}) }
 }
 
 /** Check a compiled set with the Rust checker (the CheckReceipt hash comes from the checker). */

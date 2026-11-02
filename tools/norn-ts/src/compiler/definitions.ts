@@ -808,9 +808,9 @@ class DefinitionCompiler {
   }
 
   private law(call: ts.CallExpression): L.LawDef {
-    const members = this.meta(call, ["id", "title", "version", "law", "dependencies"])
+    const members = this.meta(call, ["id", "title", "version", "law", "dependencies", "wordings"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
-    return L.law({ id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")), law: this.json(need("law")) as unknown as L.LawIR, dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
+    return L.law({ id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")), law: this.json(need("law")) as unknown as L.LawIR, ...(members.has("wordings") ? {wordings: L.decodeLawWordings(this.json(members.get("wordings")!))} : {}), dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
   }
 
   private connector(call: ts.CallExpression): C.ConnectorDef {

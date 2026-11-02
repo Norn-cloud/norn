@@ -71,3 +71,17 @@ test("counterexamples quote the precise witness without proof claims", () => {
   const rendered = renderCounterexample(goldens[0]!.payload, { state: { status: "shipped", paid: false }, trace: ["submit", "ship"], reason: "An unpaid order reached shipped" })
   expect(rendered).toContain("An unpaid order reached shipped"); expect(rendered).toContain("submit → ship"); expect(rendered).toContain("erpnext.no_unpaid_ship")
 })
+
+test("wording sidecars retain typed EN/AR slots without altering LawIR", () => {
+  const golden = goldens[0]
+  if (!golden) throw new Error("missing law fixture")
+  const text = { en: "declared value", ar: "القيمة المعلنة" }
+  const def = L.law({ id: golden.artifactId, title: golden.name, version: golden.version,
+    law: golden.payload, dependencies: golden.dependencies,
+    wordings: { [golden.payload.id]: { lawDigest: "0".repeat(64), slots: { scope:text, activation:text, component:text, response:text } } },
+  })
+  expect(canonicalJson(L.lowerLaw(def, options).artifact)).toBe(canonicalJson(golden))
+  expect(L.wordingArtifacts(def)).toMatchObject([{format:"norn.law_wording/1", lawArtifactId:golden.artifactId,
+    lawSha256:"0".repeat(64), requirement:{norm:{law:golden.payload}, wording:{response:text}}}])
+  expect(() => L.decodeLawWordings({bad:{lawDigest:"0".repeat(64), slots:{scope:text}}})).toThrow()
+})
