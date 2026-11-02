@@ -167,6 +167,7 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
             pack_version: artifact.version.clone(),
             pack_kind: None,
             provides: None,
+            type_parameters: BTreeMap::new(),
             artifacts: vec![PackArtifactRef {
                 artifact_id: member.to_owned(),
                 version: "0.1.0".to_owned(),
@@ -204,6 +205,7 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
         .enumerate()
         .map(|(index, at)| PackInstance {
             instance_id: at.instance_id.clone(),
+            type_unit_bindings: BTreeMap::new(),
             scope: law.scope.clone(),
             pack: at.pack.clone(),
             imports: if index == 0 {

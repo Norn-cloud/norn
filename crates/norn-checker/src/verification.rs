@@ -252,6 +252,16 @@ pub fn retained_law_membership(
     base: &[ArtifactEnvelope],
     budget: Budget,
 ) -> Result<RetainedLawMembership, Vec<Diagnostic>> {
+    let catalog = EffectiveCatalog::from_artifacts(base);
+    retained_membership_with_catalog(law, base, budget, &catalog)
+}
+
+fn retained_membership_with_catalog(
+    law: &ArtifactEnvelope,
+    base: &[ArtifactEnvelope],
+    budget: Budget,
+    catalog: &EffectiveCatalog,
+) -> Result<RetainedLawMembership, Vec<Diagnostic>> {
     let refused = || {
         vec![finding(
             codes::UNRESOLVED_SCOPE,
@@ -288,7 +298,7 @@ pub fn retained_law_membership(
         instance_id: root.clone(),
         pack: first.pack.clone(),
     };
-    scope_members(base, &packs, &instances, initial, budget).ok_or_else(refused)
+    scope_members(base, &packs, &instances, initial, budget, catalog).ok_or_else(refused)
 }
 
 fn scope_packs(base: &[ArtifactEnvelope]) -> Option<ScopePacks<'_>> {
@@ -325,6 +335,7 @@ fn scope_members(
     instances: &BTreeMap<String, norn_ir::PackInstance>,
     initial: norn_ir::PackInstanceRef,
     budget: Budget,
+    catalog: &EffectiveCatalog,
 ) -> Option<RetainedLawMembership> {
     use norn_ir::definition_catalog::ArtifactKey;
     let mut pending = vec![vec![initial]];
@@ -352,7 +363,16 @@ fn scope_members(
         {
             return None;
         }
-        for member in &pack.artifacts {
+        let mut members = pack.artifacts.clone();
+        for binding in crate::pack_bindings::targets(instance, &base.iter().collect::<Vec<_>>(), Some(catalog)).ok()? {
+            members.push(norn_ir::PackArtifactRef {
+                artifact_id: binding.artifact_id,
+                version: binding.version,
+                kind: norn_ir::PackArtifactKind::Entity,
+                additional: BTreeMap::new(),
+            });
+        }
+        for member in &members {
             let mut matches = base
                 .iter()
                 .filter(|a| a.artifact_id == member.artifact_id && a.version == member.version);
@@ -555,7 +575,7 @@ impl LawProjection<'_> {
             )]
         })?;
         let membership = matches!(law.scope.root, LawRoot::App(_) | LawRoot::Pack(_))
-            .then(|| retained_law_membership(artifact, self.base, self.budget))
+            .then(|| retained_membership_with_catalog(artifact, self.base, self.budget, self.catalog))
             .transpose()?;
         let origin = self.owners.get(&law.subject).ok_or_else(refused)?;
         let targets = self

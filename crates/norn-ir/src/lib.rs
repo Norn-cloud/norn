@@ -91,7 +91,7 @@ pub use business_pack::{
     CorrespondenceRelation, LinkResidual, LinkedPack, MappingRelation, OntologyLinkKind,
     OntologyLinkRoot, OntologyMapping, OntologyPackKind, OntologyPackRoot, OntologyShape,
     OntologyShapeField, OntologySource, OntologySourceFile, OntologyTerm, OntologyTermKind,
-    OntologyTermStatus, PackArtifactKind, PackArtifactRef, PackInstance, PackInstanceRef,
+    OntologyTermStatus, PackArtifactKind, PackArtifactRef, PackInstance, PackInstanceRef, PackTypeUnitBinding,
     ResidualReason, SemanticAuthority, ShapeValueType, SourceImportMode, SourceImporter,
     SourceRedistribution, TermCorrespondence,
 };
@@ -1297,6 +1297,7 @@ define_payload_root!(
         provides => "provides" as Vec<String>,
         artifacts => "artifacts" as Vec<PackArtifactRef>,
         instances => "instances" as Vec<PackInstance>,
+        type_parameters => "typeParameters" as BTreeMap<String, definition_catalog::MemberRef>,
         sources => "sources" as Vec<OntologySource>,
         terms => "terms" as Vec<OntologyTerm>,
         mappings => "mappings" as Vec<OntologyMapping>,

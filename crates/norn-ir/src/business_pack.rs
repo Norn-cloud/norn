@@ -101,6 +101,9 @@ pub struct CompositionPackRoot {
     pub provides: Option<Vec<String>>,
     /// Non-empty list of the pack's artifacts.
     pub artifacts: Vec<PackArtifactRef>,
+    /// PACK-BIND-1: named interface slots supplied by every concrete instance.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub type_parameters: BTreeMap<String, crate::definition_catalog::MemberRef>,
     /// Declarations in the retained scoped graph; omitted when there are none.
     #[serde(
         default,
@@ -129,7 +132,7 @@ pub struct PackInstanceRef {
 
 /// A scoped declaration; imports and contained instances reference this same model.
 /// Identity survives release upgrades. Structural admission grants no execution authority.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PackInstance {
     pub instance_id: String,
@@ -142,6 +145,20 @@ pub struct PackInstance {
     pub pack: InterpretationEndpoint,
     pub imports: BTreeMap<String, PackInstanceRef>,
     pub instances: Vec<PackInstanceRef>,
+    /// Compile-time substitutions, independent of governed runtime settings.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub type_unit_bindings: BTreeMap<String, PackTypeUnitBinding>,
+}
+
+/// A concrete type and every same-group Decimal contract, independently pinned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PackTypeUnitBinding {
+    pub target: InterpretationEndpoint,
+    pub type_name: crate::ObjectTypeName,
+    /// Each source Decimal-binding property names its exact concrete contract.
+    /// CurrencySource stays separate from UnitRef.
+    pub decimals: BTreeMap<String, crate::PropertyType>,
 }
 
 fn instance_scope_wire<S: serde::Serializer>(

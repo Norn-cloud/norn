@@ -2466,6 +2466,7 @@ fn check_business_pack_root(
                 "packId" => String,
                 "packVersion" => String,
                 "packKind" => norn_ir::CompositionPackKind,
+                "typeParameters" => BTreeMap<String, norn_ir::definition_catalog::MemberRef>,
             }
             arrays {
                 "provides" => String,
