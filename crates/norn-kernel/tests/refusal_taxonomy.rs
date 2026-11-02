@@ -519,6 +519,7 @@ fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
             serde_json::to_value(&refusal).unwrap()["reason"],
             json!({
                 "law": "lifecycle.transition_source",
+                "pin": {"kind": "builtin", "id": "lifecycle.transition_source", "version": "1"},
                 "subject": "commerce.SalesOrder/SO-1",
                 "values": {
                     "lifecycle": "status", "transition": "invoice",
@@ -532,4 +533,14 @@ fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
             refusal
         );
     }
+}
+
+#[test]
+fn only_engine_defined_stale_paths_are_retryable() {
+    let key = FactKey::new("demo.Item", "one");
+    let stale = ActionRefusal::<Infallible>::StalePreconditionRead { key: key.clone(), link: None }.refusal();
+    assert!(stale.retryable);
+    assert!(!ActionRefusal::<Infallible>::IdempotencyConflict { key: "used".into() }.refusal().retryable);
+    assert!(!Refusal::new("unknown", RefusalCategory::Conflict, "conflict").retryable);
+    assert!(CommitError::<Infallible>::Conflict { key, expected: FactVersion(1), current: FactVersion(2) }.refusal().retryable);
 }

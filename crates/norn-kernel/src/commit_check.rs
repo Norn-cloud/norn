@@ -1031,12 +1031,15 @@ fn check_invariants<E, C, T>(
         {
             return Err(InvariantAdmissionError::Violation {
                 key: Box::new(write.key.clone()),
-                version: catalog.invariant_owner_version(&failure.owner)
+                version: catalog
+                    .invariant_owner_version(&failure.owner)
                     .map_err(|error| InvariantAdmissionError::EffectiveValues {
-                        key: write.key.clone(), reason: error.to_string(),
+                        key: write.key.clone(),
+                        reason: error.to_string(),
                     })?
                     .ok_or_else(|| InvariantAdmissionError::EffectiveValues {
-                        key: write.key.clone(), reason: "invariant owner is unavailable".to_owned(),
+                        key: write.key.clone(),
+                        reason: "invariant owner is unavailable".to_owned(),
                     })?,
                 owner: failure.owner,
                 id: failure.id,

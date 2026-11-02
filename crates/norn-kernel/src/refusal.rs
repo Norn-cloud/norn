@@ -243,10 +243,21 @@ impl<X> CommitError<X> {
 impl<X> Refusable for CommitError<X> {
     fn refusal(&self) -> Refusal {
         let mut refusal = Refusal::new(self.code(), self.category(), self);
-        if let Self::InvariantViolation { key, owner, version, id, outcome, .. } = self {
+        if let Self::InvariantViolation {
+            key,
+            owner,
+            version,
+            id,
+            outcome,
+            ..
+        } = self
+        {
             refusal.reason = Some(invariant_reason(key, owner, version, id, outcome));
         }
-        refusal.retryable = matches!(self, Self::Conflict { .. } | Self::LinkConflict { .. } | Self::LinkReadConflict { .. });
+        refusal.retryable = matches!(
+            self,
+            Self::Conflict { .. } | Self::LinkConflict { .. } | Self::LinkReadConflict { .. }
+        );
         refusal
     }
 }
@@ -358,14 +369,18 @@ fn invariant_reason(
         norn_ir::DataQualityOutcome::NonBoolean { .. } => "non_boolean",
         norn_ir::DataQualityOutcome::EvaluationFailed { .. } => "evaluation_failed",
         // Non-runtime outcomes carry no unproven observed values into a refusal.
-        _ => "unsupported_outcome",
+        norn_ir::DataQualityOutcome::ObservedOutOfBand { .. }
+        | norn_ir::DataQualityOutcome::InvalidTemporalObservation { .. }
+        | norn_ir::DataQualityOutcome::IdentityProjectionIsolation { .. } => "unsupported_outcome",
     };
     RefusalReason {
         law: id.as_str().to_owned(),
         subject: key.to_string(),
         values: refusal_values([("outcome", outcome.into())]),
         pin: Some(norn_ir::DataQualityRuleRef::Invariant {
-            owner: owner.clone(), invariant_id: id.clone(), version: version.to_owned(),
+            owner: owner.clone(),
+            invariant_id: id.clone(),
+            version: version.to_owned(),
         }),
     }
 }
@@ -522,9 +537,19 @@ impl<X> DecisionRefusal<X> {
 impl<X> Refusable for DecisionRefusal<X> {
     fn refusal(&self) -> Refusal {
         let mut refusal = Refusal::new(self.code(), self.category(), self);
-        refusal.reason = if let Self::InvariantViolation { key, owner, version, id, outcome, .. } = self {
+        refusal.reason = if let Self::InvariantViolation {
+            key,
+            owner,
+            version,
+            id,
+            outcome,
+            ..
+        } = self
+        {
             Some(invariant_reason(key, owner, version, id, outcome))
-        } else { self.lifecycle_reason() };
+        } else {
+            self.lifecycle_reason()
+        };
         refusal.retryable = matches!(self, Self::Stale { .. });
         refusal
     }

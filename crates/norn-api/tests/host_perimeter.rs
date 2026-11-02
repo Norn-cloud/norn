@@ -110,10 +110,13 @@ fn host_refusal_preserves_status_category_and_conceals_opaque_detail()
 }
 
 #[test]
-fn invariant_refusal_retains_pin_and_typed_reason_through_api() {
+fn invariant_refusal_retains_pin_and_typed_reason_through_api() -> Result<(), Box<dyn std::error::Error>> {
     use norn_kernel::{CommitError, FactKey, Refusable};
     let error = CommitError::<std::convert::Infallible>::InvariantViolation {
-        key: Box::new(FactKey { object_type: norn_ir::ObjectTypeName("demo.Item".into()), key: "one".into() }),
+        key: Box::new(FactKey {
+            object_type: norn_ir::ObjectTypeName("demo.Item".into()),
+            key: "one".into(),
+        }),
         owner: norn_ir::InvariantOwner::Object(norn_ir::ObjectTypeName("demo.Item".into())),
         version: "sha256:owner-definition".into(),
         id: norn_ir::InvariantId("positive".into()),
@@ -125,12 +128,18 @@ fn invariant_refusal_retains_pin_and_typed_reason_through_api() {
     assert_eq!(projected.reason, kernel.reason);
     assert_eq!(projected.code, "commit.invariant_violation");
     assert!(!projected.retryable);
-    let reason = projected.reason.unwrap();
-    assert_eq!(reason.values["outcome"], norn_ir::RuntimeValue::from("not_satisfied"));
-    assert!(matches!(reason.pin, Some(norn_ir::DataQualityRuleRef::Invariant { version, .. }) if version == "sha256:owner-definition"));
+    let reason = projected.reason.ok_or("missing invariant reason")?;
+    assert_eq!(
+        reason.values.get("outcome"),
+        Some(&norn_ir::RuntimeValue::from("not_satisfied"))
+    );
+    assert!(
+        matches!(reason.pin, Some(norn_ir::DataQualityRuleRef::Invariant { version, .. }) if version == "sha256:owner-definition")
+    );
     let hidden = Refusal::from_kernel(kernel, false);
     assert!(hidden.reason.is_none());
     assert_eq!(hidden.explanation, Refusal::UNPROVEN_DETAIL);
+    Ok(())
 }
 
 proptest::proptest! {

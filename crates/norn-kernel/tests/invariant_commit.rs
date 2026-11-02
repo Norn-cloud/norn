@@ -565,6 +565,9 @@ fn raw_shared_commit_refuses_invalid_final_state_before_events_or_effects() {
         })
         .unwrap_err();
     assert_eq!(error.code(), "commit.invariant_violation");
+    let reason = norn_kernel::Refusable::refusal(&error).reason.expect("invariant reason");
+    assert!(matches!(reason.pin, Some(DataQualityRuleRef::Invariant { version, .. })
+        if version.starts_with("sha256:") && version.len() == 71));
     assert!(matches!(
         error,
         CommitError::InvariantViolation {
