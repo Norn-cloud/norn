@@ -539,7 +539,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         for receipt in self.receipt_stream() {
             let receipt = receipt?;
             for row in receipt.body.written {
-                self.proven_snapshot(&receipt.body.world, &row.object_type, &row.key, row.version)?;
+                let stored: Option<(String, String, String)> = self.conn.query_optional(
+                    &format!("SELECT root_type,snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND commit_seq=?2 AND object_type=?3 AND id=?4 AND version=?5"),
+                    params![receipt.body.world, to_i64(receipt.body.commit_seq, "fact commit")?, row.object_type, row.key, to_i64(row.version, "fact version")?],
+                    |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
+                )?;
+                let (root, encoded, hash) = stored.ok_or_else(unproven_snapshot)?;
+                let snapshot = decode_snapshot(&receipt.body.world, &row.object_type, &row.key, row.version, &encoded, &hash)?;
+                if snapshot.root_type != root || snapshot.object_type != row.object_type {
+                    return Err(unproven_snapshot());
+                }
             }
         }
         Ok(())

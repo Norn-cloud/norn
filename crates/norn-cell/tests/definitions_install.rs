@@ -5026,6 +5026,7 @@ norn_testkit::proptest::proptest! {
         for (index,parent) in [None,Some(new_root)].into_iter().enumerate() {
             let candidate=model_for(parent);let clock=at.checked_add(u64::try_from(index).expect("index")).and_then(|n|n.checked_add(2)).expect("bounded");
             store.install_definitions(candidate.clone(),install_input("identity-next",clock,&candidate),Some(u64::try_from(index).expect("index").checked_add(1).expect("bounded")),"org_demo/dev").expect("migration");
+            drop(store);store=CellStore::open(&path,candidate,StoreOptions::default()).expect("reopen migrated history");
             let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
             for kind in ["defs.Child",old_root] {
                 let HistoricalEvidence::Found(proof)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,kind,"same",cutoff,&mut DecodeBudget::new(&limits)).expect("retained identity") else {panic!("history disappeared")};

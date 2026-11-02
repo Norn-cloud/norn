@@ -314,6 +314,8 @@ pub struct DefinitionCatalog {
     pub properties: Vec<PropertyRow>,
     pub links: Vec<LinkRow>,
     pub transitions: Vec<TransitionRow>,
+    /// States of locally declared lifecycles, including inherited enum properties.
+    pub states: Vec<MemberRef>,
     pub writes: Vec<WritesRow>,
     pub depends_on: Vec<DependsOnRow>,
     pub mappings: Vec<MappingRow>,
@@ -344,23 +346,7 @@ impl DefinitionCatalog {
             Member::ObjectMap { .. } => self.mappings.iter().any(|row| &row.map == member),
             Member::Law { .. } => self.laws.iter().any(|row| &row.at == member),
             Member::Link { .. } => self.links.iter().any(|row| &row.at == member),
-            Member::State {
-                type_name,
-                lifecycle,
-                state,
-            } => self.properties.iter().any(|row| {
-                row.at.artifact_id == member.artifact_id
-                    && row.at.version == member.version
-                    && row.at.member
-                        == (Member::Property {
-                            type_name: type_name.clone(),
-                            property: lifecycle.clone(),
-                        })
-                    && row
-                        .lifecycle
-                        .as_ref()
-                        .is_some_and(|states| states.states.contains(state))
-            }),
+            Member::State { .. } => self.states.contains(member),
         }
     }
 }
