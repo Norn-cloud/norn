@@ -105,7 +105,10 @@ fn check_slot_size(values: &BTreeMap<String, RuntimeValue>) -> Result<(), CellEr
         .slice
         .max_canonical_bytes
         .saturating_sub(8192);
-    if u64::try_from(crate::codec::canonical_json(values)?.len()).map_err(|_size| refused(INVALID))? > bound {
+    if u64::try_from(crate::codec::canonical_json(values)?.len())
+        .map_err(|_size| refused(INVALID))?
+        > bound
+    {
         return Err(refused("core.compute.bound_exceeded"));
     }
     Ok(())
