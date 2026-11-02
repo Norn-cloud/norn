@@ -1521,6 +1521,7 @@ dependencies = [
  "http",
  "norn-checker",
  "norn-ir",
+ "norn-kernel",
  "serde",
  "serde_json",
  "utoipa",

@@ -8,6 +8,7 @@ description = "Generated core IR and checker API contracts"
 
 [dependencies]
 norn-checker = { path = "../norn-checker" }
+norn-kernel = { path = "../norn-kernel" }
 http = "1.5.0"
 norn-ir = { path = "../norn-ir" }
 serde = "1.0.228"

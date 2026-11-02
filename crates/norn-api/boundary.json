@@ -3,7 +3,8 @@
   "ring": "Zero",
   "allowed_norn": [
     "norn-ir",
-    "norn-checker"
+    "norn-checker",
+    "norn-kernel"
   ],
   "dev_only_norn": [],
   "third_party": [
