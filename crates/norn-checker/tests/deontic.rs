@@ -467,7 +467,10 @@ fn pack_requirement_uses_the_shared_bilingual_renderer() {
     r.norm.law.scope.root = norn_ir::LawRoot::Pack("ledger-instance".into());
     let mut ids = Vec::new();
     for (locale, label) in [(L::En, "pack"), (L::Ar, "حزمة")] {
-        let view = RequirementView { requirement: r.clone(), locale };
+        let view = RequirementView {
+            requirement: r.clone(),
+            locale,
+        };
         let slots = view.slots().expect("pack safety display");
         let scope = slots.first().expect("scope slot");
         assert!(scope.text.contains(label) && scope.text.contains("ledger-instance"));
