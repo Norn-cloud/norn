@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { join, resolve } from "node:path"
 import { Schema } from "effect"
-import { FORECAST_MANIFEST_DIGEST } from "../../../registry/core/src/metrics-pin.ts"
+import { FORECAST_MANIFEST_DIGEST } from "../../../registry/core/src/shared/metrics-pin.ts"
 import { compilePack, checkPack } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker, CHECKER_PKG_ENV } from "./checker.ts"

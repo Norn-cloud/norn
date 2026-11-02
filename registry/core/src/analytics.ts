@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { FORECAST_MANIFEST_DIGEST } from "./metrics-pin.ts"
+import { FORECAST_MANIFEST_DIGEST } from "./shared/metrics-pin.ts"
 
 const Evidence = Schema.Struct({
   id: Schema.String, status: Schema.Literals(["proposed", "published", "refused"]),

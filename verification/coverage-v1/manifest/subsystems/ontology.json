@@ -252,7 +252,7 @@
     "registry/core/artifacts/core.analytics.refuse.action.json",
     "registry/core/artifacts/core.units.json",
     "registry/core/src/analytics.ts",
-    "registry/core/src/metrics-pin.ts",
+    "registry/core/src/shared/metrics-pin.ts",
     "registry/core/src/units.rs",
     "registry/packs/canon/artifacts/norn.ontology-pack.canon.json",
     "registry/packs/canon/canon.pack.ts",
