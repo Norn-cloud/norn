@@ -124,11 +124,11 @@ def migrate(root, base, head):
     base = git(root, "rev-parse", "--verify", "--end-of-options", base + "^{commit}").stdout.decode().strip()
     head = git(root, "rev-parse", "--verify", "--end-of-options", head + "^{commit}").stdout.decode().strip()
     git(root, "merge-base", "--is-ancestor", base, head)
-    changed = git(root, "diff", "--name-only", "--no-renames", base, head, "--", COVERAGE, DIAGNOSTICS + ".json", RUST).stdout.decode().splitlines()
+    changed = git(root, "diff", "--name-only", "--no-renames", base, head, "--", COVERAGE, COVERAGE + ".json", DIAGNOSTICS, DIAGNOSTICS + ".json", RUST).stdout.decode().splitlines()
     for line in git(root, "diff", "--raw", "--no-renames", base, head, "--", *changed).stdout.decode().splitlines() if changed else []:
         if any(mode.lstrip(":") not in ("000000", "100644") for mode in line.split()[:2]):
             raise ValueError("registry file modes cannot be mapped")
-    if any(p.startswith(COVERAGE + "/") and not re.fullmatch(COVERAGE + r"/subsystems/[a-z0-9][a-z0-9-]*\.json", p) for p in changed):
+    if any(p == COVERAGE + ".json" or p.startswith(DIAGNOSTICS + "/") or (p.startswith(COVERAGE + "/") and not re.fullmatch(COVERAGE + r"/subsystems/[a-z0-9][a-z0-9-]*\.json", p)) for p in changed):
         raise ValueError("only legacy subsystem deltas can be mapped")
     plan = {}
     def current(path):

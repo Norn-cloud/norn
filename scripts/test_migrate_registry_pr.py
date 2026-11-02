@@ -64,6 +64,8 @@ class MigrationTests(unittest.TestCase):
                 proposed = [json.loads(git("show", head + ":" + migration.COVERAGE + "/subsystems/" + s["id"] + ".json")) for s in result["subsystems"]]
                 for actual, expected in zip(result["subsystems"], proposed):
                     self.assertEqual(set(actual["sourceFiles"]), set(expected["sourceFiles"]) | ({"synthetic/main.rs"} if actual["id"] == document["subsystems"][0]["id"] else set()))
+                    main_sources = next(s["sourceFiles"] for s in document["subsystems"] if s["id"] == actual["id"])
+                    self.assertEqual(actual["sourceFiles"][:len(main_sources)], main_sources)
                 expected_codes = json.loads(git("show", head + ":" + migration.DIAGNOSTICS + ".json"))["codes"]
                 actual_codes = json.loads((root / (migration.DIAGNOSTICS + ".json")).read_text())["codes"] if native else [json.loads(p.read_text()) for p in target.glob("*.json")]
                 self.assertEqual(sorted(actual_codes, key=lambda x: x["code"]), sorted(expected_codes + ([] if native else [extra]), key=lambda x: x["code"]))
