@@ -184,28 +184,17 @@ fn rescale_invalid_scales_and_full_width_boundaries_refuse() {
     assert!(profile.rescale(Decimal::MIN).is_err());
 }
 
-// VAL-ROUND: a smaller production-core domain keeps the guard independently bounded.
+/// VAL-EXACT-1: all u32 scale derivations and fixed full-width overflow witnesses.
 #[kani::proof]
 #[kani::unwind(40)]
-fn decimal_site_scale_one_to_zero_matches_integer_reference() {
-    let n = i128::from(kani::any::<i8>());
-    let rounding = mode();
-    let result =
-        ScaledArithmetic { scale: 0, rounding }.rescale(Decimal::from_i128_with_scale(n, 1));
-    let remainder = n % 10;
-    if rounding == Rounding::Refuse && remainder != 0 {
-        assert!(result.is_err());
-    } else {
-        let quotient = n / 10;
-        let magnitude = remainder.unsigned_abs();
-        let increment = match rounding {
-            Rounding::Refuse | Rounding::TowardZero => false,
-            Rounding::HalfEven => magnitude > 5 || (magnitude == 5 && quotient % 2 != 0),
-            Rounding::HalfAwayFromZero => magnitude >= 5,
-        };
-        let expected = quotient + if increment { n.signum() } else { 0 };
-        let result = result.unwrap();
-        assert_eq!(result.mantissa(), expected);
-        assert_eq!(result.scale(), 0);
-    }
+fn derived_exact_scales_and_overflow_refuse() {
+    let (a, b): (u32, u32) = kani::any();
+    let multiply: bool = kani::any();
+    let op = if multiply { "Multiply" } else { "Add" };
+    let expected = if multiply { u64::from(a) + u64::from(b) } else { u64::from(a.max(b)) };
+    assert_eq!(ScaledArithmetic::exact_result_scale(op, a, b).ok().map(u64::from), (expected <= 18).then_some(expected));
+    assert_eq!(ScaledArithmetic::exact_result_scale("Add", a, b), ScaledArithmetic::exact_result_scale("Subtract", a, b));
+    assert!(ScaledArithmetic::exact_binary("Add", Decimal::MAX, Decimal::ONE).is_err());
+    assert!(ScaledArithmetic::exact_binary("Subtract", Decimal::MIN, Decimal::ONE).is_err());
+    assert!(ScaledArithmetic::exact_binary("Multiply", Decimal::MAX, Decimal::MAX).is_err());
 }

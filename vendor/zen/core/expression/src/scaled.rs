@@ -16,6 +16,39 @@ pub struct ScaledArithmetic {
 }
 
 impl ScaledArithmetic {
+    /// VAL-EXACT-1: exact operations derive their scale without a rounding site.
+    pub fn exact_result_scale(op: &str, a: u32, b: u32) -> Result<u32, &'static str> {
+        let scale = match op {
+            "Add" | "Subtract" => a.max(b),
+            "Multiply" => a.checked_add(b).ok_or("exact result scale overflow")?,
+            _ => return Err("operation requires a declared result scale and rounding"),
+        };
+        (scale <= 18).then_some(scale).ok_or("exact result scale exceeds 18")
+    }
+
+    /// VAL-EXACT-1: checked addition, subtraction and multiplication never round.
+    pub fn exact_binary(op: &str, a: Decimal, b: Decimal) -> Result<Decimal, &'static str> {
+        let scale = Self::exact_result_scale(op, a.scale(), b.scale())?;
+        let coefficient = match op {
+            "Multiply" => a.mantissa().checked_mul(b.mantissa()),
+            "Add" | "Subtract" => {
+                let profile = Self { scale, rounding: Rounding::Refuse };
+                let (a, b) = (profile.coefficient(a)?, profile.coefficient(b)?);
+                if op == "Add" { a.checked_add(b) } else { a.checked_sub(b) }
+            }
+            _ => return Err("unsupported exact operation"),
+        }.ok_or("exact coefficient overflow")?;
+        Decimal::try_from_i128_with_scale(coefficient, scale)
+            .map_err(|_| "number exceeds the exact decimal range")
+    }
+
+    /// VAL-EXACT-1: compare after checked exact scale alignment.
+    pub fn exact_compare(a: Decimal, b: Decimal) -> Result<std::cmp::Ordering, &'static str> {
+        let scale = Self::exact_result_scale("Add", a.scale(), b.scale())?;
+        let profile = Self { scale, rounding: Rounding::Refuse };
+        Ok(profile.coefficient(a)?.cmp(&profile.coefficient(b)?))
+    }
+
     pub fn coefficient(self, value: Decimal) -> Result<i128, &'static str> {
         let value = value.normalize();
         let places = self
@@ -290,4 +323,16 @@ mod tests {
         .coefficient(Decimal::ZERO)
         .is_err());
     }
+    #[test]
+    fn derived_exact_operations_preserve_intermediates_and_refuse_overflow() {
+        let product = ScaledArithmetic::exact_binary("Multiply", "1.25".parse().unwrap(), "0.1".parse().unwrap()).unwrap();
+        assert_eq!(product.to_string(), "0.125");
+        let result = ScaledArithmetic::exact_binary("Multiply", product, Decimal::from(100)).unwrap();
+        assert_eq!(ScaledArithmetic { scale: 2, rounding: Rounding::HalfEven }.rescale(result).unwrap().to_string(), "12.50");
+        for (op, a, b) in [("Add", Decimal::MAX, Decimal::ONE), ("Subtract", Decimal::MIN, Decimal::ONE), ("Multiply", Decimal::MAX, Decimal::MAX)] {
+            assert!(ScaledArithmetic::exact_binary(op, a, b).is_err());
+        }
+        assert!(ScaledArithmetic::exact_binary("Divide", Decimal::ONE, Decimal::ONE).is_err());
+    }
+
 }

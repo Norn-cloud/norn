@@ -1608,3 +1608,25 @@ proptest::proptest! {
         }
     }
 }
+
+proptest::proptest! {
+    #[test]
+    fn derived_exact_operations_never_round(a in proptest::prelude::any::<i32>(), b in proptest::prelude::any::<i32>(), sa in 0_u32..=9, sb in 0_u32..=9) {
+        use zen_engine::scaled::ScaledArithmetic;
+        let text = |n: i32, scale: u32| {
+            let factor = 10_u64.pow(scale);
+            if scale == 0 { n.to_string() } else { format!("{}{}.{:0width$}", if n < 0 { "-" } else { "" }, u64::from(n.unsigned_abs()) / factor, u64::from(n.unsigned_abs()) % factor, width = usize::try_from(scale).unwrap()) }
+        };
+        let (left, right) = (text(a, sa).parse().unwrap(), text(b, sb).parse().unwrap());
+        let scale = sa.max(sb);
+        let aligned_a = i128::from(a) * 10_i128.pow(scale - sa);
+        let aligned_b = i128::from(b) * 10_i128.pow(scale - sb);
+        proptest::prop_assert_eq!(ScaledArithmetic::exact_compare(left, right).unwrap(), aligned_a.cmp(&aligned_b));
+        for op in ["Add", "Subtract", "Multiply"] {
+            let result = ScaledArithmetic::exact_binary(op, left, right).unwrap();
+            let expected = match op { "Add" => aligned_a + aligned_b, "Subtract" => aligned_a - aligned_b, _ => i128::from(a) * i128::from(b) };
+            proptest::prop_assert_eq!(result.mantissa(), expected);
+            proptest::prop_assert_eq!(result.scale(), if op == "Multiply" { sa + sb } else { scale });
+        }
+    }
+}

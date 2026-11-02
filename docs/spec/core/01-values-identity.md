@@ -19,7 +19,9 @@ Definition identity is exact artifact/version/digest plus stable member ID. Rena
 
 The Decimal wire declaration accepts optional `rounding` using the shared `Rounding` modes (`refuse`, `toward_zero`, `half_even`, `half_away_from_zero`); omission means exact/refuse. The declared scale is the sole scale authority. The Norn-owned rescale adapter delegates to `ScaledArithmetic` at scales 0–18; the existing exact storage/transport range remains 0–28. Until expression/store binding is qualified, artifact admission refuses non-refuse declarations as `core.values.inexact`: wire decoding alone does not activate a rounding policy.
 
-The declaration adapter is checked against generated signed-integer references. A small production-core Kani harness covers signed 8-bit coefficients rescaled from scale 1 to 0 under all four modes; this bounded arithmetic scope does not cover IR decoding, adapter parsing or the remaining expression/store binding.
+The declaration adapter is checked against generated signed-integer references. A production-core Kani harness covers all u32 scale derivations and fixed full-width coefficient/decimal overflow witnesses; this scope does not cover IR decoding, adapter parsing or the remaining expression/store binding.
+
+Within the single `ScaledArithmetic`, exact `+`/`−` derive the maximum operand scale, `×` derives their sum and comparisons align scales exactly, refusing a derived scale above 18 or coefficient overflow; division, rescale and `round` require an explicit result scale and rounding at a destination Decimal or `round(x, n, mode)` site.
 
 ## Evaluation and enforcement
 
