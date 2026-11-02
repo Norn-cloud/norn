@@ -1659,6 +1659,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-host-conformance"
+version = "0.1.0"
+
+[[package]]
 name = "norn-ir"
 version = "0.1.0"
 dependencies = [
@@ -1703,6 +1707,7 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "hex",
+ "proptest",
  "serde",
  "serde_json",
  "sha2",
