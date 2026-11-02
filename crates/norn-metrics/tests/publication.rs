@@ -55,10 +55,12 @@ impl ReceiptValidator for Checks {
 #[test]
 fn publish_timed_world_and_refuse_bulk_without_partial_effects() {
     let artifacts=source::artifacts();
-    assert!(norn_checker::check_artifact_set(&artifacts,&norn_checker::EntityArtifactSetContext{registry:&Default::default(),base:&[],tenant:None}).is_empty(),"admit the actual typed declarations");
+    let diagnostics=norn_checker::check_artifact_set(&artifacts,&norn_checker::EntityArtifactSetContext{registry:&Default::default(),base:&[],tenant:None});
+    assert!(diagnostics.is_empty(),"admit the actual typed declarations: {diagnostics:?}");
     let action:norn_ir::ActionRoot=serde_json::from_value(payload("core.analytics.publish.action")).expect("declared PUBLISH");
     for bulk in [false,true] {
         let mut world=source::world(bulk,Some(proposal()));
+        assert_eq!(world.evidence.len(),128);
         let export=export(&world); let (input,blob)=export.input(source::micros(source::SPLIT)).expect("bound input");
         let prepared=norn_metrics::producer::prepare_forecast(&export,&input).expect("library assessment");
         let mut values=proposal();
