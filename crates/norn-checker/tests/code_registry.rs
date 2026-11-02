@@ -220,7 +220,7 @@ fn conformance_directory_matches_the_public_manifest() {
 
 #[test]
 fn registry_generation_refuses_invalid_entries() {
-    let base = serde_json::json!({"code":"toy.validation.invalid", "tier":"T2", "severity":"error", "message":"synthetic", "since":"0.2.0"});
+    let base = serde_json::json!({"code":"toy.validation.invalid", "tier":"T2", "severity":"error", "message":"synthetic \"quoted\" \\ path \u{03b1}", "since":"0.2.0"});
     for change in [
         "valid",
         "identity",
@@ -252,7 +252,10 @@ fn registry_generation_refuses_invalid_entries() {
             fs::create_dir(&path).expect("invalid directory");
         } else {
             let text = if change == "duplicate-key" {
-                "{\"code\":\"a\",\"code\":\"b\"}".to_owned()
+                format!(
+                    "{{\"code\":\"toy.validation.invalid\",{}",
+                    &value.to_string()[1..]
+                )
             } else {
                 value.to_string()
             };
