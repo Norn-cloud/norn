@@ -18,6 +18,6 @@ fn selection_commutes_and_future_knowledge_preserves_old_answers() {
 #[kani::proof]
 fn receipt_prefix_including_empty_commits_matches_wide_arithmetic() {
     let first:u64=kani::any(); let count:u64=kani::any();
-    let expected=u128::from(first).checked_sub(1).and_then(|n|n.checked_add(u128::from(count))).and_then(|n|u64::try_from(n).ok());
+    let expected=u128::from(first).checked_sub(1).and_then(|n|n.checked_add(u128::from(count))).and_then(|n|<u64 as core::convert::TryFrom<u128>>::try_from(n).ok());
     assert_eq!(selection::receipt_last_sequence(first,count),expected);
 }

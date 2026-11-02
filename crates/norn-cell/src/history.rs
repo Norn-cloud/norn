@@ -273,7 +273,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let capacity = budget.remaining_rows() / 2;
         let limit = capacity.saturating_add(1);
         let rows = self.conn.query(
-            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 AND \"commit_seq\"<=?4 ORDER BY \"version\" LIMIT ?5"),
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 AND \"commit_seq\"<=?4 ORDER BY \"commit_seq\", \"version\" LIMIT ?5"),
             params![world, root, key, to_i64(known_as_of.frontier, "knowledge frontier")?, to_i64(u64::try_from(limit).map_err(|_bound| unproven_snapshot())?, "historical limit")?],
         )?;
         let versions = rows
