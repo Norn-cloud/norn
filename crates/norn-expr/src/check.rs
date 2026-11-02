@@ -527,13 +527,6 @@ fn check_expression_with_sources_and_root_bounds(
         });
         let construction = construction_source(ast, metadata, source);
         let exact = checker.exact || exact_type(expected);
-        if exact {
-            checker.diagnostics.extend(exact_admission(
-                ast,
-                metadata,
-                decimal_destination(expected).is_some(),
-            ));
-        }
         (
             inferred,
             checker.diagnostics,
@@ -2370,7 +2363,7 @@ pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType
 }
 
 /// VAL-ROUND: no information-losing operation enters the exact runtime implicitly.
-fn exact_admission<'n>(
+pub(crate) fn exact_admission<'n>(
     root: &'n Node<'n>,
     metadata: &AstMetadata,
     destination: bool,
