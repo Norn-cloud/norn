@@ -1566,7 +1566,16 @@ impl<E: SqlEngine> CellStore<E> {
         if previous != expected_head_hash {
             return Err(refused());
         }
-        let mut store = Self::from_engine(engine, Model::from_snapshot(initial)?)?;
+        let cell_id = first
+            .bindings
+            .get(crate::cell_identity::KEY)
+            .and_then(|value| norn_ir::cell_id::CellId::try_from(value.clone()).ok())
+            .ok_or_else(refused)?;
+        let mut store =
+            Self::from_engine_with_identity_source(engine, Model::from_snapshot(initial)?, |_| {
+                Ok(cell_id.clone())
+            })?;
+        store.require_cell_id(&cell_id)?;
         if store.export_commit_count()? != 0 {
             return Err(refused());
         }

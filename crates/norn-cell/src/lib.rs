@@ -29,6 +29,7 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod cell_identity;
 mod codec;
 pub mod engine;
 pub mod error;

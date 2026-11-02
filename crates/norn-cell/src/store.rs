@@ -1940,7 +1940,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// [`CellError::LedgerCorrupt`] when its ledger does not verify; engine
     /// errors otherwise.
     pub fn from_engine(conn: E, model: Model) -> Result<Self, CellError> {
-        Self::init(conn, model)
+        Self::from_engine_with_identity_source(conn, model, crate::cell_identity::generate)
     }
 
     /// Read the installed active set before constructing the model used to
@@ -2007,7 +2007,16 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 
-    fn init(conn: E, model: Model) -> Result<Self, CellError> {
+    /// Open with an injectable identity source, called only for a fresh store.
+    /// CELL-ID-1: existing identities and legacy unqualified histories are retained.
+    ///
+    /// # Errors
+    /// Store admission or identity source failure.
+    pub fn from_engine_with_identity_source(
+        conn: E,
+        model: Model,
+        mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<Self, CellError> {
         validate_store_format(&conn)?;
         conn.transaction(|| -> Result<(), CellError> {
             for statement in SYSTEM_DDL {
@@ -2032,6 +2041,8 @@ impl<E: SqlEngine> CellStore<E> {
                 (None, None) => {
                     let insert =
                         format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
+                    let cell_id = source(&conn)?;
+                    conn.execute(&insert, params!["binding:cell_id", cell_id.as_str()])?;
                     conn.execute(&insert, params!["format", STORE_FORMAT])?;
                     conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
                 }
@@ -2075,6 +2086,7 @@ impl<E: SqlEngine> CellStore<E> {
             verified: RefCell::new(LedgerHead::genesis()),
             quantity_boundary: Cell::new(None),
         };
+        crate::cell_identity::verify_history(&store.conn)?;
         // An existing file is admitted only if its ledger and receipts verify.
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
@@ -2237,6 +2249,11 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// [`CellError::BindingMismatch`] when the file is bound to another value.
     pub fn bind(&mut self, key: &str, value: &str) -> Result<(), CellError> {
+        if key == crate::cell_identity::KEY {
+            let id = norn_ir::cell_id::CellId::try_from(value.to_owned())
+                .map_err(|reason| CellError::Encoding(reason.to_owned()))?;
+            return self.require_cell_id(&id);
+        }
         let meta_key = format!("binding:{key}");
         self.conn.transaction(|| -> Result<(), CellError> {
             let found: Option<String> = self.conn.query_optional(

@@ -64,3 +64,25 @@ At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `ru
 3. Enforce key/alias history and reference fences at commit; add concurrent collision/tombstone tests.
 4. Add temporal/calendar/content-reference pins and TIME-DST/BLOB-MISSING tests; align 06/08 temporal lookup.
 5. Add governed merge/split plans after 04/06 migration checks; prove old-reference preservation with ID-RENAME extensions.
+
+### CELL-ID-1 — durable logical cell boundary
+
+A fresh store obtains one opaque 128-bit CellId from an injectable source and
+persists its 32 lowercase hexadecimal digits as `binding:cell_id` in the creation
+transaction. Scope and physical host do not contribute to it. Reopen validates
+its canonical representation and its retained journal binding. An explicitly
+bound open refuses a different identity. An existing unqualified file remains
+local-only: binding/adoption and portable export are unsupported. Existing
+receipts and history retain their original bytes and hash format.
+
+Restore requires the caller's explicit expected cell binding and matches it
+against the verified export before publishing a destination. Internal replay into
+an empty engine retains that same identity. Migration to another CellId is
+unsupported. This cut does not yet qualify individual receipts or local keys for
+portable use.
+
+Named scenarios: **CELL-ID-ONCE** generates once and reopens without calling the
+source; **CELL-ID-SCOPE** gives independent same-scope stores distinct identities;
+**CELL-ID-OPEN** refuses a different expected CellId; **CELL-ID-RESTORE** refuses
+a different or missing target binding without publishing a destination;
+**CELL-ID-LEGACY** refuses portable export/adoption of unqualified history.
