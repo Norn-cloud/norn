@@ -246,6 +246,8 @@ for field, prefix in (("shard", "test/"), ("phase", "phase/")):
     tasks.extend(prefix + value for value in values)
 if len(tasks) != len(set(tasks)) or set(tasks) - known:
     raise SystemExit("duplicate or unknown planned task")
+if plan["mode"] == "full" and set(tasks) != known:
+    raise SystemExit("full bundle plan omitted a registered task")
 target_seconds = 11 * 60
 count = min(6, len(tasks), (sum(cold_cost(task) for task in tasks) + target_seconds - 1) // target_seconds)
 bins, costs, compiled = [[] for _ in range(count)], [0] * count, [False] * count

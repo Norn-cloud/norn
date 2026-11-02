@@ -271,6 +271,10 @@ class AffectedPlanTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout)
         result = subprocess.run(command + ["bundle", json.dumps(self.full), "missing"], capture_output=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
+        incomplete = copy.deepcopy(self.full)
+        incomplete["phase"].remove("guards")
+        result = subprocess.run(command + ["bundle-plan", json.dumps(incomplete)], capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
 
     def test_bundle_executor_logs_success_and_propagates_failure(self):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
