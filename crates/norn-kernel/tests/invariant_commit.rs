@@ -3332,7 +3332,7 @@ norn_testkit::proptest::proptest! {
         let key = FactKey::new(ITEM, "generated-invariant-law");
         let values = object(json!({"item_id":"generated", "amount":amount}));
         let mut shared_budget = EvaluationBudget::default().units();
-        let shared = norn_kernel::commit_check::evaluate_invariants(&catalog, &key, &values, &mut shared_budget).unwrap();
+        let shared = norn_kernel::evaluate_invariants(&catalog, &key, &values, &mut shared_budget).unwrap();
         let mut law_budget = EvaluationBudget::default().units();
         let governed = norn_kernel::governing_laws::evaluate(&catalog, &key, &values, &mut law_budget).unwrap();
         prop_assert_eq!(governed.is_empty(), amount > 0);
