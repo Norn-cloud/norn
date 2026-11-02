@@ -470,7 +470,10 @@ export class SchemaProjection {
         throw projection("closed schemas have no unions: use a literal union, or Schema.optionalKey for an absent member", schema.node)
       }
       case "value-type":
-        if (schema.type.kind === "decimal") return { type: "number", nornType: schema.type }
+        if (schema.type.kind === "decimal") {
+          if (schema.type.scale > 18) throw projection("closed exact sites require a scale from 0 to 18", schema.node)
+          return { type: "number", nornType: schema.type }
+        }
         if (temporalWire && (schema.type.kind === "timestamp" || schema.type.kind === "date")) return S.text()
         throw projection(`Norn.${schema.type.kind === "ref" ? "ref" : schema.type.kind} projects to EntityIR properties only; closed schemas have no ${schema.type.kind} type yet`, schema.node)
     }
