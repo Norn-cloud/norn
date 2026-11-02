@@ -1,0 +1,4 @@
+{
+  "order": 2,
+  "value": "test:lazy_deadline_refuses_post_and_scheduled_expiry_consumes_timer_atomically"
+}

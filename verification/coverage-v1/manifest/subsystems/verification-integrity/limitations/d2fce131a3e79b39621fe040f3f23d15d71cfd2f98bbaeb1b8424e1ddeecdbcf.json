@@ -1,0 +1,4 @@
+{
+  "order": 0,
+  "value": "Warning-as-error plus lexical scanning excludes admitted source holes in the promoted finite corpus, but it does not establish compiler, kernel, solver, translator, operating-system, hardware, or dependency soundness."
+}
