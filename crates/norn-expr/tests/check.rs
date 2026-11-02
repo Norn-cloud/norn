@@ -1736,3 +1736,10 @@ fn val_exact_optional_decimal_retains_declared_null() {
     );
     assert!(expression.check_typed(&env, &decimal(2)).is_err());
 }
+
+#[test]
+fn val_exact_nested_destinations_never_fall_back_to_plain_number() {
+    let env = ZenTypeEnv::input_only_with_records(BTreeMap::from([("Output".to_owned(),fields([("amount",decimal(2))]))]), fields([]), EnvOptions::default()).unwrap();
+    let expression = Expression::compile("{amount: 1 / 3}").unwrap();
+    assert!(expression.check_typed(&env, &Type::Record("Output".to_owned())).unwrap_err().iter().any(|d| d.code == "core.values.inexact"));
+}

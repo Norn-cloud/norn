@@ -551,7 +551,7 @@ fn check_expression_with_sources_and_root_bounds(
                 .estimate(ast)
         });
         let construction = construction_source(ast, metadata, source);
-        let exact = checker.exact || exact_type(expected);
+        let exact = checker.exact || expected_exact_type(expected, env);
         if exact_enabled && exact {
             checker.diagnostics.extend(exact_admission(
                 ast,
@@ -2386,6 +2386,18 @@ fn exact_type(mut ty: &Type) -> bool {
         ty = inner;
     }
     matches!(ty, Type::Decimal { .. })
+}
+
+fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {
+    let mut pending = vec![ty];
+    let mut visited = BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if exact_type(ty) { return true; }
+        if let Type::Record(name) = ty {
+            if visited.insert(name) && let Some(record) = env.record(name) { pending.extend(record.fields.values().map(|field| &field.ty)); }
+        } else if let Type::Optional(inner) | Type::List(inner) = ty { pending.push(inner); }
+    }
+    false
 }
 
 pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType> {
