@@ -184,6 +184,12 @@ proptest::proptest! {
         let raw: JsonObject = serde_json::from_value(payload).unwrap();
         let error = prepare_action_input_for_call::<Infallible>(&action,&raw,"test.target.create.action","1.0.0","person:authenticated").unwrap_err();
         proptest::prop_assert!(matches!(error,norn_kernel::ActionRefusal::InvalidInput {field: ref rejected} if rejected == field), "caller authority field must refuse");
+        let mut invocation = call(&action,raw,"1.0.0"); invocation.actor = "person:authenticated".into();
+        let definitions = types(); let catalog = TypeCatalog::new(&definitions); let mut storage = cell();
+        let error = commit_action(&mut storage,&catalog,&invocation,&Allow).unwrap_err();
+        proptest::prop_assert!(matches!(error,norn_kernel::ActionRefusal::InvalidInput {field: ref rejected} if rejected == field), "governed call must refuse the spoof");
+        proptest::prop_assert!(storage.ledger().is_empty());
+        proptest::prop_assert!(!storage.load(&FactKey::new("test.Target","C26")).unwrap().exists());
     }
 }
 
