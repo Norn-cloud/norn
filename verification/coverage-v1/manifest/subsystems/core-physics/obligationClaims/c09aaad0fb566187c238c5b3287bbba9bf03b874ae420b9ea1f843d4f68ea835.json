@@ -1,0 +1,21 @@
+{
+  "order": 2,
+  "value": {
+    "id": "INV-CORE-LINKED-REVERSAL",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "residual": "The public kernel has no linked journal reversal yet; quantity-ledger reversals are covered by INV-QL-APPEND-REVERSAL. The model and reference proof cover the pack law only.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entryc09aaad0fb566187c238c5b3287bbba9bf03b874ae420b9ea1f843d4f68ea835.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryc09aaad0fb566187c238c5b3287bbba9bf03b874ae420b9ea1f843d4f68ea835.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryc09aaad0fb566187c238c5b3287bbba9bf03b874ae420b9ea1f843d4f68ea835.evidence.proof"
+      }
+    }
+  }
+}

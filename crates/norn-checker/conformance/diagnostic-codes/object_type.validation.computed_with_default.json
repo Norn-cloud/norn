@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.computed_with_default",
+  "message": "computed property {property} is read-only and cannot declare a default",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

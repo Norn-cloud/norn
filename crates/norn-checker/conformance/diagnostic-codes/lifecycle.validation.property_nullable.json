@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.property_nullable",
+  "message": "lifecycle property {property} is nullable; every object is in a state",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

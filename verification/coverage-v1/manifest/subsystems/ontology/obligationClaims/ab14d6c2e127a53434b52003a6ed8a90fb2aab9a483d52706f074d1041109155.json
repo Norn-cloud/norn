@@ -1,0 +1,21 @@
+{
+  "order": 0,
+  "value": {
+    "id": "INV-ONT-MAPPING-PROVENANCE",
+    "runtime": "tested",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "residual": "The closed Rust validator requires immutable source resolution, evidence, integer confidence in 0..10000, non-empty reviewer identity, a shared UTC review timestamp subset, and at most one direct supersession edge to an active same-term/same-pinned-source mapping; adversarial tests cover missing/range/time/unresolved/self/cross-identity/chained cases and valid direct replacement. Quint checks the two-record direct-replacement protocol and Lean proves the compact closed predicate's confidence, review, identity-preservation, direct-terminal, and exactly-one-active consequences. Reviewer strings are not authenticated principals, confidence/evidence truth is not machine-established, timestamp parsing and arbitrary graphs are outside the formal abstractions, and no correspondence proof exists.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entryab14d6c2e127a53434b52003a6ed8a90fb2aab9a483d52706f074d1041109155.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryab14d6c2e127a53434b52003a6ed8a90fb2aab9a483d52706f074d1041109155.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryab14d6c2e127a53434b52003a6ed8a90fb2aab9a483d52706f074d1041109155.evidence.proof"
+      }
+    }
+  }
+}

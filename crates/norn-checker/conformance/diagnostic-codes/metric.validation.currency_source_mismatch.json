@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.currency_source_mismatch",
+  "message": "Metric currency must match the amount type's authoritative currency source.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

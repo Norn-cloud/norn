@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.empty_identity_rule",
+  "message": "identity rule of key {key} declares neither normalize nor matchPolicy; omit it",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
