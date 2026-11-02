@@ -24,6 +24,7 @@ download_verified() {
 
 ELAN_VERSION="4.2.3"
 LEAN_VERSION="4.33.1"
+LEAN_COMPAT_VERSION="4.31.0"
 QUINT_VERSION="0.32.0"
 KANI_VERSION="0.67.0"
 Z3_VERSION="5.1.0"
@@ -36,6 +37,7 @@ installation_digest() {
   find -L "$ELAN_HOME/bin" \
     "$ELAN_HOME/toolchains/leanprover--lean4---v$LEAN_VERSION" \
     "$ELAN_HOME/toolchains/leanprover--lean4---v4.34.1" \
+    "$ELAN_HOME/toolchains/leanprover--lean4---v$LEAN_COMPAT_VERSION" \
     "$tool_root/quint-$QUINT_VERSION" "$tool_root/kani-home/kani-$KANI_VERSION" \
     "$tool_root/kani-wrapper/bin" "$tool_root/z3-$Z3_VERSION" \
     "$tool_root/temurin-jre-$JRE_VERSION" \
@@ -68,27 +70,27 @@ if [[ ! -x "$elan_unpack/elan-init" ]]; then
 fi
 
 export ELAN_HOME="$tool_root/elan"
-if [[ ! -x "$ELAN_HOME/bin/lean" ]]; then
+if [[ ! -x "$ELAN_HOME/bin/elan" ]]; then
   "$elan_unpack/elan-init" -y --no-modify-path --default-toolchain "leanprover/lean4:v$LEAN_VERSION"
-elif ! "$ELAN_HOME/bin/elan" toolchain list | grep -Fxq "leanprover/lean4:v$LEAN_VERSION"; then
-  "$ELAN_HOME/bin/elan" toolchain install "leanprover/lean4:v$LEAN_VERSION"
 fi
-
-"$ELAN_HOME/bin/elan" toolchain install leanprover/lean4:v4.34.1
+for version in "$LEAN_VERSION" 4.34.1 "$LEAN_COMPAT_VERSION"; do
+  if ! "$ELAN_HOME/bin/elan" run "leanprover/lean4:v$version" lean --version; then
+    "$ELAN_HOME/bin/elan" toolchain install "leanprover/lean4:v$version"
+  fi
+  "$ELAN_HOME/bin/elan" run "leanprover/lean4:v$version" lean --version | grep -F "version $version,"
+done
 
 for proxy in elan lean lake leanc leanmake; do
   ln -sfn "$ELAN_HOME/bin/$proxy" "$bin_root/$proxy"
 done
 
 quint_binary="$tool_root/quint-$QUINT_VERSION/quint"
-if [[ ! -x "$quint_binary" ]]; then
-  mkdir -p "$(dirname "$quint_binary")"
+mkdir -p "$(dirname "$quint_binary")"
   download_verified \
     "https://github.com/quint-co/quint/releases/download/v$QUINT_VERSION/quint-linux-amd64" \
     "939b64095b706017f2f202c6f99c860c40be7c31bddc2b98557316e50f42cd7f" \
     "$quint_binary"
-  chmod +x "$quint_binary"
-fi
+chmod +x "$quint_binary"
 ln -sfn "$quint_binary" "$bin_root/quint"
 
 kani_archive="$download_root/kani-$KANI_VERSION-x86_64-unknown-linux-gnu.tar.gz"
@@ -173,6 +175,10 @@ printf '%s  %s\n' \
 test "$("$ELAN_HOME/bin/elan" --version | cut -d ' ' -f 2)" = "$ELAN_VERSION"
 ELAN_TOOLCHAIN="leanprover/lean4:v$LEAN_VERSION" "$bin_root/lean" --version | grep -F "version $LEAN_VERSION,"
 "$bin_root/quint" --version | grep -Fx "$QUINT_VERSION"
+KANI_HOME="$kani_home" "$bin_root/kani" --version | grep -Fx "kani $KANI_VERSION"
+"$bin_root/z3" --version | grep -F "Z3 version $Z3_VERSION "
+"$bin_root/java" -version 2>&1 | grep -F 'Temurin-21.0.12.1+1'
+
 installation_digest | sha256sum > "$receipt.tmp"
 mv "$receipt.tmp" "$receipt"
 
