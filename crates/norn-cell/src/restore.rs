@@ -90,7 +90,7 @@ impl CellStore<NativeEngine> {
         options: StoreOptions,
     ) -> Result<RestoreReport, RestoreError> {
         let expected_id = crate::cell_identity::from_bindings(bindings)
-            .map_err(|_| RestoreError::IdentityMismatch)?
+            .map_err(|_invalid_identity| RestoreError::IdentityMismatch)?
             .ok_or(RestoreError::IdentityMismatch)?;
         let manifest = exporter.verify().await?;
         refuse_existing(path)?;
