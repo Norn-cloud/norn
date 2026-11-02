@@ -38,7 +38,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .iter()
         .filter(|a| a.kind() == ArtifactKind::Law)
         .map(|artifact| {
-            Ok(json!({"pin": ArtifactRef::of(artifact)?, "law": artifact.payload.to_json_value()}))
+            let pin = ArtifactRef::of(artifact)?;
+            Ok(
+                json!({"pin": {"artifactId":pin.artifact_id, "version":pin.version,
+                "sha256":pin.sha256}, "law": artifact.payload.to_json_value()}),
+            )
         })
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     println!(
