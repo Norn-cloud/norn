@@ -924,6 +924,7 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
             unit: None,
             rounding: Some(mode),
             currency_source: None,
+            per_unit: None,
         };
         assert_eq!(field(&model.env(), "retail.Sku", "price").0, decimal(mode));
         let env = fields(decimal(mode));
