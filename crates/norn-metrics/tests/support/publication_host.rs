@@ -26,7 +26,7 @@ fn dispatch(bulk:bool) -> (source::SourceWorld,Checks,DispatchedCommand) {
     );
     let now = source::millis(source::BULK_AT);
     let mut invocation: FunctionInvocation = serde_json::from_str(include_str!(
-        "../../../fixtures/function/invocation.effectful.json"
+        "../../../../fixtures/function/invocation.effectful.json"
     ))
     .expect("generic dispatch oracle");
     invocation.tenant = source::SCOPE.into();
