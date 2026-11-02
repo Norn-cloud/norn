@@ -13,6 +13,8 @@ use sha2::{Digest, Sha256};
 use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 
 mod induction;
+/// Source-bound Core 06 overlay obligation generation.
+pub mod overlay;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
 /// Profile 9 also binds verified retained-layer authority; profile 8 bound
