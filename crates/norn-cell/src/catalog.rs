@@ -198,6 +198,7 @@ pub fn resource_types() -> Result<Vec<norn_ir::ObjectTypeDef>, serde_json::Error
 #[cfg(test)]
 mod tests {
     use super::*;
+    use norn_testkit::proptest;
     proptest::proptest! {
         #[test]
         fn exact_member_identity_is_preserved(id in "test.[a-z]{1,12}", version in "[1-9]\\.[0-9]\\.[0-9]", name in "[A-Z][a-z]{0,8}") {

@@ -202,8 +202,10 @@ fn graph_classify_refuses_a_commit_during_visibility() {
     ));
 }
 
-fn catalog_access(capabilities: &[&str]) -> (norn_authz::Pdp, norn_authz::AccessRequest) {
-    use norn_authz::{
+fn catalog_access(
+    capabilities: &[&str],
+) -> (norn_kernel::authz::Pdp, norn_kernel::authz::AccessRequest) {
+    use norn_kernel::authz::{
         AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, PrincipalInput,
         ResourceInput, ScopeKey,
     };
@@ -223,8 +225,8 @@ fn catalog_access(capabilities: &[&str]) -> (norn_authz::Pdp, norn_authz::Access
         environment: None,
         business_unit: None,
     };
-    let pdp = norn_authz::Pdp::new(
-        norn_authz::compile(&schema, &access).expect("admitted AccessIR"),
+    let pdp = norn_kernel::authz::Pdp::new(
+        norn_kernel::authz::compile(&schema, &access).expect("admitted AccessIR"),
         &[CapabilityGrant {
             subject_id: "reader".into(),
             actor_kind: ActorKind::User,

@@ -1549,14 +1549,12 @@ dependencies = [
 name = "norn-cell"
 version = "0.1.0"
 dependencies = [
- "norn-authz",
  "norn-checker",
  "norn-ir",
  "norn-kernel",
  "norn-projections",
  "norn-testkit",
  "object_store",
- "proptest",
  "rusqlite",
  "serde",
  "serde_json",
