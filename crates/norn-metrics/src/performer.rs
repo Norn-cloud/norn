@@ -189,4 +189,3 @@ pub fn perform_forecast(
     };
     Ok(receipt)
 }
-
