@@ -1,0 +1,7 @@
+{
+  "code": "cli.setup.unpublished",
+  "message": "Published distribution is unavailable; run init from the repository.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "cli.project.install",
+  "message": "Dependency installation failed; retry bun install in the project directory.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}
