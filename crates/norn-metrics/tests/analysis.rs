@@ -1,0 +1,139 @@
+//! Welch parity against a closed-form df=4 distribution and refusal boundaries.
+#![allow(
+    clippy::expect_used,
+    clippy::arithmetic_side_effects,
+    reason = "numerical test oracle"
+)]
+use norn_checker::EffectiveCatalog;
+use norn_ir::{ArtifactEnvelope, RuntimeValue};
+use norn_metrics::analysis::welch;
+use norn_metrics::temporal::{TemporalPlan, TemporalRow, TemporalValue};
+use std::path::PathBuf;
+
+fn catalog() -> EffectiveCatalog {
+    let root = PathBuf::from(
+        std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR").expect("prepare typed fixtures"),
+    );
+    let artifacts: Vec<ArtifactEnvelope> =
+        serde_json::from_slice(&std::fs::read(root.join("metric-demand.json")).expect("fixture"))
+            .expect("artifacts");
+    EffectiveCatalog::from_artifacts(&artifacts)
+}
+
+fn value(n: i64, at: i64) -> TemporalValue {
+    TemporalValue {
+        value: RuntimeValue::from_json_text(n.to_string()).expect("number"),
+        valid_at: at,
+        recorded_at: at,
+        source: format!("synthetic:{n}:{at}"),
+    }
+}
+
+fn rows() -> Vec<TemporalRow> {
+    (1..=6)
+        .map(|n| TemporalRow {
+            key: format!("synthetic-{n}"),
+            at: 100,
+            features: vec![value(i64::from(n > 3), 100)],
+            outcome: value(n, 200),
+        })
+        .collect()
+}
+
+#[test]
+fn welch_refuses_constant_decimals_and_handles_unequal_variances() {
+    let catalog = catalog();
+    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0)
+        .expect("plan");
+    let decimal_plan =
+        TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "weight", 0)
+            .expect("decimal plan");
+    let mut decimals = rows();
+    for (i, row) in decimals.iter_mut().enumerate() {
+        row.outcome.value = RuntimeValue::from_json_text(if i < 3 { "0.10" } else { "0.20" })
+            .expect("typed decimal");
+    }
+    assert!(
+        welch(
+            &decimal_plan
+                .materialize(200, 1, decimals)
+                .expect("decimal table"),
+            0.05
+        )
+        .is_err()
+    );
+    let unequal = [1, 2, 3, 4, 6, 8, 10]
+        .into_iter()
+        .enumerate()
+        .map(|(i, y)| TemporalRow {
+            key: format!("unequal-{i}"),
+            at: 100,
+            features: vec![value(i64::from(i >= 3), 100)],
+            outcome: value(y, 200),
+        })
+        .collect();
+    let unequal = welch(
+        &plan.materialize(200, 1, unequal).expect("unequal table"),
+        0.05,
+    )
+    .expect("Welch");
+    assert_eq!(unequal.n, (3, 4));
+    assert!((unequal.difference + 5.0).abs() < 1e-12);
+    assert!((unequal.statistic + 5.0 / 2.0_f64.sqrt()).abs() < 1e-12);
+    assert!((unequal.degrees_of_freedom - 216.0 / 53.0).abs() < 1e-12);
+}
+
+#[test]
+fn welch_matches_closed_form_and_refuses_invalid_groups() {
+    let catalog = catalog();
+    let plan = TemporalPlan::compile(&catalog, "demo.Demand", &["stock".into()], "units", 0)
+        .expect("plan");
+    let table = plan.materialize(200, 1, rows()).expect("table");
+    let report = welch(&table, 0.05).expect("report");
+    assert_eq!(report.n, (3, 3));
+    assert!((report.difference + 3.0).abs() < 1e-12);
+    assert!((report.statistic + 3.0 * 1.5_f64.sqrt()).abs() < 1e-12);
+    assert!((report.degrees_of_freedom - 4.0).abs() < 1e-12);
+    // Integrating the df=4 density gives F(t)=1/2+3x/4-x^3/4,
+    // where x=t/sqrt(t^2+4). This oracle does not call statrs.
+    let x = (27.0_f64 / 35.0).sqrt();
+    let expected_p = 1.0 - 1.5 * x + 0.5 * x.powi(3);
+    assert!((report.p_value - expected_p).abs() < 1e-12);
+    assert!(report.interval.0 < -3.0 && report.interval.1 > -3.0 && report.interval.1 < 0.0);
+    assert!(
+        !report.sample_size_passed,
+        "three rows do not pass the conservative 30/group diagnostic"
+    );
+    for alpha in [0.0, 1.0, f64::NAN, f64::INFINITY] {
+        assert!(welch(&table, alpha).is_err());
+    }
+    let mut invalid = rows();
+    invalid
+        .first_mut()
+        .expect("row")
+        .features
+        .first_mut()
+        .expect("feature")
+        .value = RuntimeValue::from_json_text("2").expect("number");
+    assert!(
+        welch(
+            &plan.materialize(200, 1, invalid).expect("numeric table"),
+            0.05
+        )
+        .is_err()
+    );
+    let mut constant = rows();
+    for row in &mut constant {
+        row.outcome = value(1, 200);
+    }
+    assert!(welch(&plan.materialize(200, 1, constant).expect("table"), 0.05).is_err());
+    assert!(
+        welch(
+            &plan
+                .materialize(200, 1, rows().into_iter().take(3).collect())
+                .expect("one group"),
+            0.05
+        )
+        .is_err()
+    );
+}

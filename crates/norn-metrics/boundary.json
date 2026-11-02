@@ -1,0 +1,10 @@
+{
+  "name": "norn-metrics",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-ir",
+    "norn-checker"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}
