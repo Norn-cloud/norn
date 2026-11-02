@@ -104,7 +104,8 @@ impl Compiler<'_> {
             Type::Integer | Type::Decimal { .. } | Type::Number => Kind::Number,
             Type::Bool => Kind::Bool,
             Type::Text { .. } | Type::Enum { .. } => Kind::Text,
-            Type::Timestamp { .. }
+            Type::DecimalBinding { .. }
+            | Type::Timestamp { .. }
             | Type::Date
             | Type::Duration
             | Type::Record(_)

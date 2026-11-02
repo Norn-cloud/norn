@@ -61,10 +61,10 @@ fn source(artifacts: &[ArtifactEnvelope]) -> DemoResult<DefinitionSource> {
     )?)
 }
 
-/// LAW-CONVERSION-OVERLAY: the Core 06 validator preserves retained core authority.
-fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
+fn retain_demo(
+    artifacts: &[ArtifactEnvelope],
+) -> DemoResult<norn_checker::obligations::RetainedLayers> {
     use norn_checker::obligations::{RetainedLayer, RetainedLayers};
-    use norn_ir::{CustomizationOverlayOp, CustomizationRoot};
     let registry = BTreeSet::new();
     let exact = source(artifacts)?;
     let native: Vec<_> = artifacts
@@ -85,7 +85,7 @@ fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
     }
     let receipt = String::from_utf8(checked.receipt.canonical_json()?)?;
     let receipt_sha256 = checked.receipt.content_sha256()?;
-    let retained = RetainedLayers::verify(
+    Ok(RetainedLayers::verify(
         &[RetainedLayer {
             source: &exact,
             source_sha256: exact.exact_digest(),
@@ -93,7 +93,13 @@ fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
             receipt_sha256: &receipt_sha256,
         }],
         &registry,
-    )?;
+    )?)
+}
+
+/// LAW-CONVERSION-OVERLAY: the Core 06 validator preserves retained core authority.
+fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
+    use norn_ir::{CustomizationOverlayOp, CustomizationRoot};
+    let retained = retain_demo(artifacts)?;
     let target = retained
         .artifacts()
         .iter()
