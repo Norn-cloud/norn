@@ -975,7 +975,7 @@ fn verify_admission_receipt(
 fn pre_diagnostic_v2_receipt_still_verifies() {
     let stored = include_str!("golden/check-receipt.retail.json");
     assert_eq!(
-        admission_receipt_sha256(stored).unwrap(),
+        admission_receipt_sha256(stored).expect("historical receipt hash"),
         RETAIL_RECEIPT_SHA256
     );
     norn_checker::receipt::verify_admission_receipt(

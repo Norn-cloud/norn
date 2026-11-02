@@ -104,11 +104,15 @@ pub struct Refusal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<RefusalReason>,
     /// Only engine-defined stale preparation/concurrency paths permit retry.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub retryable: bool,
 }
 
 pub use norn_ir::RefusalReason;
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
 
 impl Refusal {
     /// A refusal with `message`; visibility and internal refusals always get
