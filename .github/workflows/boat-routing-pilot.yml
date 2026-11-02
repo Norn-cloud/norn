@@ -1,7 +1,7 @@
-name: Boat routing admission pilot
+name: Boat default capacity measurement
 on:
   push:
-    branches: [boat-pilot/ci-routing]
+    branches: [boat-pilot/ci-capacity]
   merge_group:
     types: [checks_requested]
 permissions:
@@ -23,13 +23,12 @@ jobs:
           PY
   concurrency:
     needs: actor-filter
-    if: github.event_name == 'merge_group'
     runs-on: boat
     timeout-minutes: 3
     strategy:
       fail-fast: false
       matrix:
-        probe: [1, 2, 3, 4, 5, 6, 7, 8]
+        probe: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - name: Measure an overlap window without a matrix concurrency limit
         env:
