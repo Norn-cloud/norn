@@ -2010,66 +2010,8 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 
-    fn init(conn: E, model: Model) -> Result<Self, CellError> {
-        validate_store_format(&conn)?;
-        conn.transaction(|| -> Result<(), CellError> {
-            for statement in SYSTEM_DDL {
-                conn.execute_batch(statement)?;
-            }
-            crate::system::intern_marking_subjects(&conn)?;
-            export_journal::init(&conn)?;
-            crate::payload_storage::init(&conn)?;
-            // Before the model's indexes name `p:` columns of an older file.
-            crate::migration::upgrade_raw_property_columns(&conn, &model)?;
-            for statement in model.schema().statements() {
-                conn.execute_batch(statement)?;
-            }
-            let meta = |key: &str| {
-                conn.query_optional(
-                    &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
-                    params![key],
-                    |row| row.get::<String>(0),
-                )
-            };
-            match (meta("format")?, meta("ddl_hash")?) {
-                (None, None) => {
-                    let insert =
-                        format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
-                    conn.execute(&insert, params!["format", STORE_FORMAT])?;
-                    conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
-                }
-                (Some(format), Some(found))
-                    if format == STORE_FORMAT && found == model.ddl_hash() => {}
-                // Older formats lack exact encoding or durable marking coverage.
-                // Refuse atomically rather than serve partially classified facts.
-                (Some(format), _) if format != STORE_FORMAT => {
-                    return Err(CellError::StoreFormat {
-                        found: format,
-                        expected: STORE_FORMAT.to_owned(),
-                    });
-                }
-                (format, found) => {
-                    return Err(CellError::SchemaMismatch {
-                        expected: format!("{STORE_FORMAT} {}", model.ddl_hash()),
-                        found: format!(
-                            "{} {}",
-                            format.unwrap_or_default(),
-                            found.unwrap_or_default()
-                        ),
-                    });
-                }
-            }
-            if let Some(active) = Self::read_active_definitions(&conn)?
-                && (active.model_hash != model.model_hash() || active.ddl_hash != model.ddl_hash())
-            {
-                return Err(CellError::SchemaMismatch {
-                    expected: format!("{} {}", model.ddl_hash(), model.model_hash()),
-                    found: format!("{} {}", active.ddl_hash, active.model_hash),
-                });
-            }
-            Ok(())
-        })?;
-        let store = Self {
+    fn unverified(conn: E, model: Model) -> Self {
+        Self {
             conn,
             model,
             candidate_validator: Cell::new(None),
@@ -2077,7 +2019,69 @@ impl<E: SqlEngine> CellStore<E> {
             export_notify: Arc::new(Notify::new()),
             verified: RefCell::new(LedgerHead::genesis()),
             quantity_boundary: Cell::new(None),
+        }
+    }
+
+    fn init_schema(conn: &E, model: &Model) -> Result<(), CellError> {
+        validate_store_format(conn)?;
+        for statement in SYSTEM_DDL {
+            conn.execute_batch(statement)?;
+        }
+        crate::system::intern_marking_subjects(conn)?;
+        export_journal::init(conn)?;
+        crate::payload_storage::init(conn)?;
+        // Before the model's indexes name `p:` columns of an older file.
+        crate::migration::upgrade_raw_property_columns(conn, model)?;
+        for statement in model.schema().statements() {
+            conn.execute_batch(statement)?;
+        }
+        let meta = |key: &str| {
+            conn.query_optional(
+                &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+                params![key],
+                |row| row.get::<String>(0),
+            )
         };
+        match (meta("format")?, meta("ddl_hash")?) {
+            (None, None) => {
+                let insert = format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
+                conn.execute(&insert, params!["format", STORE_FORMAT])?;
+                conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
+            }
+            (Some(format), Some(found)) if format == STORE_FORMAT && found == model.ddl_hash() => {}
+            // Older formats lack exact encoding or durable marking coverage.
+            // Refuse atomically rather than serve partially classified facts.
+            (Some(format), _) if format != STORE_FORMAT => {
+                return Err(CellError::StoreFormat {
+                    found: format,
+                    expected: STORE_FORMAT.to_owned(),
+                });
+            }
+            (format, found) => {
+                return Err(CellError::SchemaMismatch {
+                    expected: format!("{STORE_FORMAT} {}", model.ddl_hash()),
+                    found: format!(
+                        "{} {}",
+                        format.unwrap_or_default(),
+                        found.unwrap_or_default()
+                    ),
+                });
+            }
+        }
+        if let Some(active) = Self::read_active_definitions(conn)?
+            && (active.model_hash != model.model_hash() || active.ddl_hash != model.ddl_hash())
+        {
+            return Err(CellError::SchemaMismatch {
+                expected: format!("{} {}", model.ddl_hash(), model.model_hash()),
+                found: format!("{} {}", active.ddl_hash, active.model_hash),
+            });
+        }
+        Ok(())
+    }
+
+    fn init(conn: E, model: Model) -> Result<Self, CellError> {
+        conn.transaction(|| Self::init_schema(&conn, &model))?;
+        let store = Self::unverified(conn, model);
         // An existing file is admitted only if its ledger and receipts verify.
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
