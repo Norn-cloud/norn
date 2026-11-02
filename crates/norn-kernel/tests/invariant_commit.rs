@@ -3286,6 +3286,74 @@ fn law_invariant_runtime_exhausted_budget_refuses() {
 }
 
 #[test]
+fn law_invariant_runtime_decision_and_action_refusals_journal_and_consume() {
+    for through_action in [false, true] {
+        let laws = vec![invariant_amount_law()];
+        let (types, interfaces) = definitions();
+        let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
+        let mut native = cell().with_governing_laws(laws.clone());
+        let delivery = Observed {
+            id: ObservationId("invariant-law-delivery".into()),
+            provenance: delivery_provenance(),
+            input: JsonObject::new(),
+        };
+        assert!(native.inject(delivery.clone()));
+        let consumed = delivery.consumed();
+        let key = FactKey::new(ITEM, "invariant-law-journal");
+        let attempt = "invariant-law-attempt";
+        let expected_attempt;
+        let refusal = if through_action {
+            let action = action("upsert_input_object");
+            expected_attempt = format!("{}/{attempt}", action.action_id);
+            let mut call = action_call(
+                &action,
+                json!({"item_id":key.key, "amount":0, "status":"draft"}),
+                attempt,
+                attempt,
+            );
+            call.turn.consumes = Some(consumed.clone());
+            match commit_action(&mut native, &catalog, &call, &allow_action()) {
+                Err(ActionRefusal::Decision(refusal)) => refusal,
+                other => panic!("expected a journaled action refusal: {other:?}"),
+            }
+        } else {
+            expected_attempt = attempt.into();
+            let mut turn = turn(attempt);
+            turn.consumes = Some(consumed.clone());
+            let slice = load_slice(&native, []).unwrap();
+            commit_decision(
+                &mut native,
+                &catalog,
+                &slice,
+                &turn,
+                &output(
+                    &json!([{"op":"create", "objectType":ITEM, "key":key.key,
+                    "values":{"item_id":key.key, "amount":0, "status":"draft"}}]),
+                    true,
+                ),
+            )
+            .expect_err("law refuses the decision")
+        };
+        assert!(matches!(refusal, DecisionRefusal::Law {
+            reason: norn_kernel::governing_laws::LawEvaluationError::Violated(ref failure), ..
+        } if matches!(&failure.rule_ref, DataQualityRuleRef::Law {law_id, ..} if law_id == "amount_bounded")
+            && failure.invariant.as_ref().unwrap().version == catalog.invariant_owner_version(
+                &InvariantOwner::Object(ObjectTypeName(ITEM.into()))).unwrap().unwrap()));
+        assert_refusal_record(
+            &native,
+            0,
+            &key,
+            &InvariantOwner::Object(ObjectTypeName(ITEM.into())),
+            "positive_amount",
+            &expected_attempt,
+        );
+        assert_eq!(native.ledger().last().unwrap().consumed, Some(consumed));
+        assert!(native.observe().unwrap().is_none());
+        assert!(native.load(&key).unwrap().values.is_none());
+    }
+}
+
+#[test]
 fn law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin() {
     let laws = [invariant_amount_law()];
     let mut types = [quality_item_type()];

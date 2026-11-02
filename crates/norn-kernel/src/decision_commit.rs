@@ -933,6 +933,60 @@ pub enum FactEvent {
     },
 }
 
+impl<X> CommitError<X> {
+    pub(crate) fn is_invariant_refusal(&self) -> bool {
+        if matches!(self, Self::InvariantViolation { .. }) {
+            return true;
+        }
+        if let Self::Law {
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+            ..
+        } = self
+        {
+            return failure.invariant.is_some();
+        }
+        false
+    }
+
+    pub(crate) fn invariant_refusal_event(&self, attempt_id: String) -> Option<FactEvent> {
+        if let Self::InvariantViolation {
+            key,
+            owner,
+            id,
+            message,
+            outcome,
+            ..
+        } = self
+        {
+            return Some(FactEvent::InvariantRefused {
+                key: key.as_ref().clone(),
+                owner: owner.clone(),
+                id: id.clone(),
+                message: message.clone(),
+                outcome: outcome.as_ref().clone(),
+                attempt_id,
+            });
+        }
+        if let Self::Law {
+            key,
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+        } = self
+        {
+            let bound = failure.invariant.as_ref()?;
+            let invariant = &bound.failure;
+            return Some(FactEvent::InvariantRefused {
+                key: key.clone(),
+                owner: invariant.owner.clone(),
+                id: invariant.id.clone(),
+                message: invariant.message.clone(),
+                outcome: invariant.outcome.clone(),
+                attempt_id,
+            });
+        }
+        None
+    }
+}
+
 // Like FactChange, decode exact runtime values through a plain record. Serde's
 // internally tagged enum buffering cannot deserialize their RawValue tokens.
 enum FactEventOp {
@@ -2230,35 +2284,14 @@ where
             }
             Ok(receipt)
         }
-        Err(CommitError::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        }) => {
-            let refusal = DecisionRefusal::InvariantViolation {
-                key: key.clone(),
-                owner: owner.clone(),
-                version,
-                id: id.clone(),
-                message: message.clone(),
-                outcome: outcome.clone(),
+        Err(error) if error.is_invariant_refusal() => {
+            let Some(event) = error.invariant_refusal_event(turn.id.clone()) else {
+                return Err(DecisionRefusal::from_commit(error));
             };
+            let refusal = DecisionRefusal::from_commit(error);
             let mut refusal_commit = CellCommit::empty();
             refusal_commit.consumes.clone_from(&turn.consumes);
-            refusal_commit.events.push(
-                FactEvent::InvariantRefused {
-                    key: *key,
-                    owner,
-                    id,
-                    message,
-                    outcome: *outcome,
-                    attempt_id: turn.id.clone(),
-                }
-                .into(),
-            );
+            refusal_commit.events.push(event.into());
             match host.commit(refusal_commit) {
                 Ok(_) => Err(refusal),
                 Err(error) => Err(DecisionRefusal::from_commit(error)),

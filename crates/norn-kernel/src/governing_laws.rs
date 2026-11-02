@@ -53,6 +53,17 @@ pub struct LawFailure {
     pub severity: DataQualitySeverity,
     /// Declared explanation.
     pub message: String,
+    /// Original invariant refusal details for the existing attempt journal.
+    pub invariant: Option<Box<BoundInvariantFailure>>,
+}
+
+/// The invariant outcome and owner pin from the evaluated definition snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundInvariantFailure {
+    /// Exact invariant identity, message and evaluated outcome.
+    pub failure: crate::InvariantFailure,
+    /// Canonical version of the declaration that owns the invariant.
+    pub version: String,
 }
 fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvaluationError> {
     let decoded: Result<LawIR, serde::de::value::Error> =
@@ -166,6 +177,7 @@ fn law_failure(
     artifact: &ArtifactEnvelope,
     law: &LawIR,
     outcome: DataQualityOutcome,
+    invariant: Option<Box<BoundInvariantFailure>>,
 ) -> Result<LawFailure, LawEvaluationError> {
     Ok(LawFailure {
         refuses_native: law.severity == LawSeverity::Error,
@@ -176,7 +188,19 @@ fn law_failure(
             LawSeverity::Warning => DataQualitySeverity::Warning,
         },
         message: format!("{}: {}", law.id, law.rationale),
+        invariant,
     })
+}
+
+fn bind_invariant_failure(
+    catalog: &TypeCatalog<'_>,
+    failure: crate::InvariantFailure,
+) -> Result<Box<BoundInvariantFailure>, LawEvaluationError> {
+    let version = catalog
+        .invariant_owner_version(&failure.owner)
+        .map_err(|error| LawEvaluationError::Invalid(error.to_string()))?
+        .ok_or_else(|| LawEvaluationError::Invalid("invariant owner is unavailable".into()))?;
+    Ok(Box::new(BoundInvariantFailure { failure, version }))
 }
 
 /// LAW-COMMIT-1: preserve the governing law pin when the shared integrity
@@ -201,7 +225,13 @@ pub(crate) fn invariant_failure(
             return Err(LawEvaluationError::Unsupported(law.id));
         }
         invariant_binding(catalog, subject, &law)?;
-        return law_failure(artifact, &law, failure.outcome.clone()).map(Some);
+        return law_failure(
+            artifact,
+            &law,
+            failure.outcome.clone(),
+            Some(bind_invariant_failure(catalog, failure.clone())?),
+        )
+        .map(Some);
     }
     Ok(None)
 }
@@ -256,6 +286,7 @@ pub fn evaluate(
             return Err(LawEvaluationError::Unsupported(law.id));
         }
         let invariant_id = invariant_binding(catalog, &key.object_type, &law)?;
+        let mut invariant_failure = None;
         let activation = match &law.condition {
             Some(expr) => boolean(expr.as_str(), &context, remaining)?,
             None => Ok(true),
@@ -286,10 +317,13 @@ pub fn evaluate(
                         other @ (crate::commit_check::InvariantEvaluationError::InvalidEffectiveValues(_)
 | crate::commit_check::InvariantEvaluationError::MissingInterface(_)) => LawEvaluationError::Invalid(format!("{other:?}")),
                     })?;
-                    failures
-                        .into_iter()
-                        .next()
-                        .map_or(Ok(()), |failure| Err(failure.outcome))
+                    if let Some(failure) = failures.into_iter().next() {
+                        let outcome = failure.outcome.clone();
+                        invariant_failure = Some(bind_invariant_failure(catalog, failure)?);
+                        Err(outcome)
+                    } else {
+                        Ok(())
+                    }
                 }
                 LawResponse::Action { .. } | LawResponse::Transition { .. } => {
                     return Err(LawEvaluationError::Unsupported(law.id));
@@ -297,7 +331,7 @@ pub fn evaluate(
             },
         };
         if let Err(outcome) = result {
-            failures.push(law_failure(artifact, &law, outcome)?);
+            failures.push(law_failure(artifact, &law, outcome, invariant_failure)?);
         }
     }
     Ok(failures)
