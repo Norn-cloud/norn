@@ -1680,7 +1680,6 @@ dependencies = [
  "norn-expr",
  "norn-ir",
  "norn-testkit",
- "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

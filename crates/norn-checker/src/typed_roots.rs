@@ -2406,7 +2406,7 @@ fn check_setting_root(
         diagnostics,
         artifact_id,
         members {
-            "settingVersion" => norn_ir::IrVersion01,
+            "settingVersion" => norn_ir::IrVersion02,
             "settingKey" => String,
             "valueType" => norn_ir::SettingValueType,
             "effectiveFrom" => String,

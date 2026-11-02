@@ -2126,7 +2126,7 @@ fn validate_setting_payload(
     require_literal_field(
         payload,
         "settingVersion",
-        &["0.1"],
+        &["0.2"],
         "payload.settingVersion",
         diagnostics,
         artifact_id,

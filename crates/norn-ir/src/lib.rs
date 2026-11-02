@@ -176,7 +176,7 @@ pub use lineage::{
     LineageTrigger, commit_stable_id, object_stable_id,
 };
 pub use marking::{MARKING_ID_PATTERN, MarkingId, MarkingIr, MarkingSeverity, MaskPolicy};
-pub use members::{EmptyList, IrVersion01, JsonFalse, ProposalMetadata, WholeNumber};
+pub use members::{EmptyList, IrVersion01, IrVersion02, JsonFalse, ProposalMetadata, WholeNumber};
 pub use metric::{MetricDefinition, QuestionIR, metric_ir_schema, question_ir_schema};
 pub use osi::MetricIR;
 pub use provenance::{
@@ -1264,7 +1264,7 @@ define_payload_root!(
     #[schemars(with = "SettingRoot")]
     SettingPayload {
     required {
-        setting_version => "settingVersion" as IrVersion01,
+        setting_version => "settingVersion" as IrVersion02,
         setting_key => "settingKey" as String,
         value_type => "valueType" as SettingValueType,
         value => "value" as JsonValue,

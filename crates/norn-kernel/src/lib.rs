@@ -65,7 +65,6 @@ mod envelope;
 pub mod limits;
 pub mod naming_series;
 mod observations;
-pub mod parameter_source;
 pub mod quantity;
 pub mod receipt_binding;
 pub mod refusal;
