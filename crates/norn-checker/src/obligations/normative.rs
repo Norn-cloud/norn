@@ -39,7 +39,7 @@ impl RetainedNormativeContext {
         {
             let Ok(pack) = serde_json::from_value::<CompositionPackRoot>(
                 serde_json::to_value(artifact.payload.to_json_value())
-                    .map_err(|_| ChallengeError::Closure)?,
+                    .map_err(|_error| ChallengeError::Closure)?,
             ) else {
                 continue;
             };
@@ -63,7 +63,7 @@ impl RetainedNormativeContext {
             .ok_or(ChallengeError::InvalidSubmission)?;
         if matches != 1
             || crate::ArtifactRef::of(target)
-                .map_err(|_| ChallengeError::Closure)?
+                .map_err(|_error| ChallengeError::Closure)?
                 .sha256
                 != enacting.pack.sha256
         {
@@ -74,7 +74,7 @@ impl RetainedNormativeContext {
             "authority":{"id":authority_id,"version":authority_version,"rank":rank,
                 "enactmentOrdinal":enactment.to_string()}});
         let bytes = norn_canonical::serialize_json_verbatim(&receipt)
-            .map_err(|_| ChallengeError::LossyInput)?;
+            .map_err(|_error| ChallengeError::LossyInput)?;
         let digest = exact_commitment(b"retained-normative-context/1", &[&bytes])?;
         Ok(Self {
             retained: retained.exact_digest().into(),
