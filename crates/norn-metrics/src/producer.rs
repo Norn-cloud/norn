@@ -131,8 +131,7 @@ pub fn parameter_digest(plan: &TemporalPlan, boundary: i64) -> Result<Digest, Fo
         boundary,
         plan.object_type(),
         plan.max_age_micros(),
-        plan
-            .features()
+        plan.features()
             .iter()
             .map(|p| (&p.property, &p.unit))
             .collect::<Vec<_>>(),
@@ -197,7 +196,7 @@ fn assessment(
         complete: export.complete,
         quarantine_count: export.quarantine_count,
         fresh: export.fresh,
-        parameters_digest: parameter_digest(export.plan,input.split_boundary)?,
+        parameters_digest: parameter_digest(export.plan, input.split_boundary)?,
         assumptions_digest: export.assumptions_digest.clone(),
         remedy_digest: export.remedy_digest.clone(),
         split_at_ms: input.split_boundary.div_euclid(1000),
@@ -227,9 +226,20 @@ fn report_value(report: &impl serde::Serialize) -> Result<norn_ir::RuntimeValue,
             serde_json::Value::Number(number) if number.is_f64() => {
                 *value = serde_json::json!({ "encoding": "ieee754-binary64", "value": number.to_string() });
             }
-            serde_json::Value::Array(items) => { for item in items { tag(item); } }
-            serde_json::Value::Object(fields) => { for item in fields.values_mut() { tag(item); } }
-            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    tag(item);
+                }
+            }
+            serde_json::Value::Object(fields) => {
+                for item in fields.values_mut() {
+                    tag(item);
+                }
+            }
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => {}
         }
     }
     let mut value = serde_json::to_value(report).map_err(failure)?;
