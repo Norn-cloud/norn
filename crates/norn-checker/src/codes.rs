@@ -500,6 +500,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "Query semantics are unsupported by the selected compute profile.",
         "0.2.0",
     ),
+    introduced(
+        crate::property_codec::INEXACT,
+        Tier::T6,
+        "the number is outside the exact 96-bit decimal profile (scale at most 28)",
+        "0.2.0",
+    ),
     entry(
         crate::lifecycles::codes::PUBLICATION_GUARD,
         Tier::T6,

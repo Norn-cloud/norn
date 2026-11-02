@@ -1384,6 +1384,10 @@
           "transition"
         ],
         "properties": {
+          "acceptReceipt": {
+            "$ref": "#/components/schemas/NornIrReceiptAcceptance",
+            "description": "Bind a host-authenticated Function result before firing the transition."
+          },
           "entityArtifactId": {
             "type": "string"
           },
@@ -4253,6 +4257,11 @@
           "warning",
           "info"
         ]
+      },
+      "NornIrDigest": {
+        "type": "string",
+        "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+        "pattern": "^sha256:[0-9a-f]{64}$"
       },
       "NornIrDimensionPath": {
         "type": "object",
@@ -10093,6 +10102,47 @@
           "import",
           "system"
         ]
+      },
+      "NornIrReceiptAcceptance": {
+        "type": "object",
+        "description": "RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results.",
+        "required": [
+          "referenceField",
+          "manifestDigest",
+          "digestProperty",
+          "resultBindings"
+        ],
+        "properties": {
+          "digestProperty": {
+            "type": "string",
+            "description": "Writable text property receiving the checked receipt digest.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "manifestDigest": {
+            "type": "string",
+            "description": "Exact admitted Function manifest the host must authenticate.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "referenceField": {
+            "type": "string",
+            "description": "Required string input member naming the immutable receipt digest."
+          },
+          "resultBindings": {
+            "$ref": "#/components/schemas/NornIrReceiptAcceptancePropertyResultBindings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrReceiptAcceptancePropertyResultBindings": {
+        "type": "object",
+        "description": "Writable target property to accepted result member. Target property\ntypes govern decoding; action input supplies none of these values.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrPropertyId"
+        },
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
       },
       "NornIrRecordMember": {
         "type": "object",
