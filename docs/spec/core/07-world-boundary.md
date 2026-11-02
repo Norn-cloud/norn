@@ -46,6 +46,10 @@ receipt pins the definition version for historical re-evaluation; current laws
 cannot substitute for that snapshot. A law pin is classified as enforced only
 when it resolves to the supported direct-law contract.
 
+Pointwise recovery checks the violated rule under an authenticated retained
+catalog without requiring old outcome values to remain identical. Lifecycle
+out-of-band findings require state-aware recovery and refuse pointwise revalidation.
+
 ## Ingestion versus governed action
 
 [Owner] Imported events already happened. Validate their framing/provenance; durably capture representable source observations and advance the cursor atomically with capture. Mapping/law violations produce **findings + quarantine**, not a refused source fact. Quarantined rows retain raw evidence and stay out of authoritative aggregates unless an explicit observed-data question includes them with quality labels. Invalid transport/authentication is still a boundary failure; it is not a business-law refusal of an external occurrence.
@@ -82,6 +86,7 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 - **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
 - **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
 - **OBS-BAD:** Given imported purity 1100‰, when evaluated, then capture a quarantined finding; identical native write refuses without business changes.
+- **OBS-RECOVERY-LIFECYCLE-REFUSE:** An unchanged out-of-band lifecycle finding cannot resolve through pointwise evaluation; unsupported state-aware recovery refuses.
 - **EFFECT-UNCERTAIN:** Given provider success followed by lost reply, when retried, then dedup/lookup resolves once or outcome remains unknown; never issue a new payment ID.
 - **EFFECT-COMPENSATE:** Given confirmed payment 25, when cancellation wins after dispatch, then a separate refund 25 records its own outcome; failed refund remains outstanding.
 - **FUNCTION-ML:** Given a pinned training table and model Function, when it returns a forecast, then record output/input digests; stale or leaked-future input cannot pass publication guards.
