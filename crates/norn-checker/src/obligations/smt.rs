@@ -123,8 +123,8 @@ mod host {
         file.rewind().map_err(|_error| "io")?;
         let mut bytes = Vec::new();
         file.take(u64::try_from(limit.saturating_add(1)).map_err(|_error| "invalid_bound")?)
-        .read_to_end(&mut bytes)
-        .map_err(|_error| "io")?;
+            .read_to_end(&mut bytes)
+            .map_err(|_error| "io")?;
         if bytes.len() > limit {
             return Err("output_bound");
         }
