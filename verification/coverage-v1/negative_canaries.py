@@ -824,6 +824,7 @@ if plan.get("server_lines"):
     time.sleep(0.5)
 if out is not None and plan.get("out_json") is not None:
     out.write_text(json.dumps(plan["out_json"]))
+time.sleep(plan.get("sleep", 0))
 print(plan.get("output", ""), flush=True)
 sys.exit(plan.get("exit", 0))
 """
@@ -844,6 +845,11 @@ def quint_apalache_retry_canaries() -> None:
         "exit": 0,
     }
     cases = (
+        (
+            "timeout after the checker started is unknown and never retried",
+            [{"server_lines": ["PASS #0: SanyParser"], "sleep": 30}, success],
+            False,
+        ),
         (
             "transport error after a server-logged Error outcome",
             [
@@ -928,7 +934,7 @@ def quint_apalache_retry_canaries() -> None:
                     [str(fake_quint), "verify", "model.qnt", "--out", str(root / "result.json")],
                     cwd=root,
                     environment=environment,
-                    timeout_seconds=30,
+                    timeout_seconds=1.5 if label.startswith("timeout after") else 30,
                     quint_home=root / "quint-home",
                     label=label,
                     emit=lambda _line: None,
@@ -936,7 +942,12 @@ def quint_apalache_retry_canaries() -> None:
             except quint_apalache.HarnessError as error:
                 raise AssertionError(f"retry canary could not run: {label}: {error}") from error
         classes = [attempt.classification for attempt in run.attempts]
-        if should_pass:
+        if label.startswith("timeout after"):
+            if run.returncode != 124 or classes != ["timeout"] or "[unknown]" not in run.output:
+                raise AssertionError(f"timeout was retried or accepted as evidence: {classes}")
+            if not run.attempts[0].check_started:
+                raise AssertionError("timeout canary did not reach PASS #0")
+        elif should_pass:
             if run.returncode != 0 or len(run.attempts) != 2:
                 raise AssertionError(f"retry control did not recover once: {label}: {classes}")
             if counterexampled(run):
