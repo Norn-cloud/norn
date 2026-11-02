@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// LAW-NORMATIVE-1: normative grades stay in the existing Law artifact family.
-/// Both forms retain their exact original bytes in the envelope's artifact pin.
+/// Both forms retain the complete law, grade and source under the artifact pin.
 /// Decoding this document confers no grounding, execution or authorization.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
@@ -59,7 +59,9 @@ pub struct RuleSourceSpan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuleByteRange {
+    #[serde(deserialize_with = "crate::members::deserialize_u32")]
     pub start: u32,
+    #[serde(deserialize_with = "crate::members::deserialize_u32")]
     pub end: u32,
 }
 
