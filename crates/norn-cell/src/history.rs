@@ -124,6 +124,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .governing_laws(object_type)
     }
 
+    /// OBS-LEGACY-1: version zero supplies no authenticated governing definition.
     pub(crate) fn retained_definition_model(
         &self,
         definitions_version: u64,

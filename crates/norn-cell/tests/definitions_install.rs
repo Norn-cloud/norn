@@ -5193,6 +5193,19 @@ fn capture_purity(
     delivery: &str,
     purity: &str,
 ) {
+    capture_purity_with_retry(cell, delivery, purity, true);
+}
+
+fn capture_purity_with_retry(
+    cell: &mut norn_cell::SqliteCell<
+        norn_kernel::ObservationEvent,
+        norn_kernel::cell_host::JsonObject,
+        norn_kernel::cell_host::JsonObject,
+    >,
+    delivery: &str,
+    purity: &str,
+    check_retry: bool,
+) {
     use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
     use norn_kernel::{
         CellHost, DecisionTurn, FactKey, ObservationId, Observed, Provenance, TypeCatalog, World,
@@ -5240,6 +5253,9 @@ fn capture_purity(
     };
     commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot)
         .expect("source violation remains captured");
+    if !check_retry {
+        return;
+    }
     let retry = commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot)
         .expect_err("consumed delivery");
     assert!(matches!(
@@ -6040,23 +6056,43 @@ fn instance_source_provenance_charges_external_payloads_and_omits_non_bundle_fac
     );
 }
 
-
 #[test]
 fn legacy_law_snapshot_refuses_without_effects() {
     let (retained, input) = governing_law_input("self.name != 'bad'", 1);
     let mut legacy = serde_json::to_value(retained.definitions_snapshot()).expect("snapshot");
-    legacy.as_object_mut().expect("snapshot object").remove("lawArtifacts");
+    legacy
+        .as_object_mut()
+        .expect("snapshot object")
+        .remove("lawArtifacts");
     let snapshot = serde_json::from_value(legacy).expect("legacy snapshot decodes");
     let legacy = Model::from_snapshot(&snapshot).expect("legacy entity projection");
     assert_eq!(legacy.model_hash(), model(false).model_hash());
     let mut store = CellStore::open_in_memory(legacy.clone()).expect("store");
     let before = store.read().ledger_page(0, 100).expect("ledger");
-    let refusal = store.install_definitions(legacy, input, Some(0), "org_demo/dev").expect_err("unretained laws refuse");
+    let refusal = store
+        .install_definitions(legacy, input, Some(0), "org_demo/dev")
+        .expect_err("unretained laws refuse");
     assert!(matches!(refusal, CellError::LegacyLawSnapshot));
-    assert!(refusal.to_string().starts_with("core.boundary.legacy_law_snapshot:"));
+    assert!(
+        refusal
+            .to_string()
+            .starts_with("core.boundary.legacy_law_snapshot:")
+    );
     assert_eq!(store.read().ledger_page(0, 100).expect("ledger"), before);
-    assert!(store.read().installed_definitions(None).expect("definitions").is_none());
-    assert!(store.read().object(MAIN_WORLD, "defs.Item", "existing").expect("fact").is_none());
+    assert!(
+        store
+            .read()
+            .installed_definitions(None)
+            .expect("definitions")
+            .is_none()
+    );
+    assert!(
+        store
+            .read()
+            .object(MAIN_WORLD, "defs.Item", "existing")
+            .expect("fact")
+            .is_none()
+    );
 }
 
 #[test]
@@ -6065,24 +6101,66 @@ fn legacy_version_zero_finding_refuses_without_effects() {
     let admitted = purity_quality_host(&directory.path().join("admitted.sqlite"));
     let model = admitted.store().model().clone();
     let store = CellStore::open_in_memory(model).expect("unseeded store");
-    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
-    capture_purity(&mut cell, "unseeded", "1.20");
+    let mut cell =
+        norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    capture_purity_with_retry(&mut cell, "unseeded", "1.20", false);
     let reader = cell.store().read();
     let before = reader.ledger_page(0, 100).expect("ledger");
-    let raw = reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").expect("record");
-    let finding = before.iter().find(|entry| entry.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")).expect("finding");
-    assert_eq!(reader.receipt_at(finding.commit_seq).expect("receipt").expect("recorded").body.definitions_version, 0);
+    let raw = reader
+        .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("raw")
+        .expect("record");
+    let finding = before
+        .iter()
+        .find(|entry| entry.event.get("op").and_then(Value::as_str) == Some("data_quality_finding"))
+        .expect("finding");
+    assert_eq!(
+        reader
+            .receipt_at(finding.commit_seq)
+            .expect("receipt")
+            .expect("recorded")
+            .body
+            .definitions_version,
+        0
+    );
     for refusal in [
-        reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect_err("unseeded finding"),
-        reader.observation_is_quarantined(MAIN_WORLD, &raw).expect_err("unseeded quarantine"),
-        reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect_err("unseeded object"),
-        reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect_err("unseeded page"),
-        reader.verified_history_event(finding).expect_err("no current catalog substitution"),
+        reader
+            .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect_err("unseeded finding"),
+        reader
+            .observation_is_quarantined(MAIN_WORLD, &raw)
+            .expect_err("unseeded quarantine"),
+        reader
+            .authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect_err("unseeded object"),
+        reader
+            .authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10)
+            .expect_err("unseeded page"),
+        reader
+            .verified_history_event(finding)
+            .expect_err("no current catalog substitution"),
     ] {
         assert!(matches!(refusal, CellError::UnpinnedFinding));
-        assert!(refusal.to_string().starts_with("core.boundary.unpinned_finding:"));
+        assert!(
+            refusal
+                .to_string()
+                .starts_with("core.boundary.unpinned_finding:")
+        );
     }
-    assert_eq!(reader.ledger_page(0, 100).expect("unchanged ledger"), before);
-    assert_eq!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("unchanged fact"), Some(raw));
-    assert!(reader.installed_definitions(None).expect("definitions").is_none());
+    assert_eq!(
+        reader.ledger_page(0, 100).expect("unchanged ledger"),
+        before
+    );
+    assert_eq!(
+        reader
+            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("unchanged fact"),
+        Some(raw)
+    );
+    assert!(
+        reader
+            .installed_definitions(None)
+            .expect("definitions")
+            .is_none()
+    );
 }

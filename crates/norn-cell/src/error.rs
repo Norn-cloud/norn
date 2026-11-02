@@ -33,10 +33,14 @@ pub enum CellError {
     #[error("core.boundary.bundle_mismatch")]
     MappingBundleMismatch,
     /// Law-bearing definitions predate authenticated law retention.
-    #[error("core.boundary.legacy_law_snapshot: legacy stores must be recreated; migration is out of scope")]
+    #[error(
+        "core.boundary.legacy_law_snapshot: legacy stores must be recreated; migration is out of scope"
+    )]
     LegacyLawSnapshot,
     /// A finding has no admitted definition version to authenticate its rules.
-    #[error("core.boundary.unpinned_finding: legacy stores must be recreated; migration is out of scope")]
+    #[error(
+        "core.boundary.unpinned_finding: legacy stores must be recreated; migration is out of scope"
+    )]
     UnpinnedFinding,
     /// Observation quality evaluation could not complete.
     #[error("quality evaluation: {0}")]

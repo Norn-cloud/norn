@@ -480,6 +480,7 @@ impl Model {
         &self.law_artifacts
     }
 
+    /// OBS-LEGACY-1: missing historical law retention cannot borrow current authority.
     pub(crate) fn check_governing_laws(&self, canonical_set: &str) -> Result<(), CellError> {
         let artifacts = serde_json::from_str::<Vec<ArtifactEnvelope>>(canonical_set)?;
         let expected = canonical_law_artifacts(&artifacts)?;
