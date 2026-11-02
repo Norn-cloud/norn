@@ -152,7 +152,10 @@ impl<'de> Deserialize<'de> for ActionRuleRef {
         }
         // TXN-RULE-1: schema and decoder agree on the object-only wire form.
         let pin: Pin = crate::members::deserialize_object(deserializer)?;
-        Ok(Self { artifact_id: pin.artifact_id, version: pin.version })
+        Ok(Self {
+            artifact_id: pin.artifact_id,
+            version: pin.version,
+        })
     }
 }
 

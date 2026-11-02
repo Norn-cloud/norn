@@ -39,7 +39,12 @@ fn synchronous_rule_pin_is_closed_and_canonical() {
         payload["synchronousRule"] = invalid;
         assert!(serde_json::from_value::<ActionRoot>(payload.clone()).is_err());
     }
-    assert!(serde_json::from_str::<norn_ir::ActionRuleRef>(r#"{"artifactId":"r","artifactId":"duplicate","version":"1"}"#).is_err());
+    assert!(
+        serde_json::from_str::<norn_ir::ActionRuleRef>(
+            r#"{"artifactId":"r","artifactId":"duplicate","version":"1"}"#
+        )
+        .is_err()
+    );
 }
 const RULE_V2_FIXTURE: &str = include_str!("../../../fixtures/ir/retail-reorder-routing.rule.json");
 const RULE_V1_CONFORMANCE: &str =
