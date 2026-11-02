@@ -1,0 +1,61 @@
+{
+  "obligations": {
+    "$entries": "obligations"
+  },
+  "obligationClaims": {
+    "$entries": "obligationClaims"
+  },
+  "runtime": {
+    "status": "partial",
+    "artifacts": {
+      "$entries": "runtime.artifacts"
+    },
+    "commands": {
+      "$entries": "runtime.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "runtime.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "runtime.resultArtifacts"
+    }
+  },
+  "model": {
+    "status": "partial",
+    "bound": "two reviewed v0 packs, 19 reviewed external mappings, 20 terms, five OWL-RL membership cases, four SHACL instance decisions, a depth-eight two-record reviewed mapping-replacement protocol, and a depth-eight two-relation/four-cardinality authority protocol",
+    "artifacts": {
+      "$entries": "model.artifacts"
+    },
+    "commands": {
+      "$entries": "model.commands"
+    },
+    "resultArtifacts": {
+      "$entries": "model.resultArtifacts"
+    },
+    "generatedArtifacts": {
+      "$entries": "model.generatedArtifacts"
+    }
+  },
+  "proof": {
+    "status": "partial",
+    "scope": "reference",
+    "artifacts": {
+      "$entries": "proof.artifacts"
+    },
+    "commands": {
+      "$entries": "proof.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "proof.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "proof.resultArtifacts"
+    }
+  },
+  "limitations": {
+    "$entries": "limitations"
+  },
+  "sourceFiles": {
+    "$entries": "sourceFiles"
+  }
+}

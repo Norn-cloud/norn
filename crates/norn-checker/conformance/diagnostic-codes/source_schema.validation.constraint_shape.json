@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.constraint_shape",
+  "message": "constraint {id}: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

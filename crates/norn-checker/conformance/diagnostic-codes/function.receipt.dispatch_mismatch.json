@@ -1,0 +1,7 @@
+{
+  "code": "function.receipt.dispatch_mismatch",
+  "message": "{member} is {found}, but the dispatch pinned {expected}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

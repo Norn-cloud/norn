@@ -1,0 +1,4 @@
+{
+  "order": 2,
+  "value": "The persisted checker receipt attests only that a fixed deterministic validator accepted exact bytes and declared claims; it is not a proof of arbitrary artifact semantics, and no Rust-to-Lean refinement is claimed."
+}

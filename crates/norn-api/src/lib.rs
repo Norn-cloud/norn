@@ -1,4 +1,5 @@
 //! Core IR and checker wire schemas, projected by the existing `OpenAPI` generator.
+pub mod clock;
 pub mod contracts;
 /// Checked definition admission.
 pub mod defs;
@@ -9,3 +10,5 @@ pub mod openapi;
 pub mod refusal;
 /// Explicit cell and request scope perimeter.
 pub mod scope;
+
+pub use clock::{Clock, ManualClock};

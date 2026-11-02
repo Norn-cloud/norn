@@ -1,0 +1,4 @@
+{
+  "order": 2,
+  "value": "lean -DwarningAsError=true verification/authz-v1/AuthorizationScopeExactness.lean"
+}
