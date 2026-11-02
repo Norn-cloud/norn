@@ -1679,3 +1679,14 @@ fn val_exact_typed_sites_bind_admission_and_execution() {
             .is_ok()
     );
 }
+
+#[test]
+fn val_exact_declared_division_refuses_zero_instead_of_producing_null() {
+    let env = ZenTypeEnv::input_only(fields([("a", decimal(2)), ("b", decimal(2))]), EnvOptions::default()).unwrap();
+    let expression = Expression::compile("input.a / input.b").unwrap();
+    assert!(expression.check_typed(&env, &decimal(2)).is_ok());
+    for (denominator, success) in [("2",true),("3",false),("0",false)] {
+        let context = Value::object([("input", Value::object([("a",Value::Number("1".parse().unwrap())),("b",Value::Number(denominator.parse().unwrap()))]))]);
+        assert_eq!(expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &decimal(2)).result.is_ok(), success);
+    }
+}

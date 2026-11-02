@@ -85,14 +85,7 @@ impl Expression {
     /// # Errors
     /// Returns structural/type findings or refusals from the exact arithmetic profile.
     pub fn check_typed(&self, env: &crate::ZenTypeEnv, expected: &crate::Type) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
-        let checked = crate::check_expression_with(self, env, expected, &ResourceLimitProfile::norn_limits_v1())?;
-        if checked.uses_exact_arithmetic() {
-            let found = zen_expression::intellisense::IntelliSense::new().with_strict(true)
-                .with_ast(&self.source, false, |ast, metadata| crate::check::exact_admission(ast, metadata, crate::check::decimal_destination(expected).is_some()))
-                .unwrap_or_else(|| vec![crate::Diagnostic { code: crate::check::codes::SYNTAX, message: "expression does not parse".to_owned(), span: (0,0) }]);
-            if !found.is_empty() { return Err(found); }
-        }
-        Ok(checked)
+        crate::check::check_typed_expression(self, env, expected)
     }
 
     /// VAL-EXACT-1 / VAL-ROUND: bind admission and execution to the same source
