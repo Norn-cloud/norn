@@ -12,7 +12,7 @@ export const Quote = Norn.type({ name: "demo.Quote", title: "Quote", version: "1
 
 test("VAL-RATE typed authoring retains currency, denominator and one rounding site", () => {
  const result = compileModule(source("6"), {orgId: "org_demo", environmentId: "dev"})
- if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+ if (!result.ok || result.artifacts === undefined) throw new Error(JSON.stringify(result))
  expect(result.artifacts[0]).toMatchObject({payload: {objectType: {properties: expect.arrayContaining([{id: "price", type: E.rate(6, "currency", {system: "ucum", code: "g"}, "half_even")}])}}})
 })
 test("VAL-RATE refuses an unbounded scale or a nonliteral currency binding", () => {
