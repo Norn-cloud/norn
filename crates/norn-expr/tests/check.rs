@@ -1677,13 +1677,21 @@ fn val_exact_typed_sites_bind_admission_and_execution() {
         Value::Null
     );
     assert!(run("null", &decimal(2)).result.is_err());
-    let nested = Expression::compile("{amount: 1 / 3}").unwrap();
-    assert!(
-        nested
-            .check_typed(&env, env.variables().get("input").unwrap())
-            .is_err(),
-        "structured destinations must stay exact"
-    );
+    for source in ["{amount: 1 / 3}", "{amount: 1.0005}"] {
+        let expected = env.variables().get("input").unwrap();
+        assert!(
+            Expression::compile(source)
+                .unwrap()
+                .check_typed(&env, expected)
+                .is_err()
+        );
+        let attempt = run(source, expected);
+        assert!(attempt.result.is_err());
+        assert_eq!(
+            attempt.units_used, 0,
+            "structured Decimal site refuses before execution"
+        );
+    }
     let plain =
         ZenTypeEnv::input_only(fields([("amount", Type::Number)]), EnvOptions::default()).unwrap();
     let expression = Expression::compile("input.amount / 3 > 0").unwrap();
