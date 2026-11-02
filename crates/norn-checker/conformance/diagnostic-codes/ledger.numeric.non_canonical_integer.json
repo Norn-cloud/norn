@@ -1,0 +1,7 @@
+{
+  "code": "ledger.numeric.non_canonical_integer",
+  "message": "`{value}` is not the canonical decimal encoding `{canonical}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

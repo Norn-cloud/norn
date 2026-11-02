@@ -1,0 +1,7 @@
+{
+  "code": "ledger.amount.term_scale_exceeds_result",
+  "message": "parameter and coefficient scales overflow their representation",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

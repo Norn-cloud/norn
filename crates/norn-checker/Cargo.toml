@@ -9,6 +9,10 @@ description = "shared contract/lifecycle diagnostics (ring 0; see AGENTS.md)"
 [lib]
 path = "src/lib.rs"
 
+[[test]]
+name = "canonical_values_kani"
+path = "../../verification/canonical-values-v1/diagnostic_kani.rs"
+
 [dependencies]
 # Unicode NFC/NFKC for identity-key normalization (#2848); the edge is in
 # SKELETON.md (`norn-checker ← ir, expr, canonical`).
@@ -25,6 +29,10 @@ serde_json = "1.0.150"
 # Exact import-field paths; already locked, no-std/alloc, synchronous and sans-IO.
 serde_path_to_error = "=0.1.20"
 sha2 = "0.10.9"
+
+[build-dependencies]
+regex-lite = "0.1.9"
+serde_json = "1.0.150"
 
 [dev-dependencies]
 # Pinned OSI-schema round-trip validation only; reuses workspace 0.47.0.

@@ -1,0 +1,7 @@
+{
+  "code": "action.validation.invalid_schema",
+  "message": "ActionIR {schema} is not a closed schema: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

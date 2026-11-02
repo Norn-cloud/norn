@@ -1,0 +1,7 @@
+{
+  "code": "ledger.leg.account_unit_mismatch",
+  "message": "account `{accountId}` does not admit unit `{unitId}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

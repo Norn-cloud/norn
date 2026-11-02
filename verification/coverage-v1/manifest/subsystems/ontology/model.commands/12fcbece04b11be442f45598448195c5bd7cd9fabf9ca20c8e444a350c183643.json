@@ -1,0 +1,4 @@
+{
+  "order": 3,
+  "value": "quint verify verification/ontology-v1/models/ontology-mapping-provenance.qnt --backend apalache --invariants typeOk replacementIsDirect replacementPreservesIdentity replacementHasReviewedBoundedProvenance exactlyOneActivePerIdentity rejectedAttemptIsNoOp --max-steps 8"
+}

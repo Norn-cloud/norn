@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.source_hash_mismatch",
+  "message": "source schema {schemaId} version {version} hashes to {actual}, not the bound {sha256}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}
