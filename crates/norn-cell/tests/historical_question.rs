@@ -19,6 +19,8 @@ fn late_scrap_correction_preserves_the_original_bitemporal_answer() {
     let mut next=context.clone();next.now_ms=now;
     let watermark=next.watermarks.get_mut("erp").expect("source").get_mut("measurements").expect("partition");
     watermark.heartbeat_ms=Some(now);
+    watermark.observed="k2/81".into();
+    next.source_cursors.get_mut("erp").expect("source").insert("measurements".into(),"k2/81".into());
     let k2=KnowledgeCutoff {recorded_at:LogicalTime::from_millis(now),frontier:head.commits};
     let second=store.evaluate_question_known_at(&plan,next,k2,|_|Ok(true)).expect("T/K2");
     let week=second.result.rows.get("\"2026-10-19\"").expect("corrected showcase");

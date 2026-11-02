@@ -60,7 +60,7 @@ pub(super) fn history_ids<E:SqlEngine>(
     if cap==0 || budget.remaining_bytes()<64 {return Ok((vec![],false))}
     let limit=i64::try_from(cap.saturating_add(1)).map_err(|_n|refused("core.compute.bound_exceeded"))?;
     let head=i64::try_from(frontier).map_err(|_n|refused("core.compute.bound_exceeded"))?;
-    let suffix="FROM _norn_fact_values WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 ORDER BY commit_seq,id,version LIMIT ?4";
+    let suffix="FROM _norn_fact_values INDEXED BY \"_norn_fact_values/root_frontier\" WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 ORDER BY commit_seq,id,version LIMIT ?4";
     let bindings=params![world,root,head,limit];
     let lengths=reader.conn.query(&format!("SELECT octet_length(id)+64 {suffix}"),&bindings)?;
     if lengths.len()>cap {return Ok((vec![],false))}
