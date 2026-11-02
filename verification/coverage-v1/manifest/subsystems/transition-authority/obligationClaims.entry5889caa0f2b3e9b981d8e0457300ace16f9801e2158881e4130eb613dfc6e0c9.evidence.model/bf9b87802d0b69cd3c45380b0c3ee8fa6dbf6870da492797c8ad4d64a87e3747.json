@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/models/authority-commit.qnt",
+    "command": "quint verify verification/stripmine-2026-08-22/models/authority-commit.qnt --backend apalache --invariants typeOk atomicCommit idempotentAtMostOnce acceptedOnlyWithCurrentCapability committedPolicyWasPinned noOpPreservesCanonical --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entry5889caa0f2b3e9b981d8e0457300ace16f9801e2158881e4130eb613dfc6e0c9.evidence.model.entrybf9b87802d0b69cd3c45380b0c3ee8fa6dbf6870da492797c8ad4d64a87e3747.selectors"
+    }
+  }
+}

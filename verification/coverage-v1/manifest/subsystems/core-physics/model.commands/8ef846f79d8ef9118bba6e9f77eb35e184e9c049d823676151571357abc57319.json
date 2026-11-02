@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4"
+}

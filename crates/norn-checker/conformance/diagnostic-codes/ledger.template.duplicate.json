@@ -1,0 +1,7 @@
+{
+  "code": "ledger.template.duplicate",
+  "message": "duplicate template id `{templateId}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

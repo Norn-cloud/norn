@@ -1,0 +1,7 @@
+{
+  "code": "interface.validation.invalid_status_date",
+  "message": "deprecated since {date}, which is not a calendar date \"YYYY-MM-DD\"",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

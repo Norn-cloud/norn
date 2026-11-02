@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_duplicate_id",
+  "message": "{what} id {id} is not unique",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

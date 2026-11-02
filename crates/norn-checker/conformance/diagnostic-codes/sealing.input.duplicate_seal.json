@@ -1,0 +1,7 @@
+{
+  "code": "sealing.input.duplicate_seal",
+  "message": "seal annotations must contain at most one entry per node",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "The authority model is bounded to one owner and transition identity, abstracts persistence as one atomic assignment, and omits crashes, replication, multi-owner coordination, and liveness."
+}

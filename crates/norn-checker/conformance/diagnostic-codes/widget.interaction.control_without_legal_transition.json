@@ -1,0 +1,7 @@
+{
+  "code": "widget.interaction.control_without_legal_transition",
+  "message": "a navigation control leads to a page the app does not declare: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "crates/norn-checker/tests/quantity_ledger_boundary.rs",
+    "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+    "selectors": {
+      "$entries": "obligationClaims.entry3419154418805d515c6e9e0fa8297dbc83ed7dbe1795990d1135b3fdbbd70454.evidence.runtime.entryef8138bad1091c4dbc3d1e4c21dcd07fd8ac61025ba4df6bee5e7522dd43e092.selectors"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "order": 0,
+  "value": "cargo test --locked -p norn-kernel --test accounting_commit"
+}
