@@ -85,7 +85,10 @@ fn decimal_binding_requires_a_concrete_implementor_type() {
         (
             Type::Decimal {
                 scale: 3,
+                rounding: norn_ir::Rounding::Refuse,
                 unit: None,
+                currency_source: None,
+                per_unit: None,
             },
             true,
         ),
