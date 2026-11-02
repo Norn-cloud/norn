@@ -1,0 +1,7 @@
+{
+  "code": "ledger.amount.result_scale_exceeds_unit",
+  "message": "result scale {scale} exceeds unit precision {precision}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

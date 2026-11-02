@@ -1,0 +1,4 @@
+{
+  "order": 4,
+  "value": "Field-authority is an unenrolled finite reference contract: its model scenarios and sampled invariant traces are reported on the PR, with no bounded-model-checked or Rust correspondence coverage claim."
+}

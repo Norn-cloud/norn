@@ -1,0 +1,7 @@
+{
+  "code": "law.model.closure_refused",
+  "message": "whole-set law dependency closure refused: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

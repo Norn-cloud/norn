@@ -1,0 +1,7 @@
+{
+  "code": "interface.validation.invalid_inheritance",
+  "message": "interface parent contract is repeated, missing, cyclic or incompatible",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

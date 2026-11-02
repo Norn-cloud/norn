@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.duplicate_action_id",
+  "message": "actionId {actionId} is already used by another action of the artifact set or the installed base",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

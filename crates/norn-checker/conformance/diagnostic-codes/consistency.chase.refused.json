@@ -1,0 +1,7 @@
+{
+  "code": "consistency.chase.refused",
+  "message": "the chase exceeded its {resource} budget of {limit}; consistency is unknown",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

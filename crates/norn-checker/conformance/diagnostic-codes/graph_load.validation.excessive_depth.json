@@ -1,0 +1,7 @@
+{
+  "code": "graph_load.validation.excessive_depth",
+  "message": "graph depth {depth} exceeds budget {budget}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}
