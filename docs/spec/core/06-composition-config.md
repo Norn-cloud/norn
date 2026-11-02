@@ -85,3 +85,5 @@ Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, 
 3. Add stable generic instance/type-unit binding admission, then explicit import/export/alias conformance.
 4. Upgrade governed parameter exact typing and scope/interval resolution, then PARAM-TAX commit history tests with 01/04.
 5. Add migration plan coverage for states/timers/commands, then atomic activation, then MIGRATE-FLIGHT and rollback/restatement tests with 08.
+
+`PARAM-WIRE-2`: `settingVersion: "0.2"` carries exact decimal-string numeric values and refuses `0.1` payloads. Retained `0.1` bytes, artifact versions and receipt pins keep their original meaning. Migration requires explicit re-authoring from the intended decimal value into a new artifact version, with `supersedes` naming its predecessor; never reinterpret or silently convert an old JSON number. In-flight work retains its old generation until an explicit supported migration.

@@ -18,7 +18,7 @@ fn setting_json_value_is_an_existing_wire_compatible_payload_surface() {
         "dependencies": [],
         "provenance": { "source": "authoring_sdk" },
         "payload": {
-            "settingVersion": "0.1",
+            "settingVersion": "0.2",
             "settingKey": "commerce.notification_preferences",
             "valueType": "json",
             "value": {

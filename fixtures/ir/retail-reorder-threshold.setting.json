@@ -16,7 +16,7 @@
     "sourcePath": "fixtures/ir/retail-reorder-threshold.setting.json"
   },
   "payload": {
-    "settingVersion": "0.1",
+    "settingVersion": "0.2",
     "settingKey": "retail.sku.default_reorder_threshold",
     "valueType": "number",
     "value": "25",

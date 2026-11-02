@@ -79,7 +79,7 @@ fn at<'a>(root: &'a mut Value, path: &[&str]) -> &'a mut Value {
 /// A JSON-valued setting with a `null` inside its value.
 fn json_setting() -> Value {
     json!({
-        "settingVersion": "0.1",
+        "settingVersion": "0.2",
         "settingKey": "commerce.notification_preferences",
         "valueType": "json",
         "value": {
@@ -100,7 +100,7 @@ fn new_envelope_fixtures_roundtrip_with_pinned_hashes() {
             "fixtures/ir/retail-reorder-threshold.setting.json",
             SETTING_FIXTURE,
             ArtifactKind::Setting,
-            "bd9a9061d0190a4048aa702ff8ecb60c110395d1470f24caee4f83d33f0953bc",
+            "dac319c4909cbd5043b867e4528cd296599ee7544581c997b9a163900857861b",
         ),
         (
             "fixtures/ir/retail-core.business_pack.json",
@@ -186,6 +186,15 @@ fn setting_fixture_decodes_into_the_typed_root() {
     open["supersedes"]["note"] = json!(null);
     let setting: SettingRoot = assert_typed_roundtrip("setting with open members", &open);
     assert!(setting.review.additional.contains_key("ticket"));
+}
+
+#[test]
+fn setting_profile_refuses_retained_v01_without_reinterpretation() {
+    let mut old = payload_json(SETTING_FIXTURE);
+    old["settingVersion"] = json!("0.1");
+    assert!(!decodes::<SettingRoot>(old.clone()));
+    old["value"] = json!(5);
+    assert!(!decodes::<SettingRoot>(old));
 }
 
 #[test]
