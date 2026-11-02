@@ -27,8 +27,8 @@ fn install(artifacts: &[ArtifactEnvelope]) -> DemoResult<CellStore> {
     let registry = BTreeSet::new();
     let sources = artifacts
         .iter()
-        .map(|artifact| RuntimeValue::from_json(serde_json::to_value(artifact)?))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|artifact| Ok(RuntimeValue::from_json(serde_json::to_value(artifact)?)?))
+        .collect::<DemoResult<Vec<_>>>()?;
     let sources = ReceiptSources::new(&sources, &[])?;
     let checked = check_artifact_set_with_receipt(
         &sources,
