@@ -82,7 +82,7 @@ export function decision(
   const pins = dependencies.map((dependency): DecisionDependencyPin => (
     "_tag" in dependency
       ? { artifactId: dependency.artifactId ?? dependency.id + ".rule", version: dependency.version }
-      : { artifactId: dependency.artifactId, version: dependency.version }
+      : { ...dependency }
   ))
   return located({ _tag: "Decision" as const, ...rest, triggers: [...triggers], slice: [...slice], dependencies: pins }, at)
 }
