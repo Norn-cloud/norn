@@ -77,7 +77,7 @@ impl Expression {
     /// remaining units are spent.
     #[must_use]
     pub fn evaluate_metered(&self, context: &Value, budget: EvaluationBudget) -> EvaluationAttempt {
-        self.evaluate_with_meter(context, Meter::new(budget.units()))
+        self.evaluate_with_meter(context, &Meter::new(budget.units()))
     }
 
     /// VAL-EXACT-1 / VAL-ROUND: use exact intermediates and an optional destination.
@@ -105,7 +105,7 @@ impl Expression {
                     });
                 }
             };
-            let evaluated = self.evaluate_with_meter(context, meter.with_exact_arithmetic(profile));
+            let evaluated = self.evaluate_with_meter(context, &meter.with_exact_arithmetic(profile));
             let mut evaluated = evaluated.result?;
             if let Some(site) = site {
                 let Value::Number(number) = &evaluated.value else {
@@ -123,7 +123,7 @@ impl Expression {
         }
     }
 
-    fn evaluate_with_meter(&self, context: &Value, meter: Meter) -> EvaluationAttempt {
+    fn evaluate_with_meter(&self, context: &Value, meter: &Meter) -> EvaluationAttempt {
         let mut vm = VM::new();
         vm.set_meter(Some(meter.clone()));
         let result = (|| {
