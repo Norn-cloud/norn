@@ -566,7 +566,7 @@ impl<X> DecisionRefusal<X> {
                 ]),
             )),
             Self::GuardFalse { .. } | Self::GuardError { .. } => {
-                return self.lifecycle_guard_reason_parts();
+                self.lifecycle_guard_reason_parts()
             }
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
