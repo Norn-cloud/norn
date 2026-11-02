@@ -1216,19 +1216,27 @@ fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>, exact: bo
         Type::Timestamp { .. } => T::Timestamp,
         Type::Date => T::Date,
         Type::Integer => T::Number(Operand::Dimensionless),
-        Type::Number => T::Number(if exact { Operand::Legacy } else { Operand::Dimensionless }),
+        Type::Number => T::Number(if exact {
+            Operand::Legacy
+        } else {
+            Operand::Dimensionless
+        }),
         Type::Decimal {
             unit,
             currency_source,
             per_unit,
             ..
-        } => T::Number(if exact { units::declared(
-            env,
-            owner,
-            unit.as_ref(),
-            currency_source.as_ref(),
-            per_unit.as_ref(),
-        ) } else { Operand::Dimensionless }),
+        } => T::Number(if exact {
+            units::declared(
+                env,
+                owner,
+                unit.as_ref(),
+                currency_source.as_ref(),
+                per_unit.as_ref(),
+            )
+        } else {
+            Operand::Dimensionless
+        }),
         Type::Enum { values } => T::Str(Some(values.iter().cloned().collect())),
         Type::Json => return None,
         Type::Record(name) => T::Record(Rec::Env {
@@ -1347,7 +1355,13 @@ impl<'a> Checker<'a> {
 
     /// The checker type a site's expected type implies (`None` for `json`).
     fn expectation(&self, expected: &Type) -> Option<T> {
-        lower(expected, self.env.options().max_link_depth, self.env, None, self.exact_math)
+        lower(
+            expected,
+            self.env.options().max_link_depth,
+            self.env,
+            None,
+            self.exact_math,
+        )
     }
 
     /// A value that must not be null.
@@ -1481,11 +1495,9 @@ impl<'a> Checker<'a> {
             (T::Record(Rec::Literal(fields)), T::Record(Rec::Env { name, depth: links })) => {
                 if let Some(record) = self.env.record(name) {
                     for (field_name, found) in fields {
-                        if let Some(expected) = record
-                            .fields
-                            .get(field_name)
-                            .and_then(|field| lower(&field.ty, *links, self.env, Some(name), self.exact_math))
-                        {
+                        if let Some(expected) = record.fields.get(field_name).and_then(|field| {
+                            lower(&field.ty, *links, self.env, Some(name), self.exact_math)
+                        }) {
                             self.check_destination_at(
                                 node,
                                 found,
@@ -1905,7 +1917,9 @@ impl<'a> Checker<'a> {
                     .env
                     .record(record)
                     .and_then(|r| r.fields.get(*name))
-                    .and_then(|field| lower(&field.ty, *depth, self.env, Some(record), self.exact_math)),
+                    .and_then(|field| {
+                        lower(&field.ty, *depth, self.env, Some(record), self.exact_math)
+                    }),
                 _ => None,
             };
             match self.infer(value, field_expected.as_ref()) {
@@ -2703,7 +2717,13 @@ impl<'a> Checker<'a> {
                         }
                         FieldSource::Property { .. } | FieldSource::Builtin => *depth,
                     };
-                    let Some(lowered) = lower(&field.ty, field_depth, self.env, Some(name), self.exact_math) else {
+                    let Some(lowered) = lower(
+                        &field.ty,
+                        field_depth,
+                        self.env,
+                        Some(name),
+                        self.exact_math,
+                    ) else {
                         self.diagnostics.push(Diagnostic {
                             code: codes::OPAQUE_READ,
                             message: format!("the result includes the opaque field `{field_name}`"),

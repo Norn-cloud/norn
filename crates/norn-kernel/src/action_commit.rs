@@ -4699,10 +4699,25 @@ fn prepare_action_input_inner<'a, X>(
     })
 }
 
-fn action_derivation_destination(action: &ActionRoot, derivation: &norn_ir::ActionInputDerivation, env: &norn_expr::ZenTypeEnv) -> norn_expr::Type {
-    let explicit_nullable = action.input_schema.get("properties").and_then(norn_ir::JsonValue::as_object).and_then(|fields| fields.get(&derivation.field)).and_then(|schema| norn_expr::schema::Schema::parse(schema,"target").ok()).is_some_and(|schema| matches!(schema,norn_expr::schema::Schema::Nullable(_)));
-    let declared = env.record(norn_expr::env::INPUT_RECORD).and_then(|record| record.fields.get(&derivation.field)).map_or(norn_expr::Type::Json,|field| field.ty.clone());
-    if !explicit_nullable && let norn_expr::Type::Optional(inner) = declared { return *inner; }
+fn action_derivation_destination(
+    action: &ActionRoot,
+    derivation: &norn_ir::ActionInputDerivation,
+    env: &norn_expr::ZenTypeEnv,
+) -> norn_expr::Type {
+    let explicit_nullable = action
+        .input_schema
+        .get("properties")
+        .and_then(norn_ir::JsonValue::as_object)
+        .and_then(|fields| fields.get(&derivation.field))
+        .and_then(|schema| norn_expr::schema::Schema::parse(schema, "target").ok())
+        .is_some_and(|schema| matches!(schema, norn_expr::schema::Schema::Nullable(_)));
+    let declared = env
+        .record(norn_expr::env::INPUT_RECORD)
+        .and_then(|record| record.fields.get(&derivation.field))
+        .map_or(norn_expr::Type::Json, |field| field.ty.clone());
+    if !explicit_nullable && let norn_expr::Type::Optional(inner) = declared {
+        return *inner;
+    }
     declared
 }
 
