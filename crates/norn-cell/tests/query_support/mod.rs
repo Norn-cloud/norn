@@ -25,6 +25,7 @@ pub(crate) fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
     let object: ObjectTypeDef = serde_json::from_value(json!({"name":TYPE,"properties":[
         {"id":"input","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
         {"id":"recovered","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
+        {"id":"loss","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
         {"id":"occurred_at","type":{"kind":"timestamp","timezone":"utc"}},
         {"id":"metal","type":{"kind":"text"}}
     ]}))
@@ -144,6 +145,10 @@ pub(crate) fn put(key: &str, input: i64, recovered: i64, at: &str, metal: &str) 
                 "recovered".into(),
                 V::from(Decimal::parse(&format!("{recovered}e-3")).expect("exact mass")),
             ),
+            (
+                "loss".into(),
+                V::from(Decimal::parse(&format!("{}e-3", input - recovered)).expect("exact loss")),
+            ),
             ("occurred_at".into(), V::from(at)),
             ("metal".into(), V::from(metal)),
         ]),
@@ -173,4 +178,31 @@ pub(crate) fn load(store: &mut CellStore) {
             ..CommitBatch::default()
         })
         .expect("native fixture commit");
+}
+
+pub(crate) fn loss_plan() -> QuestionPlan {
+    let (store, base, _) = fixture();
+    let mut artifact: Value = serde_json::from_str::<Value>(include_str!(
+        "../../../../fixtures/ir/metrics/ontology.json"
+    ))
+    .expect("artifact")[0]
+        .clone();
+    artifact["artifactId"] = json!("demo.Conversion.entity.v2");
+    artifact["name"] = json!(TYPE);
+    artifact["namespace"] = json!("demo");
+    artifact["payload"] = json!({"entityVersion":"2.0","objectType":store.model().object_types().next().expect("conversion")});
+    let catalog =
+        EffectiveCatalog::from_artifacts(&[serde_json::from_value(artifact).expect("typed model")]);
+    let mut metric = base
+        .definitions()
+        .iter()
+        .find(|d| d.name == "demo.recovered")
+        .expect("sum")
+        .clone();
+    metric.name = "demo.loss".into();
+    metric.type_params.expr = Some("loss".into());
+    let mut question = base.question().clone();
+    question.name = "demo.loss_week".into();
+    question.metrics = serde_json::from_value(json!([{"metric":"demo.loss"}])).expect("selection");
+    admit(&[metric], &question, &catalog, 100).expect("admitted exact loss")
 }

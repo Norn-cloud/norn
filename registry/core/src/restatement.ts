@@ -17,9 +17,9 @@ export const Restatement = Norn.type({
   properties: Slot, identity: [{ name: "primary", properties: ["id"] }],
   defaults: { status: "building", active: "", active_digest: "", candidate: "", candidate_digest: "" },
   lifecycles: [{ property: "status", initial: ["building"], terminal: ["active"], transitions: [
-    { id: "approve", from: ["ready"], to: "approved", guardRefusalCode: "core.world.invalid_restatement",
+    { id: "approve", from: ["ready"], to: "approved",
       guards: [Norn.expression(Slot, self => self.reason !== "" && self.slice_ids !== "" && self.candidate !== "" && self.candidate_digest !== "")] },
-    { id: "activate", from: ["approved"], to: "active", guardRefusalCode: "core.world.invalid_restatement",
+    { id: "activate", from: ["approved"], to: "active",
       guards: [Norn.expression(Slot, self => self.candidate !== "" && self.candidate_digest !== "")] },
   ] }],
 })

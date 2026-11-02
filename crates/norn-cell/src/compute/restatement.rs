@@ -28,7 +28,7 @@ pub struct RestatementSlice<'a> {
     /// Stable output identity within the generation.
     pub id: &'a str,
     /// The same admitted bounded plan used by exact and incremental execution.
-    pub plan: &'a QuestionPlan,
+    pub plan: QuestionPlan,
     /// Trusted current authorization and retained source frontier evidence.
     pub context: QueryContext,
     /// Inclusive authenticated knowledge coordinate.
@@ -272,7 +272,7 @@ impl<E: SqlEngine> CellStore<E> {
         };
         for slice in slices {
             let answer = self.evaluate_question_known_at(
-                slice.plan,
+                &slice.plan,
                 slice.context.clone(),
                 slice.cutoff,
                 &mut visible,
@@ -327,7 +327,7 @@ impl<E: SqlEngine> CellStore<E> {
         }
         let pin = historical::query_pin(
             self.model().model_hash(),
-            slice.plan,
+            &slice.plan,
             &old.result.definition_pin,
             Some(prior),
         )?;
@@ -342,7 +342,7 @@ impl<E: SqlEngine> CellStore<E> {
         }
         let mut ivm = IncrementalQuestion::rebuild_known_at(
             self,
-            slice.plan,
+            &slice.plan,
             old.result.context.clone(),
             prior,
             &mut *visible,
