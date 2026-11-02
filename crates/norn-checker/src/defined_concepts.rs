@@ -85,38 +85,29 @@ pub(crate) fn check_admission(
     artifacts: &[ArtifactEnvelope],
     context: &crate::EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
-    if !artifacts
-        .iter()
-        .any(|a| a.kind() == ArtifactKind::DefinedConcept)
-    {
-        return Vec::new();
-    }
-    let pool: Vec<_> = artifacts.iter().chain(context.base).cloned().collect();
-    let catalog = crate::definition_catalog::project(&[], &pool, context.registry).ok();
+    let pool: Vec<_> = artifacts.iter().chain(context.base).collect();
     artifacts
         .iter()
         .filter(|a| a.kind() == ArtifactKind::DefinedConcept)
         .filter_map(|artifact| {
             let root = decode(&artifact.payload).ok()?;
-            let result = catalog
-                .as_ref()
-                .ok_or("definition members must resolve")
-                .and_then(|catalog| qualify(artifact, &root, &pool, catalog));
-            result.err().map(|message| Diagnostic {
-                code: DiagnosticCode::new("core.graph.incomplete_classification"),
-                severity: DiagnosticSeverity::Error,
-                message: message.into(),
-                span: Some(Span::pointer("/payload")),
-                artifact_id: Some(artifact.artifact_id.clone()),
-                remediation: None,
-            })
+            qualify(artifact, &root, &pool, context.registry)
+                .err()
+                .map(|message| Diagnostic {
+                    code: DiagnosticCode::new("core.graph.incomplete_classification"),
+                    severity: DiagnosticSeverity::Error,
+                    message: message.into(),
+                    span: Some(Span::pointer("/payload")),
+                    artifact_id: Some(artifact.artifact_id.clone()),
+                    remediation: None,
+                })
         })
         .collect()
 }
 fn required_target<'a>(
     owner: &ArtifactEnvelope,
     reference: &norn_ir::definition_catalog::MemberRef,
-    pool: &'a [ArtifactEnvelope],
+    pool: &'a [&'a ArtifactEnvelope],
 ) -> Result<&'a ArtifactEnvelope, &'static str> {
     let mut targets = pool
         .iter()
@@ -137,7 +128,8 @@ fn required_target<'a>(
 fn has_member(
     target: &ArtifactEnvelope,
     reference: &norn_ir::definition_catalog::MemberRef,
-    catalog: &norn_ir::definition_catalog::DefinitionCatalog,
+    pool: &[&ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
 ) -> bool {
     use norn_ir::definition_catalog::Member;
     if target.kind() == ArtifactKind::DefinedConcept {
@@ -145,6 +137,12 @@ fn has_member(
             || matches!(&reference.member, Member::Type { type_name }
                 if decode(&target.payload).is_ok_and(|root| root.id == *type_name));
     }
+    let Ok(closure) = entity_closure(target, pool) else {
+        return false;
+    };
+    let Ok(catalog) = crate::definition_catalog::project(&[], &closure, registry) else {
+        return false;
+    };
     target.kind() == ArtifactKind::Entity
         && (matches!(reference.member, Member::Artifact {})
             || catalog.types.iter().any(|r| r.at == *reference)
@@ -155,7 +153,7 @@ fn has_member(
 }
 fn entity_closure(
     target: &ArtifactEnvelope,
-    pool: &[ArtifactEnvelope],
+    pool: &[&ArtifactEnvelope],
 ) -> Result<Vec<ArtifactEnvelope>, &'static str> {
     let mut closure = vec![target.clone()];
     let mut cursor = 0;
@@ -163,7 +161,7 @@ fn entity_closure(
         let others: Vec<_> = pool
             .iter()
             .filter(|a| a.artifact_id != current.artifact_id)
-            .cloned()
+            .map(|a| ArtifactEnvelope::clone(a))
             .collect();
         let resolved = crate::resolve_artifact_set(std::slice::from_ref(&current), &others)
             .map_err(|_error| "the pinned base type closure must resolve")?;
@@ -220,8 +218,8 @@ fn bounded(limits: &norn_ir::ResourceLimitProfile) -> bool {
 fn qualify(
     artifact: &ArtifactEnvelope,
     root: &DefinedConceptRoot,
-    pool: &[ArtifactEnvelope],
-    catalog: &norn_ir::definition_catalog::DefinitionCatalog,
+    pool: &[&ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
 ) -> Result<(), &'static str> {
     use crate::entity_artifacts::{Decoded, decode_v2};
     use norn_ir::definition_catalog::Member;
@@ -250,7 +248,7 @@ fn qualify(
     }
     for reference in &root.dependencies {
         let dependency = required_target(artifact, reference, pool)?;
-        if !has_member(dependency, reference, catalog) {
+        if !has_member(dependency, reference, pool, registry) {
             return Err("a declared dependency member is unavailable");
         }
     }
