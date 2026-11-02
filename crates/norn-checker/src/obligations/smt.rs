@@ -36,9 +36,6 @@ pub struct SmtEvidence {
     /// Closed solver result.
     pub result: SmtResult,
 }
-fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
 #[cfg(any(test, not(target_family = "wasm")))]
 fn answer(output: &str, marker: &str) -> Result<SmtResult, &'static str> {
     let body = output
@@ -74,7 +71,7 @@ pub fn dispatch_smt(
         bound,
         z3_version: None,
         z3_sha256: None,
-        obligation_sha256: digest(text.as_bytes()),
+        obligation_sha256: format!("{:x}", Sha256::digest(text.as_bytes())),
         result: SmtResult::Unknown("unsupported_platform".into()),
     };
     #[cfg(not(target_family = "wasm"))]

@@ -17,14 +17,11 @@ fn backend() -> (PathBuf, String, SmtBound) {
         "{:x}",
         Sha256::digest(std::fs::read(&path).expect("attested binary"))
     );
-    (
-        path,
-        hash,
-        SmtBound {
-            timeout: Duration::from_secs(3),
-            bytes: 65_536,
-        },
-    )
+    let bound = SmtBound {
+        timeout: Duration::from_secs(3),
+        bytes: 65_536,
+    };
+    (path, hash, bound)
 }
 #[test]
 #[ignore = "requires pinned Z3; explicitly qualified on Boat with --include-ignored"]
