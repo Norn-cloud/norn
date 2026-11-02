@@ -67,7 +67,6 @@ impl OverlayPlan {
     }
 }
 
-/// Generate scoped conjunctive obligations against independently retained input.
 /// OVERLAY-MONOTONE-1 forbids replacement, including `update_validation`.
 /// The result is pending analysis: SAT is necessary, and progress stays unknown.
 /// # Errors

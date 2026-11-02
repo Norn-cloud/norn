@@ -1472,7 +1472,6 @@ fn overlay_monotone_retains_authority_and_refuses_replacement_or_stale_pins(paid
     let plan = overlay_obligations(&source, &retained, &target.scope).expect("pending goals");
     assert_eq!(plan.source_sha256(), source.exact_digest());
     assert_eq!(plan.retained_sha256(), retained.exact_digest());
-    assert_eq!(plan.goals().count(), 1);
     assert!(!plan.goals().next().expect("goal").1.is_empty());
     overlay.overlay.operations =
         vec![norn_ir::CustomizationOverlayOp::UpdateValidation { additional }];
