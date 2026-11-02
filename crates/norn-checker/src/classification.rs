@@ -41,12 +41,12 @@ impl Classifier {
             return Err(IncompleteClassification);
         }
         let root = crate::defined_concepts::decode(&artifact.payload)
-            .map_err(|_| IncompleteClassification)?;
+            .map_err(|_error| IncompleteClassification)?;
         let pool: Vec<_> = std::iter::once(artifact).chain(context.base).collect();
         let expression = crate::defined_concepts::qualify(artifact, &root, &pool, context.registry)
-            .map_err(|_| IncompleteClassification)?;
+            .map_err(|_error| IncompleteClassification)?;
         let paths = norn_expr::expression_read_paths(root.predicate.as_str(), "self")
-            .map_err(|_| IncompleteClassification)?;
+            .map_err(|_error| IncompleteClassification)?;
         if paths.contains(&Vec::new()) {
             return Err(IncompleteClassification);
         }
@@ -54,7 +54,7 @@ impl Classifier {
             .into_iter()
             .map(ArtifactRef::of)
             .collect::<Result<_, _>>()
-            .map_err(|_| IncompleteClassification)?;
+            .map_err(|_error| IncompleteClassification)?;
         Ok(Self {
             root,
             expression,
@@ -88,14 +88,20 @@ impl Classifier {
         rows: &[(String, RuntimeValue)],
         complete: bool,
     ) -> Result<BTreeSet<String>, IncompleteClassification> {
-        if !complete || rows.len() > self.root.bounds.slice.max_records as usize {
+        if !complete
+            || rows.len()
+                > usize::try_from(self.root.bounds.slice.max_records)
+                    .map_err(|_error| IncompleteClassification)?
+        {
             return Err(IncompleteClassification);
         }
         let mut seen = BTreeSet::new();
         let mut members = BTreeSet::new();
         let encoded =
-            norn_canonical::canonical_json_of(rows).map_err(|_| IncompleteClassification)?;
-        if encoded.len() as u64 > self.root.bounds.slice.max_canonical_bytes {
+            norn_canonical::canonical_json_of(rows).map_err(|_error| IncompleteClassification)?;
+        if u64::try_from(encoded.len()).map_err(|_error| IncompleteClassification)?
+            > self.root.bounds.slice.max_canonical_bytes
+        {
             return Err(IncompleteClassification);
         }
         let mut fuel = self.root.bounds.decide.fuel_units;
@@ -106,7 +112,7 @@ impl Classifier {
             if !seen.insert(id) || self.paths.iter().any(|path| !present(row, path)) {
                 return Err(IncompleteClassification);
             }
-            let value = Value::try_from(row).map_err(|_| IncompleteClassification)?;
+            let value = Value::try_from(row).map_err(|_error| IncompleteClassification)?;
             let attempt = self.expression.evaluate_metered(
                 &Value::object([("self", value)]),
                 EvaluationBudget::new(fuel),
@@ -116,14 +122,18 @@ impl Classifier {
                 .ok_or(IncompleteClassification)?;
             match attempt
                 .result
-                .map_err(|_| IncompleteClassification)?
+                .map_err(|_error| IncompleteClassification)?
                 .into_value()
             {
                 Value::Bool(true) => {
                     members.insert(id.clone());
                 }
                 Value::Bool(false) => {}
-                _ => return Err(IncompleteClassification),
+                Value::Null
+                | Value::Number(_)
+                | Value::String(_)
+                | Value::Array(_)
+                | Value::Object(_) => return Err(IncompleteClassification),
             }
         }
         Ok(members)
