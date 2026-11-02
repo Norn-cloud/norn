@@ -5,7 +5,9 @@ use crate::{
 };
 use norn_expr::env::FieldSource;
 use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
-use norn_graph::{Budget, Direction, Graph, reachability};
+use norn_graph::{Direction, Graph, reachability};
+/// Resource ceilings for the checker's public graph projection APIs.
+pub use norn_graph::Budget;
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot,
     LawTiming, PropertyTypeName, ResourceLimitProfile,

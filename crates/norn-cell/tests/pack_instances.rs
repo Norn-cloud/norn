@@ -281,7 +281,7 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
     let instances = norn_checker::verification::effective_law_instances(
         &all,
         &context(),
-        norn_graph::Budget {
+        norn_checker::verification::Budget {
             max_nodes: 4096,
             max_edges: 16384,
             max_steps: 65536,
@@ -674,7 +674,7 @@ fn pack_law_substitution_follows_only_the_selected_instance() {
             base: &base,
             tenant: None,
         },
-        norn_graph::Budget {
+        norn_checker::verification::Budget {
             max_nodes: 4096,
             max_edges: 16384,
             max_steps: 65536,
