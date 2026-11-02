@@ -371,7 +371,7 @@ pub(crate) mod tests {
             let value = f64::from_bits(bits);
             prop_assume!(value.is_finite());
             let encoded = report_value(&value).expect("approximate evidence");
-            let decoded = encoded.get("value").and_then(norn_ir::RuntimeValue::as_str).expect("tagged binary64").parse::<f64>().expect("roundtrip float");
+            let decoded = encoded.as_object().and_then(|fields| fields.get("value")).and_then(norn_ir::RuntimeValue::as_str).expect("tagged binary64").parse::<f64>().expect("roundtrip float");
             prop_assert_eq!(decoded.to_bits(),value.to_bits());
         }
         #[test]
