@@ -8,6 +8,10 @@ use norn_ir::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(crate) fn catalog(pool: &[&ArtifactEnvelope], registry: &BTreeSet<norn_ir::PropertyTypeName>) -> EffectiveCatalog {
+    EffectiveCatalog::from_artifacts_with_registry(&pool.iter().map(|a| (*a).clone()).collect::<Vec<_>>(), registry)
+}
+
 pub(crate) fn composition(artifact: &ArtifactEnvelope) -> Option<CompositionPackRoot> {
     serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value()).ok()?).ok()
 }

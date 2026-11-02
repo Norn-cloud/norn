@@ -679,12 +679,7 @@ fn check_pack_instances(
     let catalog = declarations
         .iter()
         .any(|(_, _, i)| !i.type_unit_bindings.is_empty())
-        .then(|| {
-            crate::EffectiveCatalog::from_artifacts_with_registry(
-                &pool.iter().map(|a| (*a).clone()).collect::<Vec<_>>(),
-                registry,
-            )
-        });
+        .then(|| crate::pack_bindings::catalog(&pool, registry));
     let mut edges = BTreeMap::new();
     for (index, (owner, pointer, instance)) in declarations.iter().enumerate() {
         let mut reject =
