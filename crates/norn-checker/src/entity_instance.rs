@@ -2287,7 +2287,7 @@ mod declared_rounding_tests {
             let number = format!("{}{}.{:03}", if coefficient < 0 {"-"} else {""}, coefficient.abs()/1000, coefficient.abs()%1000);
             let original = RuntimeValue::from_json_text(&number).expect("number");
             let stored = effective.canonical_runtime_value(&original);
-            proptest::prop_assert_eq!(effective.canonical_runtime_value(&stored), stored.clone());
+            proptest::prop_assert_eq!(effective.canonical_runtime_value(&stored), stored);
             proptest::prop_assert_eq!(effective.check_runtime_value(&original), effective.check_runtime_value(&stored));
         }
     }
