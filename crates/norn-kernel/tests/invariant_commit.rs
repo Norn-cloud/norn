@@ -3175,4 +3175,3 @@ fn property_rule_pin_observations_are_classifiable_and_native_writes_refuse() {
     assert!(cell.load(&key).unwrap().exists());
     assert!(cell.outbox().is_empty());
 }
-
