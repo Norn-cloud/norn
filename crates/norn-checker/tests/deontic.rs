@@ -167,6 +167,79 @@ fn requirement_env() -> norn_expr::ZenTypeEnv {
         .expect("input")
 }
 
+#[allow(clippy::expect_used, reason = "LAW-NORMATIVE-1 contract scenarios")]
+#[test]
+fn law_normative_contract_retains_all_grades_and_refuses_ungrounded_admission() {
+    use norn_ir::deontic::{LawDocument, StructuredLaw};
+    let envelopes: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json"))
+            .expect("envelopes");
+    for grade in [
+        DeonticModality::Obligation,
+        DeonticModality::Permission,
+        DeonticModality::Prohibition,
+    ] {
+        let mut r = requirement();
+        r.norm.modality = grade;
+        r.norm.law.modality = if grade == DeonticModality::Prohibition {
+            LawModality::Never {}
+        } else {
+            LawModality::Always {}
+        };
+        let wire = serde_json::to_value(StructuredLaw {
+            requirement: r.clone(),
+        })
+        .expect("wire");
+        let restored: LawDocument = serde_json::from_value(wire.clone()).expect("document");
+        assert_eq!(serde_json::to_value(restored).expect("encoded"), wire);
+        let mut envelope = envelopes.first().expect("fixture").clone();
+        envelope["payload"] = wire.clone();
+        let artifact: norn_ir::ArtifactEnvelope =
+            serde_json::from_value(envelope.clone()).expect("artifact");
+        assert_eq!(
+            serde_json::to_value(&artifact).expect("roundtrip"),
+            envelope
+        );
+        let findings = norn_checker::verification::check_law_local(&artifact);
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.code.as_str() == "law.model.unknown_binding")
+        );
+        for field in ["authorityRank", "enacted"] {
+            let mut invalid = wire.clone();
+            invalid["requirement"]["norm"][field] = json!(10);
+            assert!(serde_json::from_value::<LawDocument>(invalid).is_err());
+        }
+        let mut mixed = wire;
+        mixed["lawVersion"] = json!("0.1");
+        assert!(serde_json::from_value::<LawDocument>(mixed).is_err());
+    }
+    for envelope in envelopes {
+        let payload = envelope["payload"].clone();
+        let document: LawDocument = serde_json::from_value(payload.clone()).expect("plain law");
+        assert_eq!(serde_json::to_value(document).expect("encoded"), payload);
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn law_normative_pin_changes_with_the_retained_source(source in "[a-zA-Z0-9_.]{1,32}") {
+        let mut r = requirement();
+        let payload = json!({"requirement":r});
+        r.norm.source.artifact_id = format!("different.{source}");
+        let changed = json!({"requirement":r});
+        let original = norn_ir::canonical::canonical_json_of(&payload);
+        let updated = norn_ir::canonical::canonical_json_of(&changed);
+        proptest::prop_assert!(original.is_ok());
+        proptest::prop_assert!(updated.is_ok());
+        proptest::prop_assert_ne!(original.ok(), updated.ok());
+        let decoded = serde_json::from_value::<norn_ir::deontic::LawDocument>(changed.clone());
+        proptest::prop_assert!(decoded.is_ok());
+        proptest::prop_assert_eq!(decoded.ok().and_then(|d| serde_json::to_value(d).ok()), Some(changed));
+    }
+}
+
 #[test]
 fn law_contained_pack_requirement_refuses_unsupported_scope() {
     use norn_checker::deontic::{RequirementRefusal, check_requirement};

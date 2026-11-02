@@ -3,6 +3,27 @@ use crate::{IrVersion01, LawIR, ZenExpression};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// LAW-NORMATIVE-1: normative grades stay in the existing Law artifact family.
+/// Both forms retain their exact original bytes in the envelope's artifact pin.
+/// Decoding this document confers no grounding, execution or authorization.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+#[schemars(transform = crate::members::one_of_forms)]
+pub enum LawDocument {
+    /// Existing protected safety law, with unchanged wire form.
+    Safety(Box<LawIR>),
+    /// Reviewed normative declaration; never erase its grade or source metadata.
+    Structured(Box<StructuredLaw>),
+}
+
+/// Structured form of a `law` payload. Authority rank and enactment are absent:
+/// only the trusted retained enacting instance/layer may supply those inputs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StructuredLaw {
+    pub requirement: StructuredRequirement,
+}
+
 /// Reviewed structured language; predicates retain the existing ZEN semantics.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

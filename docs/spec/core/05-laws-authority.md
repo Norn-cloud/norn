@@ -6,6 +6,8 @@ Purpose [Owner]: structured laws state theorems about declared definitions, with
 
 Reuse `LawIR`, `LawScope`, `LawRoot`, `LawModality` (temporal), `LawTiming`, `LawResponse`, `DeonticRule`, `StructuredRequirement`, `AccessIr`, existing capability grants, `CheckReceipt` and obligation challenge/evidence types.
 
+**LAW-NORMATIVE-1:** Normative structured requirements use the existing Law artifact (`{requirement: StructuredRequirement}`), whose exact artifact pin retains LawIR, grade and source identities; rank/enactment come only from the trusted retained enacting instance/layer, while PolicyRoot remains authorization and evidence/approval data and APPROVE/REJECT remain ordinary typed actions.
+
 | Target record/extension | Required fields |
 |---|---|
 | Structured law | stable law ID/version, `scope`, `condition?: Expr<bool>` (absent means unconditional), `subject`, `grade: obligation/permission/prohibition`, temporal requirement, typed response, normative source/precedence, severity; existing structured safety fragment is authoritative. |
