@@ -156,7 +156,8 @@ impl<E: SqlEngine> CellStore<E> {
     }
 
     /// COMPUTE-DETERMINISTIC-1 / QUERY-GRAIN-1: evaluate a full bounded current-world snapshot.
-    /// Historical knowledge selection remains unsupported; the envelope reports the actual head.
+    /// This reads the current world; use [`Self::evaluate_question_known_at`] for a knowledge cutoff.
+    /// The envelope reports the actual verified head.
     /// The host supplies server authorization, dependency pins and Core 07 dispositions.
     /// # Errors
     /// Refuses incomplete scans, unsupported semantics, model/scope mismatch or invalid values.

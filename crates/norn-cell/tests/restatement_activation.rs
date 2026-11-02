@@ -829,3 +829,70 @@ fn resumed_slice_declarations_keep_the_same_admission_bound() {
         ));
     }
 }
+
+#[test]
+fn approved_candidate_refuses_an_alternate_kernel_writer_before_activation() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (mut store, plan, context, model) = setup(&path);
+    let point = cutoff(&store, &context);
+    stage(&mut store, &plan, &context, point);
+    drop(store);
+    for state in ["ready", "approved"] {
+        if state == "approved" {
+            assert!(governed(&path, &model, "approve", "reviewed", true));
+        }
+        let store = open(&path, &model);
+        let record = store
+            .read()
+            .object(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+            .expect("slot")
+            .expect("present");
+        let key = norn_kernel::FactKey::new(RESTATEMENT_TYPE, ID);
+        let slice = norn_kernel::FactSlice::from([(
+            key.clone(),
+            norn_kernel::FactState {
+                version: norn_kernel::FactVersion(record.version),
+                values: Some(record.values),
+            },
+        )]);
+        let definitions: Vec<_> = model.object_types().collect();
+        let catalog = TypeCatalog::new(definitions).with_interfaces(model.interfaces());
+        let output = norn_ir::DecisionOutput {
+            facts: vec![norn_ir::FactChange::Set {
+                object_type: norn_ir::ObjectTypeName(RESTATEMENT_TYPE.into()),
+                key: ID.into(),
+                property: norn_ir::PropertyId("candidate".into()),
+                value: norn_ir::RuntimeValue::from("unreviewed generation"),
+            }],
+            commands: vec![],
+            timers: vec![],
+        };
+        let turn = DecisionTurn {
+            id: format!("alternate/{state}"),
+            now: LogicalTime::from_millis(context.now_ms),
+            world: World::Main,
+            consumes: None,
+        };
+        assert!(matches!(
+            norn_kernel::prepare_decision::<std::convert::Infallible>(
+                &catalog, &slice, &turn, &output,
+            ),
+            Err(norn_kernel::DecisionRefusal::ImmutableStateWrite { .. })
+        ));
+        assert_eq!(
+            store
+                .read()
+                .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+                .expect("unchanged"),
+            slice.get(&key).expect("read").version.0
+        );
+    }
+    assert!(governed(
+        &path,
+        &model,
+        "activate",
+        "reviewed-activation",
+        true
+    ));
+}
