@@ -1215,6 +1215,10 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
         "../../../registry/core/artifacts/core.Conversion.interface.json"
     ))
     .expect("generated interface");
+    let process: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.Process.interface.json"
+    ))
+    .expect("generated parent interface");
     let property_types: ArtifactEnvelope = serde_json::from_str(include_str!(
         "../../../registry/core/artifacts/std.value_types.entity.json"
     ))
@@ -1228,13 +1232,13 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
     melt.payload = ArtifactPayload::from_kind_json(
         &norn_ir::ArtifactKind::Entity,
         serde_json::from_value(json!({"entityVersion":"2.0", "objectType":{
-            "name":"jewelry.Melt", "implements":["core.Conversion"],
+            "name":"jewelry.Melt", "role":"happening", "implements":["core.Conversion"],
             "properties": properties
         }}))
         .expect("exact payload"),
     )
     .expect("Melt");
-    let base = vec![interface, property_types, melt];
+    let base = vec![process, interface, property_types, melt];
     assert_eq!(
         check_artifact_set(
             &base,
