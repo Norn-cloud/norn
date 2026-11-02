@@ -71,8 +71,8 @@ fn knowledge_cutoff_admits_one_authenticated_proof_exactly_once() {
     let mut budget = DecodeBudget::new(&limits);
     store.read().fact_version_evidence_with_budget(MAIN_WORLD, "proof.Item", "item", 1, &mut budget).expect("proof").expect("admitted");
     let exact = ReactiveLimits {
-        max_candidate_bytes_per_commit: limits.max_candidate_bytes_per_commit - budget.remaining_bytes(),
-        max_scan: limits.max_scan - budget.remaining_rows(),
+        max_candidate_bytes_per_commit: limits.max_candidate_bytes_per_commit.checked_sub(budget.remaining_bytes()).expect("charged bytes"),
+        max_scan: limits.max_scan.checked_sub(budget.remaining_rows()).expect("charged rows"),
         ..limits
     };
     let mut budget = DecodeBudget::new(&exact);
