@@ -6827,7 +6827,6 @@ fn path_index(path: &str, array_prefix: &str) -> Option<usize> {
 
 fn property_type(property: &EffectiveProperty) -> Option<Type> {
     let ty = match &property.kind {
-        EffectiveKind::Base(PropertyType::DecimalBinding { .. }) => return None,
         EffectiveKind::Base(PropertyType::Text { format }) => Type::Text { format: *format },
         EffectiveKind::Base(PropertyType::Integer {}) => Type::Integer,
         EffectiveKind::Base(PropertyType::Decimal { scale, unit, .. }) => Type::Decimal {
@@ -6847,7 +6846,9 @@ fn property_type(property: &EffectiveProperty) -> Option<Type> {
             PropertyType::Record { .. } | PropertyType::JsonExt { .. } | PropertyType::Ref { .. },
         )
         | EffectiveKind::Registry(_) => Type::Json,
-        EffectiveKind::Unresolved => return None,
+        EffectiveKind::Base(PropertyType::DecimalBinding { .. }) | EffectiveKind::Unresolved => {
+            return None;
+        }
     };
     Some(if property.nullable { ty.optional() } else { ty })
 }
