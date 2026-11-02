@@ -1,0 +1,21 @@
+{
+  "order": 2,
+  "value": {
+    "id": "KERNEL-V2-PROJECTION",
+    "runtime": "tested",
+    "model": "partial",
+    "proof": "deferred",
+    "residual": "Finite models and sampled traces are not unbounded Rust refinement. Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entrycf989837a351434ba81edfa5db36b0317b36cc87d0dff379ece27d2240835300.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entrycf989837a351434ba81edfa5db36b0317b36cc87d0dff379ece27d2240835300.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entrycf989837a351434ba81edfa5db36b0317b36cc87d0dff379ece27d2240835300.evidence.proof"
+      }
+    }
+  }
+}

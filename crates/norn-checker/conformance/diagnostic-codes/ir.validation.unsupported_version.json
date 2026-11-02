@@ -1,0 +1,7 @@
+{
+  "code": "ir.validation.unsupported_version",
+  "message": "unsupported IR version '{irVersion}'",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

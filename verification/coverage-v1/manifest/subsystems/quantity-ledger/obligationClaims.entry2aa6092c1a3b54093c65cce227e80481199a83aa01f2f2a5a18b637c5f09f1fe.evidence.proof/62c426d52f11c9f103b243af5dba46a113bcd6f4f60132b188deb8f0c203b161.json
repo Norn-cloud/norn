@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+    "command": "lean -DwarningAsError=true verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry2aa6092c1a3b54093c65cce227e80481199a83aa01f2f2a5a18b637c5f09f1fe.evidence.proof.entry62c426d52f11c9f103b243af5dba46a113bcd6f4f60132b188deb8f0c203b161.selectors"
+    }
+  }
+}

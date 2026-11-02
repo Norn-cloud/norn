@@ -27,3 +27,19 @@ Structural checking confers no ontology admission, runtime enforcement,
 signatures or solver evidence. Retain the complete wrapper, including timing,
 and run normal LawIR admission. Diagnostics reuse its stable code catalog.
 No FRET or timed-liveness claim: deadline breach needs a future clock-aware requirement.
+
+The `structured_law_view` checker example accepts one structured Law envelope on stdin and
+prints both locales using `RequirementView`, with the unchanged original envelope and its
+artifact pin: `cargo run --locked -p norn-checker --example structured_law_view < LAW.json`.
+Its `projection_only` / `unverified` labels confer no admission, authority selection or
+approval discharge; unsupported timing refuses rendering, and retained pack roots remain visible.
+
+- **SR6 View identity:** locale changes only display labels/direction; stable law/slot
+  IDs and complete IR remain. Bidi controls have visible escapes inside isolates.
+  Display is never parsed as free prose. Duplicate exception IDs are refused.
+- **SR7 One target:** round trips retain scope, predicates, timing, grade and sources;
+  Arabic is a view, not a proof target. Consumers honor `direction()`.
+- Eight requirements cover seven physics categories; history prohibition and
+  compensation are separate. Activation predicates are row-specific typed data.
+  Inputs are bounded partition/dimension/currency data: authoring conformance,
+  not admitted aggregate proofs. Terminal history is state; posted facts stay immutable.

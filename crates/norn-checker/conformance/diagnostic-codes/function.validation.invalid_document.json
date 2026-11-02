@@ -1,0 +1,7 @@
+{
+  "code": "function.validation.invalid_document",
+  "message": "the document is not a Function {record}: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

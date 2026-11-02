@@ -1,0 +1,7 @@
+{
+  "code": "ledger.posting.certificate_coverage_mismatch",
+  "message": "certificate set does not exactly cover the evaluated unit/layer partitions",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

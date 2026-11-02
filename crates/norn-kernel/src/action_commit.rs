@@ -914,6 +914,14 @@ where
         )?,
     };
     match action.effect_program.as_ref() {
+        // RECEIPT-EFFECT-1: refuse until consumption and effects share one commit.
+        Some(ActionEffectProgram::FireTransition {
+            accept_receipt: Some(_),
+            ..
+        })
+        | None => Err(ActionRefusal::UnsupportedEffect {
+            action_id: action.action_id.clone(),
+        }),
         Some(ActionEffectProgram::FireTransition {
             object_id_field,
             object_kind,
@@ -975,9 +983,6 @@ where
             limits,
             meter,
         ),
-        None => Err(ActionRefusal::UnsupportedEffect {
-            action_id: action.action_id.clone(),
-        }),
     }
 }
 

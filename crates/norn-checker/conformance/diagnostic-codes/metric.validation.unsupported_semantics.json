@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.unsupported_semantics",
+  "message": "Calculation requires semantics outside the admitted checker profile.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
