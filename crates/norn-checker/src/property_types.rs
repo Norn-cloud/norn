@@ -417,19 +417,7 @@ fn resolve<'a>(
 }
 
 /// VAL-ROUND: a decoded policy cannot activate legacy expression arithmetic.
-fn check_rounding_site(
-    base: &[&str],
-    rounding: Option<norn_ir::Rounding>,
-    out: &mut Vec<Diagnostic>,
-) {
-    if rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse) {
-        out.push(error(crate::property_codec::INEXACT,
-            "VAL-ROUND: rounding requires the exact-site expression/store profile; this declaration is not yet executable".to_owned(),
-            span_at(base, &["type", "rounding"])));
-    }
-}
-
-/// VAL-RATE: refuse malformed declarations and premature arithmetic activation.
+/// VAL-RATE: reuse one bounded Decimal representation and its shared runtime.
 fn check_rate_site(
     base: &[&str],
     scale: u64,
@@ -447,11 +435,7 @@ fn check_rate_site(
         {
             out.push(error(crate::property_codec::INEXACT, "VAL-RATE requires currencySource, a denominator unit, no quantity unit, and scale <= 18".to_owned(), span_at(base, &["type", "perUnit"])));
         }
-        out.push(error(
-            crate::property_codec::INEXACT,
-            "VAL-RATE requires the bounded rate consumer profile before activation".to_owned(),
-            span_at(base, &["type", "perUnit"]),
-        ));
+
     }
 }
 
@@ -474,7 +458,9 @@ fn check_decimal_members(base: &[&str], property_type: &PropertyType, out: &mut 
         currency_source.as_ref(),
         out,
     );
-    check_rounding_site(base, *rounding, out);
+    if rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse) && scale.0 > 18 {
+        out.push(error(crate::property_codec::INEXACT,"declared rounding scale exceeds exact profile maximum 18".into(),span_at(base,&["type","scale"])));
+    }
     if scale.0 > MAX_DECIMAL_SCALE {
         out.push(error(
             codes::SCALE_OUT_OF_RANGE,
