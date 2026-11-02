@@ -483,6 +483,18 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     introduced(
+        "core.composition.parameter_ambiguous",
+        Tier::T3,
+        "multiple effective candidates at equal scope precedence",
+        "0.2.0",
+    ),
+    introduced(
+        "core.composition.parameter_missing",
+        Tier::T3,
+        "no effective candidate or explicit default",
+        "0.2.0",
+    ),
+    introduced(
         "core.composition.unresolved_pin",
         Tier::T3,
         "instance reference must resolve to an exact scoped pack pin",

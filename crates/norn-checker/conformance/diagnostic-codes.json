@@ -471,6 +471,20 @@
       "tier": "T3"
     },
     {
+      "code": "core.composition.parameter_ambiguous",
+      "message": "multiple effective candidates at equal scope precedence",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.composition.parameter_missing",
+      "message": "no effective candidate or explicit default",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
       "code": "core.composition.unresolved_pin",
       "message": "instance reference must resolve to an exact scoped pack pin",
       "severity": "error",
