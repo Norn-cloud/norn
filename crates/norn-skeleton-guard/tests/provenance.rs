@@ -631,7 +631,7 @@ fn trusted_policy_reads_entry_obligations_and_refuses_malformed_or_removed_entri
             "code",
         );
         let id = "synthetic-preserved-obligation";
-        let hash = hex::encode(Sha256::digest(serde_json::to_vec(id).unwrap()));
+        let hash = "2b6e3370813437d16485a55299d0d399cbbc4a57dc45f9202e8652184984af26";
         let name = if change == "identity" { "wrong" } else { &hash };
         let mut value = json!({"order": 0, "value": id});
         if change == "order" {

@@ -120,6 +120,8 @@ def entry_id(value: Any) -> str:
 
     Unkeyed object IDs stay fixed when their nested entry directories change.
     """
+    if isinstance(value, str):
+        return hashlib.sha256(b"entry:string\0" + value.encode("utf-8")).hexdigest()
     identity = {"id": value["id"]} if isinstance(value, dict) and "id" in value else value
     return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
