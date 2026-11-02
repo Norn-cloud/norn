@@ -317,7 +317,7 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
     let mut wrong = request.clone();
     wrong.action_id = "norn.write".into();
     assert!(snapshot.read(&query, &limits, &pdp, &wrong, scope).is_err());
-    let mut truncated = limits.clone();
+    let mut truncated = limits;
     truncated.max_canonical_bytes = 1;
     assert!(
         !snapshot
@@ -325,7 +325,7 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
             .expect("byte bound")
             .complete
     );
-    truncated = limits.clone();
+    truncated = limits;
     truncated.max_scan = 0;
     assert!(
         !snapshot
