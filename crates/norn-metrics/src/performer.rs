@@ -191,8 +191,8 @@ pub fn perform_forecast(
     Ok(receipt)
 }
 
-#[cfg(all(test,target_os="linux"))]
-#[allow(clippy::expect_used,reason="bounded native resource scenario")]
+#[cfg(all(test, target_os = "linux"))]
+#[allow(clippy::expect_used, reason = "bounded native resource scenario")]
 mod tests {
     use super::*;
     fn export<'a>(
