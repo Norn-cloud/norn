@@ -87,6 +87,35 @@ export RUSTUP_HOME="$tool_root/rustup"
 export RUSTUP_TOOLCHAIN="$HAX_RUST_TOOLCHAIN"
 export OPAMROOT="$tool_root/opam-root"
 export PATH="$bin_root:$CARGO_HOME/bin:$PATH"
+# OCaml native compilation is memory intensive even with only four CPUs.
+export OPAMJOBS="${OPAMJOBS:-${NORN_VERIFICATION_BUILD_JOBS:-2}}"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-${NORN_VERIFICATION_BUILD_JOBS:-2}}"
+export OPAMSWITCH="$OPAM_SWITCH"
+receipt="$tool_root/extraction-install.sha256"
+
+installation_digest() {
+  # Bind the recipe (all pins), package inventory, installed code and libraries.
+  # Build/download caches are deliberately excluded; they are never executed.
+  sha256sum "${BASH_SOURCE[0]}"
+  "$opam_binary" list --installed --short --columns=name,version
+  find -L "$OPAMROOT/$OPAM_SWITCH/bin" "$OPAMROOT/$OPAM_SWITCH/lib" \
+    "$CARGO_HOME/bin" "$tool_root/rustup/toolchains" \
+    "$source_root/aeneas/bin" "$source_root/aeneas/charon/bin" \
+    "$fstar_root" -type f -print0 | sort -z | xargs -0 -r sha256sum
+}
+
+if [[ -f "$receipt" ]]; then
+  eval "$("$opam_binary" env --set-root --set-switch --shell=sh)"
+  test "$(git -C "$source_root/aeneas/charon" rev-parse HEAD)" = a1d989057b50b0429ccd96c5b4c4428b9b218b21
+  test -z "$(git -C "$source_root/aeneas/charon" status --porcelain=v1 --untracked-files=all)"
+  installed_digest="$(installation_digest | sha256sum)"
+  if [[ "$installed_digest" != "$(cat "$receipt")" ]]; then
+    echo "Pinned extraction installation changed; rebuild the snapshot without $receipt" >&2
+    exit 1
+  fi
+  echo "Exact pinned extraction installation verified: $installed_digest"
+  exit 0
+fi
 
 if [[ ! -d "$RUSTUP_HOME/toolchains/$HAX_RUST_TOOLCHAIN" ]]; then
   rustup toolchain install "$HAX_RUST_TOOLCHAIN" \
@@ -112,12 +141,11 @@ fi
 export OPAMSWITCH="$OPAM_SWITCH"
 eval "$("$opam_binary" env --set-root --set-switch --shell=sh)"
 
-if [[ ! -x "$CARGO_HOME/bin/cargo-hax" ]] || ! command -v hax-engine >/dev/null 2>&1; then
-  (
+(
+
     cd "$source_root/hax"
-    ./setup.sh -j "${NORN_VERIFICATION_BUILD_JOBS:-4}" --no-cleanup
-  )
-fi
+    ./setup.sh -j "${NORN_VERIFICATION_BUILD_JOBS:-2}" --no-cleanup
+)
 ln -sfn "$CARGO_HOME/bin/cargo-hax" "$bin_root/cargo-hax"
 ln -sfn "$CARGO_HOME/bin/driver-hax-frontend-exporter" "$bin_root/driver-hax-frontend-exporter"
 hax_engine="$(command -v hax-engine)"
@@ -160,6 +188,13 @@ for source in "$source_root/hax" "$source_root/aeneas" "$source_root/aeneas/char
     exit 1
   fi
 done
+
+test "$("$opam_binary" var ocaml-version)" = 5.4.1
+test "$("$opam_binary" list --installed --short --columns=version hax-engine)" = 0.3.7
+test "$("$source_root/aeneas/bin/aeneas" -version)" = 'aeneas 74a460a2'
+test "$("$source_root/aeneas/charon/bin/charon" version)" = 0.1.240
+installation_digest | sha256sum > "$receipt.tmp"
+mv "$receipt.tmp" "$receipt"
 
 cat <<EOF
 Installed pinned extraction tools under:
