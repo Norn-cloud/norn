@@ -23,9 +23,6 @@ pub enum CatalogReadError {
     /// Installed definitions or their projection could not be read.
     #[error(transparent)]
     Store(#[from] CellError),
-    /// A catalog value is not exact canonical runtime data.
-    #[error(transparent)]
-    Value(#[from] norn_ir::RuntimeValueError),
 }
 
 impl CatalogSnapshot {
@@ -85,18 +82,17 @@ impl CatalogSnapshot {
             .rows
             .get(&query.object_type)
             .ok_or(CatalogReadError::Refused("unknown catalog relation"))?;
+        let limit = usize::try_from(query.limit)
+            .map_err(|_error| CatalogReadError::Refused("invalid limit"))?;
         let mut result = SliceResult {
             items: Vec::new(),
-            complete: rows.len() <= limits.max_scan,
+            complete: true,
             commit_seq: self.commit_seq,
         };
         let mut candidate_bytes = 0_u64;
         let mut output_bytes = 0_u64;
         for (bytes, item) in rows.iter().take(limits.max_scan) {
-            if result.items.len()
-                >= usize::try_from(query.limit)
-                    .map_err(|_error| CatalogReadError::Refused("invalid limit"))?
-            {
+            if result.items.len() >= limit {
                 break;
             }
             candidate_bytes = candidate_bytes.saturating_add(*bytes);
@@ -128,6 +124,9 @@ impl CatalogSnapshot {
             }
             result.items.push(item.clone());
         }
+        if result.items.len() < limit && rows.len() > limits.max_scan {
+            result.complete = false;
+        }
         Ok(result)
     }
 }
@@ -140,7 +139,7 @@ fn index(catalog: &DefinitionCatalog, commit_seq: u64) -> Result<CatalogRows, Ca
         for row in &catalog.$field {
             let row = serde_json::to_value(row).map_err(CellError::from)?;
             let key = crate::codec::canonical_json(&identity(&row))?;
-            let RuntimeValue::Object(values) = RuntimeValue::from_json(row)? else {
+            let RuntimeValue::Object(values) = RuntimeValue::from_json(row).map_err(CellError::from)? else {
                 return Err(CatalogReadError::Refused("invalid catalog row"));
             };
             let item = SliceItem { object_type:$name.into(), key, version:commit_seq, values };

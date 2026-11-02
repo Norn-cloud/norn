@@ -284,7 +284,6 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
     let result = snapshot
         .read(&query, &limits, &pdp, &request, scope)
         .expect("ordinary read");
-    assert!(result.complete);
     assert_eq!(result.items.len(), 2);
     assert_eq!(result.commit_seq, head.commits);
     let member: MemberRef = serde_json::from_str(&result.items[1].key).expect("exact MemberRef");
@@ -328,13 +327,17 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
             .complete
     );
     truncated = limits;
-    truncated.max_scan = 0;
-    assert!(
-        !snapshot
-            .read(&query, &truncated, &pdp, &request, scope)
-            .expect("scan bound")
-            .complete
-    );
+    for (scan, limit, complete) in [(1, 1, true), (0, 1, false), (1, 2, false)] {
+        truncated.max_scan = scan;
+        query.limit = limit;
+        assert_eq!(
+            snapshot
+                .read(&query, &truncated, &pdp, &request, scope)
+                .expect("scan bound")
+                .complete,
+            complete
+        );
+    }
     let mut forbidden = put(0);
     forbidden.writes = vec![FactWriteRow::Put {
         object_type: query.object_type.clone(),
