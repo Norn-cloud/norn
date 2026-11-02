@@ -48,17 +48,27 @@ pub(crate) fn render(document: &DefsResponse, scope: &DefinitionsQuery) -> Resul
     for artifact in &document.artifacts {
         let artifact: serde_json::Value =
             serde_json::from_str(artifact.get()).map_err(Refusal::host)?;
-        if artifact["kind"] != "action" {
+        if artifact.get("kind").and_then(serde_json::Value::as_str) != Some("action") {
             continue;
         }
-        let id = artifact["payload"]["actionId"]
-            .as_str()
+        let payload = artifact
+            .get("payload")
+            .ok_or_else(|| Refusal::host("missing action payload"))?;
+        let id = payload
+            .get("actionId")
+            .and_then(serde_json::Value::as_str)
             .ok_or_else(|| Refusal::host("missing action identity"))?;
-        let title = artifact["name"].as_str().unwrap_or(id);
-        let controls = fields(&artifact["payload"]["inputSchema"]).unwrap_or_else(|| {
-            "<label>Action input<textarea required spellcheck=\"false\">{}</textarea></label>"
-                .into()
-        });
+        let title = artifact
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(id);
+        let controls = payload
+            .get("inputSchema")
+            .and_then(fields)
+            .unwrap_or_else(|| {
+                "<label>Action input<textarea required spellcheck=\"false\">{}</textarea></label>"
+                    .into()
+            });
         write!(
             &mut forms,
             "<form data-action-id=\"{}\"><h2>{}</h2><p><code>{}</code></p>{controls}<button type=\"submit\">{}</button><pre role=\"status\" aria-live=\"polite\"></pre></form>",
