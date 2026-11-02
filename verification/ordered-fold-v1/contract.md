@@ -178,9 +178,12 @@ the arithmetic and meter harnesses below cover only the scoped engine methods.
 
 ## Engine proof correspondence
 
-FOLD-METER-EXACT: a charge is accepted exactly when the mathematical total
-fits both u64 and the declared limit. A refusal preserves the accepted total
-and is sticky across clones, including local arithmetic-policy clones.
+FOLD-METER-EXACT: within the ordered evaluator's sequential charge stream, a
+charge is accepted exactly when the mathematical total fits both u64 and the
+declared limit. A refusal preserves the accepted total and is sticky across
+clones, including local arithmetic-policy clones. Concurrent calls to the public
+meter are outside this profile and its exact-charge guarantee; callers sharing
+a meter outside the ordered evaluator must serialize those calls.
 
 Kani harnesses under this directory call the production scaled arithmetic and
 Meter methods. They cover i8 numerator/divisor combinations with all four
