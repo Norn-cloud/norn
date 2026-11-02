@@ -606,21 +606,75 @@ fn signed_webhook_and_missed_delivery_sweep_replay_pack_law_quarantine_and_recov
     assert_eq!(page.quarantine_count, 0);
     // Replay the ingress sweep itself after recovery, using the same sealed capture context.
     use norn_cell::engine::SqlEngine as _;
-    let inspector = NativeEngine::open(&path, StoreOptions::default()).expect("read-only evidence inspection");
-    let bundles = || inspector.query_row("SELECT COUNT(*) FROM _norn_inbox WHERE observation_id LIKE 'mapping-bundle:%'", &[], |row| row.get::<i64>(0)).expect("bundle cardinality");
+    let inspector =
+        NativeEngine::open(&path, StoreOptions::default()).expect("read-only evidence inspection");
+    let bundles = || {
+        inspector
+            .query_row(
+                "SELECT COUNT(*) FROM _norn_inbox WHERE observation_id LIKE 'mapping-bundle:%'",
+                &[],
+                |row| row.get::<i64>(0),
+            )
+            .expect("bundle cardinality")
+    };
     let before_bundles = bundles();
     assert_eq!(before_bundles, 2);
-    let replay_command = sweep.start_cycle(SweepFeed::Documents, Some(&checkpoint)).expect("second sweep cycle");
-    assert_eq!(sweep.plan_documents(&replay_command, listing).expect("refetch full document").len(), 1);
-    let replay_page = sweep.ingest(&replay_command, listing, &[document], correction.extracted_at).expect("second hydrated cycle");
+    let replay_command = sweep
+        .start_cycle(SweepFeed::Documents, Some(&checkpoint))
+        .expect("second sweep cycle");
+    assert_eq!(
+        sweep
+            .plan_documents(&replay_command, listing)
+            .expect("refetch full document")
+            .len(),
+        1
+    );
+    let replay_page = sweep
+        .ingest(
+            &replay_command,
+            listing,
+            &[document],
+            correction.extracted_at,
+        )
+        .expect("second hydrated cycle");
     assert_eq!(replay_page.observations.len(), 1);
     assert_eq!(&replay_page.observations[0], correction);
-    assert_eq!(host.observe_mapped_submission(&scope, &correction_input, || checked_raw(&replay_page.observations[0])).expect("second-cycle capture"), (fixed.clone(), false));
-    assert!(!cell.process_mapping_bundle(&fixed).expect("second-cycle processing"));
+    assert_eq!(
+        host.observe_mapped_submission(&scope, &correction_input, || checked_raw(
+            &replay_page.observations[0]
+        ))
+        .expect("second-cycle capture"),
+        (fixed.clone(), false)
+    );
+    assert!(
+        !cell
+            .process_mapping_bundle(&fixed)
+            .expect("second-cycle processing")
+    );
     assert_eq!(bundles(), before_bundles);
-    let replay_findings = cell.store().read().observation_findings(norn_cell::MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("finding stability after second cycle");
+    let replay_findings = cell
+        .store()
+        .read()
+        .observation_findings(
+            norn_cell::MAIN_WORLD,
+            "demo.erpnext.StockEntryMeasurement",
+            "MEAS-1",
+        )
+        .expect("finding stability after second cycle");
     assert_eq!(replay_findings, after);
-    assert_eq!(cell.store().read().authoritative_object(norn_cell::MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("canonical version stability").expect("record").version, record.version);
+    assert_eq!(
+        cell.store()
+            .read()
+            .authoritative_object(
+                norn_cell::MAIN_WORLD,
+                "demo.erpnext.StockEntryMeasurement",
+                "MEAS-1"
+            )
+            .expect("canonical version stability")
+            .expect("record")
+            .version,
+        record.version
+    );
     drop(inspector);
     // The planned cursor is not persisted by this cut; no full cursor-convergence claim.
     drop(cell);
