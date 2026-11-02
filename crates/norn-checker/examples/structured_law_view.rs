@@ -66,14 +66,15 @@ mod tests {
         law.as_object_mut()
             .ok_or("law payload must be an object")?
             .remove("timing");
-        law["modality"] = json!({"kind":if grade == "prohibition" { "never" } else { "always" }});
-        law["scope"]["root"]["kind"] = json!(root);
+        *law.get_mut("modality").ok_or("modality")? =
+            json!({"kind":if grade == "prohibition" { "never" } else { "always" }});
+        *law.pointer_mut("/scope/root/kind").ok_or("root kind")? = json!(root);
         let text = json!({"en":"Reviewed fixture wording", "ar":"صياغة اختبار مراجعة"});
-        artifact["payload"] = json!({"requirement":{
+        artifact.as_object_mut().ok_or("envelope")?.insert("payload".into(), json!({"requirement":{
             "norm":{"law":law,"modality":grade,"authorityId":source,"authorityVersion":"1",
                 "source":{"artifactId":source,"pointer":"/rules/0"}},
             "timing":"same_commit", "wording":{"scope":text,"activation":text,"component":text,"response":text}
-        }});
+        }}));
         Ok(serde_json::from_value(artifact)?)
     }
 
@@ -116,7 +117,9 @@ mod tests {
     fn unsupported_structured_timing_has_no_rendered_success() -> Result<(), Box<dyn Error>> {
         let artifact = artifact("permission", "entity", "fixture.source")?;
         let mut wire = serde_json::to_value(artifact)?;
-        wire["payload"]["requirement"]["norm"]["law"]["modality"] = json!({"kind":"eventually"});
+        *wire
+            .pointer_mut("/payload/requirement/norm/law/modality")
+            .ok_or("modality")? = json!({"kind":"eventually"});
         assert!(project(&serde_json::from_value(wire)?).is_err());
         Ok(())
     }
