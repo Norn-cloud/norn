@@ -4282,6 +4282,59 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9]*$"
     },
+    "FoldArithmetic": {
+      "description": "Arithmetic policy is part of declaration/evidence identity. Ordinary ZEN\ndivision and implicit rounding do not implement this contract.",
+      "type": "object",
+      "properties": {
+        "rounding": {
+          "$ref": "#/$defs/FoldRounding"
+        },
+        "scale": {
+          "description": "Quantity-ledger-compatible exact scaled integers; at most 18 places.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scale",
+        "rounding"
+      ]
+    },
+    "FoldOrderKey": {
+      "description": "One required scalar property of a fold item. All keys ascend; the final\nidentity breaks every tie without consulting input enumeration order.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FoldOrderKind"
+        },
+        "property": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "kind"
+      ]
+    },
+    "FoldOrderKind": {
+      "type": "string",
+      "enum": [
+        "string",
+        "integer"
+      ]
+    },
+    "FoldRounding": {
+      "type": "string",
+      "enum": [
+        "refuse",
+        "toward_zero",
+        "half_even",
+        "half_away_from_zero"
+      ]
+    },
     "GapReason": {
       "description": "Why a target member is not mapped.",
       "oneOf": [
@@ -5226,6 +5279,10 @@
         "key": {
           "description": "Key of the referenced decision graph: the `artifactId` of a `RuleIR` v2\nrule that the envelope declares as a required `rule` dependency. The\nchecker resolves it and bounds the sub-decision closure (T3-DEC-1).",
           "type": "string"
+        },
+        "orderedFold": {
+          "description": "Bounded ordered application of this existing sub-decision. Execution\nremains refused until the ordered-fold semantics profile is supported.",
+          "$ref": "#/$defs/OrderedFold"
         },
         "outputPath": {
           "type": [
@@ -7360,6 +7417,70 @@
         "active",
         "deprecated",
         "superseded"
+      ]
+    },
+    "OrderedFold": {
+      "description": "A deterministic collection derivation through an existing RuleIR helper.\nThe helper's input is exactly `{accumulator, item, index}` and its output\nis the next accumulator. Residuals and provenance are ordinary declared\naccumulator fields; the evaluator does not interpret their names.",
+      "type": "object",
+      "properties": {
+        "accumulatorSchema": {
+          "description": "Closed schema of the initial and every subsequent accumulator.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "arithmetic": {
+          "$ref": "#/$defs/FoldArithmetic"
+        },
+        "identity": {
+          "description": "The last order key; must be a unique, stable string identity.",
+          "type": "string"
+        },
+        "initial": {
+          "description": "Exact expression evaluated once against the node input.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "itemSchema": {
+          "description": "Closed schema of one input item.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "maxAccumulatorBytes": {
+          "description": "Canonical encoded byte bound, checked initially and after every step.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "maxItems": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "order": {
+          "description": "Required, non-null item properties in lexicographic ascending order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FoldOrderKey"
+          }
+        },
+        "semanticsVersion": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "semanticsVersion",
+        "order",
+        "identity",
+        "itemSchema",
+        "accumulatorSchema",
+        "initial",
+        "maxItems",
+        "maxAccumulatorBytes",
+        "arithmetic"
       ]
     },
     "Origin": {
