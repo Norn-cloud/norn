@@ -42,7 +42,7 @@ fn fixture(max_records: u32) -> (Model, InstalledDefinitionInput, Classifier) {
         "namespace":"test", "name":"HighValue", "lifecycle":"draft", "scope":{},
         "provenance":{"source":"system"}, "dependencies":[{"artifactId":"test.Scrap.entity", "version":"1.0.0", "kind":"entity", "required":true}],
         "payload":{"id":"test.HighValue", "version":"1.0.0", "base":{"artifactId":"test.Scrap.entity", "version":"1.0.0",
-            "member":{"kind":"type", "typeName":"test.Scrap"}}, "predicate":"self.fine_g > 100 && self.note == null", "dependencies":[], "bounds":bounds}
+            "member":{"kind":"type", "typeName":"test.Scrap"}}, "predicate":"self.fine_g > 100 and self.note == null", "dependencies":[], "bounds":bounds}
     })).expect("classification");
     let classifier = Classifier::prepare(
         &class,
@@ -196,4 +196,145 @@ fn graph_classify_refuses_a_commit_during_visibility() {
         }),
         Err(ClassificationError::Incomplete)
     ));
+}
+
+fn catalog_access(capabilities: &[&str]) -> (norn_authz::Pdp, norn_authz::AccessRequest) {
+    use norn_authz::{
+        AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, PrincipalInput,
+        ResourceInput, ScopeKey,
+    };
+    let projection = norn_projections::project_cedar_schema(
+        &norn_cell::catalog::resource_types().expect("virtual resources"),
+        &[],
+        &[],
+    );
+    let schema = AuthzSchema::from_projected_cedarschema(&projection.schema).expect("schema");
+    let access = serde_json::from_value(json!({"accessVersion":"0.1", "policyId":"test.catalog", "rules":
+        ["Type", "Property"].iter().map(|name| json!({"ruleId":format!("read_{name}"),
+            "actions":["norn.read"], "resourceType":format!("norn.catalog.{name}"), "scope":{"dimensions":["org"]}})).collect::<Vec<_>>()
+    })).expect("AccessIR");
+    let scope = ScopeKey {
+        org: "test".into(),
+        tenant: None,
+        workspace: None,
+        environment: None,
+        business_unit: None,
+    };
+    let pdp = norn_authz::Pdp::new(
+        norn_authz::compile(&schema, &access).expect("admitted AccessIR"),
+        &[CapabilityGrant {
+            subject_id: "reader".into(),
+            actor_kind: ActorKind::User,
+            agent_session_id: None,
+            scope: Some(scope.clone()),
+            capabilities: capabilities.iter().map(|value| (*value).into()).collect(),
+            binding: None,
+        }],
+    )
+    .expect("PDP");
+    let request = AccessRequest {
+        principal: PrincipalInput {
+            subject_id: "reader".into(),
+            actor_kind: ActorKind::User,
+            agent_session_id: None,
+            roles: vec![],
+            attributes: BTreeMap::new(),
+        },
+        scope: Some(scope.clone()),
+        capability: "norn.read".into(),
+        action_id: "norn.read".into(),
+        resource: ResourceInput {
+            object_type: "unrelated.Type".into(),
+            id: "unrelated-object".into(),
+            scope,
+            attributes: BTreeMap::new(),
+        },
+        context: BTreeMap::new(),
+        binding: None,
+        delegation: Delegation::Direct,
+    };
+    (pdp, request)
+}
+#[test]
+fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
+    use norn_cell::catalog::CatalogSnapshot;
+    use norn_cell::reactive::{ReactiveLimits, SliceQuery};
+    use norn_ir::definition_catalog::{Member, MemberRef};
+    let (model, input, _) = fixture(10);
+    let mut store = CellStore::open_in_memory(model.clone()).expect("cell");
+    store
+        .install_definitions(model, input, Some(0), "test")
+        .expect("install");
+    let snapshot = CatalogSnapshot::read_active(&store, &BTreeSet::new()).expect("catalog");
+    let head = store.verified_head().expect("head");
+    let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
+    let mut query = SliceQuery {
+        object_type: "norn.catalog.Type".into(),
+        filter: BTreeMap::from([("role".into(), RuntimeValue::String("thing".into()))]),
+        limit: 10,
+        binding: None,
+    };
+    let (pdp, request) = catalog_access(&["norn.read"]);
+    let scope = request.scope.as_ref().expect("scope");
+    let result = snapshot
+        .read(&query, &limits, &pdp, &request, scope)
+        .expect("ordinary read");
+    assert!(result.complete);
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.commit_seq, head.commits);
+    let member: MemberRef = serde_json::from_str(&result.items[0].key).expect("exact MemberRef");
+    assert_eq!(
+        member,
+        MemberRef {
+            artifact_id: "test.Scrap.entity".into(),
+            version: "1.0.0".into(),
+            member: Member::Type {
+                type_name: "test.Scrap".into()
+            }
+        }
+    );
+    query.object_type = "norn.catalog.Property".into();
+    query.filter.clear();
+    assert_eq!(
+        snapshot
+            .read(&query, &limits, &pdp, &request, scope)
+            .expect("properties")
+            .items
+            .len(),
+        2
+    );
+    let (denied, _) = catalog_access(&[]);
+    assert!(
+        snapshot
+            .read(&query, &limits, &denied, &request, scope)
+            .expect("capability denial")
+            .items
+            .is_empty()
+    );
+    let mut wrong = request.clone();
+    wrong.action_id = "norn.write".into();
+    assert!(snapshot.read(&query, &limits, &pdp, &wrong, scope).is_err());
+    let mut truncated = limits.clone();
+    truncated.max_canonical_bytes = 1;
+    assert!(
+        !snapshot
+            .read(&query, &truncated, &pdp, &request, scope)
+            .expect("byte bound")
+            .complete
+    );
+    truncated = limits.clone();
+    truncated.max_scan = 0;
+    assert!(
+        !snapshot
+            .read(&query, &truncated, &pdp, &request, scope)
+            .expect("scan bound")
+            .complete
+    );
+    query.limit = limits.max_records.saturating_add(1);
+    assert!(
+        snapshot
+            .read(&query, &limits, &pdp, &request, scope)
+            .is_err()
+    );
+    assert_eq!(store.verified_head().expect("read emits nothing"), head);
 }

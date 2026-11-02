@@ -1549,6 +1549,7 @@ dependencies = [
 name = "norn-cell"
 version = "0.1.0"
 dependencies = [
+ "norn-authz",
  "norn-checker",
  "norn-ir",
  "norn-kernel",

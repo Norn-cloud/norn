@@ -194,6 +194,7 @@
     "Legacy unversioned relation mutation is retained for migration and pre-reset tests, checks only immutable identity plus endpoint existence, is not credited as authoritative RelationIR enforcement, and must be migrated or disabled before public production."
   ],
   "sourceFiles": [
+    "crates/norn-cell/src/catalog.rs",
     "crates/norn-cell/src/classification.rs",
     "crates/norn-cell/tests/classification.rs",
     "crates/norn-checker/src/classification.rs",
