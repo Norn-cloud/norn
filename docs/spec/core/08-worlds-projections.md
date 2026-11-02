@@ -101,3 +101,5 @@ Named runtime scenarios cover the scrap-yield K1/K2 correction, exact loss and
 ratio deltas, multi-slice selection, denied/premature approval and activation,
 interrupted staging, stale tokens, current authorization and reproducible old
 answers. Generated change sequences include source redelivery and restart.
+
+RESTATE-HISTORY-1 opaque rebuild/candidate capabilities are bound to their originating cell-store instance. Foreign-host preparation/staging refuses before input reads or writes, even when world, scope and slot version coincide. Restart obtains a new capability through authenticated resume and recomputation.

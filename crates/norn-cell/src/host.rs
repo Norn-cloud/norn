@@ -144,7 +144,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         context: crate::compute::QueryContext,
         expected_version: u64,
         reason: &str,
-        slices: &BTreeSet<String>,
+        slices: &std::collections::BTreeSet<String>,
     ) -> Result<crate::compute::restatement::RestatementBuild, CellError> {
         if context.world != MAIN_WORLD || context.scope != self.scope {
             return Err(CellError::ComputeRefused("core.compute.stale_input"));
