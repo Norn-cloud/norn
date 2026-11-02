@@ -1899,9 +1899,10 @@ fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
             (declared.cardinality.to, true),
             (declared.cardinality.from, false),
         ] {
-            if multiplicity != Multiplicity::One {
+            if outgoing && multiplicity != Multiplicity::One {
                 continue;
             }
+            let mut restricted = multiplicity == Multiplicity::One;
             let endpoint = if outgoing { &key.source } else { &key.target };
             let owner = model.link_owner(&source, &key.link);
             let mut count = 0usize;
@@ -1918,12 +1919,19 @@ fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
                 let same_relation = if outgoing {
                     true
                 } else {
-                    concrete_after(commit, model, view, &link.source)?
-                        .is_some_and(|source| model.link_owner(&source, &link.link) == owner)
+                    let concrete = concrete_after(commit, model, view, &link.source)?;
+                    concrete.is_some_and(|source| {
+                        let same = model.link_owner(&source, &link.link) == owner;
+                        restricted |= same
+                            && model.link(&source, &link.link).is_some_and(|declaration| {
+                                declaration.cardinality.from == Multiplicity::One
+                            });
+                        same
+                    })
                 };
                 count = count.saturating_add(usize::from(same_relation));
             }
-            if count > 1 {
+            if restricted && count > 1 {
                 return Err(CommitError::LinkCardinality {
                     key: Box::new(write.key.clone()),
                     endpoint: endpoint.clone(),
