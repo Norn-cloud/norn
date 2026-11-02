@@ -184,16 +184,22 @@ pub(crate) fn validate_dispatches(
         let Some(invocation) = function_invocation(&command.command) else {
             continue;
         };
-        if let Some(origin) = invocation.provenance_commit.qualified() {
-            let cell = crate::cell_identity::read(engine)?;
-            if invocation.world != batch.world
-                || origin.commit != commit
-                || cell
-                    .as_ref()
-                    .is_none_or(|cell| !origin.belongs_to(cell, &batch.world))
-            {
-                return Err(CellError::Encoding("Function dispatch provenance does not match its committing cell/world/position".to_owned()));
-            }
+        let Some(origin) = invocation.provenance_commit.qualified() else {
+            return Err(CellError::Encoding(
+                "new Function dispatch requires cell-qualified provenance".to_owned(),
+            ));
+        };
+        let cell = crate::cell_identity::read(engine)?;
+        if invocation.world != batch.world
+            || origin.commit != commit
+            || cell
+                .as_ref()
+                .is_none_or(|cell| !origin.belongs_to(cell, &batch.world))
+        {
+            return Err(CellError::Encoding(
+                "Function dispatch provenance does not match its committing cell/world/position"
+                    .to_owned(),
+            ));
         }
     }
     Ok(())

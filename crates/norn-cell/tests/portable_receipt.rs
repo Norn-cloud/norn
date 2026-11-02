@@ -264,8 +264,14 @@ fn wrong_function_origin_refuses_before_any_effect() {
         .expect("portable dispatch");
 }
 
+fn local_hash<T: serde::Serialize>(value: &T) -> String {
+    norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(
+        &norn_ir::canonical::canonical_json_of(value).expect("canonical fixture"),
+    )
+}
+
 #[test]
-fn legacy_function_invocation_remains_local_only_even_in_a_new_commit() {
+fn legacy_invocations_replay_locally_but_cannot_be_new_dispatches() {
     let mut target = store(1);
     let invocation: FunctionInvocation = serde_json::from_str(include_str!(
         "../../../fixtures/function/invocation.wasm.json"
@@ -275,11 +281,43 @@ fn legacy_function_invocation_remains_local_only_even_in_a_new_commit() {
         "invocation".into(),
         norn_ir::runtime::encode(&invocation).expect("payload"),
     )]));
+    let legacy_batch = CommitBatch {
+        effects: vec![command(nested.clone())],
+        ..CommitBatch::default()
+    };
+    let before = target.read().dump().expect("before");
+    assert!(target.commit(&legacy_batch).is_err());
+    assert_eq!(target.read().dump().expect("after"), before);
+    // Construct a pre-envelope writer fixture; replay must retain these bytes.
     target
         .commit(&CommitBatch {
-            effects: vec![command(nested)],
+            effects: vec![command(RuntimeValue::Null)],
             ..CommitBatch::default()
         })
-        .expect("local dispatch");
-    assert!(target.export_command(1, "same-command").is_err());
+        .expect("seed");
+    let mut old = target.export_record(1).expect("record").expect("present");
+    old.batch = legacy_batch;
+    old.receipt.body.request_hash = local_hash(&old.batch);
+    old.receipt.hash = local_hash(&old.receipt.body);
+    old.portable_receipt = None;
+    let old_hash = old.hash().expect("old hash");
+    let rebuilt = CellStore::rebuild_export_history(
+        NativeEngine::open_in_memory().expect("engine"),
+        &[old.clone()],
+        &old_hash,
+    )
+    .expect("legacy replay");
+    assert_eq!(rebuilt.export_record(1).expect("retained"), Some(old));
+    assert_eq!(
+        rebuilt
+            .read()
+            .head_command()
+            .expect("head")
+            .expect("pending")
+            .command
+            .command,
+        nested
+    );
+    assert!(rebuilt.portable_receipt(1).is_err());
+    assert!(rebuilt.export_command(1, "same-command").is_err());
 }

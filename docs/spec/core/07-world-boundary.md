@@ -92,7 +92,9 @@ input and output content digests remain unchanged.
 
 Function invocation provenance is either the retained v1 scalar (local-only), or
 `norn.cell.commit/v2` containing cell, world and local commit. V1 dispatch bytes
-and digests are preserved. Qualified invocations use the invocation/v2 domain;
+and digests are preserved. New dispatches require qualified provenance; a bound
+modern reconciliation context refuses fresh scalar completions. Qualified
+invocations use the invocation/v2 domain;
 reconciliation requires a matching authenticated host cell/world and retains the
 origin through authenticated receipt lookup and action binding. The receipt
 reference/v1 envelope hashes the complete cell/world/commit origin and the

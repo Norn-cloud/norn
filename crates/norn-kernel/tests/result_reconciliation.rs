@@ -1392,7 +1392,15 @@ fn check_qualified_receipt_fence(first: u128) {
     }
     let a = CellId::try_from(format!("{first:032x}")).expect("cell");
     let b = CellId::try_from(format!("{:032x}", first ^ 1)).expect("cell");
+    let local = ReconcileContext {
+        cell: Some(&a),
+        ..context(ReconcilePolicy::DEFAULT)
+    };
     let mut case = case("wasm");
+    assert!(matches!(
+        run_with(&case, &case.receipt, &local, &ALLOW),
+        Reconciliation::Refused(_)
+    ));
     case.dispatched.invocation.provenance_commit =
         CommitProvenance::Qualified(QualifiedCommit::new(a.clone(), "main".into(), 1207));
     case.dispatched = DispatchedCommand::pin(
@@ -1401,10 +1409,6 @@ fn check_qualified_receipt_fence(first: u128) {
     )
     .expect("dispatch");
     case.receipt.dispatch = case.dispatched.dispatch.clone();
-    let local = ReconcileContext {
-        cell: Some(&a),
-        ..context(ReconcilePolicy::DEFAULT)
-    };
     let foreign = ReconcileContext {
         cell: Some(&b),
         ..local

@@ -805,6 +805,14 @@ fn check_dispatch<R: ReceiptValidator + ?Sized>(
             },
         ));
     }
+    if context.cell.is_some() && invocation.provenance_commit.qualified().is_none() {
+        return Some((
+            Classification::Rejected,
+            RefusalReason::OutOfScope {
+                detail: "legacy Function completion is local-only".to_owned(),
+            },
+        ));
+    }
     if invocation.provenance_commit.qualified().is_some()
         && invocation.content_digest().ok().as_ref() != Some(&dispatched.dispatch)
     {
