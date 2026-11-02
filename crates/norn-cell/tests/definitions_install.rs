@@ -6642,12 +6642,7 @@ fn source_dispute_index_reuses_verified_snapshot_and_refuses_external_tampering(
         2,
         "no unrelated evidence is decoded per operand"
     );
-    for target in ["MEAS-1", "MEAS-0"] {
-        let link = norn_kernel::LinkKey::new(clean.clone(), "unused", norn_kernel::FactKey::new("quality.Measured", target));
-        assert!(matches!(norn_kernel::CellHost::load_link(&cell, &link), Err(CellError::QualityEvaluation(_))), "both live and missing interface roots retain quarantine");
-    }
-    let link = norn_kernel::LinkKey::new(clean.clone(), "unused", norn_kernel::FactKey::new("quality.Measured", "clean-interface"));
-    assert!(matches!(norn_kernel::CellHost::load_link(&cell, &link), Err(CellError::UnknownLink {..})), "clean interfaces reach ordinary link validation");
+    assert_interface_dispute_fences(&cell, &clean);
     let external = NativeEngine::open(&path, StoreOptions::default()).expect("external connection");
     external.execute("UPDATE _norn_inbox SET observed = json_set(observed, '$.input.finding.message', 'forged') WHERE observation_id LIKE 'mapping-conflict:%'", &[]).expect("synthetic corruption");
     assert!(
@@ -6726,4 +6721,13 @@ fn source_dispute_index_retries_churn_and_returns_a_distinct_retryable_refusal()
         }
         assert!(counter.evidence_reads.get() <= 6, "at most three complete rebuild attempts");
     }
+}
+
+fn assert_interface_dispute_fences(cell: &norn_cell::SqliteCell<Value, Value, norn_ir::RuntimeObject, CountedEngine>, clean: &norn_kernel::FactKey) {
+    for target in ["MEAS-1", "MEAS-0"] {
+        let link = norn_kernel::LinkKey::new(clean.clone(), "unused", norn_kernel::FactKey::new("quality.Measured", target));
+        assert!(matches!(norn_kernel::CellHost::load_link(cell, &link), Err(CellError::QualityEvaluation(_))), "both live and missing interface roots retain quarantine");
+    }
+    let link = norn_kernel::LinkKey::new(clean.clone(), "unused", norn_kernel::FactKey::new("quality.Measured", "clean-interface"));
+    assert!(matches!(norn_kernel::CellHost::load_link(cell, &link), Err(CellError::UnknownLink {..})), "clean interfaces reach ordinary link validation");
 }

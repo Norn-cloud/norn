@@ -295,13 +295,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Vec<DataQualityFinding>, CellError> {
         let roots = self.source_dispute_roots(crate::MAIN_WORLD, object_type, key)?;
         self.with_source_dispute_index(|index| {
-            let mut findings = BTreeMap::new();
+            let mut seen = BTreeSet::new();
+            let mut findings = Vec::new();
             for root in roots.as_ref().into_iter().flatten().chain(index.roots_by_key.get(key).into_iter().flatten().filter(|_root| roots.is_none())) {
                 for (kind, finding) in index.subjects.get(&(root.clone(), key.to_owned())).into_iter().flatten() {
-                    if *kind == identity { findings.insert(finding.id.clone(), finding.clone()); }
+                    if *kind == identity && seen.insert(finding.id.clone()) { findings.push(finding.clone()); }
                 }
             }
-            findings.into_values().collect()
+            findings
         })
     }
 
