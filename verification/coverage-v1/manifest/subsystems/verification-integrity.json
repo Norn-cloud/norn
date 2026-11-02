@@ -364,6 +364,7 @@
     "scripts/guarantees_matrix.py",
     "scripts/test_guarantees_matrix.py",
     "crates/norn-checker/examples/pack_guarantees.rs",
+    "crates/norn-checker/examples/structured_law_view.rs",
     "scripts/demo/guarantees_drop.py",
     "scripts/demo/drop-12-guarantees.sh",
     "scripts/test_guarantees_drop.py"
