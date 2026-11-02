@@ -1,12 +1,11 @@
 {
-  "obligations": [
-    "INV-AUTH-ATOMIC-COMMIT",
-    "INV-AUTH-STALE-REJECT",
-    "INV-AUTH-IDEMPOTENT-RESULT",
-    "INV-AUTH-CLOSED-CUSTOM-EFFECT",
-    "INV-AUTH-HARD-INVARIANT-OWNERSHIP",
-    "INV-AUTH-DOMAIN-ADMISSION-PREDICATE"
-  ],
+  "runtime": {
+    "status": "missing",
+    "artifacts": [],
+    "commands": [],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
   "obligationClaims": [
     {
       "id": "INV-AUTH-ATOMIC-COMMIT",
@@ -192,10 +191,23 @@
       }
     }
   ],
-  "runtime": {
-    "status": "missing",
-    "artifacts": [],
-    "commands": [],
+  "proof": {
+    "status": "partial",
+    "artifacts": [
+      "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+      "verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+      "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+      "verification/kernel-l1/Reference.lean",
+      "verification/kernel-l1/Audit.lean",
+      "verification/kernel-l1/VersionProof.lean"
+    ],
+    "commands": [
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
+      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+      "scripts/verify-kernel-l1-lean.sh",
+      "scripts/verify-kernel-l1-aeneas.sh"
+    ],
     "generatedArtifacts": [],
     "resultArtifacts": []
   },
@@ -222,36 +234,6 @@
     ],
     "generatedArtifacts": []
   },
-  "proof": {
-    "status": "partial",
-    "artifacts": [
-      "verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
-      "verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
-      "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
-      "verification/kernel-l1/Reference.lean",
-      "verification/kernel-l1/Audit.lean",
-      "verification/kernel-l1/VersionProof.lean"
-    ],
-    "commands": [
-      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
-      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ClosedActionEffect.lean",
-      "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
-      "scripts/verify-kernel-l1-lean.sh",
-      "scripts/verify-kernel-l1-aeneas.sh"
-    ],
-    "generatedArtifacts": [],
-    "resultArtifacts": []
-  },
-  "limitations": [
-    "A general expected-owner-version compare-and-swap path exists in the retained in-memory store, but legacy unversioned callers remain and no transport TransitionEnvelope routes custom state effects through it.",
-    "The authority model is bounded to one owner and transition identity, abstracts persistence as one atomic assignment, and omits crashes, replication, multi-owner coordination, and liveness.",
-    "The closed-action model bounds artifact versions to 1..3 and validation outcomes to Boolean predicates; it does not model arbitrary JSON schema or ontology semantics.",
-    "The Verus function is not linked to the retained store implementation by extraction or a proved refinement.",
-    "The closed custom ActionIR subset currently contains only upsert_input_object; it is evidence for the authority pattern, not a general verified action language.",
-    "Only the final representation-free hard-invariant ownership Boolean predicate has extracted production correspondence. Descriptor parsing, enum mapping, artifact activation/lookup, store-path completeness, and atomic persistence remain outside that proof.",
-    "No normalized durable production profile is retained in this workspace.",
-    "Kernel L1 adds a single-object mathematical reference and a checked-successor correspondence fragment only. VersionProof does not prove stale-CAS admission, durable persistence, or whole-kernel refinement; no evidence status is promoted by its enrollment."
-  ],
   "sourceFiles": [
     "Cargo.toml",
     "crates/norn-api/Cargo.toml",
@@ -280,6 +262,7 @@
     "crates/norn-cell/src/store.rs",
     "crates/norn-cell/src/system.rs",
     "crates/norn-cell/src/write.rs",
+    "crates/norn-cell/tests/temporal_source_world.rs",
     "crates/norn-checker-wasm/Cargo.toml",
     "crates/norn-checker/Cargo.toml",
     "crates/norn-cli/Cargo.toml",
@@ -346,6 +329,7 @@
     "crates/norn-kernel/src/decision_commit.rs",
     "crates/norn-kernel/src/effect.rs",
     "crates/norn-kernel/src/envelope.rs",
+    "crates/norn-kernel/src/guard_diagnostic.rs",
     "crates/norn-kernel/src/limits.rs",
     "crates/norn-kernel/src/naming_series.rs",
     "crates/norn-kernel/src/observations.rs",
@@ -496,9 +480,26 @@
     "verification/kernel-l1/Audit.lean",
     "verification/kernel-l1/Reference.lean",
     "verification/kernel-l1/VersionProof.lean",
+    "verification/kernel-l1/guard_diagnostic_kani.rs",
     "verification/kernel-l1/version_kani.rs",
-    "verification/kernel-l1/version_verus.rs",
-    "crates/norn-kernel/src/guard_diagnostic.rs",
-    "verification/kernel-l1/guard_diagnostic_kani.rs"
+    "verification/kernel-l1/version_verus.rs"
+  ],
+  "limitations": [
+    "A general expected-owner-version compare-and-swap path exists in the retained in-memory store, but legacy unversioned callers remain and no transport TransitionEnvelope routes custom state effects through it.",
+    "The authority model is bounded to one owner and transition identity, abstracts persistence as one atomic assignment, and omits crashes, replication, multi-owner coordination, and liveness.",
+    "The closed-action model bounds artifact versions to 1..3 and validation outcomes to Boolean predicates; it does not model arbitrary JSON schema or ontology semantics.",
+    "The Verus function is not linked to the retained store implementation by extraction or a proved refinement.",
+    "The closed custom ActionIR subset currently contains only upsert_input_object; it is evidence for the authority pattern, not a general verified action language.",
+    "Only the final representation-free hard-invariant ownership Boolean predicate has extracted production correspondence. Descriptor parsing, enum mapping, artifact activation/lookup, store-path completeness, and atomic persistence remain outside that proof.",
+    "No normalized durable production profile is retained in this workspace.",
+    "Kernel L1 adds a single-object mathematical reference and a checked-successor correspondence fragment only. VersionProof does not prove stale-CAS admission, durable persistence, or whole-kernel refinement; no evidence status is promoted by its enrollment."
+  ],
+  "obligations": [
+    "INV-AUTH-ATOMIC-COMMIT",
+    "INV-AUTH-STALE-REJECT",
+    "INV-AUTH-IDEMPOTENT-RESULT",
+    "INV-AUTH-CLOSED-CUSTOM-EFFECT",
+    "INV-AUTH-HARD-INVARIANT-OWNERSHIP",
+    "INV-AUTH-DOMAIN-ADMISSION-PREDICATE"
   ]
 }
