@@ -54,12 +54,12 @@ pub fn evaluate<E: SqlEngine>(
         return Err(incomplete());
     }
     let artifacts: Vec<ArtifactEnvelope> =
-        serde_json::from_str(&installed.canonical_set).map_err(|_| incomplete())?;
+        serde_json::from_str(&installed.canonical_set).map_err(|_error| incomplete())?;
     let definitions: BTreeSet<_> = artifacts
         .iter()
         .map(ArtifactRef::of)
         .collect::<Result<_, _>>()
-        .map_err(|_| incomplete())?;
+        .map_err(|_error| incomplete())?;
     if !classifier
         .definitions()
         .iter()
@@ -73,7 +73,8 @@ pub fn evaluate<E: SqlEngine>(
         return Err(incomplete());
     };
     let mut limits = ReactiveLimits::from_profile(&classifier.declaration().bounds);
-    limits.max_scan = classifier.declaration().bounds.slice.max_records as usize;
+    limits.max_scan = usize::try_from(classifier.declaration().bounds.slice.max_records)
+        .map_err(|_error| incomplete())?;
     let mut budget = DecodeBudget::new(&limits);
     budget.capture();
     // A filled requested prefix is ordinarily complete. Request one beyond the
@@ -115,7 +116,9 @@ pub fn evaluate<E: SqlEngine>(
         }
         rows.push((item.key.clone(), RuntimeValue::Object(record.values)));
     }
-    let members = classifier.classify(&rows, true).map_err(|_| incomplete())?;
+    let members = classifier
+        .classify(&rows, true)
+        .map_err(|_error| incomplete())?;
     let dependencies = budget.take_dependencies()?;
     if store.verified_head()? != head {
         return Err(incomplete());
