@@ -60,10 +60,8 @@
       "$ref": "#/$defs/Digest"
     },
     "provenanceCommit": {
-      "description": "The ledger position of the commit that dispatched the command.",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
+      "description": "Versioned cell/world/commit provenance; historical scalar positions stay local-only.",
+      "$ref": "#/$defs/CommitProvenance"
     },
     "retry": {
       "description": "Retry and cost ceilings.",
@@ -162,6 +160,10 @@
         "sizeBytes"
       ]
     },
+    "CellId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
     "CollectionPin": {
       "description": "A conservative relevant-collection epoch: any insert, delete, or update in\nthe collection invalidates it.",
       "type": "object",
@@ -181,6 +183,31 @@
       "required": [
         "objectType",
         "epoch"
+      ]
+    },
+    "CommitFormat": {
+      "description": "The qualified commit provenance format. Legacy scalar positions have no cell.",
+      "oneOf": [
+        {
+          "description": "Cell-qualified provenance version two.",
+          "type": "string",
+          "const": "norn.cell.commit/v2"
+        }
+      ]
+    },
+    "CommitProvenance": {
+      "description": "Old scalar provenance retains its original canonical bytes and stays local.",
+      "anyOf": [
+        {
+          "description": "Historical local-only position; never portable evidence.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "description": "New cell/world-qualified origin.",
+          "$ref": "#/$defs/QualifiedCommit"
+        }
       ]
     },
     "Destination": {
@@ -356,6 +383,37 @@
         "objectType",
         "predicate",
         "members"
+      ]
+    },
+    "QualifiedCommit": {
+      "description": "A committed position in exactly one logical cell and execution world.",
+      "type": "object",
+      "properties": {
+        "cell": {
+          "description": "Logical originating cell.",
+          "$ref": "#/$defs/CellId"
+        },
+        "commit": {
+          "description": "Local ledger position.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "format": {
+          "description": "Explicit format version.",
+          "$ref": "#/$defs/CommitFormat"
+        },
+        "world": {
+          "description": "Execution world, never a global snapshot.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "cell",
+        "world",
+        "commit"
       ]
     },
     "RelevantStateToken": {

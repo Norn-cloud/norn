@@ -167,6 +167,7 @@ fn wrong_function_origin_refuses_before_any_effect() {
             CommitProvenance::Qualified(QualifiedCommit::new(cell, world.into(), commit));
         let before = target.read().dump().expect("before");
         let batch = CommitBatch {
+            world: "main".into(),
             effects: vec![command(
                 norn_ir::runtime::encode(&invocation).expect("payload"),
             )],
@@ -183,6 +184,7 @@ fn wrong_function_origin_refuses_before_any_effect() {
         CommitProvenance::Qualified(QualifiedCommit::new(id(1), "main".into(), 1));
     target
         .commit(&CommitBatch {
+            world: "main".into(),
             effects: vec![command(
                 norn_ir::runtime::encode(&invocation).expect("payload"),
             )],

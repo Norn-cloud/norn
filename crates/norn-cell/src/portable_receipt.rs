@@ -59,7 +59,7 @@ pub(crate) struct JournalInput<'a> {
 }
 
 impl<'a> JournalInput<'a> {
-    pub fn current(submitted: Option<&'a norn_ir::RuntimeValue>) -> Self {
+    pub(crate) fn current(submitted: Option<&'a norn_ir::RuntimeValue>) -> Self {
         Self {
             submitted,
             mode: ReceiptMode::Current,
@@ -73,7 +73,10 @@ pub(crate) struct JournalReceipt<'a> {
     pub mode: ReceiptMode,
 }
 impl JournalReceipt<'_> {
-    pub fn envelope(&self, cell: Option<norn_ir::cell_id::CellId>) -> Option<PortableReceipt> {
+    pub(crate) fn envelope(
+        &self,
+        cell: Option<norn_ir::cell_id::CellId>,
+    ) -> Option<PortableReceipt> {
         match (self.mode, cell) {
             (ReceiptMode::Current, Some(cell)) => Some(PortableReceipt {
                 format: ReceiptFormat::V1,
