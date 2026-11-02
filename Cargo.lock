@@ -1670,6 +1670,20 @@ dependencies = [
 [[package]]
 name = "norn-host-conformance"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "norn-authz",
+ "norn-cell",
+ "norn-checker",
+ "norn-ir",
+ "norn-kernel",
+ "norn-metrics",
+ "norn-projections",
+ "proptest",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
 
 [[package]]
 name = "norn-ir"

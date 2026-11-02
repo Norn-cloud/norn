@@ -1,8 +1,14 @@
 //! Compile the actual core policy with the configured native Function identity.
-#![allow(clippy::expect_used,clippy::panic,clippy::disallowed_methods,missing_docs,reason="checked typed fixture preparation")]
-use std::{path::PathBuf,sync::OnceLock};
-pub(crate) fn artifacts()->Vec<norn_ir::ArtifactEnvelope> {
-    static FIXTURES:OnceLock<Vec<norn_ir::ArtifactEnvelope>>=OnceLock::new();
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::disallowed_methods,
+    missing_docs,
+    reason = "checked typed fixture preparation"
+)]
+use std::{path::PathBuf, sync::OnceLock};
+pub(crate) fn artifacts() -> Vec<norn_ir::ArtifactEnvelope> {
+    static FIXTURES: OnceLock<Vec<norn_ir::ArtifactEnvelope>> = OnceLock::new();
     FIXTURES.get_or_init(|| {
         let dir=tempfile::tempdir().expect("fixture directory");
         let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
