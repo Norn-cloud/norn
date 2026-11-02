@@ -1797,12 +1797,27 @@ fn val_round_explicit_site_scopes_division_and_rescale() {
 
 #[test]
 fn val_round_dynamic_divisor_is_nonnullable_at_an_explicit_site() {
-    let env = ZenTypeEnv::input_only(fields([("a", Type::Number), ("b", Type::Number)]), EnvOptions::default()).unwrap();
+    let env = ZenTypeEnv::input_only(
+        fields([("a", Type::Number), ("b", Type::Number)]),
+        EnvOptions::default(),
+    )
+    .unwrap();
     let expression = Expression::compile("round(input.a / input.b, 2, 'half_even')").unwrap();
     let checked = expression.check_typed(&env, &Type::Number).unwrap();
     for (b, success) in [("3", true), ("0", false)] {
-        let context = Value::object([("input",Value::object([("a",Value::Number("1".parse().unwrap())),("b",Value::Number(b.parse().unwrap()))]))]);
-        let attempt = expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &Type::Number);
+        let context = Value::object([(
+            "input",
+            Value::object([
+                ("a", Value::Number("1".parse().unwrap())),
+                ("b", Value::Number(b.parse().unwrap())),
+            ]),
+        )]);
+        let attempt = expression.evaluate_typed_metered(
+            &context,
+            EvaluationBudget::default(),
+            &env,
+            &Type::Number,
+        );
         assert_eq!(attempt.result.is_ok(), success);
         assert!(attempt.units_used <= checked.cost().units());
     }

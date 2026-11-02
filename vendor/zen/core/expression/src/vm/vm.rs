@@ -181,9 +181,21 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             }) {
                 let exact = meter.exact_arithmetic()
                     || self.exact_sites.last().is_some_and(Option::is_some);
-                let arithmetic = self.exact_sites.last().copied().flatten().or_else(|| meter.arithmetic());
+                let arithmetic = self
+                    .exact_sites
+                    .last()
+                    .copied()
+                    .flatten()
+                    .or_else(|| meter.arithmetic());
                 let next = self.bytecode.get(self.ip as usize);
-                let at_rescale = arithmetic.is_some() && (next.is_none() || matches!(next, Some(Opcode::Rescale { .. })) || (matches!(next, Some(Opcode::Negate)) && matches!(self.bytecode.get(self.ip as usize + 1), None | Some(Opcode::Rescale { .. }))));
+                let at_rescale = arithmetic.is_some()
+                    && (next.is_none()
+                        || matches!(next, Some(Opcode::Rescale { .. }))
+                        || (matches!(next, Some(Opcode::Negate))
+                            && matches!(
+                                self.bytecode.get(self.ip as usize + 1),
+                                None | Some(Opcode::Rescale { .. })
+                            )));
                 let failure = |message: &str| OpcodeErr {
                     opcode: "ScaledArithmetic".into(),
                     message: message.into(),
