@@ -490,7 +490,10 @@ impl Schema {
                 let fields = properties
                     .iter()
                     .map(|(key, schema)| {
-                        let ty = schema.expression_type(&format!("{name}/field:{}",key.replace('~',"~0").replace('/',"~1")), records);
+                        let ty = schema.expression_type(
+                            &format!("{name}/field:{}", key.replace('~', "~0").replace('/', "~1")),
+                            records,
+                        );
                         (
                             key.clone(),
                             if required.contains(key) {
