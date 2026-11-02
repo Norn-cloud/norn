@@ -61,13 +61,10 @@ Admission computes effective types from retained exact definitions, resolves int
 Derived/classified membership is evaluated at one authorized snapshot using 03. Unknown inputs cannot establish membership for access or law discharge; report incomplete classification. Predicate dependencies must be acyclic and cannot depend recursively on their own access filter. Membership changes emit no actions. An activated durable obligation survives later membership exit.
 
 Definition catalog reads project admitted IR and exact source identity.
-`norn-cell::catalog::CatalogSnapshot` projects the active installed set and serves
-`norn.catalog.{Artifact,Type,Facet,Property,Link,Transition,State,Writes,DependsOn,Mapping,Law}`
-through ordinary bounded `SliceQuery/SliceResult` reads. Hosts add the virtual
-resource descriptors to their existing authorization projection, never to stored
-models. Each row requires `norn.read` plus kernel PDP authorization in the exact
-physical cell scope. Member keys are canonical JSON of the unchanged `MemberRef`;
-edge keys preserve their exact endpoints. This surface executes no analytical QuestionIR. Updating a definition requires ordinary admission + activation (06); catalog-row writes never activate executable meaning. Display labels can change without replacing semantic member IDs.
+`norn-cell::catalog::CatalogSnapshot` serves the active set's `norn.catalog.*` virtual
+relations through bounded `SliceQuery/SliceResult`, ordinary `norn.read` and kernel PDP
+in the exact cell scope. Hosts add its resource descriptors only to Cedar projection.
+Keys preserve exact MemberRef identities and edge endpoints. No analytical QuestionIR runs. Updating a definition requires ordinary admission + activation (06); catalog-row writes never activate executable meaning. Display labels can change without replacing semantic member IDs.
 
 | Invariant | Enforcement layer | Stable target diagnostic |
 |---|---|---|

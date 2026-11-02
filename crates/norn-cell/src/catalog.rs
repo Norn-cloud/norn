@@ -29,11 +29,10 @@ pub enum CatalogReadError {
 }
 
 impl CatalogSnapshot {
-    /// Project the cell's active definition set at a verified commit revision.
-    /// Registry names are supplied by the trusted host's admitted registry.
+    /// Project active installed definitions at one verified revision.
     ///
     /// # Errors
-    /// Missing/corrupt definitions or a concurrent commit refuse the snapshot.
+    /// Missing/corrupt definitions or a concurrent commit.
     pub fn read_active<E: SqlEngine>(
         store: &CellStore<E>,
         registry: &BTreeSet<PropertyTypeName>,
@@ -59,15 +58,11 @@ impl CatalogSnapshot {
         })
     }
 
-    /// Read one virtual relation with ordinary `norn.read` and kernel PDP checks.
-    /// The trusted host supplies the physical cell scope and its request context.
-    /// Policies must admit the selected `norn.catalog.*` virtual resource type.
-    /// Member row keys are canonical JSON of their unchanged exact `MemberRef`;
-    /// edge keys are canonical JSON of the edge, preserving both endpoint IDs.
+    /// Read virtual rows with `norn.read` and kernel PDP in the trusted cell scope.
+    /// Member keys preserve canonical `MemberRef`; edge keys preserve endpoints.
     ///
     /// # Errors
-    /// Unsupported/over-profile queries refuse. Unauthorized rows are omitted;
-    /// decode, scan and output bounds produce an explicitly incomplete slice.
+    /// Unsupported/over-profile queries refuse; exhausted bounds mark incomplete.
     pub fn read(
         &self,
         query: &SliceQuery,
@@ -88,20 +83,16 @@ impl CatalogSnapshot {
         let rows = self.rows(&query.object_type)?;
         let mut result = SliceResult {
             items: Vec::new(),
-            complete: true,
+            complete: rows.len() <= limits.max_scan,
             commit_seq: self.commit_seq,
         };
         let mut candidate_bytes = 0_u64;
         let mut output_bytes = 0_u64;
-        for (index, row) in rows.enumerate() {
+        for row in rows.take(limits.max_scan) {
             if result.items.len()
                 >= usize::try_from(query.limit)
                     .map_err(|_error| CatalogReadError::Refused("invalid limit"))?
             {
-                break;
-            }
-            if index >= limits.max_scan {
-                result.complete = false;
                 break;
             }
             let row = row.map_err(CellError::from)?;
@@ -115,13 +106,8 @@ impl CatalogSnapshot {
                 result.complete = false;
                 break;
             }
-            let values = match value {
-                RuntimeValue::Object(values) => values,
-                RuntimeValue::Null
-                | RuntimeValue::Bool(_)
-                | RuntimeValue::Number(_)
-                | RuntimeValue::String(_)
-                | RuntimeValue::Array(_) => BTreeMap::new(),
+            let RuntimeValue::Object(values) = value else {
+                return Err(CatalogReadError::Refused("invalid catalog row"));
             };
             if !query
                 .filter
@@ -189,10 +175,9 @@ fn identity(row: &Value) -> Value {
     }
 }
 
-type Rows<'a> = Box<dyn Iterator<Item = Result<Value, serde_json::Error>> + 'a>;
+type Rows<'a> = Box<dyn ExactSizeIterator<Item = Result<Value, serde_json::Error>> + 'a>;
 
-/// Virtual resource descriptors for the host's ordinary Cedar schema projection.
-/// These describe read views; they must not be installed as stored object types.
+/// Virtual read descriptors for Cedar projection; never install them as stored types.
 ///
 /// # Errors
 /// A descriptor cannot decode as the existing object-type contract.
@@ -213,4 +198,16 @@ pub fn resource_types() -> Result<Vec<norn_ir::ObjectTypeDef>, serde_json::Error
     .into_iter()
     .map(|name| serde_json::from_value(serde_json::json!({"name":format!("norn.catalog.{name}")})))
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    proptest::proptest! {
+        #[test]
+        fn exact_member_identity_is_preserved(id in "test.[a-z]{1,12}", version in "[1-9]\\.[0-9]\\.[0-9]", name in "[A-Z][a-z]{0,8}") {
+            let at = MemberRef { artifact_id:id, version, member:Member::Type {type_name:format!("test.{name}")} };
+            proptest::prop_assert_eq!(identity(&serde_json::json!({"at":at.clone(), "role":"thing"})), serde_json::json!(at));
+        }
+    }
 }

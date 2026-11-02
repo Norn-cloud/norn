@@ -340,5 +340,12 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
             .read(&query, &limits, &pdp, &request, scope)
             .is_err()
     );
+    let mut forbidden = put(0);
+    forbidden.writes = vec![FactWriteRow::Put {
+        object_type: query.object_type.clone(),
+        key: result.items[0].key.clone(),
+        values: result.items[0].values.clone(),
+    }];
+    assert!(store.commit(&forbidden).is_err());
     assert_eq!(store.verified_head().expect("read emits nothing"), head);
 }
