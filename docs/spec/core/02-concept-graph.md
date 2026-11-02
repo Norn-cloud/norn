@@ -14,7 +14,8 @@ Reuse `ObjectTypeDef {name, extends, implements, properties, links, owned_collec
 | Meta-ontology row | `definition_pin`, `kind`, `member_id`, `owner`, typed edges to members, source span, law origins; generated read-only from admitted IR. |
 
 GRAPH-LINK-1 counts cardinality by the declaring relation identity, including inherited
-overrides. Unrelated declarations with the same role name do not share cardinality.
+overrides. A pre-existing subtype incoming bound also constrains later base additions.
+Unrelated declarations with the same role name do not share cardinality.
 GRAPH-DRAFT conformance covers atomic creation, missing/invalid participants,
 cardinality refusal with no facts/events/enqueues, and atomic required-link replacement.
 
