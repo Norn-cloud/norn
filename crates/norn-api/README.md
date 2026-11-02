@@ -4,6 +4,11 @@ Projects the Rust IR and checker schemas into OpenAPI components for the TypeScr
 Run `norn openapi` to regenerate the contract. Cell execution uses `norn-cell` and
 `norn-kernel` directly; the fixture example supplies a local definitions server.
 
+The replay clock is a host prerequisite: the pure `Clock` interface supplies
+kernel logical time, and `ManualClock` supports deterministic replay through
+shared `Arc` handles. Wall-clock access, the native server, connector host and
+analytics executor remain deferred to subsequent ports.
+
 ## Host export contract (slice 1a)
 
 Exports scope and refusal infrastructure without a server or store.
@@ -178,3 +183,10 @@ The entrypoint compiles the typed fixture, builds the real CLI and explicitly
 runs the ignored acceptance. Missing definitions, CLI, browser or admission are
 failures, never skips. The in-process trusted actor adapter and loopback listener
 are test infrastructure; this does not authorize a public deployment.
+## Host target and base contracts
+
+HOST-TARGET: native targets enable the native cell adapter; Wasm uses the portable
+cell implementation. Default library builds and the fixture command need no flags.
+HOST-BASE: admission accepts a complete standalone tenant artifact set with no
+external base catalog. Extensions requiring a separate trusted base refuse; the
+host never infers base authority from submitted definitions.

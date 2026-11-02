@@ -67,6 +67,7 @@ pub mod osi;
 pub mod posting;
 pub mod provenance;
 pub mod quantity_ledger;
+pub mod requirement_display;
 pub mod rule;
 pub mod runtime;
 pub mod sealing;

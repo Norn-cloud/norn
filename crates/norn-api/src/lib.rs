@@ -1,6 +1,7 @@
 //! Core IR and checker wire schemas, projected by the existing `OpenAPI` generator.
 /// Default-deny host authorization.
 pub mod authz;
+pub mod clock;
 pub mod contracts;
 /// Checked definition admission.
 pub mod defs;
@@ -17,5 +18,6 @@ pub mod scope;
 /// Governed action transport adapters.
 pub mod actions;
 
-#[cfg(feature = "http-host")]
+#[cfg(all(feature = "http-host", not(target_arch = "wasm32")))]
 mod ui;
+pub use clock::{Clock, ManualClock};
