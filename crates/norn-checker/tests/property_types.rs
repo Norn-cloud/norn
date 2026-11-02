@@ -357,26 +357,14 @@ fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
         unit: None,
         currency_source: None,
     };
-    let exact = site(2, None);
-    assert!(norn_expr::rescale_decimal(&exact, &"1.005".parse().expect("number")).is_err());
-    assert_eq!(
-        norn_expr::rescale_decimal(&exact, &"1.0100".parse().expect("number"))
-            .expect("exact")
-            .as_str(),
-        "1.01"
-    );
-    let rounded = site(2, Some(Rounding::HalfAwayFromZero));
-    for text in ["1.005", "-1.005"] {
-        assert_eq!(
-            norn_expr::rescale_decimal(&rounded, &text.parse().expect("number"))
-                .expect("rounds")
-                .as_str(),
-            if text.starts_with('-') {
-                "-1.01"
-            } else {
-                "1.01"
-            }
-        );
+    for (text, rounding, expected) in [
+        ("1.005", None, None),
+        ("1.0100", None, Some("1.01")),
+        ("1.005", Some(Rounding::HalfAwayFromZero), Some("1.01")),
+        ("-1.005", Some(Rounding::HalfAwayFromZero), Some("-1.01")),
+    ] {
+        let result = norn_expr::rescale_decimal(&site(2, rounding), &text.parse().expect("number"));
+        assert_eq!(result.as_ref().ok().map(norn_expr::Number::as_str), expected);
     }
     for scale in [19, 28, u64::MAX] {
         let unsupported = site(scale, None);
@@ -401,7 +389,7 @@ proptest::proptest! {
             let base = coefficient / 10;
             let remainder = coefficient.abs() % 10;
             let increment = match rounding { Rounding::Refuse | Rounding::TowardZero => false, Rounding::HalfEven => remainder > 5 || (remainder == 5 && base % 2 != 0), Rounding::HalfAwayFromZero => remainder >= 5 };
-            let expected = base + if increment { coefficient.signum() } else { 0 };
+            let expected = base.checked_add(if increment { coefficient.signum() } else { 0 }).expect("bounded integer reference");
             let text = format!("{}{}.{:02}", if expected < 0 { "-" } else { "" }, expected.abs()/100, expected.abs()%100);
             proptest::prop_assert_eq!(result.expect("representable"), text.parse::<norn_expr::Number>().expect("number"));
         }
