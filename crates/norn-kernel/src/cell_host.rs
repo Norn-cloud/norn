@@ -599,6 +599,12 @@ pub struct CommitVersions {
 /// no event, no enqueue, no consumption.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommitError<X> {
+    /// RECEIPT-EFFECT-1: an expected receipt precondition failed without effects.
+    #[error("action.receipt_{reason}")]
+    ReceiptRefused {
+        /// Safe host-declared reason, excluding storage error details.
+        reason: &'static str,
+    },
     /// An owned child or manifest was changed without the trusted atomic
     /// parent-and-rows action, or a parent delete omitted that action.
     #[error("{key} is protected by an owned child collection transaction")]
@@ -827,6 +833,7 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::ReceiptRefused { .. } => "action.receipt_refused",
             Self::DuplicateKey { .. } => "commit.duplicate_key",
             Self::NotPending { .. } => "commit.not_pending",
             Self::Conflict { .. } => "commit.conflict",
@@ -946,7 +953,7 @@ pub trait CellHost {
         &self,
         _reference: &crate::receipt_binding::ReceiptReference,
         _manifest: &norn_ir::function::Digest,
-    ) -> Result<Option<crate::receipt_binding::ReceiptBinding<JsonObject>>, Self::Error> {
+    ) -> Result<Option<crate::receipt_binding::ReceiptBinding<JsonObject>>, CommitError<Self::Error>> {
         Ok(None)
     }
 

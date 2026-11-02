@@ -20,6 +20,10 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// Expected receipt admission refusal; never exposes a storage error.
+    #[error("action.receipt_{0}")]
+    ReceiptRefused(&'static str),
+
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,

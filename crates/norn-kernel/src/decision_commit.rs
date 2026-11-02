@@ -1351,6 +1351,12 @@ fn temporal_property_expected(property: &EffectiveProperty) -> Option<&'static s
 /// Why a decision result was refused. Nothing was committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecisionRefusal<X> {
+    /// Expected receipt admission failure; no storage details are disclosed.
+    #[error("action.receipt_{reason}")]
+    ReceiptRefused {
+        /// Safe host-declared reason.
+        reason: &'static str,
+    },
     /// The turn targets a historical, read-only world.
     #[error("the turn targets a historical, read-only world; nothing can be committed there")]
     ReadOnlyWorld,
@@ -1605,6 +1611,7 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::ReceiptRefused { .. } => "action.receipt_refused",
             Self::ReadOnlyWorld => "decision.read_only_world",
             Self::PerformOutsideMain { .. } => "decision.perform_outside_main",
             Self::EnvelopeExceeded { .. } => "decision.envelope_exceeded",
@@ -1674,6 +1681,7 @@ impl<X> DecisionRefusal<X> {
             | Self::InvalidOutput { .. }
             | Self::NotPending { .. }
             | Self::Overflow
+            | Self::ReceiptRefused { .. }
             | Self::Host(_) => None,
         }
     }
@@ -1771,6 +1779,7 @@ impl<X> DecisionRefusal<X> {
                 reason: format!("commit emitted {actual} events, limit is {limit}"),
             },
             CommitError::Overflow => Self::Overflow,
+            CommitError::ReceiptRefused { reason } => Self::ReceiptRefused { reason },
             CommitError::Host(error) => Self::Host(error),
         }
     }

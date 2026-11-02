@@ -46,8 +46,8 @@ impl norn_kernel::receipt_binding::AcceptedReceiptStore for Bound<'_> {
     }
 }
 
-pub(crate) fn refused(reason: &str) -> CellError {
-    CellError::Engine(format!("action.receipt_{reason}"))
+pub(crate) fn refused(reason: &'static str) -> CellError {
+    CellError::ReceiptRefused(reason)
 }
 
 struct ReceiptView<'a, 'b, S: SqlEngine>(&'a StoreReader<'b, S>);
@@ -609,6 +609,28 @@ mod tests {
                 .expect("unknown")
                 .is_none()
         );
+    }
+    #[test]
+    fn intervening_commit_refuses_without_consuming_receipt() {
+        use norn_kernel::{CellCommit, Refusable, receipt_binding::ReceiptReference};
+        let dir = tempfile::tempdir().expect("dir");
+        let (mut cell, dispatched, receipt, checks, _) = setup(&dir.path().join("cell.sqlite"));
+        let digest = retain(&mut cell, &dispatched, &receipt, &checks, true).expect("retain");
+        let reference = ReceiptReference::parse(&RuntimeValue::String(digest.0.clone())).expect("reference");
+        assert!(cell.resolve_accepted_receipt(&reference, &receipt.manifest).expect("usable").is_some());
+        let before = cell.store().verified_head().expect("head");
+        cell.commit(CellCommit::default()).expect("unrelated commit");
+        let after = cell.store().verified_head().expect("head");
+        assert_ne!(after, before);
+        let refusal = cell.resolve_accepted_receipt(&reference, &receipt.manifest).expect_err("stale").refusal();
+        assert_eq!(refusal.code, "action.receipt_refused");
+        assert_eq!(refusal.category, norn_kernel::RefusalCategory::Precondition);
+        assert!(refusal.message.contains("replayed_or_stale"));
+        assert!(cell.commit_accepted_receipt(CellCommit::default(), &reference).is_err());
+        assert_eq!(cell.store().verified_head().expect("head"), after);
+        assert!(cell.function_receipt_evidence(&digest).expect("retained").is_some());
+        let consumed = cell.store.conn.query_optional("SELECT consumed_commit_seq FROM _norn_function_receipt WHERE reference=?1", params![digest.0], |row| row.get::<Option<i64>>(0)).expect("consumption").flatten();
+        assert_eq!(consumed, None);
     }
     #[test]
     fn consumption_is_atomic_single_use_and_refusal_preserves_evidence() {

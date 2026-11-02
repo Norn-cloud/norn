@@ -175,6 +175,7 @@ impl<X> CommitError<X> {
             | Self::LinkCardinality { .. }
             | Self::LinkRequired { .. }
             | Self::TypeMismatch { .. }
+            | Self::ReceiptRefused { .. }
             | Self::InvariantViolation { .. } => RefusalCategory::Precondition,
             Self::AccountingPosting { reason, .. } => match reason {
                 norn_ir::posting::AccountingError::PostedJournalImmutable
@@ -264,6 +265,7 @@ impl<X> DecisionRefusal<X> {
             | Self::ObjectExists { .. }
             | Self::ImmutableStateWrite { .. }
             | Self::SourceOwnedTarget { .. }
+            | Self::ReceiptRefused { .. }
             | Self::InvariantViolation { .. } => RefusalCategory::Precondition,
             Self::Stale { .. } | Self::NotPending { .. } => RefusalCategory::Conflict,
             Self::AccountingPosting { reason, .. } => match reason {
@@ -508,6 +510,7 @@ impl<X> DecisionRefusal<X> {
             | Self::InvariantBudgetExceeded { .. }
             | Self::TraversalLimitExceeded { .. }
             | Self::Overflow
+            | Self::ReceiptRefused { .. }
             | Self::Host(_) => None,
         };
         reason.map(|(law, key, values)| RefusalReason {

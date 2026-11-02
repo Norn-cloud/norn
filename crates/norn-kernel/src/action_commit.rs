@@ -1140,7 +1140,7 @@ fn receipt_changes<H: CellHost + ?Sized>(
         .map_err(|_invalid_reference| invalid())?;
     let binding = host
         .resolve_accepted_receipt(&reference, &declaration.manifest_digest)
-        .map_err(host_failure)?
+        .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from(error)))?
         .ok_or_else(invalid)?;
     let (digest, result, acceptance) = binding.into_parts();
     if acceptance

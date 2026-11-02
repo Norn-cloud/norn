@@ -1408,7 +1408,7 @@ where
             }?;
             if let Some((reference, stored)) = receipt {
                 crate::receipt_store::claim(reader, &self.scope, reference, stored)
-                    .map_err(CommitError::Host)?;
+                    .map_err(receipt_commit_error)?;
             }
             Ok(versions)
         };
@@ -1608,9 +1608,9 @@ where
         manifest: &norn_ir::function::Digest,
     ) -> Result<
         Option<norn_kernel::receipt_binding::ReceiptBinding<norn_kernel::cell_host::JsonObject>>,
-        CellError,
+        CommitError<CellError>,
     > {
-        self.bind_function_receipt(reference, manifest)
+        self.bind_function_receipt(reference, manifest).map_err(receipt_commit_error)
     }
 
     fn commit_accepted_receipt(
@@ -1620,8 +1620,8 @@ where
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let stored = self
             .receipt_for_acceptance(reference.digest())
-            .map_err(CommitError::Host)?
-            .ok_or_else(|| CommitError::Host(crate::receipt_store::refused("unknown")))?;
+            .map_err(receipt_commit_error)?
+            .ok_or_else(|| receipt_commit_error(crate::receipt_store::refused("unknown")))?;
         if commit
             .consumes
             .as_ref()
@@ -1772,5 +1772,12 @@ where
     fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), CellError> {
         self.published.push(receipt.clone());
         Ok(())
+    }
+}
+
+fn receipt_commit_error(error: CellError) -> CommitError<CellError> {
+    match error {
+        CellError::ReceiptRefused(reason) => CommitError::ReceiptRefused { reason },
+        other => CommitError::Host(other),
     }
 }
