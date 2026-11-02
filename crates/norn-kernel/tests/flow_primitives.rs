@@ -17,6 +17,19 @@ fn identity<'a>(instance: &'a str, step: &'a str) -> FlowStepIdentity<'a> {
 }
 
 #[test]
+fn persisted_keys_retain_the_version_one_encoding() {
+    let step = identity("run", "charge");
+    assert_eq!(
+        step.attempt_key(0).expect("key").0,
+        "flow-attempt:d3f593d10af0d6af9ec828637045c52c7137042cc35a845172f077403ed50e15"
+    );
+    assert_eq!(
+        step.operation_key().expect("key").0,
+        "flow-operation:897f14ae62ab4734acf38ac72358e00126d48ce577f75fdb2284a7c1c698c3e3"
+    );
+}
+
+#[test]
 fn keys_frame_components_and_separate_provider_operation_from_attempt() {
     let left = identity("a:b", "c");
     let right = identity("a", "b:c");

@@ -94,7 +94,9 @@ changed payload under an existing key; **FLOW-TIME-BOUNDARY** checks exact due
 boundaries, clock rollback, empty queues and overflow. Generated tests sample key
 uniqueness, arbitrary redelivery orders and scheduling correspondence. The bounded
 Kani harness checks full-width deadline arithmetic and ordering over three live
-identities, not cryptographic collision freedom or scheduler liveness.
+identities, not cryptographic collision freedom or scheduler liveness. Run it with
+`kani --edition 2024 --fail-fast --output-format terse verification/kernel-l1/timer_schedule_kani.rs`.
+This harness is enrolled source evidence, not a promoted full-profile gate.
 
 The dispatch integration is a subsequent implementation unit. It must persist
 schedule/cancel alongside lifecycle state, commands and receipts, re-enter the
