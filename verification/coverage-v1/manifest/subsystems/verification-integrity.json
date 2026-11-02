@@ -366,7 +366,6 @@
     "crates/norn-checker/examples/pack_guarantees.rs",
     "scripts/demo/guarantees_drop.py",
     "scripts/demo/drop-12-guarantees.sh",
-    "scripts/demo/drop-12-guarantees.md",
     "scripts/test_guarantees_drop.py"
   ],
   "obligations": [
