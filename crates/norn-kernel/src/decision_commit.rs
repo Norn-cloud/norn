@@ -2270,7 +2270,7 @@ pub(crate) fn widen_effect<C: From<JsonObject>, T: From<JsonObject>>(
     }
 }
 
-fn fact_key(change: &FactChange) -> FactKey {
+pub(crate) fn fact_key(change: &FactChange) -> FactKey {
     let (object_type, key) = match change {
         FactChange::Create {
             object_type, key, ..

@@ -171,19 +171,10 @@ pub(crate) fn writer_target<X>(
     change: &norn_ir::FactChange,
 ) -> Result<(FactKey, norn_ir::WriteChange), ActionRefusal<X>> {
     use norn_ir::{FactChange, WriteChange};
-    let (object_type, key, operation) = match change {
-        FactChange::Create {
-            object_type, key, ..
-        } => (object_type, key, WriteChange::Created),
-        FactChange::Set {
-            object_type, key, ..
-        }
-        | FactChange::Transition {
-            object_type, key, ..
-        } => (object_type, key, WriteChange::Modified),
-        FactChange::Delete { .. } => {
-            return Err(refused("synchronous action rules cannot delete facts"));
-        }
+    let operation = match change {
+        FactChange::Create { .. } => WriteChange::Created,
+        FactChange::Set { .. } | FactChange::Transition { .. } => WriteChange::Modified,
+        FactChange::Delete { .. } => return Err(refused("synchronous action rules cannot delete facts")),
     };
-    Ok((FactKey::new(object_type.as_str(), key), operation))
+    Ok((crate::decision_commit::fact_key(change), operation))
 }

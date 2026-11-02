@@ -4840,7 +4840,7 @@ fn expression_object(values: &JsonObject) -> Result<BTreeMap<String, ExprValue>,
 }
 
 fn has_action_preparation_features(action: &ActionRoot) -> bool {
-    !action.derive.is_empty() || !action.slice.is_empty() || !action.preconditions.is_empty()
+    action.synchronous_rule.is_some() || !action.derive.is_empty() || !action.slice.is_empty() || !action.preconditions.is_empty()
 }
 
 fn check_action_record_size<X>(
