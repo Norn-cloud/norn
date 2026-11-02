@@ -1,12 +1,27 @@
 //! Preregistered policy and actual Cedar-backed reviewer authority.
-#![allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic, missing_docs, reason = "synthetic policy fixture")]
-use std::collections::BTreeMap;
-use norn_authz::{AccessRequest,ActorKind,AuthzSchema,CapabilityGrant,Delegation,Pdp,PrincipalInput,ResourceInput,ScopeKey};
-use norn_ir::{RuntimeObject,RuntimeValue as Value,function::{Digest,FunctionReceipt}};
-use norn_kernel::ActionAuthorizer;
-use norn_kernel::result_reconciliation::{DispatchedCommand,InvalidReceipt,ReceiptValidator,ResultAuthorizer,ResultAuthzRequest,ResultDenial};
-use norn_metrics::producer::ForecastExport;
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    missing_docs,
+    reason = "synthetic policy fixture"
+)]
 use super::source;
+use norn_authz::{
+    AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp, PrincipalInput,
+    ResourceInput, ScopeKey,
+};
+use norn_ir::{
+    RuntimeObject, RuntimeValue as Value,
+    function::{Digest, FunctionReceipt},
+};
+use norn_kernel::ActionAuthorizer;
+use norn_kernel::result_reconciliation::{
+    DispatchedCommand, InvalidReceipt, ReceiptValidator, ResultAuthorizer, ResultAuthzRequest,
+    ResultDenial,
+};
+use norn_metrics::producer::ForecastExport;
+use std::collections::BTreeMap;
 const REGISTRATION: &[u8] = br#"{"scope":"synthetic descriptive forecast","thresholdGrams":1}"#;
 pub(crate) fn docs() -> Digest {
     Digest::of_json_document(REGISTRATION).expect("declared before fitting")

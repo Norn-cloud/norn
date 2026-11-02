@@ -1,18 +1,37 @@
 //! ANALYSIS-PUBLISH-1: actual Function receipts enter the governed action.
-#![allow(clippy::expect_used,clippy::indexing_slicing,clippy::panic,clippy::print_stdout,missing_docs,reason = "synthetic publication acceptance")]
-#[path = "support/scrap_world.rs"] mod source;
-#[path = "support/publication_policy.rs"] mod policy;
-#[path = "support/publication_host.rs"] mod host;
-use std::collections::BTreeMap;
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::print_stdout,
+    missing_docs,
+    reason = "synthetic publication acceptance"
+)]
+#[path = "support/publication_host.rs"]
+mod host;
+#[path = "support/publication_policy.rs"]
+mod policy;
+#[path = "support/scrap_world.rs"]
+mod source;
 use norn_ir::RuntimeValue as Value;
-use norn_kernel::{ActionCall,ActionOutcome,CellHost,DecisionTurn,FactKey,LogicalTime,TypeCatalog,World,commit_action};
+use norn_kernel::{
+    ActionCall, ActionOutcome, CellHost, DecisionTurn, FactKey, LogicalTime, TypeCatalog, World,
+    commit_action,
+};
 use policy::reviewer;
+use std::collections::BTreeMap;
 #[test]
 fn publish_timed_world_and_refuse_bulk_without_partial_effects() {
-    let action=policy::admitted_publish();
+    let action = policy::admitted_publish();
     for bulk in [false, true] {
-        let host::Host {mut cell,receipt,reference,prepared,model}=host::retained_host(bulk);
-        let now=source::millis(source::BULK_AT);
+        let host::Host {
+            mut cell,
+            receipt,
+            reference,
+            prepared,
+            model,
+        } = host::retained_host(bulk);
+        let now = source::millis(source::BULK_AT);
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let request = ActionCall {
             action: &action,

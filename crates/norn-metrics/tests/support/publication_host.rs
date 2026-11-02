@@ -1,14 +1,33 @@
 //! Real native receipt setup; no publication effects are applied here.
-#![allow(clippy::expect_used, clippy::panic, missing_docs, reason = "synthetic host fixture")]
-use norn_cell::{CommitBatch,EffectRow,FactWriteRow,OutboxCommand,SqliteCell};
-use norn_ir::{RuntimeObject,RuntimeValue as Value,function::{Digest,FunctionInvocation,FunctionReceipt}};
-use norn_kernel::{CellHost,Command,CommandId,FreshnessPolicy,Generation,IdempotencyKey,LogicalTime};
-use norn_kernel::result_reconciliation::{Completion,DispatchedCommand,ResultChecks};
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    missing_docs,
+    reason = "synthetic host fixture"
+)]
+use super::{
+    policy::{Checks, docs, export, proposal},
+    source,
+};
+use norn_cell::{CommitBatch, EffectRow, FactWriteRow, OutboxCommand, SqliteCell};
+use norn_ir::{
+    RuntimeObject, RuntimeValue as Value,
+    function::{Digest, FunctionInvocation, FunctionReceipt},
+};
+use norn_kernel::result_reconciliation::{Completion, DispatchedCommand, ResultChecks};
+use norn_kernel::{
+    CellHost, Command, CommandId, FreshnessPolicy, Generation, IdempotencyKey, LogicalTime,
+};
 use norn_metrics::producer::ForecastExport;
-use super::{source,policy::{docs,export,proposal,Checks}};
-pub(crate) type Cell=SqliteCell<norn_kernel::FactEvent,RuntimeObject,RuntimeObject>;
-pub(crate) struct Host { pub(crate) cell:Cell,pub(crate) receipt:FunctionReceipt,pub(crate) reference:Digest,pub(crate) prepared:norn_metrics::host::ForecastSummary,pub(crate) model:norn_cell::Model }
-fn dispatch(bulk:bool) -> (source::SourceWorld,Checks,DispatchedCommand) {
+pub(crate) type Cell = SqliteCell<norn_kernel::FactEvent, RuntimeObject, RuntimeObject>;
+pub(crate) struct Host {
+    pub(crate) cell: Cell,
+    pub(crate) receipt: FunctionReceipt,
+    pub(crate) reference: Digest,
+    pub(crate) prepared: norn_metrics::host::ForecastSummary,
+    pub(crate) model: norn_cell::Model,
+}
+fn dispatch(bulk: bool) -> (source::SourceWorld, Checks, DispatchedCommand) {
     let mut world = source::world(bulk, Some(proposal));
     assert_eq!(world.evidence.len(), 128);
     let export = export(&world);
@@ -46,18 +65,17 @@ fn dispatch(bulk:bool) -> (source::SourceWorld,Checks,DispatchedCommand) {
         expected_owner_version: 2,
     });
     invocation.freshness = norn_ir::function::FreshnessMode::DestinationCas;
-    let dispatched =
-        DispatchedCommand::pin(invocation.clone(), checks.0.execution_profile.clone())
-            .expect("dispatch");
+    let dispatched = DispatchedCommand::pin(invocation.clone(), checks.0.execution_profile.clone())
+        .expect("dispatch");
     let command=Command { id:CommandId(invocation.command_id.clone()),generation:Generation(1),idempotency_key:IdempotencyKey("forecast".into()),freshness:FreshnessPolicy::AppendOnly,deadline:None,payload:norn_ir::runtime_object!{"type"=>"norn.function/v1","invocation"=>norn_ir::runtime::encode(&invocation).expect("invocation")}.as_object().expect("envelope").clone() };
     world.store.commit(&CommitBatch { world:"main".into(),scope:source::SCOPE.into(),logical_time:now,writes:vec![
         FactWriteRow::Put{object_type:"core.analytics.Publication".into(),key:"forecast".into(),values},
         FactWriteRow::Put{object_type:"norn.FunctionCommand".into(),key:command.id.0.clone(),values:norn_ir::runtime_object!{"state"=>norn_ir::runtime::encode(&norn_kernel::result_reconciliation::CommandState::dispatched(&dispatched)).expect("state")}.as_object().expect("state object").clone()},
     ],effects:vec![EffectRow::Enqueue{command:OutboxCommand {command_id:command.id.0.clone(),generation:1,idempotency_key:command.idempotency_key.0.clone(),deadline:None,command:norn_ir::runtime::encode(&command).expect("command")}}],..CommitBatch::default() }).expect("pin and dispatch");
-    (world,checks,dispatched)
+    (world, checks, dispatched)
 }
-fn native_cell(world:source::SourceWorld) -> Cell {
-    let now=source::millis(source::BULK_AT);
+fn native_cell(world: source::SourceWorld) -> Cell {
+    let now = source::millis(source::BULK_AT);
     let source::SourceWorld {
         store,
         rows,
@@ -70,10 +88,9 @@ fn native_cell(world:source::SourceWorld) -> Cell {
             store,
             source::SCOPE,
             move |command: &Command<RuntimeObject>| {
-                let actual: FunctionInvocation = norn_ir::runtime::decode(
-                    command.payload.get("invocation").expect("envelope"),
-                )
-                .expect("invocation");
+                let actual: FunctionInvocation =
+                    norn_ir::runtime::decode(command.payload.get("invocation").expect("envelope"))
+                        .expect("invocation");
                 let export = ForecastExport {
                     tenant: source::SCOPE,
                     world: "main",
@@ -109,10 +126,10 @@ fn native_cell(world:source::SourceWorld) -> Cell {
     cell.advance_to(LogicalTime::from_millis(now));
     cell
 }
-pub(crate) fn retained_host(bulk:bool) -> Host {
-    let (world,checks,dispatched)=dispatch(bulk);
-    let model=source::model(&source::artifacts());
-    let mut cell=native_cell(world);
+pub(crate) fn retained_host(bulk: bool) -> Host {
+    let (world, checks, dispatched) = dispatch(bulk);
+    let model = source::model(&source::artifacts());
+    let mut cell = native_cell(world);
     let performed = cell.perform().expect("perform").expect("result");
     let receipt: FunctionReceipt =
         norn_ir::runtime::decode(&Value::Object(performed.input)).expect("receipt");
@@ -138,5 +155,11 @@ pub(crate) fn retained_host(bulk:bool) -> Host {
             },
         )
         .expect("authenticate and retain actual receipt");
-    Host {cell,receipt,reference,prepared,model}
+    Host {
+        cell,
+        receipt,
+        reference,
+        prepared,
+        model,
+    }
 }

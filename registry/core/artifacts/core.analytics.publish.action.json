@@ -8,8 +8,35 @@
   "namespace": "core",
   "payload": {
     "actionId": "core.analytics.publish",
-    "description": "Fail-closed declaration: acceptReceipt must bind the referenced Function result before this transition can succeed.",
+    "description": "Accept configured Function evidence, then apply the declared publication policy under reviewer authority.",
     "effectProgram": {
+      "acceptReceipt": {
+        "digestProperty": "receipt_digest",
+        "manifestDigest": "sha256:27c147b1485f8d096f253d098e5c844cf8ee9843362a1c21dba9fbae21f8e232",
+        "referenceField": "receipt",
+        "resultBindings": {
+          "complete": "complete",
+          "diagnostics_passed": "diagnostics_passed",
+          "frontier_age_ms": "frontier_age_ms",
+          "holdout_count": "holdout_rows",
+          "holdout_error_nanos": "rmse_nanos",
+          "late_feature_count": "late_features",
+          "latest_training_label_ms": "latest_training_label_ms",
+          "non_forward_outcome_count": "non_forward_outcome_count",
+          "quarantined_count": "quarantine_count",
+          "result_assumptions_digest": "assumptions_digest",
+          "result_error_unit": "error_unit",
+          "result_model_digest": "implementation_digest",
+          "result_parameters_digest": "parameters_digest",
+          "result_remedy_digest": "remedy_digest",
+          "result_source_digest": "source_digest",
+          "result_split_at_ms": "split_at_ms",
+          "result_table_digest": "table_digest",
+          "result_table_version": "table_version",
+          "temporal_leakage": "temporal_leakage",
+          "training_count": "training_rows"
+        }
+      },
       "entityArtifactId": "core.analytics.Publication.entity",
       "entityArtifactVersion": "0.1.0",
       "kind": "fire_transition",

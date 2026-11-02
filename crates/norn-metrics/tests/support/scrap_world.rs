@@ -105,7 +105,7 @@ pub(crate) fn world(
     )
     .expect("ontology units");
     let mut store = CellStore::open_in_memory(model(&artifacts)).expect("cell");
-    preregister(&mut store,&plan,proposal);
+    preregister(&mut store, &plan, proposal);
     for (logical_time, key, values) in source_events(bulk) {
         store
             .commit(&CommitBatch {
@@ -185,7 +185,7 @@ pub(crate) fn world(
     }
 }
 
-fn source_events(bulk:bool) -> Vec<(u64,String,RuntimeObject)> {
+fn source_events(bulk: bool) -> Vec<(u64, String, RuntimeObject)> {
     let mut events = Vec::new();
     for line in CSV.lines().skip(1) {
         let row: Vec<_> = line.split(',').collect();
@@ -211,7 +211,11 @@ fn source_events(bulk:bool) -> Vec<(u64,String,RuntimeObject)> {
     events
 }
 
-fn preregister(store:&mut CellStore,plan:&TemporalPlan,proposal:Option<fn(&TemporalPlan)->RuntimeObject>) {
+fn preregister(
+    store: &mut CellStore,
+    plan: &TemporalPlan,
+    proposal: Option<fn(&TemporalPlan) -> RuntimeObject>,
+) {
     if let Some(propose) = proposal {
         let values = propose(plan);
         store
