@@ -383,12 +383,12 @@ fn valid_locale_tag(tag: &str) -> bool {
         if singleton.len() != 1 || !alnum(singleton) || !extensions.insert(singleton) {
             return false;
         }
-        let mut count = 0;
+        let mut has_subtag = false;
         while parts.peek().is_some_and(|s| s.len() >= 2 && alnum(s)) {
             parts.next();
-            count += 1;
+            has_subtag = true;
         }
-        if count == 0 {
+        if !has_subtag {
             return false;
         }
     }
