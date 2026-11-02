@@ -1,5 +1,11 @@
 {
+<<<<<<< HEAD
   "sha256": "dddc3acb34f130b012914656b4c07d4e8f1c6550907ff43524e968da5c379a93",
+||||||| c9a9e1f35
+  "sha256": "72f2d516545da3bfe062b3cd98fc09b70e55ff0ae20946b73fc06c9b9bb1c46c",
+=======
+  "sha256": "3d3e17b21625db75d2745cae6db021b7d99b5f00f83aa436eacc3f58afd58c5b",
+>>>>>>> core01/exact-consumers
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",
