@@ -212,7 +212,7 @@ fn featureless_actions_keep_large_inputs_without_allowing_identity_claims() {
         "large".into(),
         norn_ir::RuntimeValue::String("x".repeat(limit + 1)),
     );
-    let mut storage = cell();
+    let mut storage = Cell::new(|_| JsonObject::new()).with_types(definitions.clone());
     assert!(matches!(
         commit_action(
             &mut storage,
