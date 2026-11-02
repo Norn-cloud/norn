@@ -1069,3 +1069,38 @@ fn val_env_schema_member_paths_do_not_alias_nested_or_array_records() {
     assert_eq!(records.len(), 4);
     assert_eq!(root, Type::Record("root".into()));
 }
+
+#[test]
+fn val_env_scalar_and_array_roots_are_pinned_and_rates_refuse_v1() {
+    let env = ZenTypeEnv::input_only(BTreeMap::new(), EnvOptions::default()).expect("base env");
+    let bind = |value: serde_json::Value| {
+        env.clone()
+            .bind_exact_schema("demo.root", &serde_json::from_value(value).expect("schema"))
+            .expect("exact root")
+    };
+    let scalar = serde_json::json!({"type":"number","nornType":{"kind":"decimal","scale":2}});
+    let changed = serde_json::json!({"type":"number","nornType":{"kind":"decimal","scale":3}});
+    assert_ne!(
+        bind(scalar.clone()).reference().expect("scalar pin"),
+        bind(changed).reference().expect("changed pin")
+    );
+    assert_ne!(
+        bind(scalar.clone()).reference().expect("scalar pin"),
+        bind(serde_json::json!({"type":"array","items":scalar}))
+            .reference()
+            .expect("array pin")
+    );
+    let rate = serde_json::json!({"type":"number","nornType":{"kind":"decimal","scale":2,"currencySource":{"links":[],"property":"currency"},"perUnit":{"system":"ucum","code":"g"}}});
+    for schema in [
+        rate.clone(),
+        serde_json::json!({"type":"array","items":rate}),
+    ] {
+        let bound = bind(schema);
+        bound.reference().expect("env/2 root rate pin");
+        assert!(
+            bound
+                .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+                .is_err()
+        );
+    }
+}

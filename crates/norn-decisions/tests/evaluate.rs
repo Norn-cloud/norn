@@ -1852,3 +1852,15 @@ proptest::proptest! {
         proptest::prop_assert_eq!(evaluated.output.commands[0].get("value"),Some(&expected));
     }
 }
+
+proptest::proptest! {
+    #[test]
+    fn val_env_scalar_root_scale_and_shape_change_the_pin(first in 0_u8..=18, second in 0_u8..=18, first_array in proptest::bool::ANY, second_array in proptest::bool::ANY) {
+        let pin = |scale:u8,array:bool| {
+            let scalar = serde_json::json!({"type":"number","nornType":{"kind":"decimal","scale":scale}});
+            let schema = if array { serde_json::json!({"type":"array","items":scalar}) } else { scalar };
+            norn_expr::ZenTypeEnv::input_only(BTreeMap::new(),norn_expr::EnvOptions::default()).unwrap().bind_exact_schema("demo.root",&serde_json::from_value(schema).unwrap()).unwrap().reference().unwrap()
+        };
+        proptest::prop_assert_eq!(pin(first,first_array) == pin(second,second_array), first == second && first_array == second_array);
+    }
+}

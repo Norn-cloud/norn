@@ -508,7 +508,11 @@ impl ZenTypeEnv {
             return Ok(self);
         }
         let mut records = BTreeMap::new();
-        let _root_type = schema.expression_type(name, &mut records);
+        let root_type = schema.expression_type(name, &mut records);
+        records.insert(
+            format!("{name}/root"),
+            BTreeMap::from([("value".to_owned(), root_type)]),
+        );
         for (name, fields) in records {
             if self.records.contains_key(&name) {
                 return Err("duplicate exact schema record".into());
