@@ -226,7 +226,7 @@ fn law_artifact(payload: serde_json::Value) -> Option<norn_ir::ArtifactEnvelope>
     let envelopes: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).ok()?;
     let mut envelope = envelopes.into_iter().next()?;
-    envelope["payload"] = payload;
+    envelope.as_object_mut()?.insert("payload".into(), payload);
     serde_json::from_value(envelope).ok()
 }
 
