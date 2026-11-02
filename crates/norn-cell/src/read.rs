@@ -1142,7 +1142,8 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     pub(crate) conn: &'a E,
     model: &'a Model,
     quantity_boundary: Option<crate::quantity::FormatBoundary>,
-    pub(crate) source_disputes: Option<&'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>>,
+    pub(crate) source_disputes:
+        Option<&'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>>,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -1222,7 +1223,10 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         }
     }
 
-    pub(crate) const fn with_source_disputes(mut self, index: &'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>) -> Self {
+    pub(crate) const fn with_source_disputes(
+        mut self,
+        index: &'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>,
+    ) -> Self {
         self.source_disputes = Some(index);
         self
     }

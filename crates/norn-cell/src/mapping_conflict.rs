@@ -11,7 +11,7 @@ use norn_ir::{
 };
 use norn_kernel::{ObservationId, Observed};
 use serde::{Deserialize, Serialize};
-use std::{collections::{BTreeMap, BTreeSet}};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Quarantined capture evidence; this never supplies canonical write authority.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -209,8 +209,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     fn source_evidence_revision(&self) -> Result<(i64, i64), CellError> {
         // Own writes (including rolled-back writes) and commits by other connections
         // invalidate both positive and negative membership. No persisted cache is trusted.
-        let own = self.conn.query_row("SELECT total_changes()", params![], |row| row.get(0))?;
-        let external = self.conn.query_row("PRAGMA data_version", params![], |row| row.get(0))?;
+        let own = self
+            .conn
+            .query_row("SELECT total_changes()", params![], |row| row.get(0))?;
+        let external = self
+            .conn
+            .query_row("PRAGMA data_version", params![], |row| row.get(0))?;
         Ok((own, external))
     }
 
@@ -221,7 +225,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             self.index_source_finding(&mut index, &conflict.incoming, false, &conflict.finding)?;
         }
         for guard in self.identity_evidence()? {
-            index.identities.insert(crate::mapping_identity::keys(&guard.bundle.raw, &guard.bundle.input)?);
+            index.identities.insert(crate::mapping_identity::keys(
+                &guard.bundle.raw,
+                &guard.bundle.input,
+            )?);
             self.index_source_finding(&mut index, &guard.bundle, true, &guard.finding)?;
         }
         if self.source_evidence_revision()? != revision {
@@ -242,16 +249,29 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let mut subjects = BTreeSet::new();
         for bundle in related.iter().chain(std::iter::once(incoming)) {
             for record in &bundle.records {
-                subjects.insert((self.retained_mapping_root(bundle.definitions_version, record.object_type.as_str())?, record.key.clone()));
+                subjects.insert((
+                    self.retained_mapping_root(
+                        bundle.definitions_version,
+                        record.object_type.as_str(),
+                    )?,
+                    record.key.clone(),
+                ));
             }
         }
         for subject in subjects {
-            index.subjects.entry(subject).or_default().push((identity, finding.clone()));
+            index
+                .subjects
+                .entry(subject)
+                .or_default()
+                .push((identity, finding.clone()));
         }
         Ok(())
     }
 
-    fn with_source_dispute_index<T>(&self, read: impl FnOnce(&SourceDisputeIndex) -> T) -> Result<T, CellError> {
+    fn with_source_dispute_index<T>(
+        &self,
+        read: impl FnOnce(&SourceDisputeIndex) -> T,
+    ) -> Result<T, CellError> {
         let Some(cache) = self.source_disputes else {
             return Ok(read(&self.build_source_dispute_index()?));
         };
@@ -263,10 +283,23 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(read(&cache.borrow()))
     }
 
-    pub(crate) fn indexed_source_findings(&self, object_type: &str, key: &str, identity: bool) -> Result<Vec<DataQualityFinding>, CellError> {
+    pub(crate) fn indexed_source_findings(
+        &self,
+        object_type: &str,
+        key: &str,
+        identity: bool,
+    ) -> Result<Vec<DataQualityFinding>, CellError> {
         let subject = (self.root_type(object_type)?.to_owned(), key.to_owned());
-        self.with_source_dispute_index(|index| index.subjects.get(&subject).into_iter().flatten()
-            .filter(|(kind, _finding)| *kind == identity).map(|(_kind, finding)| finding.clone()).collect())
+        self.with_source_dispute_index(|index| {
+            index
+                .subjects
+                .get(&subject)
+                .into_iter()
+                .flatten()
+                .filter(|(kind, _finding)| *kind == identity)
+                .map(|(_kind, finding)| finding.clone())
+                .collect()
+        })
     }
 
     pub(crate) fn indexed_identity_dispute(&self, keys: &[String; 5]) -> Result<bool, CellError> {

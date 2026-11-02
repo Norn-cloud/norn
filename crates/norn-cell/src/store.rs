@@ -2344,7 +2344,8 @@ impl<E: SqlEngine> CellStore<E> {
     /// Committed-state reads.
     #[must_use]
     pub fn read(&self) -> StoreReader<'_, E> {
-        StoreReader::new(&self.conn, &self.model).with_source_disputes(&self.source_disputes)
+        StoreReader::new(&self.conn, &self.model)
+            .with_source_disputes(&self.source_disputes)
             .with_quantity_boundary(self.quantity_boundary.get())
     }
 
