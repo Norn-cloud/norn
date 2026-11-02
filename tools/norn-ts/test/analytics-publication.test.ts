@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { join, resolve } from "node:path"
 import { Schema } from "effect"
+import { FORECAST_MANIFEST_DIGEST } from "../../../registry/core/src/metrics-pin.ts"
 import { compilePack, checkPack } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker, CHECKER_PKG_ENV } from "./checker.ts"
@@ -21,13 +22,16 @@ test("ANALYSIS-PUBLISH-1 declares publication states, law and reference-only gov
   const artifacts = publication().map(artifact => Schema.decodeUnknownSync(Envelope)(artifact))
   expect(artifacts.find(artifact => artifact.artifactId === "core.analytics.Publication.entity")?.payload).toMatchObject({
     objectType: { lifecycles: [{ property: "status", transitions: [
-      { id: "publish", guardRefusalCode: "core.projection.publication_guard", guards: expect.arrayContaining(["false"]) },
+      { id: "publish", guardRefusalCode: "core.projection.publication_guard", guards: expect.arrayContaining(["!self.temporal_leakage"]) },
       { id: "refuse" },
     ] }] },
   })
   expect(artifacts.find(artifact => artifact.artifactId === "core.analytics.publish.action")?.payload).toMatchObject({
     inputSchema: { additionalProperties: false, properties: { id: { type: "string" }, receipt: { type: "string" } }, required: ["id", "receipt"] },
-    effectProgram: { kind: "fire_transition", transition: "publish" },
+    effectProgram: { kind: "fire_transition", transition: "publish", acceptReceipt: {
+      referenceField: "receipt", manifestDigest: FORECAST_MANIFEST_DIGEST, digestProperty: "receipt_digest",
+      resultBindings: { temporal_leakage: "temporalLeakage", holdout_error_nanos: "rmseNanos" },
+    } },
   })
   expect(artifacts.find(artifact => artifact.artifactId === "core.analytics.publication_policy.law")?.payload).toMatchObject({
     modality: { kind: "always" }, response: { kind: "invariant", invariantId: "publication_policy" },
@@ -37,7 +41,7 @@ test("ANALYSIS-PUBLISH-1 declares publication states, law and reference-only gov
   })
 })
 
-test.skipIf(!checker)("Rust admits the declared publication policy without granting a Function binding", () => {
+test.skipIf(!checker)("Rust admits the declared publication policy with the configured Function binding", () => {
   const report = checkPack(checker!, publication(), [])
   expect(report.diagnostics.diagnostics).toEqual([])
   expect(report.admitted).toBe(true)

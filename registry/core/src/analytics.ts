@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
+import { FORECAST_MANIFEST_DIGEST } from "./metrics-pin.ts"
 
 const Evidence = Schema.Struct({
   id: Schema.String, status: Schema.Literals(["proposed", "published", "refused"]),
@@ -12,9 +13,9 @@ const Evidence = Schema.Struct({
   result_split_at_ms: Schema.Int, result_model_digest: Schema.String, result_parameters_digest: Schema.String,
   complete: Schema.Boolean, quarantined_count: Schema.Int,
   frontier_age_ms: Schema.Int, max_frontier_age_ms: Schema.Int,
-  late_feature_count: Schema.Int, latest_training_label_ms: Schema.Int,
+  late_feature_count: Schema.Int, latest_training_label_ms: Schema.Int, temporal_leakage: Schema.Boolean,
   training_count: Schema.Int, holdout_count: Schema.Int, non_forward_outcome_count: Schema.Int,
-  holdout_error_nanos: Schema.Int, holdout_error_limit_nanos: Schema.Int,
+  holdout_error_nanos: Schema.NullOr(Schema.Int), holdout_error_limit_nanos: Schema.Int,
   error_unit: Schema.String, result_error_unit: Schema.String, diagnostics_passed: Schema.Boolean,
 })
 
@@ -30,9 +31,9 @@ export const PublicationEvidence = Norn.interfaceType({
       self.result_model_digest === self.model_digest && self.result_parameters_digest === self.parameters_digest &&
       self.complete && self.quarantined_count === 0 && self.frontier_age_ms >= 0 &&
       self.max_frontier_age_ms >= 0 && self.frontier_age_ms <= self.max_frontier_age_ms &&
-      self.late_feature_count === 0 && self.latest_training_label_ms < self.split_at_ms &&
+      !self.temporal_leakage && self.late_feature_count === 0 && self.latest_training_label_ms < self.split_at_ms &&
       self.training_count > 0 && self.holdout_count > 0 && self.non_forward_outcome_count === 0 &&
-      self.holdout_error_nanos >= 0 && self.holdout_error_limit_nanos >= 0 && self.holdout_error_nanos <= self.holdout_error_limit_nanos &&
+      self.holdout_error_nanos !== null && self.holdout_error_nanos >= 0 && self.holdout_error_limit_nanos >= 0 && self.holdout_error_nanos <= self.holdout_error_limit_nanos &&
       self.error_unit !== "" && self.error_unit === self.result_error_unit &&
       self.assumptions_digest !== "" && self.assumptions_digest === self.result_assumptions_digest &&
       self.remedy_digest !== "" && self.remedy_digest === self.result_remedy_digest &&
@@ -41,11 +42,8 @@ export const PublicationEvidence = Norn.interfaceType({
   }],
 })
 
-/** ANALYSIS-PUBLISH-1: recorded Function evidence precedes projection authority.
- * No ordinary create/update action authors these evidence fields. Until the
- * acceptReceipt effect binds authenticated results atomically, PUBLISH keeps
- * an explicit closed gate. PUBLISH accepts only a receipt reference and an ID.
- */
+/** ANALYSIS-PUBLISH-1: only the configured, recorded Function receipt may
+ * populate evidence before the declared publication policy is evaluated. */
 export const Publication = Norn.type({
   name: "core.analytics.Publication", title: "Analytical publication", version: "0.1.0",
   properties: Evidence, implements: [PublicationEvidence], identity: [{ name: "primary", properties: ["id"] }],
@@ -53,7 +51,6 @@ export const Publication = Norn.type({
   lifecycles: [{ property: "status", initial: ["proposed"], terminal: ["published", "refused"], transitions: [
     { id: "publish", from: ["proposed"], to: "published", guardRefusalCode: "core.projection.publication_guard",
       guards: [
-        Norn.expression(Evidence, () => false),
         Norn.expression(Evidence, self => self.receipt_digest !== ""),
         Norn.expression(Evidence, self => self.table_version !== "" && self.table_digest !== "" && self.source_digest !== "" &&
           self.result_table_version === self.table_version && self.result_table_digest === self.table_digest &&
@@ -63,10 +60,11 @@ export const Publication = Norn.type({
         Norn.expression(Evidence, self => self.complete && self.quarantined_count === 0),
         Norn.expression(Evidence, self => self.frontier_age_ms >= 0 && self.max_frontier_age_ms >= 0 &&
           self.frontier_age_ms <= self.max_frontier_age_ms),
+        Norn.expression(Evidence, self => !self.temporal_leakage),
         Norn.expression(Evidence, self => self.late_feature_count === 0),
         Norn.expression(Evidence, self => self.latest_training_label_ms < self.split_at_ms),
         Norn.expression(Evidence, self => self.training_count > 0 && self.holdout_count > 0 && self.non_forward_outcome_count === 0),
-        Norn.expression(Evidence, self => self.holdout_error_nanos >= 0 && self.holdout_error_limit_nanos >= 0 &&
+        Norn.expression(Evidence, self => self.holdout_error_nanos !== null && self.holdout_error_nanos >= 0 && self.holdout_error_limit_nanos >= 0 &&
           self.holdout_error_nanos <= self.holdout_error_limit_nanos && self.error_unit !== "" && self.error_unit === self.result_error_unit),
         Norn.expression(Evidence, self => self.assumptions_digest !== "" && self.assumptions_digest === self.result_assumptions_digest &&
           self.remedy_digest !== "" && self.remedy_digest === self.result_remedy_digest &&
@@ -84,8 +82,20 @@ export const Publish = Norn.action({
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   input: Reference, output: Schema.Struct({ id: Schema.String }),
   writes: [{ type: Publication, change: "modified" }],
-  description: "Fail-closed declaration: acceptReceipt must bind the referenced Function result before this transition can succeed.",
-  effect: { kind: "fire_transition", type: Publication, objectIdField: "id", lifecycle: "status", transition: "publish" },
+  description: "Accept configured Function evidence, then apply the declared publication policy under reviewer authority.",
+  effect: { kind: "fire_transition", type: Publication, objectIdField: "id", lifecycle: "status", transition: "publish",
+    acceptReceipt: { referenceField: "receipt", manifestDigest: FORECAST_MANIFEST_DIGEST, digestProperty: "receipt_digest",
+      resultBindings: {
+        result_table_version: "tableVersion", result_table_digest: "tableDigest", result_source_digest: "sourceDigest",
+        result_split_at_ms: "splitAtMs", result_model_digest: "implementationDigest", result_parameters_digest: "parametersDigest",
+        result_assumptions_digest: "assumptionsDigest", result_remedy_digest: "remedyDigest",
+        complete: "complete", quarantined_count: "quarantineCount", frontier_age_ms: "frontierAgeMs",
+        late_feature_count: "lateFeatures", latest_training_label_ms: "latestTrainingLabelMs", temporal_leakage: "temporalLeakage",
+        training_count: "trainingRows", holdout_count: "holdoutRows", non_forward_outcome_count: "nonForwardOutcomeCount",
+        holdout_error_nanos: "rmseNanos", result_error_unit: "errorUnit", diagnostics_passed: "diagnosticsPassed",
+      },
+    },
+  },
 })
 
 export const Refuse = Norn.action({
