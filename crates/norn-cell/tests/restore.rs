@@ -111,26 +111,15 @@ async fn refuse_semantic_change(changed: Model, transition: bool) {
     let manifest = exporter.verify().await.expect("verified export");
     assert_eq!(manifest.model_hash, original.model_hash());
     assert!(matches!(
-        {
-            let expected_bindings = {
-                let mut expected = bindings();
-                let source = exporter.verify().await.expect("source identity");
-                expected.extend(
-                    ["cell_id", "cell_identity_format"]
-                        .map(|key| (key.to_owned(), source.bindings[key].clone())),
-                );
-                expected
-            };
-            CellStore::restore_from(
-                &mut exporter,
-                &target,
-                changed,
-                "org_demo/dev",
-                &expected_bindings,
-                StoreOptions::default(),
-            )
-            .await
-        },
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            changed,
+            "org_demo/dev",
+            &manifest.bindings,
+            StoreOptions::default(),
+        )
+        .await,
         Err(RestoreError::ModelDefinitionsMismatch)
     ));
     assert!(!target.exists());
@@ -138,26 +127,15 @@ async fn refuse_semantic_change(changed: Model, transition: bool) {
         std::fs::read_dir(dir.path()).expect("no staging").count(),
         1
     );
-    {
-        let expected_bindings = {
-            let mut expected = bindings();
-            let source = exporter.verify().await.expect("source identity");
-            expected.extend(
-                ["cell_id", "cell_identity_format"]
-                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
-            );
-            expected
-        };
-        CellStore::restore_from(
-            &mut exporter,
-            &target,
-            original.clone(),
-            "org_demo/dev",
-            &expected_bindings,
-            StoreOptions::default(),
-        )
-        .await
-    }
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        original.clone(),
+        "org_demo/dev",
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
     .expect("matching definitions restore");
     let rebuilt = CellStore::open(&target, original, StoreOptions::default()).expect("reopen");
     assert_eq!(
