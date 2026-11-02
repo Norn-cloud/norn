@@ -336,7 +336,7 @@ fn val_unit_action_info_cannot_refuse_or_hide_an_error() {
             serde_json::from_value(document).expect("declarations");
         let action = artifacts
             .iter()
-            .find(|artifact| artifact.kind == norn_ir::ArtifactKind::Action)
+            .find(|artifact| artifact.kind() == norn_ir::ArtifactKind::Action)
             .expect("action");
         let local = action.validate();
         assert_eq!(
