@@ -5706,7 +5706,7 @@
         ],
         "properties": {
           "rounding": {
-            "$ref": "#/components/schemas/NornIrFoldRounding"
+            "$ref": "#/components/schemas/NornIrRounding"
           },
           "scale": {
             "type": "integer",
@@ -5739,15 +5739,6 @@
         "enum": [
           "string",
           "integer"
-        ]
-      },
-      "NornIrFoldRounding": {
-        "type": "string",
-        "enum": [
-          "refuse",
-          "toward_zero",
-          "half_even",
-          "half_away_from_zero"
         ]
       },
       "NornIrGapReason": {
@@ -10588,6 +10579,20 @@
               "decimal"
             ]
           },
+          "perUnit": {
+            "$ref": "#/components/schemas/NornIrUnitRef",
+            "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`."
+          },
+          "rounding": {
+            "type": "string",
+            "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+            "enum": [
+              "refuse",
+              "toward_zero",
+              "half_even",
+              "half_away_from_zero"
+            ]
+          },
           "scale": {
             "type": "integer",
             "format": "uint64",
@@ -11217,6 +11222,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrRounding": {
+        "type": "string",
+        "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
+        "enum": [
+          "refuse",
+          "toward_zero",
+          "half_even",
+          "half_away_from_zero"
+        ]
       },
       "NornIrRuleConditionV1": {
         "oneOf": [

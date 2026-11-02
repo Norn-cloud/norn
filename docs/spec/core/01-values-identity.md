@@ -8,7 +8,7 @@ Reuse `PropertyType`, `PropertyConstraints`, `DecimalLiteral`, `UnitRef`, `Runti
 
 | Target semantic record | Required fields and constraints |
 |---|---|
-| Value contract | `type: PropertyType`, `constraints: PropertyConstraints`, unit and scale derived solely from `type` (`PropertyType::Decimal` requires scale), `rounding?: enum(exact, midpoint_away_from_zero, half_even)`; arithmetic declares a rounding site, never ambient locale. |
+| Value contract | `type: PropertyType`, `constraints: PropertyConstraints`, unit and scale derived solely from `type` (`PropertyType::Decimal` requires scale), `rounding` derived solely from the optional shared `PropertyType::Decimal.rounding` (`Rounding`, default `refuse`); arithmetic declares a rounding site, never ambient locale. |
 | Object identity | `scope: Scope`, `id: opaque stable ID`, `created_under: Pin`; independent of mutable business keys and concrete subtype labels. |
 | Key binding | `object_id`, `key: KeySpec`, `canonical_components: [RuntimeValue]`, `valid_from`, `valid_to?`, `recorded_at`, `source_aliases: [Alias]`; uniqueness domain is explicit root type + scope + key name. |
 | Alias | `connector_instance`, `source_type`, `source_key`, `object_id`, valid/recorded intervals; source IDs cannot become native authority. |
@@ -20,6 +20,17 @@ Definition identity is exact artifact/version/digest plus stable member ID. Rena
 Temporal construction accepts either local wall time with its pinned calendar/timezone version and explicit `dst_policy` (reject, earlier or later), or an already-resolved UTC `effective_at`. Local construction resolves once to the UTC instant; ambiguous local time without a policy refuses. Persist that resolved instant with the temporal pins. Replay reuses the resolved UTC instant rather than resolving the wall time again under current timezone rules.
 
 The initial unit vocabulary is the ordinary pinned `core.units` pack, not a kernel allowlist. Its `core.units.code` enum admits `g`, `mg`, `kg`, `1`, `%`, `[ppth]`, `{each}`, `s`, `min`, `h`, `d` and `wk`. Each unit has a value type containing its fixed code, dimension and positive exact rational factor to gram, unity, each or second. Count remains distinct from dimensionless values. The pack provenance pins UCUM essence 2.2 and its source digest; currencies remain ISO 4217 money. Full UCUM and QUDT admission are deferred to #351. Selecting another unit descriptor refuses; conversion requires an explicit declared expression and rounding site. Catalog membership alone does not establish arithmetic compatibility.
+The Decimal wire declaration accepts optional `rounding` using the shared `Rounding` modes (`refuse`, `toward_zero`, `half_even`, `half_away_from_zero`); omission means exact/refuse. The declared scale is the sole result-scale authority at a rounding site. The Norn-owned rescale adapter delegates to `ScaledArithmetic` at scales 0–18; the existing exact storage/transport range remains 0–28. Until expression/store binding is qualified, artifact admission refuses non-refuse declarations as `core.values.inexact`: wire decoding alone does not activate a rounding policy.
+
+The declaration adapter is checked against generated signed-integer references. A production-core Kani harness covers all u32 scale derivations and fixed full-width coefficient/decimal overflow witnesses; this scope does not cover IR decoding, adapter parsing or the remaining expression/store binding.
+
+Within the single `ScaledArithmetic`, exact `+`/`−` derive the maximum operand scale, `×` derives their sum and comparisons align scales exactly, refusing a derived scale above 18 or coefficient overflow; division, rescale and `round` require an explicit result scale and rounding at a destination Decimal or `round(x, n, mode)` site.
+
+The explicit exact-expression runtime uses this same VM/core, retains intermediate scales and meters refusal paths; division requires a destination with its effective mode, and final Decimal quantization happens only at the destination. Plain Number and OrderedFold keep their existing execution paths. Expression admission, explicit round lowering and store activation remain separate cuts; unsupported operations refuse.
+
+A destination Decimal with omitted rounding supplies effective Refuse just like explicit Refuse: exact quotients are accepted, nonzero remainders refuse, and their type-environment fingerprints canonicalize omission to Refuse; predicates without a destination require explicit round(value, scale, mode) around division.
+
+VAL-ROUND keeps `norn.expr.env/1` bytes and pins unchanged by omitting canonical Refuse, adding a rounding field only for newly admitted non-default policies that strict older decoders reject; a version bump is required only when existing bytes or their meaning change.
 
 ## Evaluation and enforcement
 
@@ -68,3 +79,10 @@ At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `ru
 **VAL-DECIMAL-BIND-1:** An interface `decimal-binding` member obtains its exact unit and scale solely from the implementing type's concrete Decimal declaration, and same-group members require identical units/scales; missing bindings refuse `core.values.unit_binding_required`, mismatches refuse `core.values.unit_mismatch`, with no scalar or sibling-unit fallback.
 
 **VAL-DECIMAL-SCALE-1:** Decimal member checks recurse through stored Records. The shared commit integrity check applies the existing resolved Decimal runtime value validator, including declared scale and bounds, before any proposed writes/events/outbox effects become visible. Balanced values `100 = 99.1999 + 0.8001` refuse at scale 3; exact representable values and insignificant trailing zeros admit. Generated balanced decimal partitions check this boundary independently of conservation arithmetic.
+The shared type checker marks actual Decimal reads and declared destinations; typed consumer admission admits derived exact predicates and, within the exact profile, rejects destination-free division or unsupported inexact functions as `core.values.inexact`, and the typed consumer API binds that admission and the shared exact VM to the same environment and source. Structured Decimal destinations refuse until member-wise runtime binding is available. Kernel invariant binding follows in its own cut. Other consumer/store activation and explicit round lowering remain separate cuts.
+
+VAL-ENV binds `currency_source` in new `norn.expr.env/2` admissions; retained receipts and pins select explicit historical `/1` recomputation, while relabelling `/1` hashes as `/2` refuses (migration: re-admit for `/2`, never rewrite an old pin).
+
+VAL-UNIT admits same-code addition, subtraction and comparison, scalar multiplication and same-code quantity division to a scalar; a numeric literal inherits the sole quantity unit with an explanation diagnostic naming that unit, while declared unitless operands, mixed codes, compound units and inverse units refuse until #351.
+
+VAL-RATE is a Decimal refinement with mandatory `currencySource` and `perUnit`, no quantity `unit`, and one declared scale/rounding: Rate<C,U> × Quantity<U> → Money<C>, Money<C> ÷ Quantity<U> → Rate<C,U>, and same-type comparison/addition/subtraction are the bounded contract; all other compound operations refuse, multiplication stores at the destination Money scale/rounding (Refuse by default), and env `/2` fingerprints both bindings while `/1` refuses rates.

@@ -67,6 +67,9 @@ declare module "@norn/authoring" {
 
     function decimal(scale: number, options?: { readonly unit?: UnitRef } | { readonly currency: string }): Schema.Finite
 
+    /** VAL-RATE: a typed currency-per-unit decimal; general compound units are not admitted. */
+    function rate(scale: number, options: { readonly currency: string; readonly perUnit: UnitRef; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
+
     /**
      * A shared property type by name (EntityIR `ref`): a Norn Core registry
      * value type such as `iso4217.currency_code` or `iso3166.alpha2`, or a

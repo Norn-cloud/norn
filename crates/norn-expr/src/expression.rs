@@ -77,7 +77,116 @@ impl Expression {
     /// remaining units are spent.
     #[must_use]
     pub fn evaluate_metered(&self, context: &Value, budget: EvaluationBudget) -> EvaluationAttempt {
+        self.evaluate_with_meter(context, &Meter::new(budget.units()))
+    }
+
+    /// VAL-ROUND: check the shared type grammar and the declared exact-site profile.
+    ///
+    /// # Errors
+    /// Returns structural/type findings or refusals from the exact arithmetic profile.
+    pub fn check_typed(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
+        crate::check::check_typed_expression(self, env, expected)
+    }
+
+    /// VAL-EXACT-1 / VAL-ROUND: bind admission and execution to the same source
+    /// and declared environment; plain Number retains its existing evaluator.
+    #[must_use]
+    pub fn evaluate_typed_metered(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> EvaluationAttempt {
+        let checked = match self.check_typed(env, expected) {
+            Ok(checked) => checked,
+            Err(found) => {
+                return EvaluationAttempt {
+                    result: Err(ExprError::Compile {
+                        message: found
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("; "),
+                    }),
+                    units_used: 0,
+                };
+            }
+        };
+        if checked.uses_exact_arithmetic() {
+            self.evaluate_exact_site(
+                context,
+                budget,
+                crate::check::decimal_destination(expected).as_ref(),
+                matches!(expected, crate::Type::Optional(_)),
+            )
+        } else {
+            self.evaluate_metered(context, budget)
+        }
+    }
+
+    /// VAL-EXACT-1 / VAL-ROUND: use exact intermediates and an optional destination.
+    /// A destination supplies its declared mode, defaulting to exact/refuse.
+    #[must_use]
+    pub fn evaluate_exact_metered(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        site: Option<&norn_ir::PropertyType>,
+    ) -> EvaluationAttempt {
+        self.evaluate_exact_site(context, budget, site, false)
+    }
+
+    fn evaluate_exact_site(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        site: Option<&norn_ir::PropertyType>,
+        nullable: bool,
+    ) -> EvaluationAttempt {
         let meter = Meter::new(budget.units());
+        let result = (|| {
+            let profile = match site {
+                Some(norn_ir::PropertyType::Decimal {
+                    scale, rounding, ..
+                }) => Some(crate::convert::scaled_site(
+                    scale.0,
+                    rounding.unwrap_or(norn_ir::Rounding::Refuse),
+                )?),
+                None => None,
+                Some(_) => {
+                    return Err(ExprError::Evaluation {
+                        message: "exact site must be a declared Decimal".to_owned(),
+                    });
+                }
+            };
+            let evaluated =
+                self.evaluate_with_meter(context, &meter.with_exact_arithmetic(profile));
+            let mut evaluated = evaluated.result?;
+            if nullable && evaluated.value == Value::Null {
+                return Ok(evaluated);
+            }
+            if let Some(site) = site {
+                let Value::Number(number) = &evaluated.value else {
+                    return Err(ExprError::Evaluation {
+                        message: "Decimal site requires a numeric result".to_owned(),
+                    });
+                };
+                evaluated.value = Value::Number(crate::rescale_decimal(site, number)?);
+            }
+            Ok(evaluated)
+        })();
+        EvaluationAttempt {
+            result,
+            units_used: meter.used().min(meter.limit()),
+        }
+    }
+
+    fn evaluate_with_meter(&self, context: &Value, meter: &Meter) -> EvaluationAttempt {
         let mut vm = VM::new();
         vm.set_meter(Some(meter.clone()));
         let result = (|| {
@@ -110,7 +219,7 @@ impl Expression {
         })();
         EvaluationAttempt {
             result,
-            units_used: meter.used().min(budget.units()),
+            units_used: meter.used().min(meter.limit()),
         }
     }
 }

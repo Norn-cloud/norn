@@ -70,7 +70,13 @@ fn rejects(self_type: &str, source: &str, expected: &Type, code: &str) {
 }
 
 fn decimal(scale: u64) -> Type {
-    Type::Decimal { scale, unit: None }
+    Type::Decimal {
+        scale,
+        unit: None,
+        rounding: norn_ir::Rounding::Refuse,
+        currency_source: None,
+        per_unit: None,
+    }
 }
 
 fn temporal_input_env() -> ZenTypeEnv {
@@ -1612,4 +1618,128 @@ fn generated_accepted_unary_tests_are_total() {
     assert!(missing.is_empty(), "not admitted: {missing:?}");
     assert!(accepted > 200, "only {accepted} accepted");
     assert!(rejected > 1_000, "only {rejected} rejected");
+}
+
+#[test]
+fn val_exact_typed_sites_bind_admission_and_execution() {
+    let env =
+        ZenTypeEnv::input_only(fields([("amount", decimal(3))]), EnvOptions::default()).unwrap();
+    let context = Value::object([(
+        "input",
+        Value::object([("amount", Value::Number("1.005".parse().unwrap()))]),
+    )]);
+    let run = |source: &str, expected: &Type| {
+        Expression::compile(source).unwrap().evaluate_typed_metered(
+            &context,
+            EvaluationBudget::default(),
+            &env,
+            expected,
+        )
+    };
+    assert_eq!(
+        run("input.amount * 0.1 > 0", &Type::Bool)
+            .result
+            .unwrap()
+            .into_value(),
+        Value::Bool(true)
+    );
+    let refused = run("input.amount / 3 > 0", &Type::Bool);
+    assert!(refused.result.is_err());
+    assert_eq!(refused.units_used, 0, "refuse before VM execution");
+    assert!(
+        Expression::compile("input.amount / 3 > 0")
+            .unwrap()
+            .check_typed(&env, &Type::Bool)
+            .unwrap_err()
+            .iter()
+            .any(|d| d.code == "core.values.inexact")
+    );
+    assert!(
+        run("round(input.amount, 2) > 0", &Type::Bool)
+            .result
+            .is_err()
+    );
+    let destination = Type::Decimal {
+        scale: 2,
+        unit: None,
+        rounding: norn_ir::Rounding::HalfAwayFromZero,
+        currency_source: None,
+        per_unit: None,
+    };
+    assert_eq!(
+        run("input.amount", &destination)
+            .result
+            .unwrap()
+            .into_value(),
+        Value::Number("1.01".parse().unwrap())
+    );
+    assert_eq!(
+        run("null", &decimal(2).optional())
+            .result
+            .unwrap()
+            .into_value(),
+        Value::Null
+    );
+    assert!(run("null", &decimal(2)).result.is_err());
+    for source in ["{amount: 1 / 3}", "{amount: 1.0005}"] {
+        let expected = env.variables().get("input").unwrap();
+        assert!(
+            Expression::compile(source)
+                .unwrap()
+                .check_typed(&env, expected)
+                .is_err()
+        );
+        let attempt = run(source, expected);
+        assert!(attempt.result.is_err());
+        assert_eq!(
+            attempt.units_used, 0,
+            "structured Decimal site refuses before execution"
+        );
+    }
+    let plain =
+        ZenTypeEnv::input_only(fields([("amount", Type::Number)]), EnvOptions::default()).unwrap();
+    let expression = Expression::compile("input.amount / 3 > 0").unwrap();
+    assert!(
+        !check_expression_with(
+            &expression,
+            &plain,
+            &Type::Bool,
+            &ResourceLimitProfile::norn_limits_v1()
+        )
+        .unwrap()
+        .uses_exact_arithmetic()
+    );
+    assert!(
+        expression
+            .evaluate_typed_metered(&context, EvaluationBudget::default(), &plain, &Type::Bool)
+            .result
+            .is_ok()
+    );
+}
+
+#[test]
+fn val_exact_declared_division_refuses_zero_instead_of_producing_null() {
+    let env = ZenTypeEnv::input_only(
+        fields([("a", decimal(2)), ("b", decimal(2))]),
+        EnvOptions::default(),
+    )
+    .unwrap();
+    let expression = Expression::compile("input.a / input.b").unwrap();
+    assert!(expression.check_typed(&env, &decimal(2)).is_ok());
+    for (denominator, success) in [("2", true), ("3", false), ("0", false)] {
+        let context = Value::object([(
+            "input",
+            Value::object([
+                ("a", Value::Number("1".parse().unwrap())),
+                ("b", Value::Number(denominator.parse().unwrap())),
+            ]),
+        )]);
+        assert_eq!(
+            expression
+                .evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &decimal(2))
+                .result
+                .is_ok(),
+            success
+        );
+    }
 }

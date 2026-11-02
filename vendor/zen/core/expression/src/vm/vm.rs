@@ -58,14 +58,66 @@ impl VM {
         self.stack.clear();
         self.scopes.clear();
 
+        let policy = self
+            .meter
+            .as_ref()
+            .filter(|meter| !meter.exact_arithmetic())
+            .and_then(|m| m.arithmetic().map(|p| (m, p)));
+        if let Some((meter, profile)) = policy {
+            check_scaled_value(scope.base(), meter, profile)?;
+            for (_, local) in scope.locals() {
+                check_scaled_value(local, meter, profile)?;
+            }
+        }
         #[allow(unused_mut)]
         let mut inner = VMInner::new(bytecode, &mut self.stack, &mut self.scopes);
         {
             inner.meter = self.meter.as_ref();
         }
 
-        inner.run(scope)
+        let output = inner.run(scope)?;
+        if let Some((meter, profile)) = policy {
+            check_scaled_value(&output, meter, profile)?;
+        }
+        Ok(output)
     }
+}
+
+fn check_scaled_value(
+    value: &Variable,
+    meter: &crate::meter::Meter,
+    profile: crate::scaled::ScaledArithmetic,
+) -> VMResult<()> {
+    let mut pending = vec![value.clone()];
+    while let Some(value) = pending.pop() {
+        meter.charge(1).map_err(BudgetExhausted)?;
+        match value {
+            Number(number) => {
+                profile.coefficient(number).map_err(|message| OpcodeErr {
+                    opcode: "ScaledArithmetic".into(),
+                    message: message.into(),
+                })?;
+            }
+            Array(items) => {
+                let items = items.borrow();
+                meter.charge(items.len() as u64).map_err(BudgetExhausted)?;
+                pending.extend(items.iter().cloned());
+            }
+            Object(fields) => {
+                let fields = fields.borrow();
+                meter.charge(fields.len() as u64).map_err(BudgetExhausted)?;
+                pending.extend(fields.values().cloned());
+            }
+            Null | Bool(_) | String(_) => {}
+            Dynamic(_) => {
+                return Err(OpcodeErr {
+                    opcode: "ScaledArithmetic".into(),
+                    message: "unsupported profiled value".into(),
+                })
+            }
+        }
+    }
+    Ok(())
 }
 
 struct VMInner<'parent_ref, 'bytecode_ref> {
@@ -120,6 +172,110 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             self.ip += 1;
 
             self.charge(op)?;
+            if let Some(meter) = self
+                .meter
+                .filter(|m| m.arithmetic().is_some() || m.exact_arithmetic())
+            {
+                let exact = meter.exact_arithmetic();
+                let failure = |message: &str| OpcodeErr {
+                    opcode: "ScaledArithmetic".into(),
+                    message: message.into(),
+                };
+                match op {
+                    Opcode::Add
+                        if exact
+                            && matches!(
+                                (self.peek(1), self.peek(0)),
+                                (Some(String(_)), Some(String(_)))
+                            ) => {}
+                    Opcode::Add | Opcode::Subtract | Opcode::Multiply | Opcode::Divide => {
+                        let (Number(b), Number(a)) = (self.pop()?, self.pop()?) else {
+                            return Err(failure("scaled arithmetic requires numbers"));
+                        };
+                        let name = match op {
+                            Opcode::Add => "Add",
+                            Opcode::Subtract => "Subtract",
+                            Opcode::Multiply => "Multiply",
+                            _ => "Divide",
+                        };
+                        let result = if exact && name != "Divide" {
+                            crate::scaled::ScaledArithmetic::exact_binary(name, a, b)
+                        } else {
+                            let mut profile = meter.arithmetic().ok_or_else(|| {
+                                failure("division requires a declared result scale and rounding")
+                            })?;
+                            if exact {
+                                // VAL-ROUND: only a final result may use destination rounding.
+                                if usize::try_from(self.ip).ok() != Some(self.bytecode.len()) {
+                                    profile.rounding = crate::scaled::Rounding::Refuse;
+                                }
+                                profile.divide(a, b)
+                            } else {
+                                profile.binary(name, a, b)
+                            }
+                        };
+                        self.push(Number(result.map_err(failure)?));
+                        continue;
+                    }
+                    Opcode::In if exact => {
+                        return Err(failure("membership outside the exact arithmetic profile"))
+                    }
+                    Opcode::Negate if exact => {
+                        if let Some(Number(number)) = self.peek(0) {
+                            crate::scaled::ScaledArithmetic::exact_result_scale(
+                                "Add",
+                                number.scale(),
+                                0,
+                            )
+                            .map_err(failure)?;
+                        }
+                    }
+                    Opcode::Equal | Opcode::Compare(_) if exact => {
+                        if let (Some(Number(a)), Some(Number(b))) = (self.peek(1), self.peek(0)) {
+                            crate::scaled::ScaledArithmetic::exact_compare(*a, *b)
+                                .map_err(failure)?;
+                        }
+                    }
+                    Opcode::PushNumber(n) => {
+                        if exact {
+                            crate::scaled::ScaledArithmetic::exact_result_scale(
+                                "Add",
+                                n.scale(),
+                                0,
+                            )
+                            .map_err(failure)?;
+                        } else {
+                            meter
+                                .arithmetic()
+                                .ok_or_else(|| failure("missing arithmetic site"))?
+                                .coefficient(*n)
+                                .map_err(failure)?;
+                        }
+                    }
+                    Opcode::Modulo | Opcode::Exponent | Opcode::CallMethod { .. } => {
+                        return Err(failure("operation outside the scaled arithmetic profile"));
+                    }
+                    Opcode::CallFunction {
+                        kind:
+                            crate::functions::FunctionKind::Internal(
+                                crate::functions::InternalFunction::String,
+                            ),
+                        ..
+                    } if matches!(self.peek(0), Some(String(_))) => {}
+                    Opcode::CallFunction { kind, .. }
+                        if !matches!(
+                            kind,
+                            crate::functions::FunctionKind::Internal(
+                                crate::functions::InternalFunction::Len
+                                    | crate::functions::InternalFunction::Flatten
+                            )
+                        ) =>
+                    {
+                        return Err(failure("function outside the scaled arithmetic profile"));
+                    }
+                    _ => {}
+                }
+            }
 
             match op {
                 Opcode::PushNull => self.push(Null),

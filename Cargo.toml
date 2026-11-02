@@ -68,6 +68,7 @@ zen-engine = { path = "vendor/zen/core/engine", default-features = false }
 # cannot meet a deny lint yet downgrade it locally at the top of lib.rs with
 # a TODO(rust-safety) marker; new code must not add violations.
 [workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 unsafe_code = "forbid"
 unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "warn"

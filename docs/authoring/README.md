@@ -399,3 +399,5 @@ CURRENT codes come from the profile/corpus; semantic rows describe TARGET refusa
 | Unsupported or stale proof evidence | Show unknown; implement the generic semantics or regenerate/check evidence; never lower the required assurance |
 
 CURRENT commands, from `tools/norn-ts`: `bun src/cli.ts profile <file.ts>`, then `bun src/cli.ts check <pack-dir|file.ts> --org ID --env ID` with `NORN_CHECKER_WASM_PKG` built as described in the SDK README. Profile recognition is not admission. Run SDK `bun run typecheck` and `bun test` there, then `bash scripts/ci/core.sh cheap` from the repository root and the required full CI gates in the prescribed test environment; target examples require implementation and correspondence scenarios before they can pass these checks.
+
+`Norn.rate(scale, { currency: "currency", perUnit: { system: "ucum", code: "g" }, rounding: "refuse" })` is CURRENT declaration syntax for the bounded Rate refinement. It emits Decimal `currencySource` plus `perUnit` at one scale; omitted rounding means Refuse. Rate arithmetic remains admission-closed until its bounded typed consumer profile is qualified. General compound units remain TARGET.

@@ -21,6 +21,9 @@ import { type EnvelopeOptions, envelope } from "./envelope.ts"
 
 // ------------------------------------------------------------ value kinds
 
+/** Wire spellings of the shared norn_ir::Rounding contract. */
+export type Rounding = "refuse" | "toward_zero" | "half_even" | "half_away_from_zero"
+
 export type TextFormat = "email" | "uri" | "uuid"
 export type TimezonePolicy = "utc" | "offset"
 export interface UnitRef {
@@ -41,7 +44,7 @@ export interface EnumValue {
 export type PropertyType =
   | { readonly kind: "text"; readonly format?: TextFormat }
   | { readonly kind: "integer" }
-  | { readonly kind: "decimal"; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource }
+  | { readonly kind: "decimal"; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource; readonly perUnit?: UnitRef; readonly rounding?: Rounding }
   | { readonly kind: "decimal-binding"; readonly group: string }
   | { readonly kind: "boolean" }
   | { readonly kind: "timestamp"; readonly timezone: TimezonePolicy }
@@ -61,6 +64,13 @@ export const money = (scale: number, currency: string | CurrencySource): Propert
   currencySource: typeof currency === "string" ? { links: [], property: currency } : { links: [...currency.links], property: currency.property },
 })
 export const boundDecimal = (group: string): PropertyType => ({ kind: "decimal-binding", group })
+/** VAL-RATE: currency per one declared quantity unit at a single exact scale. */
+export const rate = (scale: number, currency: string | CurrencySource, perUnit: UnitRef, rounding?: Rounding): PropertyType => ({
+  kind: "decimal", scale,
+  currencySource: typeof currency === "string" ? { links: [], property: currency } : { links: [...currency.links], property: currency.property },
+  perUnit: { system: perUnit.system, code: perUnit.code },
+  ...(rounding === undefined ? {} : { rounding }),
+})
 export const boolean: PropertyType = { kind: "boolean" }
 export const timestamp = (timezone: TimezonePolicy): PropertyType => ({ kind: "timestamp", timezone })
 export const date: PropertyType = { kind: "date" }

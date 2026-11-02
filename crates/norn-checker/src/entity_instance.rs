@@ -1160,8 +1160,13 @@ fn resolved_kind(resolved: &crate::property_types::ResolvedType<'_>) -> Effectiv
     }
 }
 
+/// VAL-ROUND: compare effective contracts, including the default refusal mode.
 fn same_effective_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
     match (left, right) {
+        (
+            EffectiveKind::Base(PropertyType::Decimal { .. }),
+            EffectiveKind::Base(PropertyType::Decimal { .. }),
+        ) => kind_narrows(left, right) == Some(true) && kind_narrows(right, left) == Some(true),
         (EffectiveKind::Base(left), EffectiveKind::Base(right)) => match (left, right) {
             (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
                 enum_values(left) == enum_values(right)
@@ -1205,13 +1210,22 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
                 scale: candidate_scale,
                 unit: candidate_unit,
                 currency_source: candidate_currency,
+                rounding: candidate_rounding,
+                per_unit: candidate_per_unit,
             },
             PropertyType::Decimal {
                 scale: previous_scale,
                 unit: previous_unit,
                 currency_source: previous_currency,
+                rounding: previous_rounding,
+                per_unit: previous_per_unit,
             },
-        ) if candidate_unit == previous_unit && candidate_currency == previous_currency => {
+        ) if candidate_per_unit == previous_per_unit
+            && candidate_unit == previous_unit
+            && candidate_currency == previous_currency
+            && candidate_rounding.unwrap_or(norn_ir::Rounding::Refuse)
+                == previous_rounding.unwrap_or(norn_ir::Rounding::Refuse) =>
+        {
             Some(candidate_scale.0 <= previous_scale.0)
         }
         (
@@ -1898,6 +1912,22 @@ mod tests {
             .into_iter()
             .next()
             .expect("one property")
+    }
+
+    #[test]
+    fn val_round_omission_and_explicit_refuse_have_the_same_contract() {
+        for scale in 0..=28 {
+            let omitted = effective_property(
+                serde_json::json!({"id":"amount","type":{"kind":"decimal","scale":scale}}),
+            );
+            let explicit = effective_property(
+                serde_json::json!({"id":"amount","type":{"kind":"decimal","scale":scale,"rounding":"refuse"}}),
+            );
+            for (a, b) in [(&omitted, &explicit), (&explicit, &omitted)] {
+                assert!(a.same_contract(b));
+                assert!(a.narrowing_reasons_from(b).is_empty());
+            }
+        }
     }
 
     #[test]

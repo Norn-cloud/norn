@@ -279,6 +279,7 @@ impl fmt::Display for CostEstimate {
 pub struct CheckedExpression {
     inferred: InferredType,
     cost: CostEstimate,
+    exact: bool,
 }
 
 /// Owned source provenance for a bounded, checked expression's construction.
@@ -294,6 +295,12 @@ pub enum ConstructionSource {
 }
 
 impl CheckedExpression {
+    /// VAL-EXACT-1: the expression reads or produces a declared Decimal.
+    #[must_use]
+    pub const fn uses_exact_arithmetic(&self) -> bool {
+        self.exact
+    }
+
     /// The proved type of the result.
     #[must_use]
     pub const fn inferred(&self) -> &InferredType {
@@ -460,8 +467,15 @@ pub fn check_expression_with_root_bounds(
     limits: &ResourceLimitProfile,
     root_bounds: &BTreeMap<String, RootCostBounds>,
 ) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, Some(root_bounds))
-        .map(|(checked, _)| checked)
+    check_expression_with_sources_and_root_bounds(
+        expr,
+        env,
+        expected,
+        limits,
+        Some(root_bounds),
+        false,
+    )
+    .map(|(checked, _)| checked)
 }
 
 /// Checks an expression with the same bounds and grammar as
@@ -480,7 +494,23 @@ pub fn check_expression_with_sources(
     expected: &Type,
     limits: &ResourceLimitProfile,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None)
+    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None, false)
+}
+
+pub(crate) fn check_typed_expression(
+    expr: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+) -> Result<CheckedExpression, Vec<Diagnostic>> {
+    check_expression_with_sources_and_root_bounds(
+        expr,
+        env,
+        expected,
+        &ResourceLimitProfile::norn_limits_v1(),
+        None,
+        true,
+    )
+    .map(|(checked, _)| checked)
 }
 
 fn check_expression_with_sources_and_root_bounds(
@@ -489,6 +519,7 @@ fn check_expression_with_sources_and_root_bounds(
     expected: &Type,
     limits: &ResourceLimitProfile,
     root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
+    exact_enabled: bool,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
     let source = expr.source();
     let structural = StructuralLimits::NORN_EXPR_4;
@@ -507,9 +538,10 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         );
         if !found.is_empty() {
-            return (None, found, whole, None, None);
+            return (None, found, whole, None, None, false);
         }
         let mut checker = Checker::new(env, metadata, None);
+        checker.exact_math = exact_enabled;
         let expectation = checker.expectation(expected);
         let found = checker.infer(ast, expectation.as_ref());
         let inferred = found.and_then(|ty| checker.representable(&ty, whole));
@@ -519,15 +551,38 @@ fn check_expression_with_sources_and_root_bounds(
                 .estimate(ast)
         });
         let construction = construction_source(ast, metadata, source);
-        (inferred, checker.diagnostics, whole, cost, construction)
+        let exact = checker.exact || expected_exact_type(expected, env);
+        if exact_enabled && exact {
+            checker.admit_exact(ast, expected);
+        }
+        (
+            inferred,
+            checker.diagnostics,
+            whole,
+            cost,
+            construction,
+            exact,
+        )
     });
-    let Some((inferred, mut diagnostics, span, cost, construction)) = outcome else {
+    let Some((inferred, mut diagnostics, span, cost, construction, exact)) = outcome else {
         return Err(vec![Diagnostic {
             code: codes::SYNTAX,
             message: "expression does not parse".to_owned(),
             span: (0, 0),
         }]);
     };
+    // Only declared exact sites use error-on-zero division. Plain Number keeps
+    // the legacy nullable division contract in this same checker.
+    if exact_enabled && !exact {
+        return check_expression_with_sources_and_root_bounds(
+            expr,
+            env,
+            expected,
+            limits,
+            root_bounds,
+            false,
+        );
+    }
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
@@ -553,7 +608,14 @@ fn check_expression_with_sources_and_root_bounds(
         }]);
     }
     let cost = within_budget(cost, limits, span)?;
-    Ok((CheckedExpression { inferred, cost }, construction))
+    Ok((
+        CheckedExpression {
+            inferred,
+            cost,
+            exact,
+        },
+        construction,
+    ))
 }
 
 fn construction_source(
@@ -1025,6 +1087,9 @@ struct Checker<'a> {
     /// The proved type of every inferred node, by address, for the cost
     /// estimate.
     types: HashMap<usize, T>,
+    exact: bool,
+    exact_math: bool,
+    rate: bool,
 }
 
 /// The node inside any number of parentheses.
@@ -1081,7 +1146,32 @@ impl<'a> Checker<'a> {
             scopes: Vec::new(),
             diagnostics: Vec::new(),
             types: HashMap::new(),
+            exact: false,
+            exact_math: false,
+            rate: false,
         }
+    }
+
+    fn admit_exact(&mut self, node: &Node<'_>, expected: &Type) {
+        if self.rate || rate_type(expected) {
+            self.report::<()>(
+                node,
+                "core.values.inexact",
+                "Rate requires the bounded rate consumer profile before activation".to_owned(),
+            );
+        }
+        if expected_exact_type(expected, self.env) && decimal_destination(expected).is_none() {
+            self.report::<()>(
+                node,
+                "core.values.inexact",
+                "structured Decimal destinations require member-wise store binding".to_owned(),
+            );
+        }
+        self.diagnostics.extend(exact_admission(
+            node,
+            self.metadata,
+            decimal_destination(expected).is_some(),
+        ));
     }
 
     fn span(&self, node: &Node<'_>) -> (u32, u32) {
@@ -1573,6 +1663,8 @@ impl<'a> Checker<'a> {
             Some(subject) if name == SUBJECT_VARIABLE => Some(subject),
             _ => self.env.variables().get(name),
         };
+        self.exact |= declared.is_some_and(exact_type);
+        self.rate |= declared.is_some_and(rate_type);
         match declared.map(|ty| lower(ty, depth)) {
             Some(Some(ty)) => Some(ty),
             Some(None) => self.report(node, codes::OPAQUE_READ, format!("`{name}` is opaque")),
@@ -1640,6 +1732,8 @@ impl<'a> Checker<'a> {
                     }
                     FieldSource::Property { .. } | FieldSource::Builtin => depth,
                 };
+                self.exact |= exact_type(&field.ty);
+                self.rate |= rate_type(&field.ty);
                 match lower(&field.ty, depth) {
                     Some(ty) => Some(ty),
                     None => self.report(
@@ -1838,7 +1932,7 @@ impl<'a> Checker<'a> {
                 let bounded_literal =
                     matches!(right, Node::Number(divisor) if divisor.abs() >= 1.into());
                 l.and(r).map(|()| {
-                    if bounded_literal {
+                    if bounded_literal || self.exact_math {
                         T::Number
                     } else {
                         optional(T::Number)
@@ -2310,4 +2404,114 @@ impl<'a> Checker<'a> {
             }
         })
     }
+}
+
+/// VAL-EXACT-1: record references are inspected when their members are read.
+fn exact_type(mut ty: &Type) -> bool {
+    while let Type::Optional(inner) | Type::List(inner) = ty {
+        ty = inner;
+    }
+    matches!(ty, Type::Decimal { .. })
+}
+
+fn rate_type(mut ty: &Type) -> bool {
+    while let Type::Optional(inner) | Type::List(inner) = ty {
+        ty = inner;
+    }
+    matches!(
+        ty,
+        Type::Decimal {
+            per_unit: Some(_),
+            ..
+        }
+    )
+}
+
+fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {
+    let mut pending = vec![ty];
+    let mut visited = BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if exact_type(ty) {
+            return true;
+        }
+        let mut names = Vec::new();
+        ty.records(&mut names);
+        for name in names {
+            if visited.insert(name.clone())
+                && let Some(record) = env.record(&name)
+            {
+                pending.extend(record.fields.values().map(|field| &field.ty));
+            }
+        }
+    }
+    false
+}
+
+pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType> {
+    while let Type::Optional(inner) = ty {
+        ty = inner;
+    }
+    let Type::Decimal {
+        scale,
+        unit,
+        rounding,
+        currency_source,
+        per_unit,
+    } = ty
+    else {
+        return None;
+    };
+    Some(norn_ir::PropertyType::Decimal {
+        scale: norn_ir::WholeNumber(*scale),
+        unit: unit.clone(),
+        rounding: Some(*rounding),
+        currency_source: currency_source.clone(),
+        per_unit: per_unit.clone(),
+    })
+}
+
+/// VAL-ROUND: no information-losing operation enters the exact runtime implicitly.
+pub(crate) fn exact_admission<'n>(
+    root: &'n Node<'n>,
+    metadata: &AstMetadata,
+    destination: bool,
+) -> Vec<Diagnostic> {
+    let mut pending = vec![root];
+    let mut out = Vec::new();
+    while let Some(node) = pending.pop() {
+        let reason = if matches!(
+            node,
+            Node::Binary {
+                operator: Operator::Arithmetic(ArithmeticOperator::Divide),
+                ..
+            }
+        ) && !destination
+        {
+            Some("division requires a declared Decimal destination or explicit round site")
+        } else if matches!(
+            node,
+            Node::Binary {
+                operator: Operator::Comparison(ComparisonOperator::In | ComparisonOperator::NotIn),
+                ..
+            }
+        ) {
+            Some("membership is outside the exact arithmetic profile")
+        } else if matches!(node, Node::FunctionCall { kind, .. } if !matches!(kind, FunctionKind::Internal(InternalFunction::Len)))
+        {
+            Some("function requires an explicit supported exact site")
+        } else if matches!(node, Node::Number(value) if value.scale() > 18) {
+            Some("numeric literal exceeds the exact arithmetic scale bound")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            out.push(Diagnostic {
+                code: "core.values.inexact",
+                message: reason.to_owned(),
+                span: metadata.get(&address(node)).map_or((0, 0), |m| m.span),
+            });
+        }
+        bounds::children(node, &mut pending);
+    }
+    out
 }
