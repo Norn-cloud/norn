@@ -33,6 +33,8 @@ impl ActionAuthorizer for Policy {
     fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
         Ok(())
     }
+    fn authorize_read(&self, _: &norn_kernel::ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> { Ok(()) }
+    fn authorize_read_type(&self, _: &norn_kernel::ActionReadTypeAuthzRequest<'_>) -> Result<(), ActionDenial> { Ok(()) }
 }
 fn pin(a: &ArtifactEnvelope) -> InterpretationEndpoint {
     InterpretationEndpoint {
@@ -176,6 +178,8 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
         },
     );
     all.extend([pack, app]);
+    let findings = norn_checker::check_artifact_set(&all, &context());
+    assert!(findings.is_empty(), "valid baseline: {findings:?}");
     all
 }
 fn context() -> norn_checker::EntityArtifactSetContext<'static> {

@@ -3069,6 +3069,7 @@ fn validate_business_pack_payload(
                     "provides",
                     "artifacts",
                     "instances",
+                    "typeParameters",
                 ],
                 "payload",
                 diagnostics,

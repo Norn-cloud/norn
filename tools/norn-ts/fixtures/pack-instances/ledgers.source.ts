@@ -38,20 +38,22 @@ export const CurrencyLaw = Norn.law({
   law: { lawVersion: "0.1", id: "demo.ledger.usd", owner: "demo", severity: "error", rationale: "Currency constraints apply to the monetary instance only.", provenance: { source: "authoring_sdk", sourcePath: "tools/norn-ts/fixtures/pack-instances/ledgers.source.ts" }, scope: { root: { kind: "entity", id: "demo.UsdLedger" }, objectTypes: ["demo.UsdLedger"] }, subject: "demo.UsdLedger", modality: { kind: "always" }, response: { kind: "invariant", objectType: "demo.UsdLedger", invariantId: "usd_currency" } },
   dependencies: [{ artifactId: "demo.UsdLedger.interface", kind: "entity", version: "1.0.0", required: true }],
 })
-const UsdInput = Schema.Struct({ id: Schema.String, ledger_id: Schema.Literals(["ledger-usd"]), from_account: Schema.String, to_account: Schema.String, currency: Schema.Literals(["USD"]), debit: Schema.Finite, credit: Schema.Finite })
-const FineInput = Schema.Struct({ id: Schema.String, ledger_id: Schema.Literals(["ledger-fine"]), from_account: Schema.String, to_account: Schema.String, debit: Schema.Finite, credit: Schema.Finite })
+const UsdInput = Schema.Struct({ id: Schema.String, ledger_id: Schema.String, from_account: Schema.String, to_account: Schema.String, currency: Schema.String, debit: Schema.Finite, credit: Schema.Finite })
+const FineInput = Schema.Struct({ id: Schema.String, ledger_id: Schema.String, from_account: Schema.String, to_account: Schema.String, debit: Schema.Finite, credit: Schema.Finite })
 export const PostUsd = Norn.action({
   id: "demo.ledger.post_usd", title: "Post USD transfer", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  slice: [{ name: "from", type: UsdAccount, key: { property: { from: "input", property: "from_account" } } }, { name: "to", type: UsdAccount, key: { property: { from: "input", property: "to_account" } } }],
   createLinks: [{ link: "from", targetType: UsdAccount, targetIdField: "from_account" }, { link: "to", targetType: UsdAccount, targetIdField: "to_account" }],
   input: UsdInput, output: Schema.Struct({ id: Schema.String }), writes: [{ type: UsdTransfer, change: "created" }],
   effect: { kind: "upsert_input_object", type: UsdTransfer, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
 export const PostFine = Norn.action({
   id: "demo.ledger.post_fine", title: "Post fine-gram transfer", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  slice: [{ name: "from", type: FineAccount, key: { property: { from: "input", property: "from_account" } } }, { name: "to", type: FineAccount, key: { property: { from: "input", property: "to_account" } } }],
   createLinks: [{ link: "from", targetType: FineAccount, targetIdField: "from_account" }, { link: "to", targetType: FineAccount, targetIdField: "to_account" }],
   input: FineInput, output: Schema.Struct({ id: Schema.String }), writes: [{ type: FineTransfer, change: "created" }],
   effect: { kind: "upsert_input_object", type: FineTransfer, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
 
-export const OpenUsd = Norn.action({ id: "demo.ledger.open_usd", title: "Open USD account", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true, input: Schema.Struct({ id: Schema.String, ledger_id: Schema.Literals(["ledger-usd"]), currency: Schema.Literals(["USD"]) }), output: Schema.Struct({ id: Schema.String }), writes: [{ type: UsdAccount, change: "created" }], effect: { kind: "upsert_input_object", type: UsdAccount, objectIdField: "id", writeMode: { kind: "create_only" } } })
-export const OpenFine = Norn.action({ id: "demo.ledger.open_fine", title: "Open fine-gram account", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true, input: Schema.Struct({ id: Schema.String, ledger_id: Schema.Literals(["ledger-fine"]) }), output: Schema.Struct({ id: Schema.String }), writes: [{ type: FineAccount, change: "created" }], effect: { kind: "upsert_input_object", type: FineAccount, objectIdField: "id", writeMode: { kind: "create_only" } } })
+export const OpenUsd = Norn.action({ id: "demo.ledger.open_usd", title: "Open USD account", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true, input: Schema.Struct({ id: Schema.String, ledger_id: Schema.String, currency: Schema.String }), output: Schema.Struct({ id: Schema.String }), writes: [{ type: UsdAccount, change: "created" }], effect: { kind: "upsert_input_object", type: UsdAccount, objectIdField: "id", writeMode: { kind: "create_only" } } })
+export const OpenFine = Norn.action({ id: "demo.ledger.open_fine", title: "Open fine-gram account", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true, input: Schema.Struct({ id: Schema.String, ledger_id: Schema.String }), output: Schema.Struct({ id: Schema.String }), writes: [{ type: FineAccount, change: "created" }], effect: { kind: "upsert_input_object", type: FineAccount, objectIdField: "id", writeMode: { kind: "create_only" } } })
