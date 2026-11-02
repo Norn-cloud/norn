@@ -24,13 +24,9 @@ def git(root, *args, check=True):
 
 def read(root, revision, path):
     result = git(root, "show", f"{revision}:{path}", check=False)
-    if result.returncode:
-        if revision.startswith(":"):
-            return MISSING
-        if git(root, "ls-tree", revision, "--", path).stdout:
-            raise ValueError(f"cannot read {revision}:{path}")
-        return MISSING
-    return result.stdout
+    if result.returncode and not revision.startswith(":") and git(root, "ls-tree", revision, "--", path).stdout:
+        raise ValueError(f"cannot read {revision}:{path}")
+    return MISSING if result.returncode else result.stdout
 
 
 def merge(base, current, proposed):
@@ -126,6 +122,10 @@ def migrate(root, base, head):
             raise ValueError("registry file modes cannot be mapped")
     if any(p == COVERAGE + ".json" or p.startswith(DIAGNOSTICS + "/") or (p.startswith(COVERAGE + "/") and not re.fullmatch(COVERAGE + r"/subsystems/[a-z0-9][a-z0-9-]*\.json", p)) for p in changed):
         raise ValueError("only legacy subsystem deltas can be mapped")
+    for path in changed:
+        records = [read(root, revision, RECORDS + path + ".json") for revision in (base, head)]
+        if all(raw is not MISSING for raw in records) and len({json.dumps({k: v for k, v in object_bytes(raw).items() if k != "sha256"}, sort_keys=True) for raw in records}) != 1:
+            raise ValueError("non-hash legacy provenance changes need manual mapping")
     plan = {}
     def current(path):
         target = root / path
