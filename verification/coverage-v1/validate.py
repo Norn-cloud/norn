@@ -427,10 +427,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
     merge_runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
-        admitted = {"ubuntu-24.04"}
-        if name in {"core", "plan", "test", "full"}:
-            admitted.add(merge_runner)
-        require(isinstance(job.get("runs-on"), str) and job["runs-on"] in admitted,
+        expected_runner = merge_runner if name in {"core", "plan", "test", "full"} else "ubuntu-24.04"
+        require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve merge-only Boat opt-in and hosted fallback")
     cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
