@@ -156,7 +156,7 @@ fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
         || !plan.goals().any(|(_, guards)| guards.len() > 1)
         || !plan.laws().iter().any(|instance| {
             instance.law_digest == law_pin.sha256
-                && instance.subject.artifact.artifact_id == target.artifact_id
+                && instance.subject.artifact_id == target.artifact_id
         })
     {
         return Err("additive overlay did not retain core guard goals".into());
