@@ -209,6 +209,8 @@
     "vendor/zen/core/expression/src/functions/registry.rs",
     "verification/stripmine-2026-08-22/models/active-artifact-authority.qnt",
     "verification/stripmine-2026-08-22/models/artifact-promotion.qnt",
-    "crates/norn-checker/src/obligations/overlay.rs"
+    "crates/norn-checker/src/obligations/overlay.rs",
+    "crates/norn-checker/src/obligations/smt.rs",
+    "crates/norn-checker/tests/smt_dispatch.rs"
   ]
 }

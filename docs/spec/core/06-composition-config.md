@@ -85,3 +85,5 @@ Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, 
 3. Add stable generic instance/type-unit binding admission, then explicit import/export/alias conformance.
 4. Upgrade governed parameter exact typing and scope/interval resolution, then PARAM-TAX commit history tests with 01/04.
 5. Add migration plan coverage for states/timers/commands, then atomic activation, then MIGRATE-FLIGHT and rollback/restatement tests with 08.
+
+`SMT-RESULT-1`: the host obligation dispatcher binds the exact SMT-LIB2 digest to the observed pinned Z3 version/digest and a declared subprocess timeout. Missing tools, crashes, timeout, unsupported logic and malformed output yield `unknown`, never `unsat`. Tool installation and its expected digest are trusted immutable host configuration. Solver answers alone grant no admission or liveness proof.
