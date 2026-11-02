@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.link_override_widens_cardinality",
+  "message": "link {link} overrides the one {owner} declares with a wider cardinality; an override may only narrow (many to one, optional to required)",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.mutable_identity",
+  "message": "{what} {value} is not a content digest (sha256:<64 hex>); a tag, URI, or object key is never an identity",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

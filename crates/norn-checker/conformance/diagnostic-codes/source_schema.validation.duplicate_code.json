@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.duplicate_code",
+  "message": "code set {id} is empty or lists {value} twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

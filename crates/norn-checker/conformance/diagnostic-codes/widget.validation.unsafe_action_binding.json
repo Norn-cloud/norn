@@ -1,0 +1,7 @@
+{
+  "code": "widget.validation.unsafe_action_binding",
+  "message": "action binding must target a Norn action or process command, not a raw mutation",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

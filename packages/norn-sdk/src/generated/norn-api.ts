@@ -571,6 +571,8 @@ export interface components {
          *     (T3-LIFE-3, #2867).
          */
         NornIrActionEffectProgramOneOf1: {
+            /** @description Bind a host-authenticated Function result before firing the transition. */
+            acceptReceipt?: components["schemas"]["NornIrReceiptAcceptance"];
             entityArtifactId: string;
             entityArtifactVersion: string;
             /** @enum {string} */
@@ -1590,6 +1592,14 @@ export interface components {
          * @enum {string}
          */
         NornIrDiagnosticSeverity: "error" | "warning" | "info";
+        /**
+         * @description A content digest, `sha256:<64 lower-case hex>`.
+         *
+         *     Decoding accepts any string so that admission can report a mutable
+         *     identity (a tag, URI, or object key) as a finding;
+         *     [`Digest::is_well_formed`] is the rule.
+         */
+        NornIrDigest: string;
         /** @description A property reached by zero or more declared directional link roles. */
         NornIrDimensionPath: {
             /** @description Forward or inverse roles, in traversal order; empty means the root object. */
@@ -4281,6 +4291,23 @@ export interface components {
         NornIrProposalMode: "preview";
         /** @enum {string} */
         NornIrProvenanceSource: "authoring_sdk" | "agent" | "migration" | "import" | "system";
+        /** @description RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results. */
+        NornIrReceiptAcceptance: {
+            /** @description Writable text property receiving the checked receipt digest. */
+            digestProperty: string;
+            /** @description Exact admitted Function manifest the host must authenticate. */
+            manifestDigest: string;
+            /** @description Required string input member naming the immutable receipt digest. */
+            referenceField: string;
+            resultBindings: components["schemas"]["NornIrReceiptAcceptancePropertyResultBindings"];
+        };
+        /**
+         * @description Writable target property to accepted result member. Target property
+         *     types govern decoding; action input supplies none of these values.
+         */
+        NornIrReceiptAcceptancePropertyResultBindings: {
+            [key: string]: components["schemas"]["NornIrPropertyId"];
+        };
         /**
          * @description One required member of a closed record. A nullable member must still be
          *     present, with an explicit null when it has no value.

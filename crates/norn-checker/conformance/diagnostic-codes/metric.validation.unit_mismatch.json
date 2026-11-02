@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.unit_mismatch",
+  "message": "Ratio operand units and currencies must agree.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

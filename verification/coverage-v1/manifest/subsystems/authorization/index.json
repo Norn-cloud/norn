@@ -1,0 +1,61 @@
+{
+  "obligations": {
+    "$entries": "obligations"
+  },
+  "obligationClaims": {
+    "$entries": "obligationClaims"
+  },
+  "runtime": {
+    "status": "missing",
+    "artifacts": {
+      "$entries": "runtime.artifacts"
+    },
+    "commands": {
+      "$entries": "runtime.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "runtime.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "runtime.resultArtifacts"
+    }
+  },
+  "model": {
+    "status": "bounded_model_checked",
+    "bound": "Apalache depth 8 over the general one-principal capability/owner transition model plus a dedicated commit-authorization model with Boolean exact-binding groups, policy/resource versions 1..4, authorization epochs 1..4, logical time 1..4, revocation/policy/resource changes, optional expiry, and at most one logical commit; plus exhaustive per-step None/Some(A)/Some(B) combinations for tenant, workspace, environment, business unit, and agent session to depth 4",
+    "artifacts": {
+      "$entries": "model.artifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "model.resultArtifacts"
+    },
+    "commands": {
+      "$entries": "model.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "model.generatedArtifacts"
+    }
+  },
+  "proof": {
+    "status": "partial",
+    "scope": "mixed concrete extracted decision and independent references",
+    "artifacts": {
+      "$entries": "proof.artifacts"
+    },
+    "commands": {
+      "$entries": "proof.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "proof.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "proof.resultArtifacts"
+    }
+  },
+  "limitations": {
+    "$entries": "limitations"
+  },
+  "sourceFiles": {
+    "$entries": "sourceFiles"
+  }
+}

@@ -642,6 +642,14 @@ pub enum ActionEffectProgram {
         entity_artifact_version: String,
         lifecycle: PropertyId,
         transition: TransitionId,
+        /// Bind a host-authenticated Function result before firing the transition.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::members::present_non_null"
+        )]
+        #[schemars(with = "ReceiptAcceptance")]
+        accept_receipt: Option<ReceiptAcceptance>,
     },
     /// Atomically mutate a parent and its declared ordered child rows.
     /// Membership and order are checked against the host's protected
@@ -664,6 +672,21 @@ pub enum ActionEffectProgram {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         collections: Vec<OwnedCollectionAction>,
     },
+}
+
+/// RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReceiptAcceptance {
+    /// Required string input member naming the immutable receipt digest.
+    pub reference_field: String,
+    /// Exact admitted Function manifest the host must authenticate.
+    pub manifest_digest: function::Digest,
+    /// Writable text property receiving the checked receipt digest.
+    pub digest_property: PropertyId,
+    /// Writable target property to accepted result member. Target property
+    /// types govern decoding; action input supplies none of these values.
+    pub result_bindings: BTreeMap<PropertyId, PropertyId>,
 }
 
 /// Trusted row-level conditions and derivations for one owned collection.

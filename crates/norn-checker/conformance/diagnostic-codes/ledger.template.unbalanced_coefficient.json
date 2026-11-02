@@ -1,0 +1,7 @@
+{
+  "code": "ledger.template.unbalanced_coefficient",
+  "message": "template `{templateId}` has coefficient residual {coefficient} for parameter `{parameterId}`, unit `{unitId}`, layer `{layer}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
