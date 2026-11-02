@@ -34,7 +34,7 @@ from datetime import datetime
 REPO = "Norn-cloud/norn"
 SCHEMA = "norn.ci-frontier/v2"
 WORKFLOW = ".github/workflows/ci-policy.yml"
-RUN_NAME = "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1}', github.event.pull_request.head.sha, github.event.pull_request.updated_at) || github.event_name }}"
+RUN_NAME = "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}"
 RESAMPLES = 2000
 RUNNER = "ubuntu-24.04"
 
@@ -78,15 +78,24 @@ def row(spec):
         raise ValueError("duplicate job identity")
     created = run["created_at"] if attempt == 1 else run["run_started_at"]
     ready = None
-    attribution = re.fullmatch(r"READY ([0-9a-f]{40}) (\S+)", run.get("display_title", ""))
+    attribution = re.fullmatch(r"READY ([0-9a-f]{40}) (\S+) ([0-9a-f]{40})", run.get("display_title", ""))
     if attempt == 1 and run["event"] == "pull_request" and attribution and attribution[1] == run["head_sha"]:
-        # The pinned workflow emits this title only for the triggering READY event.
-        # A previous workflow's arbitrary PR title is not event attribution.
-        content = gh(f"contents/{WORKFLOW}?ref={run['head_sha']}")
-        source = base64.b64decode(content["content"]).decode("utf-8")
-        if "run-name: " + RUN_NAME in source.splitlines():
-            ts(attribution[2])
-            ready = attribution[2]
+        for pr in run.get("pull_requests", []):
+            if pr.get("head", {}).get("sha") != run["head_sha"]:
+                continue
+            try:
+                revision = gh(f"git/ref/pull/{pr['number']}/merge")["object"]["sha"]
+                if revision != attribution[3]:
+                    continue
+                content = gh(f"contents/{WORKFLOW}?ref={revision}")
+                source = base64.b64decode(content["content"]).decode("utf-8")
+                if "run-name: " + RUN_NAME in source.splitlines():
+                    ts(attribution[2])
+                    ready = attribution[2]
+                    break
+            except (subprocess.CalledProcessError, KeyError, ValueError, UnicodeError):
+                # Optional attribution must not discard otherwise valid job timings.
+                continue
     entries = []
     for job in jobs:
         start, end = job.get("started_at"), job.get("completed_at")
@@ -231,25 +240,35 @@ def self_test():
         assert len(collected["jobs"]) == 101 and collected["created_at"] == finish
         summary = attempt_document([collected], [])["summary"]
         assert summary["service_s"] == 0 and summary["job_queue_s"] is None and summary["executing_jobs"] == 0
-    for attempt, name, pinned, expected in (
-        (1, "READY " + "a" * 40 + " " + stamp, True, stamp),
-        (2, "READY " + "a" * 40 + " " + stamp, True, None),
-        (1, "READY " + "a" * 40 + " " + stamp, False, None),
-        (1, "pull_request", True, None),
-        (1, "READY " + "b" * 40 + " " + stamp, True, None),
+    ready_title = "READY " + "a" * 40 + " " + stamp + " " + "c" * 40
+    for attempt, name, pinned, availability, expected in (
+        (1, ready_title, True, "available", stamp),
+        (2, ready_title, True, "available", None),
+        (1, ready_title, False, "available", None),
+        (1, "pull_request", True, "available", None),
+        (1, ready_title.replace("a" * 40, "b" * 40), True, "available", None),
+        (1, ready_title, True, "missing-ref", None),
+        (1, ready_title, True, "missing-source", None),
+        (1, ready_title, True, "moved-ref", None),
     ):
         def ready_api(path):
             if path == f"actions/runs/4/attempts/{attempt}":
                 return {"id": 4, "path": WORKFLOW, "status": "completed", "created_at": finish,
                         "run_started_at": finish, "updated_at": finish, "event": "pull_request",
                         "head_sha": "a" * 40, "conclusion": "success", "display_title": name,
-                        "pull_requests": [{"number": 7}]}
-            if path.startswith("contents/"):
+                        "pull_requests": [{"number": 7, "head": {"sha": "a" * 40}}]}
+            if path == "git/ref/pull/7/merge":
+                if availability == "missing-ref":
+                    raise subprocess.CalledProcessError(1, "gh", stderr="HTTP 404")
+                return {"object": {"sha": ("d" if availability == "moved-ref" else "c") * 40}}
+            if path == "contents/" + WORKFLOW + "?ref=" + "c" * 40:
+                if availability == "missing-source":
+                    raise subprocess.CalledProcessError(1, "gh", stderr="HTTP 404")
                 body = "run-name: " + RUN_NAME if pinned else "name: Public core"
                 return {"content": base64.b64encode(body.encode()).decode()}
             if "/jobs?" in path:
                 return {"jobs": []}
-            raise AssertionError(f"unattributed timeline lookup: {path}")
+            raise AssertionError(f"unattributed timeline or raw-head workflow lookup: {path}")
         with patch.dict(globals(), gh=ready_api):
             assert row(f"4:{attempt}")["ready_at"] == expected
     with patch.dict(globals(), row=lambda spec: {"run_id": int(spec.split(":")[0]), "attempt": int(spec.split(":")[1])}):

@@ -1,5 +1,5 @@
 name: Public core
-run-name: ${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1}', github.event.pull_request.head.sha, github.event.pull_request.updated_at) || github.event_name }}
+run-name: ${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
