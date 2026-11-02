@@ -5688,6 +5688,59 @@
           "A named result composition."
         ]
       },
+      "NornIrFoldArithmetic": {
+        "type": "object",
+        "description": "Arithmetic policy is part of declaration/evidence identity. Ordinary ZEN\ndivision and implicit rounding do not implement this contract.",
+        "required": [
+          "scale",
+          "rounding"
+        ],
+        "properties": {
+          "rounding": {
+            "$ref": "#/components/schemas/NornIrFoldRounding"
+          },
+          "scale": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Quantity-ledger-compatible exact scaled integers; at most 18 places.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrFoldOrderKey": {
+        "type": "object",
+        "description": "One required scalar property of a fold item. All keys ascend; the final\nidentity breaks every tie without consulting input enumeration order.",
+        "required": [
+          "property",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/NornIrFoldOrderKind"
+          },
+          "property": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrFoldOrderKind": {
+        "type": "string",
+        "enum": [
+          "string",
+          "integer"
+        ]
+      },
+      "NornIrFoldRounding": {
+        "type": "string",
+        "enum": [
+          "refuse",
+          "toward_zero",
+          "half_even",
+          "half_away_from_zero"
+        ]
+      },
       "NornIrGapReason": {
         "type": "string",
         "description": "Why a target member is not mapped.",
@@ -6702,6 +6755,10 @@
           "key": {
             "type": "string",
             "description": "Key of the referenced decision graph: the `artifactId` of a `RuleIR` v2\nrule that the envelope declares as a required `rule` dependency. The\nchecker resolves it and bounds the sub-decision closure (T3-DEC-1)."
+          },
+          "orderedFold": {
+            "$ref": "#/components/schemas/NornIrOrderedFold",
+            "description": "Bounded ordered application of this existing sub-decision. Execution\nremains refused until the ordered-fold semantics profile is supported."
           },
           "outputPath": {
             "type": [
@@ -9783,6 +9840,76 @@
           "deprecated",
           "superseded"
         ]
+      },
+      "NornIrOrderedFold": {
+        "type": "object",
+        "description": "A deterministic collection derivation through an existing RuleIR helper.\nThe helper's input is exactly `{accumulator, item, index}` and its output\nis the next accumulator. Residuals and provenance are ordinary declared\naccumulator fields; the evaluator does not interpret their names.",
+        "required": [
+          "semanticsVersion",
+          "order",
+          "identity",
+          "itemSchema",
+          "accumulatorSchema",
+          "initial",
+          "maxItems",
+          "maxAccumulatorBytes",
+          "arithmetic"
+        ],
+        "properties": {
+          "accumulatorSchema": {
+            "$ref": "#/components/schemas/NornIrOrderedFoldPropertyAccumulatorSchema"
+          },
+          "arithmetic": {
+            "$ref": "#/components/schemas/NornIrFoldArithmetic"
+          },
+          "identity": {
+            "type": "string",
+            "description": "The last order key; must be a unique, stable string identity."
+          },
+          "initial": {
+            "type": "string",
+            "description": "Exact expression evaluated once against the node input."
+          },
+          "itemSchema": {
+            "$ref": "#/components/schemas/NornIrOrderedFoldPropertyItemSchema"
+          },
+          "maxAccumulatorBytes": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Canonical encoded byte bound, checked initially and after every step.",
+            "minimum": 0
+          },
+          "maxItems": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "order": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrFoldOrderKey"
+            },
+            "description": "Required, non-null item properties in lexicographic ascending order."
+          },
+          "semanticsVersion": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrOrderedFoldPropertyAccumulatorSchema": {
+        "type": "object",
+        "description": "Closed schema of the initial and every subsequent accumulator.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
+      "NornIrOrderedFoldPropertyItemSchema": {
+        "type": "object",
+        "description": "Closed schema of one input item.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
       },
       "NornIrOrigin": {
         "type": "string",

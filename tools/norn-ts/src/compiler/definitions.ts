@@ -808,9 +808,16 @@ class DefinitionCompiler {
   }
 
   private law(call: ts.CallExpression): L.LawDef {
-    const members = this.meta(call, ["id", "title", "version", "law", "dependencies"])
+    const members = this.meta(call, ["id", "title", "version", "law", "dependencies", "wordings"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
-    return L.law({ id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")), law: this.json(need("law")) as unknown as L.LawIR, dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
+    const law = this.json(need("law")) as unknown as L.LawIR
+    const wordingNode = members.get("wordings")
+    const wordingData = wordingNode ? this.json(wordingNode) : undefined
+    let wordings: L.LawDef["wordings"]
+    try { if (wordingData !== undefined) wordings = L.decodeLawWordings(wordingData) }
+    catch (error) { throw new CompileError("NORN-FLOW-LITERAL", `invalid law wordings: ${String(error)}`, wordingNode ?? call) }
+    if (wordings && Object.keys(wordings).some(id => id !== law.id)) throw new CompileError("NORN-FLOW-LITERAL", "wording key must equal its law ID", wordingNode ?? call)
+    return L.law({ id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")), law, ...(wordings ? { wordings } : {}), dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
   }
 
   private connector(call: ts.CallExpression): C.ConnectorDef {

@@ -655,6 +655,7 @@ impl<'a> TypeCatalog<'a> {
         rule_ref: &DataQualityRuleRef,
     ) -> Result<DataQualityRuleClassification, norn_ir::canonical::CanonicalJsonError> {
         match rule_ref {
+            DataQualityRuleRef::Law { .. } => Ok(DataQualityRuleClassification::Unverified),
             DataQualityRuleRef::Builtin { id, version } => Ok(
                 if (id == PROPERTY_DOMAIN_RULE_ID && self.has_property_domain_rule(rule_ref)?)
                     || is_supported_builtin_rule(id, version)

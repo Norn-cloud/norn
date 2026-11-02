@@ -6,6 +6,7 @@
   ],
   "dev_only_norn": [],
   "third_party": [
+    "http",
     "serde",
     "serde_json",
     "utoipa"

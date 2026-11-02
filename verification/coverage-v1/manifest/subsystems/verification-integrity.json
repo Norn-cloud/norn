@@ -456,6 +456,15 @@
     "crates/norn-checker/src/obligations/induction.rs",
     "scripts/demo/run.sh",
     "scripts/demo/jewelry.source.ts",
-    "crates/norn-checker/examples/jewelry_demo.rs"
+    "crates/norn-checker/examples/jewelry_demo.rs",
+    "scripts/demo/drop-01-authored-laws.sh",
+    "scripts/demo/drop-02-exact-values-units.sh",
+    "scripts/demo/drop-common.sh",
+    "tools/norn-ts/fixtures/stock-parity/scenarios.ts",
+    "tools/norn-ts/src/parity/stock-trace.ts",
+    "tools/norn-ts/test/stock-trace.test.ts",
+    "crates/norn-checker/src/metric/compute/arithmetic.rs",
+    "crates/norn-checker/src/metric/compute/contribution.rs",
+    "verification/query-compute-v1/arithmetic_kani.rs"
   ]
 }

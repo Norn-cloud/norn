@@ -258,6 +258,14 @@
     "verification/ontology/scripts/build_company_commerce_pack.py",
     "verification/ontology/scripts/semantic_check.py",
     "verification/ontology/scripts/validate.py",
-    "verification/ontology/scripts/validate_semantics.py"
+    "verification/ontology/scripts/validate_semantics.py",
+    "crates/norn-checker/tests/demo_measurements.rs",
+    "registry/packs/demo-erpnext/artifacts/demo.erpnext.Measurement.interface.json",
+    "registry/packs/demo-erpnext/artifacts/demo.erpnext.StockEntryMeasurement.entity.json",
+    "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.mapping.json",
+    "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.source.json",
+    "registry/packs/demo-erpnext/measurements.ts",
+    "crates/norn-checker/src/definition_catalog.rs",
+    "crates/norn-checker/tests/definition_catalog.rs"
   ]
 }
