@@ -395,3 +395,10 @@ test("acyclic authoring compiles and extracts canonical IR with false omitted", 
   expect(canonicalJson(compiled.artifacts)).toBe(canonicalJson([built.artifact]))
   if (checker) expect(checker.checkArtifactSet(compiled.artifacts).admitted).toBe(true)
 })
+
+
+test("acceptReceipt syntax lowers reference and result bindings", () => {
+  const result = compileDefinitions(join(TOOL_ROOT, "fixtures/definitions/accept-receipt.source.ts"), { scope, sourcePath: "tools/norn-ts/fixtures/definitions/accept-receipt.source.ts" })
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.artifacts[1]).toMatchObject({ payload: { effectProgram: { acceptReceipt: { referenceField: "receipt", digestProperty: "digest", resultBindings: { score: "score" } } } } })
+})
