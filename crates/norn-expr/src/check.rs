@@ -2416,6 +2416,7 @@ pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType
         scale,
         unit,
         rounding,
+        currency_source,
     } = ty
     else {
         return None;
@@ -2424,7 +2425,7 @@ pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType
         scale: norn_ir::WholeNumber(*scale),
         unit: unit.clone(),
         rounding: Some(*rounding),
-        currency_source: None,
+        currency_source: currency_source.clone(),
     })
 }
 

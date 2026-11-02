@@ -71,3 +71,7 @@ At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `ru
 5. Add governed merge/split plans after 04/06 migration checks; prove old-reference preservation with ID-RENAME extensions.
 
 The shared type checker marks actual Decimal reads and declared destinations; typed consumer admission admits derived exact predicates and, within the exact profile, rejects destination-free division or unsupported inexact functions as `core.values.inexact`, and the typed consumer API binds that admission and the shared exact VM to the same environment and source. Kernel invariant binding follows in its own cut. Other consumer/store activation and explicit round lowering remain separate cuts.
+
+VAL-ENV binds `currency_source` in new `norn.expr.env/2` admissions; retained receipts and pins select explicit historical `/1` recomputation, while relabelling `/1` hashes as `/2` refuses (migration: re-admit for `/2`, never rewrite an old pin).
+
+VAL-UNIT admits same-code addition, subtraction and comparison, scalar multiplication and same-code quantity division to a scalar; a numeric literal inherits the sole quantity unit with an explanation diagnostic naming that unit, while declared unitless operands, mixed codes, compound units and inverse units refuse until #351.

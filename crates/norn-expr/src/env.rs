@@ -56,7 +56,10 @@ pub const TYPE_ENV_ID: &str = "norn.expr.env";
 /// Version of the type-environment format. Bump when existing bytes or their
 /// meaning change, not for a canonically defaulted optional field that occurs
 /// only in newly admitted policies.
-pub const TYPE_ENV_VERSION: u32 = 1;
+pub const TYPE_ENV_VERSION: u32 = 2;
+
+mod version;
+pub use version::TypeEnvVersion;
 
 /// The hash profile the environment content hash is computed under.
 pub const TYPE_ENV_HASH_PROFILE: HashProfile = HashProfile::Norn1;
@@ -91,6 +94,8 @@ pub enum Type {
         scale: u64,
         /// The unit of a quantity, if declared.
         unit: Option<UnitRef>,
+        /// Money currency binding, relative to the value owner.
+        currency_source: Option<norn_ir::metric::DimensionPath>,
         /// Effective destination mode; omitted declarations become Refuse.
         rounding: Rounding,
     },
@@ -167,7 +172,7 @@ impl Type {
         Self::List(Box::new(self))
     }
 
-    fn to_canonical_value(&self) -> JsonValue {
+    fn to_canonical_value(&self, version: TypeEnvVersion) -> JsonValue {
         match self {
             Self::Bool => kind("bool", []),
             Self::Text { format } => match format {
@@ -179,6 +184,7 @@ impl Type {
                 scale,
                 unit,
                 rounding,
+                currency_source,
             } => {
                 let mut fields = vec![("scale", number(*scale))];
                 if let Some(unit) = unit {
@@ -189,6 +195,14 @@ impl Type {
                             ("code", string(&unit.code)),
                         ]),
                     ));
+                }
+                if version == TypeEnvVersion::V2 {
+                    if let Some(source) = currency_source {
+                        fields.push(("currencySource", object([
+                            ("links", JsonValue::Array(source.links.iter().map(|link| string(link.as_str())).collect())),
+                            ("property", string(source.property.as_str())),
+                        ])));
+                    }
                 }
                 if let Some(mode) = rounding.canonical_field() {
                     fields.push(("rounding", string(mode)));
@@ -210,8 +224,8 @@ impl Type {
             ),
             Self::Json => kind("json", []),
             Self::Record(name) => kind("record", [("name", string(name))]),
-            Self::List(item) => kind("list", [("item", item.to_canonical_value())]),
-            Self::Optional(item) => kind("optional", [("item", item.to_canonical_value())]),
+            Self::List(item) => kind("list", [("item", item.to_canonical_value(version))]),
+            Self::Optional(item) => kind("optional", [("item", item.to_canonical_value(version))]),
         }
     }
 
@@ -798,19 +812,23 @@ impl ZenTypeEnv {
     /// The environment as a Norn1 canonical JSON value.
     #[must_use]
     pub fn to_canonical_value(&self) -> JsonValue {
+        self.canonical_value_at_version(TypeEnvVersion::V2)
+    }
+
+    fn canonical_value_at_version(&self, version: TypeEnvVersion) -> JsonValue {
         let records = self
             .records
             .iter()
-            .map(|(name, record)| (name.clone(), record_value(record)))
+            .map(|(name, record)| (name.clone(), record_value(record, version)))
             .collect();
         let variables = self
             .variables
             .iter()
-            .map(|(name, ty)| (name.clone(), ty.to_canonical_value()))
+            .map(|(name, ty)| (name.clone(), ty.to_canonical_value(version)))
             .collect();
         object([
             ("id", string(TYPE_ENV_ID)),
-            ("version", number(u64::from(TYPE_ENV_VERSION))),
+            ("version", number(u64::from(version.number()))),
             (
                 "maxLinkDepth",
                 number(u64::from(self.options.max_link_depth)),
@@ -827,7 +845,15 @@ impl ZenTypeEnv {
     /// [`CanonicalJsonError`] if `norn-canonical` rejects the value (not
     /// expected: the value is strings, integers, and booleans).
     pub fn canonical_json(&self) -> Result<Vec<u8>, CanonicalJsonError> {
-        norn_ir::canonical::serialize(&self.to_canonical_value())
+        self.canonical_json_at_version(TypeEnvVersion::V2)
+    }
+
+    /// VAL-ENV: recompute the selected historical format without upgrading its bytes.
+    ///
+    /// # Errors
+    /// As [`Self::canonical_json`].
+    pub fn canonical_json_at_version(&self, version: TypeEnvVersion) -> Result<Vec<u8>, CanonicalJsonError> {
+        norn_ir::canonical::serialize(&self.canonical_value_at_version(version))
     }
 
     /// Lower-case hex content hash under [`TYPE_ENV_HASH_PROFILE`].
@@ -845,10 +871,18 @@ impl ZenTypeEnv {
     ///
     /// As [`ZenTypeEnv::canonical_json`].
     pub fn reference(&self) -> Result<TypeEnvRef, CanonicalJsonError> {
+        self.reference_at_version(TypeEnvVersion::V2)
+    }
+
+    /// A receipt reference using its explicitly selected environment format.
+    ///
+    /// # Errors
+    /// As [`Self::canonical_json`].
+    pub fn reference_at_version(&self, version: TypeEnvVersion) -> Result<TypeEnvRef, CanonicalJsonError> {
         Ok(TypeEnvRef {
             id: TYPE_ENV_ID.to_owned(),
-            version: TYPE_ENV_VERSION,
-            sha256: self.content_sha256()?,
+            version: version.number(),
+            sha256: TYPE_ENV_HASH_PROFILE.hash_canonical_bytes(&self.canonical_json_at_version(version)?),
         })
     }
 }
@@ -859,7 +893,7 @@ fn first_unknown_record(ty: &Type, records: &BTreeSet<String>) -> Option<String>
     names.into_iter().find(|name| !records.contains(name))
 }
 
-fn record_value(record: &RecordType) -> JsonValue {
+fn record_value(record: &RecordType, version: TypeEnvVersion) -> JsonValue {
     let kind_name = match record.kind {
         RecordKind::Object => "object",
         RecordKind::Interface => "interface",
@@ -881,7 +915,7 @@ fn record_value(record: &RecordType) -> JsonValue {
             };
             (
                 name.clone(),
-                object([("type", field.ty.to_canonical_value()), ("source", source)]),
+                object([("type", field.ty.to_canonical_value(version)), ("source", source)]),
             )
         })
         .collect();
@@ -1539,11 +1573,12 @@ impl<'d, 'e> Derivation<'d, 'e> {
                     scale,
                     unit,
                     rounding,
-                    ..
+                    currency_source,
                 } => Type::Decimal {
                     scale: scale.0,
                     unit: unit.clone(),
                     rounding: Rounding::effective(*rounding),
+                    currency_source: currency_source.clone(),
                 },
                 PropertyType::Boolean {} => Type::Bool,
                 PropertyType::Timestamp { timezone } => Type::Timestamp {

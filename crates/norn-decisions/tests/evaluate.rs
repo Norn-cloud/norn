@@ -1742,10 +1742,24 @@ proptest::proptest! {
 proptest::proptest! {
     #[test]
     fn val_exact_typed_products_preserve_integer_reference(a in -1000_i32..1000, b in -1000_i32..1000) {
-        let env = norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::from([("x".to_owned(), norn_expr::Type::Decimal { scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse })]), norn_expr::EnvOptions::default()).unwrap();
+        let env = norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::from([("x".to_owned(), norn_expr::Type::Decimal { scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse, currency_source: None, })]), norn_expr::EnvOptions::default()).unwrap();
         let context = Value::object([("input", Value::object([("x", Value::Number(format!("{}{}.{:02}", if a<0 {"-"} else {""}, a.abs()/100, a.abs()%100).parse().unwrap()))]))]);
         let expression = norn_expr::Expression::compile(&format!("input.x * {b} > 0")).unwrap();
         let value = expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &norn_expr::Type::Bool).result.unwrap().into_value();
         proptest::prop_assert_eq!(value, Value::Bool(a*b>0));
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_env_currency_source_changes_only_v2_pin(first in "[a-z]{1,12}", second in "[a-z]{1,12}") {
+        use norn_expr::env::TypeEnvVersion::V1;
+        let env = |property: &str| norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::from([("money".to_owned(), norn_expr::Type::Decimal {
+            scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse,
+            currency_source: Some(norn_ir::metric::DimensionPath { links: Vec::new(), property: property.parse().unwrap() }),
+        })]), norn_expr::EnvOptions::default()).unwrap();
+        let (first_env, second_env) = (env(&first), env(&second));
+        proptest::prop_assert_eq!(first_env.reference_at_version(V1).unwrap(), second_env.reference_at_version(V1).unwrap());
+        proptest::prop_assert_eq!(first_env.reference().unwrap() == second_env.reference().unwrap(), first == second);
     }
 }

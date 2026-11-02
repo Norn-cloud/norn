@@ -73,8 +73,7 @@ fn decimal(scale: u64) -> Type {
     Type::Decimal {
         scale,
         unit: None,
-        rounding: norn_ir::Rounding::Refuse,
-    }
+        rounding: norn_ir::Rounding::Refuse, currency_source: None, }
 }
 
 fn temporal_input_env() -> ZenTypeEnv {
@@ -1660,8 +1659,7 @@ fn val_exact_typed_sites_bind_admission_and_execution() {
     let destination = Type::Decimal {
         scale: 2,
         unit: None,
-        rounding: norn_ir::Rounding::HalfAwayFromZero,
-    };
+        rounding: norn_ir::Rounding::HalfAwayFromZero, currency_source: None, };
     assert_eq!(
         run("input.amount", &destination)
             .result

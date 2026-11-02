@@ -222,7 +222,21 @@ fn pretty(bytes: &[u8]) -> String {
 
 #[test]
 fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
-    let receipt = receipt(&registry_layer());
+    let values = registry_layer();
+    let artifacts = envelopes(&values);
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let mut receipt = receipt(&values);
+    assert_eq!(receipt.type_env.as_ref().unwrap().version, 2);
+    receipt.type_env = Some(derive_type_env(&artifacts, &[], &limits).unwrap()
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1).unwrap());
+    let stored = compact(&receipt);
+    let hash = receipt.content_sha256().unwrap();
+    verify_admission_receipt(&stored, &hash, &artifacts, &[], &limits).expect("historical /1 receipt verifies");
+    let mut relabelled: Value = serde_json::from_str(&stored).unwrap();
+    relabelled["typeEnv"]["version"] = json!(2);
+    let relabelled = compact_value(&relabelled);
+    let hash = admission_receipt_sha256(&relabelled).unwrap();
+    assert!(verify_admission_receipt(&relabelled, &hash, &artifacts, &[], &limits).is_err());
     let actual = pretty(&receipt.canonical_json().expect("canonical"));
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN);
     if std::env::var_os(UPDATE_ENV).is_some() {
@@ -251,7 +265,7 @@ fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
     assert_eq!(value["identifierProfile"], IDENTIFIER_ADMISSION_PROFILE);
     assert_eq!(EXPR_PROFILE, norn_expr::check::CHECKER_PROFILE);
     assert_eq!(value["typeEnv"]["id"], norn_expr::TYPE_ENV_ID);
-    assert_eq!(value["typeEnv"]["version"], norn_expr::TYPE_ENV_VERSION);
+    assert_eq!(value["typeEnv"]["version"], 1);
     assert_eq!(value["admitted"], true);
     assert_eq!(value["diagnostics"]["count"], 0);
     assert_eq!(

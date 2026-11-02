@@ -6833,11 +6833,12 @@ fn property_type(property: &EffectiveProperty) -> Option<Type> {
             scale,
             unit,
             rounding,
-            ..
+            currency_source,
         }) => Type::Decimal {
             scale: scale.0,
             unit: unit.clone(),
             rounding: norn_ir::Rounding::effective(*rounding),
+            currency_source: currency_source.clone(),
         },
         EffectiveKind::Base(PropertyType::Boolean {}) => Type::Bool,
         EffectiveKind::Base(PropertyType::Timestamp { timezone }) => Type::Timestamp {
