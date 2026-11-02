@@ -60,3 +60,5 @@ Present: `crates/norn-kernel/src/observations.rs`, `crates/norn-cell/src/{histor
 4. **Demo priority:** #69 point-in-time analytical inputs, recorded regression/forecast receipt and publication guards in separate cuts; ANALYSIS-LEAK plus exact beat-6 regression fixture.
 5. Add world/base pin and scenario clock/outcome fixtures; WORLD-FORK against the real evaluator.
 6. Complete subscription cursor/authority reset, then IVM/full-recompute equivalence with 03, then EN/AR explanations over the same result IDs.
+
+HOST-CONFORMANCE-1 cross-boundary perform/receipt and authenticated publication fixtures live in the non-publishing, tests-only host-conformance crate. Its declared Norn edges are development-only; metrics retains its existing IR/checker boundary and the violation baseline cannot grow.
