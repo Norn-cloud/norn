@@ -2,8 +2,8 @@
 #![allow(clippy::expect_used,clippy::panic,clippy::disallowed_methods,missing_docs,reason="checked typed fixture preparation")]
 use std::{path::PathBuf,sync::OnceLock};
 pub(crate) fn artifacts()->Vec<norn_ir::ArtifactEnvelope> {
-    static FIXTURES:OnceLock<tempfile::TempDir>=OnceLock::new();
-    let dir=FIXTURES.get_or_init(|| {
+    static FIXTURES:OnceLock<Vec<norn_ir::ArtifactEnvelope>>=OnceLock::new();
+    FIXTURES.get_or_init(|| {
         let dir=tempfile::tempdir().expect("fixture directory");
         let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let function=norn_checker::function::admit_function_manifest(&norn_metrics::host::manifest().expect("configured Function")).expect("admitted Function");
@@ -23,7 +23,6 @@ await Bun.write(`${output}/scrap-publication.json`, JSON.stringify([...core.arti
 "#;
         let result=std::process::Command::new("bun").arg("--eval").arg(script).arg(root).arg(dir.path()).arg(function.digest.0).output().expect("typed compiler");
         assert!(result.status.success(),"{}{}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
-        dir
-    });
-    serde_json::from_slice(&std::fs::read(dir.path().join("scrap-publication.json")).expect("compiled declarations")).expect("typed artifacts")
+        serde_json::from_slice(&std::fs::read(dir.path().join("scrap-publication.json")).expect("compiled declarations")).expect("typed artifacts")
+    }).clone()
 }
