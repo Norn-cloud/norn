@@ -491,9 +491,18 @@ fn decision_node(rule_id: &str, node: &JdmNode) -> Result<DecisionNode, Admissio
         JdmNode::SwitchNode { content, .. } => DecisionNodeKind::SwitchNode {
             content: switch_content(content),
         },
-        JdmNode::DecisionNode { content, .. } => DecisionNodeKind::DecisionNode {
-            content: sub_decision_content(content),
-        },
+        JdmNode::DecisionNode { content, .. } => {
+            if content.ordered_fold.is_some() {
+                return Err(AdmissionError::NodeNotAdmitted {
+                    rule_id: rule_id.to_owned(),
+                    node_id: node.id().to_owned(),
+                    node_type: "orderedFold",
+                });
+            }
+            DecisionNodeKind::DecisionNode {
+                content: sub_decision_content(content),
+            }
+        }
         JdmNode::FunctionNode { .. } | JdmNode::CustomNode { .. } => {
             return Err(AdmissionError::NodeNotAdmitted {
                 rule_id: rule_id.to_owned(),
