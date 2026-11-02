@@ -222,7 +222,12 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                     }
                     Opcode::Negate if exact => {
                         if let Some(Number(number)) = self.peek(0) {
-                            crate::scaled::ScaledArithmetic::exact_result_scale("Add", number.scale(), 0).map_err(failure)?;
+                            crate::scaled::ScaledArithmetic::exact_result_scale(
+                                "Add",
+                                number.scale(),
+                                0,
+                            )
+                            .map_err(failure)?;
                         }
                     }
                     Opcode::Equal | Opcode::Compare(_) if exact => {
