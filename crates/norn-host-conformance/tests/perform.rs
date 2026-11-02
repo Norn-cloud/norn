@@ -2,6 +2,7 @@
 #![cfg(target_os="linux")]
 #![allow(clippy::expect_used,clippy::panic,missing_docs,reason="native host correspondence")]
 use norn_metrics::{performer::perform_forecast,host::ForecastSummary,producer::ForecastExport};
+use norn_metrics::temporal::TemporalPlan;
 use norn_ir::{RuntimeValue,function::{FunctionInvocation,FunctionReceipt,FunctionOutcome}};
 
     use norn_cell::{
