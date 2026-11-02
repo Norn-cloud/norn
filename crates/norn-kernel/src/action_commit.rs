@@ -4337,7 +4337,8 @@ fn build_action_commands<X>(
         .map_err(invalid)?;
     let context = ActionExpressionContext {
         value: ExprValue::object([("input", ExprValue::Object(input))]),
-        environment: norn_expr::schema::action_environment(action, None, action.derive.len()).map_err(&invalid)?,
+        environment: norn_expr::schema::action_environment(action, None, action.derive.len())
+            .map_err(&invalid)?,
     };
     action
         .commands
@@ -4527,7 +4528,12 @@ fn evaluate_action_expression(
     remaining_fuel: &mut u64,
 ) -> Result<RuntimeValue, String> {
     let expression = Expression::compile(source).map_err(|error| error.to_string())?;
-    let attempt = expression.evaluate_typed_metered(&context.value, EvaluationBudget::new(*remaining_fuel), &context.environment, &norn_expr::Type::Json);
+    let attempt = expression.evaluate_typed_metered(
+        &context.value,
+        EvaluationBudget::new(*remaining_fuel),
+        &context.environment,
+        &norn_expr::Type::Json,
+    );
     *remaining_fuel = (*remaining_fuel).saturating_sub(attempt.units_used);
     let evaluated = attempt.result.map_err(|error| error.to_string())?;
     expression_value_to_runtime(evaluated.value())
