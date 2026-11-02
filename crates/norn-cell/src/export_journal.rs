@@ -255,7 +255,8 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(self.read().next_commit_seq()?.saturating_sub(1))
     }
 
-    /// Return the immutable export record for one commit, verifying its local Norn1 hash.
+    /// Return a portable record after verifying its hash, events and versioned
+    /// cell identity against the owning store. Unqualified history stays local.
     ///
     /// # Errors
     ///

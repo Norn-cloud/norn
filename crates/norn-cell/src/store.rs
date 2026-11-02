@@ -2248,6 +2248,8 @@ impl<E: SqlEngine> CellStore<E> {
     /// Bind the file to `value` under the identity key `key` (for example
     /// the tenant scope it serves): recorded on first use, and checked on
     /// every later open, so a file is never served under another identity.
+    /// Logical cell keys only validate an existing versioned binding; they
+    /// cannot add an identity or format marker to a legacy file.
     ///
     /// # Errors
     ///
