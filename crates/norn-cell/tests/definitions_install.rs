@@ -5144,8 +5144,12 @@ norn_testkit::proptest::proptest! {
 
 fn measurement_model(artifacts: &[norn_ir::ArtifactEnvelope]) -> Model {
     let (mut objects, mut properties, mut interfaces) = (Vec::new(), Vec::new(), Vec::new());
-    for artifact in artifacts.iter().filter(|a| a.kind() == norn_ir::ArtifactKind::Entity) {
-        let root: norn_ir::EntityRoot = norn_ir::runtime::decode(&artifact.payload.to_json_value()).expect("entity root");
+    for artifact in artifacts
+        .iter()
+        .filter(|a| a.kind() == norn_ir::ArtifactKind::Entity)
+    {
+        let root: norn_ir::EntityRoot =
+            norn_ir::runtime::decode(&artifact.payload.to_json_value()).expect("entity root");
         match root {
             norn_ir::EntityRoot::V2(root) => objects.push(root.object_type),
             norn_ir::EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
@@ -5153,7 +5157,10 @@ fn measurement_model(artifacts: &[norn_ir::ArtifactEnvelope]) -> Model {
             _ => panic!("unexpected fixture entity root"),
         }
     }
-    Model::from_definitions_with_interfaces(&objects, &properties, &interfaces).expect("pack model").with_governing_laws(artifacts).expect("pack laws")
+    Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
+        .expect("pack model")
+        .with_governing_laws(artifacts)
+        .expect("pack laws")
 }
 
 fn measurement_values(purity: &str) -> BTreeMap<String, Value> {
@@ -5173,13 +5180,52 @@ fn purity_quality_host(
 > {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut artifacts: Vec<norn_ir::ArtifactEnvelope> = [
-        "demo.erpnext.StockEntryMeasurement.entity", "demo.erpnext.purity.law",
-        "demo.erpnext.fine_mass_definition.law", "demo.erpnext.Measurement.interface",
-    ].iter().map(|id| serde_json::from_str(&std::fs::read_to_string(root.join(format!("registry/packs/demo-erpnext/artifacts/{id}.json"))).expect("pack artifact")).expect("compiled artifact")).collect();
-    artifacts.extend(["core.value_types.entity", "std.value_types.entity", "core.Agent.interface", "core.AgentRole.interface", "core.Resource.interface", "core.EconomicEvent.interface", "core.Commitment.interface", "core.Hold.interface", "core.LedgerEffect.interface", "core.Claim.interface"].iter().map(|id| serde_json::from_str::<norn_ir::ArtifactEnvelope>(&std::fs::read_to_string(root.join(format!("registry/core/artifacts/{id}.json"))).expect("core artifact")).expect("compiled core")));
-    let findings = norn_checker::check_artifact_set(&artifacts, &norn_checker::EntityArtifactSetContext {
-        registry: &std::collections::BTreeSet::new(), base: &[], tenant: None,
-    });
+        "demo.erpnext.StockEntryMeasurement.entity",
+        "demo.erpnext.purity.law",
+        "demo.erpnext.fine_mass_definition.law",
+        "demo.erpnext.Measurement.interface",
+    ]
+    .iter()
+    .map(|id| {
+        serde_json::from_str(
+            &std::fs::read_to_string(
+                root.join(format!("registry/packs/demo-erpnext/artifacts/{id}.json")),
+            )
+            .expect("pack artifact"),
+        )
+        .expect("compiled artifact")
+    })
+    .collect();
+    artifacts.extend(
+        [
+            "core.value_types.entity",
+            "std.value_types.entity",
+            "core.Agent.interface",
+            "core.AgentRole.interface",
+            "core.Resource.interface",
+            "core.EconomicEvent.interface",
+            "core.Commitment.interface",
+            "core.Hold.interface",
+            "core.LedgerEffect.interface",
+            "core.Claim.interface",
+        ]
+        .iter()
+        .map(|id| {
+            serde_json::from_str::<norn_ir::ArtifactEnvelope>(
+                &std::fs::read_to_string(root.join(format!("registry/core/artifacts/{id}.json")))
+                    .expect("core artifact"),
+            )
+            .expect("compiled core")
+        }),
+    );
+    let findings = norn_checker::check_artifact_set(
+        &artifacts,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &std::collections::BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
     assert!(findings.is_empty(), "{findings:?}");
     let model = measurement_model(&artifacts);
     let mut input = install_input("quality", 1_793_527_260_000, &model);
@@ -5194,13 +5240,21 @@ fn purity_quality_host(
     norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("host")
 }
 
-type MeasurementCell = norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject>;
+type MeasurementCell = norn_cell::SqliteCell<
+    norn_kernel::ObservationEvent,
+    norn_kernel::cell_host::JsonObject,
+    norn_kernel::cell_host::JsonObject,
+>;
 
 fn capture_purity(cell: &mut MeasurementCell, delivery: &str, purity: &str) {
     capture_measurement(cell, delivery, measurement_values(purity));
 }
 
-fn capture_measurement(cell: &mut MeasurementCell, delivery: &str, values: BTreeMap<String, Value>) {
+fn capture_measurement(
+    cell: &mut MeasurementCell,
+    delivery: &str,
+    values: BTreeMap<String, Value>,
+) {
     use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
     use norn_kernel::{
         CellHost, DecisionTurn, FactKey, ObservationId, Observed, Provenance, TypeCatalog, World,
@@ -5227,7 +5281,10 @@ fn capture_measurement(cell: &mut MeasurementCell, delivery: &str, values: BTree
     assert!(!cell.inject(&observed).expect("same source delivery"));
     let pending = cell.observe().expect("observe").expect("pending");
     let model = cell.store().model().clone();
-    let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces()).with_property_types(model.property_types()).with_governing_laws(model.law_artifacts());
+    let catalog = TypeCatalog::new(model.object_types())
+        .with_interfaces(model.interfaces())
+        .with_property_types(model.property_types())
+        .with_governing_laws(model.law_artifacts());
     let key = FactKey::new("demo.erpnext.StockEntryMeasurement", "MEAS-1");
     let slice = load_slice(cell, [key.clone()]).expect("slice");
     let turn = DecisionTurn {
