@@ -20,6 +20,9 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// Core 08 has not retained the source-dispute evidence frontier for this world.
+    #[error("core.world.source_dispute_unqualified")]
+    SourceDisputeWorldUnqualified,
     /// Captured relation/delete output requires a processing profile beyond CP2.
     #[error("unsupported mapping processing profile")]
     UnsupportedMappingProfile,

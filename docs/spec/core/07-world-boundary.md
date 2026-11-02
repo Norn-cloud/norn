@@ -85,6 +85,7 @@ sealed raw-envelope digest and exact source/mapping/definition pins, preserving
 diagnostics and nonconforming records, and issues observed-write authority only
 after cell-owned recomputation matches the pinned bundle
 (`core.boundary.bundle_mismatch` on disagreement).
+CP2 authoritative/governed non-main reads touching a source-disputed or NFC-quarantined subject refuse `core.world.source_dispute_unqualified` until Core 08 retains the source-evidence frontier; they never omit the overlay.
 OBS-EVIDENCE-1 uses NFC only for inbox lookup keys, preserves non-NFC spelling evidence as bytes in a durable “identity normalized; possible collision” finding, and refuses convergence, authoritative promotion and governed reads (rechecked at commit) of every mapped subject in that bucket pending the separate opaque/signed source-byte retention and byte-exact identity bridge.
 
 FEED-CONFLICT implements OBS-EVIDENCE-1 for mapped captures: compare the immutable
