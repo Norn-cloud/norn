@@ -87,7 +87,8 @@ test("wording sidecars retain typed EN/AR slots without altering LawIR", () => {
   expect(() => L.decodeLawWordings({bad:{lawDigest:"0".repeat(64), slots:{scope:text}}})).toThrow()
   const dir = mkdtempSync(join(ROOT, "wording-"))
   try {
-    writeFileSync(join(dir, "law.ts"), L.printLaw(def))
+    const { _tag, ...meta } = def
+    writeFileSync(join(dir, "law.ts"), L.printLaw(meta))
     const pack = compilePack(dir, { ...options, root: join(TOOL_ROOT, "..", "..") })
     if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
     expect(canonicalJson(pack.artifacts)).toBe(canonicalJson([golden]))

@@ -1,11 +1,9 @@
 //! LAW-WORDING-PIN-1: display slots bind to an exact law without changing its semantics.
 use crate::{ArtifactRef, deontic::check_requirement};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, LawIR, deontic::StructuredRequirement, requirement_display::{RequirementLocale, RequirementView}};
-use serde::{Deserialize, Serialize};
 
 /// Compiler-produced display data, admitted separately from executable artifacts.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct LawWordingArtifact {
     /// Closed sidecar format.
     pub format: String,
@@ -28,7 +26,7 @@ pub enum WordingBinding {
     Unverified,
 }
 
-/// A display projection from #322 and its independent binding status.
+/// A shared requirement display projection and its independent binding status.
 #[derive(Debug)]
 pub struct AdmittedWording {
     /// Stale/mismatched law bindings are unverified.
@@ -38,23 +36,18 @@ pub struct AdmittedWording {
 }
 
 /// Refusal to admit malformed display data; this never changes a law.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum WordingError {
     /// The sidecar format, identity or pin is malformed.
-    #[error("law.wording.invalid_document")]
     Document,
     /// The shared display profile refuses the structured requirement.
-    #[error("law.wording.render: {0}")]
     Render(&'static str),
     /// The shared structured-requirement checker refuses its slots.
-    #[error("law.wording.requirement: {0:?}")]
     Requirement(crate::deontic::RequirementRefusal),
     /// Canonical hashing could not establish the referenced identity.
-    #[error("law.wording.pin: {0:?}")]
     Pin(crate::ReceiptError),
     /// The admitted artifact payload cannot decode as a law.
-    #[error("law.wording.encoding: {0}")]
-    Encoding(#[from] serde_json::Error),
+    Encoding(serde_json::Error),
 }
 
 /// LAW-WORDING-PIN-1: stale wording never inherits a current law's assurance.
@@ -73,10 +66,38 @@ pub fn admit_wording(wording: &LawWordingArtifact, law: &ArtifactEnvelope, env: 
     view.slots().map_err(WordingError::Render)?;
     let pin = ArtifactRef::of(law).map_err(WordingError::Pin)?;
     let current: Option<LawIR> = if law.kind() == ArtifactKind::Law {
-        Some(serde_json::from_str(&serde_json::to_string(&law.payload.to_json_value())?)?)
+        Some(serde_json::from_str(&serde_json::to_string(&law.payload.to_json_value()).map_err(WordingError::Encoding)?).map_err(WordingError::Encoding)?)
     } else { None };
     let bound = wording.law_artifact_id == pin.artifact_id && wording.law_sha256 == pin.sha256
         && current.as_ref() == Some(&wording.requirement.norm.law);
-    if bound { check_requirement(&wording.requirement, env).map_err(WordingError::Requirement)?; }
+    match check_requirement(&wording.requirement, env) {
+        Ok(()) => {},
+        // A stale requirement may refer to members absent from the new law's environment.
+        Err(crate::deontic::RequirementRefusal::PredicateType) if !bound => {},
+        Err(error) => return Err(WordingError::Requirement(error)),
+    }
     Ok(AdmittedWording { binding: if bound { WordingBinding::Bound } else { WordingBinding::Unverified }, view })
 }
+
+impl LawWordingArtifact {
+    /// Decode the closed compiler output without expanding the executable IR contract.
+    ///
+    /// # Errors
+    /// Refuses unknown/missing fields, malformed JSON and invalid structured requirements.
+    pub fn parse(input: &str) -> Result<Self, WordingError> {
+        let value: serde_json::Value = serde_json::from_str(input).map_err(WordingError::Encoding)?;
+        let fields = value.as_object().ok_or(WordingError::Document)?;
+        if fields.len() != 5 { return Err(WordingError::Document); }
+        let text = |name| fields.get(name).and_then(serde_json::Value::as_str).map(str::to_owned).ok_or(WordingError::Document);
+        Ok(Self { format: text("format")?, artifact_id: text("artifactId")?,
+            law_artifact_id: text("lawArtifactId")?, law_sha256: text("lawSha256")?,
+            requirement: serde_json::from_value(fields.get("requirement").ok_or(WordingError::Document)?.clone()).map_err(WordingError::Encoding)? })
+    }
+}
+
+impl std::fmt::Display for WordingError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "law.wording.invalid_document: {self:?}")
+    }
+}
+impl std::error::Error for WordingError {}
