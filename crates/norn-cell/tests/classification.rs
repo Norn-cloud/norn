@@ -42,7 +42,7 @@ fn fixture(max_records: u32) -> (Model, InstalledDefinitionInput, Classifier) {
         "namespace":"test", "name":"HighValue", "lifecycle":"draft", "scope":{},
         "provenance":{"source":"system"}, "dependencies":[{"artifactId":"test.Scrap.entity", "version":"1.0.0", "kind":"entity", "required":true}],
         "payload":{"id":"test.HighValue", "version":"1.0.0", "base":{"artifactId":"test.Scrap.entity", "version":"1.0.0",
-            "member":{"kind":"type", "typeName":"test.Scrap"}}, "predicate":"self.fine_g > 100 && self.note == null", "dependencies":[], "bounds":bounds}
+            "member":{"kind":"type", "typeName":"test.Scrap"}}, "predicate":"self.fine_g > 100 and self.note == null", "dependencies":[], "bounds":bounds}
     })).expect("classification");
     let classifier = Classifier::prepare(
         &class,
