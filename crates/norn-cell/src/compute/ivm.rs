@@ -146,22 +146,11 @@ impl IncrementalQuestion {
         Ok(definition_pin)
     }
 
-    fn apply<E: SqlEngine>(
-        &mut self,
-        store: &CellStore<E>,
-        context: QueryContext,
-        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
-    ) -> Result<(), CellError> {
-        let definition_pin = self.check_binding(store, &context)?;
-        let old = &self.result.context;
-        let stale = || refused("core.compute.stale_input");
-        let reader = store.read();
-        let verified=store.verified_head()?;
-        let limits=ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
-        let mut budget=DecodeBudget::new(&limits);
-        let head=if let Some(cutoff)=self.knowledge {super::historical::frame(&reader,cutoff,context.now_ms,&mut budget)?.0} else {verified};
+    fn changed_keys<E:SqlEngine>(&self,store:&CellStore<E>,context:&QueryContext,head:&crate::LedgerHead)->Result<BTreeSet<String>,CellError> {
+        let reader=store.read();let old=&self.result.context;
+        let stale=||refused("core.compute.stale_input");
         let mut changed = BTreeSet::new();
-        if head != self.result.revision {
+        if head != &self.result.revision {
             let next = self
                 .result
                 .revision
@@ -194,6 +183,23 @@ impl IncrementalQuestion {
                 .filter(|id| old.exclusions.get(*id) != context.exclusions.get(*id))
                 .cloned(),
         );
+        Ok(changed)
+    }
+
+    fn apply<E: SqlEngine>(
+        &mut self,
+        store: &CellStore<E>,
+        context: QueryContext,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<(), CellError> {
+        let definition_pin = self.check_binding(store, &context)?;
+        let stale = || refused("core.compute.stale_input");
+        let reader = store.read();
+        let verified=store.verified_head()?;
+        let limits=ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
+        let mut budget=DecodeBudget::new(&limits);
+        let head=if let Some(cutoff)=self.knowledge {super::historical::frame(&reader,cutoff,context.now_ms,&mut budget)?.0} else {verified};
+        let changed=self.changed_keys(store,&context,&head)?;
         let mut history=reader.history_read();
         for id in changed {
             if let Some((_, previous)) = self.contributions.remove(&id) {

@@ -12,7 +12,7 @@ use serde::Serialize;
 pub struct HistoricalQuestionResult {
     /// Historical commit authority; source world/scope remain in the result context.
     pub world:norn_kernel::World,
-    /// Inclusive receipt clock, alongside result.known_as_of's immutable frontier.
+    /// Inclusive receipt clock, alongside `result.known_as_of`'s immutable frontier.
     pub knowledge_time_ms:u64,
     /// Existing exact query result, including effective cutoff and versioned members.
     pub result:QueryResult,

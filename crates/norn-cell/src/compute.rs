@@ -238,10 +238,10 @@ impl<E: SqlEngine> CellStore<E> {
                 &contributions,
             )?;
             Ok(Snapshot {
+                historical_receipt,
                 result,
                 contributions,
                 members,
-                historical_receipt,
             })
         })
     }
