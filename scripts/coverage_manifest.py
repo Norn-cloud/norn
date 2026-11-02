@@ -97,7 +97,8 @@ def _assemble(directory: Path) -> tuple[dict[str, Any], list[Path]]:
                     raise InvalidCoverageLayout(f"{path}: invalid entry envelope")
                 item = restore(entry["value"], [*parts, "entry" + path.stem])
                 keyed = not isinstance(item, dict) or "id" in item
-                if not re.fullmatch(r"[0-9a-f]{64}\.json", path.name) or (keyed and path.name != entry_id(item) + ".json"):
+                identity = re.fullmatch(r"([0-9a-f]{64})(?:dup[1-9][0-9]*)?\.json", path.name)
+                if not identity or (keyed and identity[1] != entry_id(item)):
                     raise InvalidCoverageLayout(f"{path}: mismatched entry identity")
                 result.append(path)
                 entries.append((entry["order"], path.name, item))
@@ -175,12 +176,13 @@ def write(document: dict[str, Any], directory: Path, *, split_entries: bool = Fa
                 fields.add(field)
                 folder = target / field
                 folder.mkdir()
-                seen = set()
+                seen = {}
                 for order, item in enumerate(value):
                     name = entry_id(item)
-                    if name in seen:
-                        raise InvalidCoverageLayout(f"{field}: duplicate entry identity")
-                    seen.add(name)
+                    occurrence = seen.get(name, 0)
+                    seen[name] = occurrence + 1
+                    if occurrence:
+                        name += f"dup{occurrence}"
                     (folder / f"{name}.json").write_text(json.dumps({"order": order, "value": split(item, [*parts, "entry" + name])}, indent=2) + "\n")
                 return {"$entries": field}
             if isinstance(value, dict):

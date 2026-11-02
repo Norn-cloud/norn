@@ -142,6 +142,9 @@ class EnrollmentTests(unittest.TestCase):
 class CoverageLayoutTests(unittest.TestCase):
     def test_both_layouts_preserve_every_claim_and_order(self):
         document = coverage_manifest.load()
+        # Repeated artifact paths remain valid; occurrence IDs preserve them.
+        subsystem = next(s for s in document["subsystems"] if s["runtime"]["artifacts"])
+        subsystem["runtime"]["artifacts"] *= 2
         for split in (False, True):
             with self.subTest(split=split), tempfile.TemporaryDirectory() as temporary:
                 target = Path(temporary) / "manifest"
