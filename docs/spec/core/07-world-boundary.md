@@ -155,3 +155,10 @@ membership. Later mapping contexts therefore extend an existing dispute.
 No caller claim or persisted membership grants authority. A cold snapshot costs
 one evidence rebuild; repeated operands use indexed membership without decoding
 unrelated evidence. Bounded fact/reference reads apply their byte budget first.
+
+Indexes built by quality, guard or candidate validation remain transaction-local
+and cannot survive rollback. Native connection revisions are unavailable while
+uncommitted state is visible. A moving evidence revision retries at most three
+complete rebuild attempts; continued movement refuses the retryable
+`core.boundary.source_evidence_changed`, while stable recomputation disagreement
+continues to refuse `core.boundary.bundle_mismatch`.

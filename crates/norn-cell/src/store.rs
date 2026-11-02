@@ -2649,7 +2649,8 @@ impl<E: SqlEngine> CellStore<E> {
                 &self.conn, &self.model, effective_batch, boundary, prior_receipt.as_ref(),
             )?;
             admitted_boundary.set(boundary.or(new_boundary));
-            let quality_reader = StoreReader::new(&self.conn, &self.model).with_source_disputes(&self.source_disputes);
+            let quality_disputes = RefCell::default();
+            let quality_reader = StoreReader::new(&self.conn, &self.model).with_transaction_source_disputes(&quality_disputes);
             let quality_cutoff = prior_receipt.as_ref().map_or_else(|| quality_reader.next_commit_seq(), |receipt| Ok(receipt.body.commit_seq))?;
             crate::observation_quality::deduplicate(&quality_reader, &mut quantity_batch, quality_cutoff)?;
             let effective_batch = &quantity_batch;
@@ -2749,8 +2750,9 @@ impl<E: SqlEngine> CellStore<E> {
             let linked = writer.apply_links()?;
             probe(CommitPoint::LinksApplied)?;
             if let Some(validate) = self.candidate_validator.get() {
+                let validator_disputes = RefCell::default();
                 validate(
-                    &StoreReader::new(&self.conn, commit_model).with_source_disputes(&self.source_disputes),
+                    &StoreReader::new(&self.conn, commit_model).with_transaction_source_disputes(&validator_disputes),
                     effective_batch,
                     installation.is_some(),
                 )?;

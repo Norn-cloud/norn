@@ -2938,6 +2938,8 @@ struct WriteCounter {
     forbid: std::rc::Rc<std::cell::Cell<bool>>,
     outgoing_reads: std::rc::Rc<std::cell::Cell<usize>>,
     evidence_reads: std::rc::Rc<std::cell::Cell<usize>>,
+    revision_bumps: std::rc::Rc<std::cell::Cell<usize>>,
+    revision_epoch: std::rc::Rc<std::cell::Cell<u64>>,
 }
 
 struct CountedEngine {
@@ -2959,7 +2961,16 @@ impl CountedEngine {
 
 impl SqlEngine for CountedEngine {
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
-        self.inner.read_cache_revision()
+        let Some((writes, remote)) = self.inner.read_cache_revision()? else {
+            return Ok(None);
+        };
+        if self.counter.revision_bumps.get() > 0 {
+            self.counter.revision_bumps.set(self.counter.revision_bumps.get().saturating_sub(1));
+            let epoch = self.counter.revision_epoch.get().checked_add(1).ok_or(CellError::OutOfRange("test revision"))?;
+            self.counter.revision_epoch.set(epoch);
+        }
+        let remote = remote.checked_add(self.counter.revision_epoch.get()).ok_or(CellError::OutOfRange("test revision"))?;
+        Ok(Some((writes, remote)))
     }
 
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
@@ -6668,5 +6679,45 @@ norn_testkit::proptest::proptest! {
             let findings = store.read().observation_findings(MAIN_WORLD, "quality.Measurement", &alternate_key).expect("refreshed membership");
             norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
         }
+    }
+}
+
+
+#[test]
+fn source_dispute_index_revision_is_unavailable_for_rolled_back_state() {
+    let engine = NativeEngine::open_in_memory().expect("engine");
+    engine.execute("CREATE TABLE cache_test (value INTEGER)", &[]).expect("table");
+    let before = engine.read_cache_revision().expect("committed revision").expect("cacheable");
+    let rolled_back: Result<(), CellError> = engine.transaction(|| {
+        engine.execute("INSERT INTO cache_test VALUES (1)", &[])?;
+        assert_eq!(engine.read_cache_revision()?, None, "uncommitted state cannot seed a persistent cache");
+        Err(CellError::Engine("intentional rollback".into()))
+    });
+    assert!(rolled_back.is_err());
+    let after = engine.read_cache_revision().expect("committed revision").expect("cacheable again");
+    assert_ne!(before, after);
+    let count: i64 = engine.query_row("SELECT COUNT(*) FROM cache_test", &[], |row| row.get(0)).expect("rollback contents");
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn source_dispute_index_retries_churn_and_returns_a_distinct_retryable_refusal() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("revision-churn.sqlite");
+    let store = mapping_bundle_store(&path);
+    let model = store.model().clone(); drop(store);
+    let counter = WriteCounter::default();
+    let engine = CountedEngine { inner:NativeEngine::open(&path, StoreOptions::default()).expect("engine"), counter:counter.clone() };
+    let store = CellStore::from_engine(engine, model).expect("store");
+    for churn in 1..=8 {
+        counter.revision_bumps.set(churn);
+        counter.evidence_reads.set(0);
+        let result = store.read().observation_findings(MAIN_WORLD, "quality.Measurement", "clean");
+        if churn < 7 {
+            assert!(result.expect("bounded retry stabilizes").is_empty());
+        } else {
+            assert!(matches!(result, Err(CellError::SourceEvidenceChanged)));
+        }
+        assert!(counter.evidence_reads.get() <= 6, "at most three complete rebuild attempts");
     }
 }

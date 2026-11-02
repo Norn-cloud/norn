@@ -208,7 +208,21 @@ pub(crate) struct SourceDisputeIndex {
 
 impl<E: SqlEngine> StoreReader<'_, E> {
     fn build_source_dispute_index(&self) -> Result<SourceDisputeIndex, CellError> {
-        let revision = self.conn.read_cache_revision()?;
+        for _attempt in 0..3 {
+            let revision = self.conn.read_cache_revision()?;
+            let collected = self.collect_source_dispute_index();
+            if self.conn.read_cache_revision()? != revision {
+                continue;
+            }
+            let mut index = collected?;
+            index.revision = revision;
+            index.initialized = true;
+            return Ok(index);
+        }
+        Err(CellError::SourceEvidenceChanged)
+    }
+
+    fn collect_source_dispute_index(&self) -> Result<SourceDisputeIndex, CellError> {
         let mut index = SourceDisputeIndex::default();
         for conflict in self.verified_source_conflicts()? {
             self.index_source_finding(&mut index, &conflict.incoming, false, &conflict.finding)?;
@@ -220,11 +234,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             )?);
             self.index_source_finding(&mut index, &guard.bundle, true, &guard.finding)?;
         }
-        if self.conn.read_cache_revision()? != revision {
-            return Err(CellError::MappingBundleMismatch);
-        }
-        index.revision = revision;
-        index.initialized = true;
         Ok(index)
     }
 

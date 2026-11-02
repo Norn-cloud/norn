@@ -20,6 +20,9 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// OBS-DISPUTE-LOOKUP-1: retry after three unstable source-evidence snapshots.
+    #[error("core.boundary.source_evidence_changed")]
+    SourceEvidenceChanged,
     /// Core 08 has not retained the source-dispute evidence frontier for this world.
     #[error("core.world.source_dispute_unqualified")]
     SourceDisputeWorldUnqualified,

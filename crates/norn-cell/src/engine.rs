@@ -146,6 +146,8 @@ pub trait SqlEngine {
     /// Equal revisions must imply unchanged database contents on this connection,
     /// including local writes/rollbacks and commits by other connections.
     /// Hosts without this capability return `None`; no cache survives their read boundary.
+    /// Return `None` while uncommitted state could later roll back without
+    /// changing the token. Native engines only offer revisions in autocommit mode.
     /// This is a host optimization, not an extension of admitted SQL.
     ///
     /// # Errors
@@ -414,6 +416,9 @@ impl rusqlite::types::ToSql for SqlValue {
 #[cfg(feature = "native")]
 impl SqlEngine for NativeEngine {
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        if !self.conn.is_autocommit() {
+            return Ok(None);
+        }
         let external: i64 = self
             .conn
             .query_row("PRAGMA data_version", [], |row| row.get(0))?;
