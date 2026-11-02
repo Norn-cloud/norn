@@ -2836,7 +2836,6 @@ where
                     &FactKey::new(collection.child_type.as_str(), row_id.clone()),
                     &values,
                 )?;
-                let current_values = row_states.get(&key).and_then(|state| state.values.as_ref());
                 let recompute_derived = additions.contains(row_id)
                     || replacements.contains_key(row_id)
                     || order_changed;
@@ -2847,7 +2846,6 @@ where
                         collection,
                         snapshot_config(&configs, collection_id)?,
                         &preparation.effective_input,
-                        current_values,
                         values,
                         &mut preparation.remaining_fuel,
                     )?;
@@ -3043,9 +3041,6 @@ where
             child_type,
             snapshot_config(&configs, collection_id)?,
             &preparation.effective_input,
-            row_states
-                .get(&(collection_id.clone(), row_id.clone()))
-                .and_then(|state| state.values.as_ref()),
             values,
             &mut preparation.remaining_fuel,
         )?;
