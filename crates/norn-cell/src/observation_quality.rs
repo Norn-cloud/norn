@@ -30,7 +30,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         record: &ObjectRecord,
     ) -> Result<bool, CellError> {
-        if self.source_dispute_at(world, &record.object_type, &record.id)?        {
+        if self.source_dispute_at(world, &record.object_type, &record.id)? {
             return Ok(true);
         }
         Ok(self
@@ -52,7 +52,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<Option<ObjectRecord>, CellError> {
-        if world != crate::MAIN_WORLD { self.source_dispute_at(world, object_type, key)?; }
+        if world != crate::MAIN_WORLD {
+            self.source_dispute_at(world, object_type, key)?;
+        }
         let Some(record) = self.object(world, object_type, key)? else {
             return Ok(None);
         };
@@ -101,7 +103,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
-        if world != crate::MAIN_WORLD { self.source_dispute_at(world, object_type, key)?; }
+        if world != crate::MAIN_WORLD {
+            self.source_dispute_at(world, object_type, key)?;
+        }
         let mut findings: Vec<_> = self
             .review_findings(world, object_type, key)?
             .into_iter()

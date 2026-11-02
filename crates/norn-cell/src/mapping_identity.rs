@@ -138,7 +138,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         key: &norn_kernel::FactKey,
     ) -> Result<(), CellError> {
-        if self.source_dispute_at(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)?        {
+        if self.source_dispute_at(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)? {
             return Err(CellError::QualityEvaluation(
                 "core.boundary.import_finding: disputed source identity".into(),
             ));
@@ -147,10 +147,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// OBS-EVIDENCE-1: non-main reads cannot omit an unqualified source-evidence overlay.
-    pub(crate) fn source_dispute_at(&self, world: &str, object_type: &str, key: &str) -> Result<bool, CellError> {
+    pub(crate) fn source_dispute_at(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+    ) -> Result<bool, CellError> {
         let disputed = !self.source_conflict_findings(object_type, key)?.is_empty()
             || !self.identity_findings(object_type, key)?.is_empty();
-        if disputed && world != crate::MAIN_WORLD { return Err(CellError::SourceDisputeWorldUnqualified); }
+        if disputed && world != crate::MAIN_WORLD {
+            return Err(CellError::SourceDisputeWorldUnqualified);
+        }
         Ok(disputed)
     }
 

@@ -1388,12 +1388,23 @@ where
         }
         let guard = |reader: &StoreReader<'_, S>| {
             if authorization.is_none() {
-                for key in commit.reads.iter().map(|r| &r.key)
+                for key in commit
+                    .reads
+                    .iter()
+                    .map(|r| &r.key)
                     .chain(commit.writes.iter().map(|w| &w.key))
                     .chain(references.iter().map(|r| &r.key))
                     .chain(property_reads.iter().map(|(r, _)| &r.key))
-                    .chain(commit.links.iter().flat_map(|w| [&w.key.source, &w.key.target])) {
-                    reader.refuse_disputed_subject(key).map_err(CommitError::Host)?;
+                    .chain(
+                        commit
+                            .links
+                            .iter()
+                            .flat_map(|w| [&w.key.source, &w.key.target]),
+                    )
+                {
+                    reader
+                        .refuse_disputed_subject(key)
+                        .map_err(CommitError::Host)?;
                 }
                 for read in &commit.link_reads {
                     reader

@@ -6411,25 +6411,69 @@ fn retained_mapping_root_survives_removal_of_an_unapplied_type() {
     );
 }
 
-fn source_dispute_world_fixture(normalized: bool) -> (tempfile::TempDir, CellStore, norn_cell::ObjectRecord, norn_cell::ObjectRecord) {
+fn source_dispute_world_fixture(
+    normalized: bool,
+) -> (
+    tempfile::TempDir,
+    CellStore,
+    norn_cell::ObjectRecord,
+    norn_cell::ObjectRecord,
+) {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("world-dispute.sqlite");
     let mut store = mapping_bundle_store(&path);
     let input = bundle_input();
     let mut original = bundle_raw("MEAS-1", "0.90");
-    original.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from("é"));
-    let (id, _) = store.inject_mapping_bundle(&original, &input).expect("capture");
-    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    original
+        .input
+        .as_object_mut()
+        .expect("raw")
+        .insert("source_id".into(), Value::from("é"));
+    let (id, _) = store
+        .inject_mapping_bundle(&original, &input)
+        .expect("capture");
+    let mut cell =
+        norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
     cell.process_mapping_bundle(&id).expect("apply first");
-    let before = cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("eligible").expect("record");
+    let before = cell
+        .store()
+        .read()
+        .authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("eligible")
+        .expect("record");
     let model = cell.store().model().clone();
     drop(cell);
     store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
-    store.commit(&CommitBatch {world:"fork/test".into(), scope:"org_demo/dev".into(), logical_time:store.read().clock_floor().expect("clock"), writes:vec![FactWriteRow::Put { object_type:"quality.Measurement".into(), key:"MEAS-1".into(), values:before.values.clone()}], ..CommitBatch::default()}).expect("synthetic non-main fixture");
-    let fork = store.read().object("fork/test", "quality.Measurement", "MEAS-1").expect("raw world").expect("record");
-    let mut candidate = if normalized {original.clone()} else {bundle_raw("MEAS-1", "1.20")};
-    candidate.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from(if normalized {"e\u{301}"} else {"é"}));
-    store.inject_mapping_bundle(&candidate, &input).expect("durable dispute");
+    store
+        .commit(&CommitBatch {
+            world: "fork/test".into(),
+            scope: "org_demo/dev".into(),
+            logical_time: store.read().clock_floor().expect("clock"),
+            writes: vec![FactWriteRow::Put {
+                object_type: "quality.Measurement".into(),
+                key: "MEAS-1".into(),
+                values: before.values.clone(),
+            }],
+            ..CommitBatch::default()
+        })
+        .expect("synthetic non-main fixture");
+    let fork = store
+        .read()
+        .object("fork/test", "quality.Measurement", "MEAS-1")
+        .expect("raw world")
+        .expect("record");
+    let mut candidate = if normalized {
+        original.clone()
+    } else {
+        bundle_raw("MEAS-1", "1.20")
+    };
+    candidate.input.as_object_mut().expect("raw").insert(
+        "source_id".into(),
+        Value::from(if normalized { "e\u{301}" } else { "é" }),
+    );
+    store
+        .inject_mapping_bundle(&candidate, &input)
+        .expect("durable dispute");
     (dir, store, before, fork)
 }
 
@@ -6439,17 +6483,77 @@ fn source_dispute_non_main_reads_refuse_until_core08_retains_the_frontier() {
         let (_directory, store, before, fork) = source_dispute_world_fixture(normalized);
         let reader = store.read();
         let expected = "core.world.source_dispute_unqualified";
-        assert_eq!(reader.authoritative_object("fork/test", "quality.Measurement", "MEAS-1").expect_err("object refuses").to_string(), expected);
-        assert_eq!(reader.authoritative_page("fork/test", "quality.Measurement", None, 10).expect_err("page refuses").to_string(), expected);
-        assert_eq!(reader.observation_findings("fork/test", "quality.Measurement", "MEAS-1").expect_err("findings refuse").to_string(), expected);
-        assert_eq!(reader.observation_is_quarantined("fork/test", &fork).expect_err("governed predicate refuses").to_string(), expected);
-        assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("live quarantine").is_none());
-        assert_eq!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw preserved"), Some(before.clone()));
-        assert_eq!(reader.object("fork/test", "quality.Measurement", "MEAS-1").expect("raw world preserved"), Some(fork));
-        assert!(reader.authoritative_object("fork/test", "quality.Measurement", "OTHER").expect("unaffected absence").is_none());
-        let mut cell: norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_ir::RuntimeObject, norn_ir::RuntimeObject> = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("native cell");
+        assert_eq!(
+            reader
+                .authoritative_object("fork/test", "quality.Measurement", "MEAS-1")
+                .expect_err("object refuses")
+                .to_string(),
+            expected
+        );
+        assert_eq!(
+            reader
+                .authoritative_page("fork/test", "quality.Measurement", None, 10)
+                .expect_err("page refuses")
+                .to_string(),
+            expected
+        );
+        assert_eq!(
+            reader
+                .observation_findings("fork/test", "quality.Measurement", "MEAS-1")
+                .expect_err("findings refuse")
+                .to_string(),
+            expected
+        );
+        assert_eq!(
+            reader
+                .observation_is_quarantined("fork/test", &fork)
+                .expect_err("governed predicate refuses")
+                .to_string(),
+            expected
+        );
+        assert!(
+            reader
+                .authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+                .expect("live quarantine")
+                .is_none()
+        );
+        assert_eq!(
+            reader
+                .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+                .expect("raw preserved"),
+            Some(before.clone())
+        );
+        assert_eq!(
+            reader
+                .object("fork/test", "quality.Measurement", "MEAS-1")
+                .expect("raw world preserved"),
+            Some(fork)
+        );
+        assert!(
+            reader
+                .authoritative_object("fork/test", "quality.Measurement", "OTHER")
+                .expect("unaffected absence")
+                .is_none()
+        );
+        let mut cell: norn_cell::SqliteCell<
+            norn_kernel::ObservationEvent,
+            norn_ir::RuntimeObject,
+            norn_ir::RuntimeObject,
+        > = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new())
+            .expect("native cell");
         let mut written = norn_kernel::CellCommit::empty();
-        written.writes.push(norn_kernel::FactWrite {key:norn_kernel::FactKey::new("quality.Measurement", "MEAS-1"), expected:norn_kernel::FactVersion(before.version), mutation:norn_kernel::FactMutation::Put {values:before.values}});
-        assert!(matches!(norn_kernel::CellHost::commit(&mut cell, written), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
+        written.writes.push(norn_kernel::FactWrite {
+            key: norn_kernel::FactKey::new("quality.Measurement", "MEAS-1"),
+            expected: norn_kernel::FactVersion(before.version),
+            mutation: norn_kernel::FactMutation::Put {
+                values: before.values,
+            },
+        });
+        assert!(matches!(
+            norn_kernel::CellHost::commit(&mut cell, written),
+            Err(norn_kernel::CommitError::Host(
+                CellError::QualityEvaluation(_)
+            ))
+        ));
     }
 }
