@@ -203,6 +203,7 @@ pub enum PackArtifactKind {
     Mapping,
     /// Scoped temporal law.
     Law,
+    DefinedConcept,
 }
 
 /// An ontology pack: a closed-world, semantic-only ontology profile.

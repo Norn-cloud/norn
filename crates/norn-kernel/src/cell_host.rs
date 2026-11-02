@@ -783,6 +783,8 @@ pub enum CommitError<X> {
         key: Box<FactKey>,
         /// The object type or interface that declared the invariant.
         owner: InvariantOwner,
+        /// Canonical digest of the owning declaration at evaluation.
+        version: String,
         /// The invariant identity within its owner.
         id: InvariantId,
         /// The invariant's human-readable refusal message.
