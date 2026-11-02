@@ -2125,7 +2125,7 @@ proptest! {
         prop_assert!(matches!(store.read().object_at_version_with_budget(MAIN_WORLD,"proof.Item","item",version,&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))));
         prop_assert!(matches!(store.read().fact_version_evidence_with_budget(MAIN_WORLD,"proof.Item","item",version,&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))));
         prop_assert!(matches!(store.read().receipt_for_fact_version(MAIN_WORLD,"proof.Item","item",version),Err(CellError::HistoricalValueUnproven(_))));
-        prop_assert!(matches!(store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",norn_cell::KnowledgeCutoff{recorded_at:norn_kernel::LogicalTime::from_millis(u64::MAX),frontier:version},&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))));
+        prop_assert!(matches!(store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",norn_cell::KnowledgeCutoff{recorded_at:norn_kernel::LogicalTime::from_millis(u64::MAX),frontier:version},&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))), "joint tampering must refuse historical selection");
         prop_assert_eq!(store.read().receipt_at(version).expect("receipt unchanged").expect("receipt"),evidence.receipt().clone());
         drop(store);drop(connection);
         prop_assert!(matches!(CellStore::open(&path,model(),StoreOptions::default()),Err(CellError::HistoricalValueUnproven(_))));
