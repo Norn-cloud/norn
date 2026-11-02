@@ -132,7 +132,9 @@ impl<X> From<norn_decisions::DecisionError> for ActionRefusal<X> {
     fn from(error: norn_decisions::DecisionError) -> Self {
         if let norn_decisions::DecisionError::BudgetExhausted { .. } = error {
             return Self::ExpressionBudgetExceeded {
-                limit: crate::limits::ResourceLimitProfile::norn_limits_v1().turn.fuel_units,
+                limit: crate::limits::ResourceLimitProfile::norn_limits_v1()
+                    .turn
+                    .fuel_units,
             };
         }
         refused(error.to_string())
