@@ -6,7 +6,7 @@ use norn_decisions::{AdmittedDecision, DecisionBinding};
 use norn_ir::{ActionRuleRef, DecisionOutput, RuleRoot, RuntimeValue};
 use std::collections::BTreeMap;
 
-/// A checked RuleIR graph and its exact helper closure, sealed against mutation.
+/// A checked `RuleIR` graph and its exact helper closure, sealed against mutation.
 #[derive(Debug)]
 pub struct SynchronousRule {
     pub(crate) reference: ActionRuleRef,
@@ -143,6 +143,9 @@ pub(crate) fn resolve<'a, X>(
     let Some(pin) = &call.action.synchronous_rule else {
         return Ok(None);
     };
+    if !matches!(call.action.effect_program, Some(norn_ir::ActionEffectProgram::FireTransition { .. })) {
+        return Err(refused("only transition actions admit a synchronous writer"));
+    }
     let mut matching = catalog
         .action_rules
         .iter()

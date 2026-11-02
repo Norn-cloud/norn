@@ -905,18 +905,8 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
-    // TXN-RULE-1: never silently execute only part of a declared closure.
-    if action.synchronous_rule.is_some() {
-        crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
-        if !matches!(
-            action.effect_program,
-            Some(ActionEffectProgram::FireTransition { .. })
-        ) {
-            return Err(crate::synchronous_rule::refused(
-                "only transition actions admit a synchronous writer",
-            ));
-        }
-    }
+    // TXN-RULE-1: a declared closure never degrades to its primary effect.
+    crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
     if (action.quantity_effect.is_some() || !action.create_links.is_empty())
         && matches!(
             action.effect_program,
@@ -1094,7 +1084,6 @@ where
         &mut preparation.receipt_evidence_bytes,
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
     )?;
-    let mut record = record;
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
@@ -1124,15 +1113,15 @@ where
                 ));
             }
             if operation == norn_ir::WriteChange::Created {
-                if !slice.facts.contains_key(&key) {
+                if let std::collections::btree_map::Entry::Vacant(entry) = slice.facts.entry(key) {
                     let state = authorize_upsert_target(
                         host,
                         call,
                         &preparation.effective_input,
                         authorizer,
-                        &key,
+                        entry.key(),
                     )?;
-                    slice.facts.insert(key, state);
+                    entry.insert(state);
                 }
             } else {
                 let state = slice.facts.get(&key).ok_or_else(|| {
