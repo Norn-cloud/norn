@@ -1707,6 +1707,7 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "hex",
+ "proptest",
  "serde",
  "serde_json",
  "sha2",
