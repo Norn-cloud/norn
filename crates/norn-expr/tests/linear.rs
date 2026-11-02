@@ -63,7 +63,7 @@ fn linear_profile_refuses_strings_outside_the_smt_unicode_repertoire() {
 }
 proptest::proptest! {
     #[test]
-    fn generated_out_of_repertoire_strings_never_get_an_smt_predicate(code in 0x30000u32..=0x10ffff) {
+    fn generated_out_of_repertoire_strings_never_get_an_smt_predicate(code in 0x3_0000u32..=0x10_ffff) {
         let ch = char::from_u32(code).expect("Unicode scalar");
         let source = format!("'{ch}' == '{ch}'");
         let error = linear_guard(&source, &env()).expect_err("unsupported SMT character");
