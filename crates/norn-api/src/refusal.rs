@@ -83,7 +83,7 @@ pub struct Refusal {
     pub retryable: bool,
     /// Shared declaration pin and typed operands, disclosed together.
     #[schema(required = true, schema_with = refusal_reason_schema)]
-    pub reason: Option<norn_ir::RefusalReason>,
+    pub reason: Option<Box<norn_ir::RefusalReason>>,
     /// The HTTP status the refusal is served with.
     #[serde(skip)]
     pub status: u16,
@@ -191,7 +191,7 @@ impl Refusal {
         };
         let mut projected =
             Self::new(status, &source.code, message, source.message).with_category(category);
-        projected.reason = source.reason;
+        projected.reason = source.reason.map(Box::new);
         projected.retryable = source.retryable;
         projected.project_detail(revealable)
     }

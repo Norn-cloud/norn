@@ -126,7 +126,7 @@ fn invariant_refusal_retains_pin_and_typed_reason_through_api()
     };
     let kernel = error.refusal();
     let projected = Refusal::from_kernel(kernel.clone(), true);
-    assert_eq!(projected.reason, kernel.reason);
+    assert_eq!(projected.reason.as_deref(), kernel.reason.as_ref());
     assert_eq!(projected.code, "commit.invariant_violation");
     assert!(!projected.retryable);
     let reason = projected.reason.ok_or("missing invariant reason")?;
