@@ -899,7 +899,8 @@ fn create_link_consumes_only_fields_without_a_declared_scalar_property() {
 #[test]
 #[allow(
     clippy::disallowed_methods,
-    reason = "test invokes the typed fixture compiler"
+    clippy::too_many_lines,
+    reason = "native parameter commit/replay and typed fixture compilation"
 )]
 fn parameter_projection_pins_selected_revision_and_replays_original_evidence() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
