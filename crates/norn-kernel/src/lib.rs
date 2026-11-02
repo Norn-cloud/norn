@@ -65,6 +65,8 @@ mod envelope;
 mod guard_diagnostic;
 pub mod limits;
 pub mod naming_series;
+mod partition_slice;
+pub use partition_slice::{PartitionSlice, load_partition_slice};
 mod observations;
 pub mod quantity;
 pub mod receipt_binding;
