@@ -97,7 +97,9 @@ impl SettingValue {
     pub fn runtime_value(&self) -> Result<RuntimeValue, RuntimeValueError> {
         match self {
             Self::Number(literal) => Self::decimal(literal.as_str()).map(RuntimeValue::Number),
-            Self::LegacyNumber(value) => Err(RuntimeValueError::Inexact { number: value.to_string() }),
+            Self::LegacyNumber(value) => Err(RuntimeValueError::Inexact {
+                number: value.to_string(),
+            }),
             value @ (Self::Text(_) | Self::Boolean(_) | Self::Json(_)) => {
                 RuntimeValue::from_ir(&value.to_json_value())
             }
@@ -175,10 +177,15 @@ impl TryFrom<SettingRootWire> for SettingRoot {
     fn try_from(wire: SettingRootWire) -> Result<Self, Self::Error> {
         let value_type = wire.value_type;
         let value = match (wire.setting_version, value_type, wire.value) {
-            (IrVersion02::V0_1, SettingValueType::Number, JsonValue::Number(n)) if n.is_finite() => Some(SettingValue::LegacyNumber(n)),
+            (IrVersion02::V0_1, SettingValueType::Number, JsonValue::Number(n))
+                if n.is_finite() =>
+            {
+                Some(SettingValue::LegacyNumber(n))
+            }
             (IrVersion02::V0_1, SettingValueType::Number, _) => None,
             (_, kind, value) => SettingValue::from_wire(kind, value),
-        }.ok_or_else(|| {
+        }
+        .ok_or_else(|| {
             format!(
                 "value does not match valueType '{}'",
                 value_type.as_wire_str()
