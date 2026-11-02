@@ -5268,7 +5268,8 @@ norn_testkit::proptest::proptest! {
             norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
             let page = reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("authoritative projection");
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
-            norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
+            norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1-ALT").expect("second role").is_none());
+            norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 2);
             norn_testkit::proptest::prop_assert_eq!(page.scanned_through.as_deref(), Some("MEAS-1"));
             let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
             norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
@@ -5583,6 +5584,10 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
     mapping["payload"]["interfaces"] = json!(["quality.Measured.interface"]);
     mapping["payload"]["maps"] = json!([{"id":"measurement", "source":{"dataset":"Rows"}, "target":{"entity":"quality.Measurement.entity", "interface":"quality.Measured.interface"}, "subject":"input.name", "sourceRecord":"input.name", "properties":[{"property":"purity", "value":"input.purity"}]}]);
     artifacts.push(source);
+    let mut alternate = mapping.clone();
+    alternate["artifactId"] = json!("quality.alternate");
+    alternate["payload"]["maps"][0]["subject"] = json!("input.name + '-ALT'");
+    artifacts.push(serde_json::from_value(alternate).expect("alternate role"));
     artifacts.push(serde_json::from_value(mapping).expect("mapping"));
     let object =
         serde_json::to_value(&artifacts[0]).expect("object")["payload"]["objectType"].clone();
@@ -6117,6 +6122,12 @@ norn_testkit::proptest::proptest! {
         let model = store.model().clone();
         let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
         cell.process_mapping_bundle(&accepted_id).expect("apply first");
+        drop(cell);
+        store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("second mapping context");
+        let mut alternate = input.clone(); alternate.mapping = "quality.alternate".into();
+        let (second_id, _) = store.inject_mapping_bundle(&original, &alternate).expect("second role");
+        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+        cell.process_mapping_bundle(&second_id).expect("apply second role");
         let before = cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("read").expect("object");
         drop(cell);
         store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
@@ -6152,7 +6163,7 @@ norn_testkit::proptest::proptest! {
             norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
             norn_testkit::proptest::prop_assert_eq!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("first bytes"), Some(before.clone()));
             let page = cell.store().read().authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("aggregate population");
-            norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
+            norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 2);
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
             norn_testkit::proptest::prop_assert_eq!(cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("review").len(), 1);
             drop(cell);

@@ -46,28 +46,34 @@ fn content(bundle: &MappingBundle) -> Result<String, CellError> {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    fn source_event_bundles(&self, incoming: &MappingBundle) -> Result<Vec<MappingBundle>, CellError> {
+        let rows = self.conn.query(
+            &format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND json_extract(observed, '$.input.input.connectorInstance') = ?1 AND json_extract(observed, '$.input.input.partition') = ?2 AND json_extract(observed, '$.input.raw.source') = ?3 AND json_extract(observed, '$.input.raw.source_id') = ?4 AND json_extract(observed, '$.input.raw.event_id') = ?5 ORDER BY position"),
+            params![&incoming.input.connector_instance, &incoming.input.partition, field(incoming,"source")?, field(incoming,"source_id")?, field(incoming,"event_id")?],
+        )?;
+        let mut bundles = Vec::new();
+        for values in rows {
+            let row = crate::engine::SqlRow(values);
+            let stored_id: String = row.get(0)?;
+            let captured: String = row.get(1)?;
+            let observed: Observed<RuntimeValue> = serde_json::from_str(&captured)?;
+            let bundle: MappingBundle = norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+            self.recheck_mapping_bundle(&bundle)?;
+            if observed.id.0 != stored_id || stored_id != format!("mapping-bundle:{}", bundle.digest) { return Err(CellError::MappingBundleMismatch); }
+            bundles.push(bundle);
+        }
+        Ok(bundles)
+    }
+
+
     /// Find a conflict against the first captured source event, including consumed captures.
     pub(crate) fn mapping_conflict(
         &self,
         incoming: &MappingBundle,
     ) -> Result<Option<MappingConflict>, CellError> {
         let new = content(incoming)?;
-        let captured: Option<(String, String)> = self.conn.query_optional(
-            &format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND json_extract(observed, '$.input.input.connectorInstance') = ?1 AND json_extract(observed, '$.input.input.partition') = ?2 AND json_extract(observed, '$.input.raw.source') = ?3 AND json_extract(observed, '$.input.raw.source_id') = ?4 AND json_extract(observed, '$.input.raw.event_id') = ?5 ORDER BY position LIMIT 1"),
-            params![&incoming.input.connector_instance, &incoming.input.partition, field(incoming,"source")?, field(incoming,"source_id")?, field(incoming,"event_id")?],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        let Some((stored_id, captured)) = captured else {
-            return Ok(None);
-        };
-        let observed: Observed<RuntimeValue> = serde_json::from_str(&captured)?;
-        let accepted: MappingBundle =
-            norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-        self.recheck_mapping_bundle(&accepted)?;
-        if observed.id.0 != stored_id || stored_id != format!("mapping-bundle:{}", accepted.digest)
-        {
-            return Err(CellError::MappingBundleMismatch);
-        }
+        let Some(accepted) = self.source_event_bundles(incoming)?.into_iter().next() else { return Ok(None); };
+        let accepted_id = format!("mapping-bundle:{}", accepted.digest);
         let old = content(&accepted)?;
         if old == new {
             return Ok(None);
@@ -90,6 +96,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .chain(&incoming.records)
             .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key))
             .collect();
+        let observation_ids = vec![accepted_id.clone(), format!("mapping-bundle:{}", incoming.digest)];
         let finding = DataQualityFinding::v2(
             DataQualityRuleRef::Builtin {
                 id: "core.boundary.import_finding".into(),
@@ -103,15 +110,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .records
                 .iter()
                 .chain(&incoming.records)
-                .map(|r| {
-                    DataQualityLineage::new(
-                        r.provenance.clone(),
-                        vec![
-                            observed.id.0.clone(),
-                            format!("mapping-bundle:{}", incoming.digest),
-                        ],
-                    )
-                })
+                .map(|r| DataQualityLineage::new(r.provenance.clone(), observation_ids.clone()))
                 .collect(),
             incoming.input.recorded_at.clone(),
             incoming.input.recorded_at.clone(),
@@ -119,7 +118,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )?
         .with_evidence_digest(evidence)?;
         Ok(Some(MappingConflict {
-            accepted_bundle_id: observed.id.0,
+            accepted_bundle_id: accepted_id,
             incoming: incoming.clone(),
             finding,
         }))
@@ -148,7 +147,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             let root = self.root_type(object_type)?;
             let mut affected = false;
-            for subject in &conflict.finding.subjects {
+            let related = self.source_event_bundles(&conflict.incoming)?;
+            for subject in related.iter().flat_map(|b| &b.records).chain(&conflict.incoming.records) {
                 if subject.key == key && self.root_type(subject.object_type.as_str())? == root {
                     affected = true;
                 }
