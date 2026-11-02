@@ -655,7 +655,7 @@ fn param_fallthrough_boundaries_ambiguity_and_explicit_default() {
         }
     }
     let payload =
-        read_json(&fixtures().join("ir/retail-reorder-threshold.setting.json"))["payload"].clone();
+        read_json(&fixtures().join("ir/retail-reorder-threshold-v0.3.setting.json"))["payload"].clone();
     let mut first: norn_ir::SettingRoot = serde_json::from_value(payload).expect("setting");
     first.effective_from = "2026-06-01T00:00:00Z".into();
     first.effective_to = Some("2026-07-01T00:00:00Z".into());

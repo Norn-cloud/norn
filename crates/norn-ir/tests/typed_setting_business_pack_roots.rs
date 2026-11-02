@@ -21,7 +21,7 @@ use norn_ir::{
 use serde_json::{Value, json};
 
 const SETTING_FIXTURE: &str =
-    include_str!("../../../fixtures/ir/retail-reorder-threshold.setting.json");
+    include_str!("../../../fixtures/ir/retail-reorder-threshold-v0.3.setting.json");
 const COMPOSITION_FIXTURE: &str =
     include_str!("../../../fixtures/ir/retail-core.business_pack.json");
 const COMMERCE_ONTOLOGY_FIXTURE: &str =
@@ -98,9 +98,15 @@ fn new_envelope_fixtures_roundtrip_with_pinned_hashes() {
     for (name, source, kind, pinned) in [
         (
             "fixtures/ir/retail-reorder-threshold.setting.json",
+            include_str!("../../../fixtures/ir/retail-reorder-threshold.setting.json"),
+            ArtifactKind::Setting,
+            "075143521b3c6891339b498040b5291853014513c9dca5db58c02aa8d3bca5d9",
+        ),
+        (
+            "fixtures/ir/retail-reorder-threshold-v0.3.setting.json",
             SETTING_FIXTURE,
             ArtifactKind::Setting,
-            "dac319c4909cbd5043b867e4528cd296599ee7544581c997b9a163900857861b",
+            "e4ad226552a3f3f8e7edcb624f97d857963976581dcde1a45e24b1b39b986d14",
         ),
         (
             "fixtures/ir/retail-core.business_pack.json",
@@ -139,7 +145,7 @@ fn setting_fixture_decodes_into_the_typed_root() {
     assert_eq!(setting.review.state, SettingReviewState::Approved);
     assert_eq!(
         setting.supersedes.expect("fixture supersedes").version,
-        "0.1.0"
+        "0.2.0"
     );
 
     let setting: SettingRoot = assert_typed_roundtrip("json setting", &json_setting());
@@ -189,12 +195,14 @@ fn setting_fixture_decodes_into_the_typed_root() {
 }
 
 #[test]
-fn setting_profile_refuses_retained_v01_without_reinterpretation() {
+fn setting_profile_retains_v01_without_reinterpretation() {
     let mut old = payload_json(SETTING_FIXTURE);
     old["settingVersion"] = json!("0.1");
     assert!(!decodes::<SettingRoot>(old.clone()));
     old["value"] = json!(5);
-    assert!(!decodes::<SettingRoot>(old));
+    let retained = assert_typed_roundtrip::<SettingRoot>("retained binary64", &old);
+    assert!(matches!(retained.value, SettingValue::LegacyNumber(5.0)));
+    assert!(retained.value.runtime_value().is_err());
 }
 
 #[test]

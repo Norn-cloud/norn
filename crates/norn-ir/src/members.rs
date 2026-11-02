@@ -193,9 +193,11 @@ pub enum IrVersion01 {
     V0_1,
 }
 
-/// Exact-decimal setting wire profile; older profiles require explicit migration.
+/// Setting value profiles: historical binary64 and current exact decimal literals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub enum IrVersion02 {
+    #[serde(rename = "0.1")]
+    V0_1,
     #[default]
     #[serde(rename = "0.2")]
     V0_2,

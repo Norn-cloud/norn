@@ -32,7 +32,7 @@ const RULE_FIXTURE: &str = include_str!("../../../fixtures/ir/retail-reorder-rou
 const POLICY_FIXTURE: &str = include_str!("../../../fixtures/ir/retail-procurement.policy.json");
 const DERIVED_FIXTURE: &str = include_str!("../../../fixtures/ir/retail-low-stock.derived.json");
 const SETTING_FIXTURE: &str =
-    include_str!("../../../fixtures/ir/retail-reorder-threshold.setting.json");
+    include_str!("../../../fixtures/ir/retail-reorder-threshold-v0.3.setting.json");
 
 fn fixture(source: &str) -> Value {
     serde_json::from_str(source).expect("fixture should be JSON")

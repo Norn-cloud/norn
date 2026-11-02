@@ -366,6 +366,7 @@ pub fn check_artifact_set_with_receipt(
         artifacts.identity.clone(),
         IDENTIFIER_ADMISSION_PROFILE,
         None,
+        false,
     )
 }
 
@@ -412,6 +413,7 @@ pub fn check_artifact_set_with_flow_source_map(
         artifacts.identity.clone(),
         IDENTIFIER_ADMISSION_PROFILE,
         flow_source_map,
+        false,
     )
 }
 
@@ -441,6 +443,7 @@ pub fn check_artifact_set_with_verified_receipt(
         artifacts.identity.clone(),
         &version.identifier_profile,
         version.flow_source_map.as_ref(),
+        true,
     )
 }
 
@@ -506,9 +509,10 @@ fn check_artifact_set_with_profile(
     artifact_set: ArtifactSetRef,
     identifier_profile: &str,
     flow_source_map: Option<&FlowSourceMap>,
+    retained: bool,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
     let limit_profile = limits.reference()?;
-    let mut diagnostics = crate::check_artifact_set(artifacts, context);
+    let mut diagnostics = crate::artifact_set::check_artifact_set_profile(artifacts, context, retained);
     if let Some(flow_source_map) = flow_source_map {
         diagnostics.extend(crate::validate_flow_source_map(
             flow_source_map,
@@ -842,6 +846,7 @@ pub fn recover_legacy_admission_receipt(
         ArtifactSetRef::of(artifacts, base)?,
         IDENTIFIER_ADMISSION_PROFILE,
         None,
+        false,
     )?;
 
     if checked.receipt.admitted {
@@ -861,6 +866,7 @@ pub fn recover_legacy_admission_receipt(
         ArtifactSetRef::of(artifacts, base)?,
         HISTORICAL_IDENTIFIER_PROFILE,
         None,
+        true,
     )?;
 
     let limit_profile = limits.reference()?;

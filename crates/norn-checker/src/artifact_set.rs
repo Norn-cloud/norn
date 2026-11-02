@@ -308,7 +308,30 @@ pub fn check_artifact_set(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
+    check_artifact_set_profile(artifacts, context, false)
+}
+
+/// PARAM-WIRE-2: only verified retained sets may reuse their tagged value profile.
+pub(crate) fn check_artifact_set_profile(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    retained: bool,
+) -> Vec<Diagnostic> {
     let mut layout_findings = Vec::new();
+    if !retained {
+        for artifact in artifacts {
+            if matches!(&artifact.payload, ArtifactPayload::Setting(s) if s.setting_version.get() == Some(&norn_ir::IrVersion02::V0_1))
+            {
+                layout_findings.push(Diagnostic {
+                    code: DiagnosticCode::new("setting.validation.invalid_payload"),
+                    severity: DiagnosticSeverity::Error,
+                    message: "new setting admissions require settingVersion 0.2; retained 0.1 values require their verified receipt".into(),
+                    span: None, artifact_id: Some(artifact.artifact_id.clone()),
+                    remediation: Some(DiagnosticRemediation::FixDefinition),
+                });
+            }
+        }
+    }
     let normalized_artifacts = normalize_artifacts(artifacts, &mut layout_findings);
     let normalized_base = normalize_artifacts(context.base, &mut layout_findings);
     let normalized_context = EntityArtifactSetContext {
