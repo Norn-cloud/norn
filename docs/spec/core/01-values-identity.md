@@ -75,3 +75,5 @@ The shared type checker marks actual Decimal reads and declared destinations; ty
 VAL-ENV binds `currency_source` in new `norn.expr.env/2` admissions; retained receipts and pins select explicit historical `/1` recomputation, while relabelling `/1` hashes as `/2` refuses (migration: re-admit for `/2`, never rewrite an old pin).
 
 VAL-UNIT admits same-code addition, subtraction and comparison, scalar multiplication and same-code quantity division to a scalar; a numeric literal inherits the sole quantity unit with an explanation diagnostic naming that unit, while declared unitless operands, mixed codes, compound units and inverse units refuse until #351.
+
+The VAL-UNIT algebra returns literal-unit inference evidence without converting values; expression qualifier propagation is a separate consumer binding.

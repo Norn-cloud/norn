@@ -1763,3 +1763,20 @@ proptest::proptest! {
         proptest::prop_assert_eq!(first_env.reference().unwrap() == second_env.reference().unwrap(), first == second);
     }
 }
+
+proptest::proptest! {
+    #[test]
+    fn val_unit_algebra_preserves_codes_and_literal_provenance(a in "[a-z]{1,12}", b in "[a-z]{1,12}") {
+        use norn_expr::units::{self, Operand, Operation};
+        let first = Operand::Quantity(norn_ir::UnitRef { system: norn_ir::UnitSystem::Ucum, code: a.clone() });
+        let second = Operand::Quantity(norn_ir::UnitRef { system: norn_ir::UnitSystem::Ucum, code: b.clone() });
+        for operation in [Operation::Add, Operation::Subtract, Operation::Compare, Operation::Divide] {
+            proptest::prop_assert_eq!(units::admit(operation, &first, &second).is_ok(), a == b);
+        }
+        let inherited = units::admit(Operation::Add, &first, &Operand::Literal).unwrap();
+        proptest::prop_assert_eq!(inherited.result, first.clone());
+        proptest::prop_assert_eq!(inherited.inferred_literal_unit.unwrap().code, a);
+        proptest::prop_assert!(units::admit(Operation::Add, &first, &Operand::Dimensionless).is_err());
+        proptest::prop_assert!(units::admit(Operation::Multiply, &first, &second).is_err());
+    }
+}
