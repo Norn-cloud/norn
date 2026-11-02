@@ -1,3 +1,12 @@
 {
-   "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "Vamsi-2581",
+      "id": 245859299,
+      "comment_id": 6576664920,
+      "created_at": "2026-11-02T12:03:55Z",
+      "repoId": 1438876916,
+      "pullRequestNo": 22
+    }
+  ]
 }
