@@ -1520,6 +1520,7 @@ version = "0.1.0"
 dependencies = [
  "http",
  "norn-ir",
+ "norn-kernel",
  "serde",
  "serde_json",
  "utoipa",
