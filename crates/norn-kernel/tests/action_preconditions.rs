@@ -897,7 +897,10 @@ fn create_link_consumes_only_fields_without_a_declared_scalar_property() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods, reason = "test invokes the typed fixture compiler")]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "test invokes the typed fixture compiler"
+)]
 fn parameter_projection_pins_selected_revision_and_replays_original_evidence() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let compiled = std::process::Command::new("bun").current_dir(root).args("tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/parameters/binding.source.ts --org org_demo --env dev".split_whitespace()).output().expect("typed binding compiler");
