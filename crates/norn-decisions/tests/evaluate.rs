@@ -1730,7 +1730,7 @@ proptest::proptest! {
         use norn_ir::Rounding;
         let mode = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][selected];
         let environment = |rounding| norn_expr::ZenTypeEnv::input_only(
-            std::collections::BTreeMap::from([("amount".to_owned(), norn_expr::Type::Decimal { scale, unit: None, rounding })]),
+            std::collections::BTreeMap::from([("amount".to_owned(), norn_expr::Type::Decimal { scale, unit: None, rounding, currency_source: None })]),
             norn_expr::EnvOptions::default()).unwrap();
         let omitted = environment(Rounding::effective(None));
         let explicit = environment(Rounding::effective(Some(Rounding::Refuse)));
