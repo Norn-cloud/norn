@@ -1,6 +1,9 @@
 //! Checked, identity-grained lowering for the bounded exact query profile.
 
-use norn_ir::metric::{MetricFilter, TimeGrain};
+pub mod arithmetic;
+pub mod contribution;
+
+use norn_ir::metric::{FilterOperator, MetricFilter, TimeGrain};
 use norn_ir::{MetricDefinition, ObjectTypeName, PropertyId, PropertyType, QuestionIR};
 
 use super::{BoundMeasure, MeasureAggregate, bind_metric, check_metrics_and_questions};
@@ -33,6 +36,8 @@ pub struct QuestionPlan {
     question: QuestionIR,
     sums: Vec<KeyedSum>,
     max_items: u32,
+    properties: Vec<EffectiveProperty>,
+    definitions: Vec<MetricDefinition>,
 }
 
 impl QuestionPlan {
@@ -52,6 +57,18 @@ impl QuestionPlan {
     #[must_use]
     pub fn sums(&self) -> &[KeyedSum] {
         &self.sums
+    }
+
+    /// Checked effective properties used for projection and store-model binding.
+    #[must_use]
+    pub fn properties(&self) -> &[EffectiveProperty] {
+        &self.properties
+    }
+
+    /// Canonically ordered declarations, retained for content-addressing the plan.
+    #[must_use]
+    pub fn definitions(&self) -> &[MetricDefinition] {
+        &self.definitions
     }
 
     /// Full-population bound; exceeding it must discard the result.
@@ -107,10 +124,7 @@ pub fn admit(
             !dimension.path.links.is_empty()
                 || !matches!(dimension.grain, None | Some(TimeGrain::Week))
         })
-        || question
-            .filters
-            .iter()
-            .any(|filter| !filter.path.links.is_empty())
+        || question.filters.iter().any(unsupported_filter)
     {
         return Err(refuse());
     }
@@ -145,7 +159,17 @@ pub fn admit(
             lower_sum(definition, question, catalog)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let properties = catalog
+        .object_type_named(question.object_set.as_str())
+        .and_then(Result::ok)
+        .ok_or_else(refuse)?
+        .properties
+        .clone();
+    let mut definitions = definitions.to_vec();
+    definitions.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(QuestionPlan {
+        properties,
+        definitions,
         question: question.clone(),
         sums,
         max_items,
@@ -172,10 +196,7 @@ fn lower_sum(
         || metric.currency.is_some()
         || definition.norn.freshness.is_some()
         || definition.norn.authz.is_some()
-        || metric
-            .default_filters
-            .iter()
-            .any(|f| !f.path.links.is_empty())
+        || metric.default_filters.iter().any(unsupported_filter)
     {
         return Err(refuse());
     }
@@ -199,6 +220,11 @@ fn lower_sum(
         time_property: metric.time_dimension.property,
         filters: metric.default_filters,
     })
+}
+
+fn unsupported_filter(filter: &MetricFilter) -> bool {
+    !filter.path.links.is_empty()
+        || !matches!(filter.operator, FilterOperator::Eq | FilterOperator::Ne)
 }
 
 fn refusal(code: &str) -> Vec<Diagnostic> {
