@@ -105,7 +105,8 @@ impl Expression {
                     });
                 }
             };
-            let evaluated = self.evaluate_with_meter(context, &meter.with_exact_arithmetic(profile));
+            let evaluated =
+                self.evaluate_with_meter(context, &meter.with_exact_arithmetic(profile));
             let mut evaluated = evaluated.result?;
             if let Some(site) = site {
                 let Value::Number(number) = &evaluated.value else {
