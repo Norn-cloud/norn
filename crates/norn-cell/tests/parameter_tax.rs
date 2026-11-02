@@ -294,6 +294,9 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
     let mut cell = open();
     for (id, input, original) in originals {
         assert_eq!(recorded(&cell, id), original, "durable original receipt");
+        for pin in &original.parameter_reads {
+            assert!(cell.load(&pin.key).expect("edited rate").version > pin.expected);
+        }
         let ActionOutcome::Replayed { record } = commit_action(
             &mut cell,
             &catalog,
