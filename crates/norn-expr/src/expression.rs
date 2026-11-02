@@ -13,32 +13,6 @@ use zen_expression::{IsolateError, Scope, Variable, compile_expression, compile_
 use crate::convert::{from_variable, to_variable};
 use crate::{ExprError, Value};
 
-/// VAL-ROUND: quantize at a declared Decimal site using shared scaled arithmetic.
-/// The declaration is the only scale/mode authority. Omission means refuse.
-/// This does not admit an expression or authorize a business mutation.
-///
-/// # Errors
-/// Returns a typed evaluation error for a non-Decimal site, or an invalid-number
-/// error for unsupported scale (above 18), inexact refusal or checked overflow.
-pub fn rescale_decimal(
-    site: &norn_ir::PropertyType,
-    value: &crate::Number,
-) -> Result<crate::Number, ExprError> {
-    let norn_ir::PropertyType::Decimal {
-        scale, rounding, ..
-    } = site
-    else {
-        return Err(ExprError::Evaluation {
-            message: "exact site must be a declared Decimal".to_owned(),
-        });
-    };
-    crate::convert::rescale_number(
-        value,
-        scale.0,
-        rounding.unwrap_or(norn_ir::Rounding::Refuse),
-    )
-}
-
 /// A compiled ZEN standard expression, ready to evaluate repeatedly.
 ///
 /// Compilation checks syntax only; it does not type-check the expression

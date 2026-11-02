@@ -69,6 +69,7 @@ pub use check::{
     check_expression_with_sources, check_unary, check_unary_with, validate_evaluation_source,
     validate_unary_evaluation_source,
 };
+pub use convert::rescale_decimal;
 pub use env::{
     ACTOR_VARIABLE, EntityDefinitions, EnvError, EnvOptions, Field, FieldSource, INPUT_VARIABLE,
     RecordKind, RecordType, SELF_VARIABLE, TYPE_ENV_HASH_PROFILE, TYPE_ENV_ID, TYPE_ENV_VERSION,
@@ -77,7 +78,6 @@ pub use env::{
 pub use error::ExprError;
 pub use expression::{
     Evaluation, EvaluationAttempt, EvaluationBudget, Expression, UnaryTest, check_unary_syntax,
-    rescale_decimal,
 };
 pub use reads::{ExpressionReads, expression_read_paths, expression_reads};
 pub use value::{Number, Value};

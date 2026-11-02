@@ -1,4 +1,4 @@
-//! The only place Norn values meet zen `Variable`s. Nothing here is public.
+//! The only place Norn values meet zen `Variable`s.
 //!
 //! The engine's decimal type is never named: it is reached through
 //! `Variable::Number` inference, so `norn-expr` stays within its SKELETON.md
@@ -26,20 +26,25 @@ pub(crate) fn canonical_engine_number(input: &str) -> Result<String, String> {
     }
 }
 
-/// VAL-ROUND: lower a declared mode to the one shared scaled arithmetic core.
-pub(crate) fn rescale_number(
-    value: &Number,
-    scale: u64,
-    rounding: norn_ir::Rounding,
-) -> Result<Number, ExprError> {
+/// VAL-ROUND: quantize at a declared Decimal site using shared scaled arithmetic.
+/// The declaration is the only scale/mode authority. Omission means refuse.
+/// This does not admit an expression or authorize a business mutation.
+///
+/// # Errors
+/// Returns a typed evaluation error for a non-Decimal site, or an invalid-number
+/// error for unsupported scale (above 18), inexact refusal or checked overflow.
+pub fn rescale_decimal(site: &norn_ir::PropertyType, value: &Number) -> Result<Number, ExprError> {
     use zen_expression::scaled::{Rounding, ScaledArithmetic};
+    let norn_ir::PropertyType::Decimal { scale, rounding, .. } = site else {
+        return Err(ExprError::Evaluation { message: "exact site must be a declared Decimal".to_owned() });
+    };
     let invalid = |reason: String| ExprError::InvalidNumber {
         input: value.as_str().to_owned(),
         reason,
     };
-    let scale = u32::try_from(scale)
+    let scale = u32::try_from(scale.0)
         .map_err(|error| invalid(format!("unsupported exact-site scale: {error}")))?;
-    let rounding = match rounding {
+    let rounding = match rounding.unwrap_or(norn_ir::Rounding::Refuse) {
         norn_ir::Rounding::Refuse => Rounding::Refuse,
         norn_ir::Rounding::TowardZero => Rounding::TowardZero,
         norn_ir::Rounding::HalfEven => Rounding::HalfEven,

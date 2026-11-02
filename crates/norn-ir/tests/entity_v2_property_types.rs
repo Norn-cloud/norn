@@ -224,15 +224,10 @@ fn schema_publishes_every_kind_and_closed_members() {
 
 #[test]
 fn val_round_uses_the_shared_enum_and_keeps_omission_distinct_from_null() {
-    use norn_ir::{Rounding, WholeNumber};
-    let default = PropertyType::Decimal {
-        scale: WholeNumber(2),
-        rounding: None,
-        unit: None,
-        currency_source: None,
-    };
-    let value = serde_json::to_value(&default).expect("wire");
-    assert!(value.get("rounding").is_none());
+    use norn_ir::Rounding;
+    let value = serde_json::json!({"kind":"decimal","scale":2});
+    let default: PropertyType = serde_json::from_value(value.clone()).expect("default");
+    assert_eq!(serde_json::to_value(default).expect("wire"), value);
     for rounding in [
         Rounding::Refuse,
         Rounding::TowardZero,
