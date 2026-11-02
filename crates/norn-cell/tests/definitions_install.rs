@@ -6305,8 +6305,11 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::load_link(&cell, &link), Err(CellError::QualityEvaluation(_))));
         norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_link_targets(&cell, &key, "unused", 1, 64), Err(CellError::QualityEvaluation(_))));
         let mut stale = norn_kernel::CellCommit::empty();
-        stale.reads.push(norn_kernel::FactExpectation { key, expected });
+        stale.reads.push(norn_kernel::FactExpectation { key: key.clone(), expected });
         norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, stale), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
+        let mut written = norn_kernel::CellCommit::empty();
+        written.writes.push(norn_kernel::FactWrite { key, expected, mutation: norn_kernel::FactMutation::Put { values:BTreeMap::from([("purity".into(), Value::from_json_text("0.90").expect("value"))]) } });
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, written), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
         drop(cell);
         for delivery in 1..deliveries {
             store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
@@ -6436,8 +6439,12 @@ fn source_dispute_non_main_reads_refuse_until_core08_retains_the_frontier() {
         assert_eq!(reader.observation_findings("fork/test", "quality.Measurement", "MEAS-1").expect_err("findings refuse").to_string(), expected);
         assert_eq!(reader.observation_is_quarantined("fork/test", &fork).expect_err("governed predicate refuses").to_string(), expected);
         assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("live quarantine").is_none());
-        assert_eq!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw preserved"), Some(before));
+        assert_eq!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw preserved"), Some(before.clone()));
         assert_eq!(reader.object("fork/test", "quality.Measurement", "MEAS-1").expect("raw world preserved"), Some(fork));
         assert!(reader.authoritative_object("fork/test", "quality.Measurement", "OTHER").expect("unaffected absence").is_none());
+        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("native cell");
+        let mut written = norn_kernel::CellCommit::empty();
+        written.writes.push(norn_kernel::FactWrite {key:norn_kernel::FactKey::new("quality.Measurement", "MEAS-1"), expected:norn_kernel::FactVersion(before.version), mutation:norn_kernel::FactMutation::Put {values:before.values}});
+        assert!(matches!(norn_kernel::CellHost::commit(&mut cell, written), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
     }
 }
