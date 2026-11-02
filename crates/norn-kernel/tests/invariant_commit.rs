@@ -3129,3 +3129,24 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_eq!(catalog.classify_data_quality_rule(&forged).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
     }
 }
+
+#[test]
+fn property_rule_pin_empty_catalog_forms_are_equivalent() {
+    let definition: ObjectTypeDef =
+        serde_json::from_value(json!({"name":"test.Simple","properties":[
+            {"id":"amount","type":{"kind":"decimal","scale":3}}
+        ]}))
+        .unwrap();
+    let catalog = TypeCatalog::new([&definition]);
+    let rule = catalog
+        .property_domain_rule_ref(&definition.name, &norn_ir::PropertyId("amount".into()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        TypeCatalog::new([&definition])
+            .with_property_types(&[])
+            .classify_data_quality_rule(&rule)
+            .unwrap(),
+        norn_kernel::DataQualityRuleClassification::Builtin
+    );
+}
