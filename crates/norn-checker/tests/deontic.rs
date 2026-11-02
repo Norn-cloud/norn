@@ -464,7 +464,7 @@ fn wording_fixture(minimum: i32) -> (norn_ir::ArtifactEnvelope, norn_checker::la
 }
 
 // LAW-WORDING-PIN-1: changed executable law values never retain a wording binding.
-norn_testkit::proptest::proptest! {
+proptest::proptest! {
     #[test]
     #[allow(clippy::expect_used, reason = "typed wording property assertions")]
     fn wording_pin_changes_to_unverified_without_changing_semantic_ids(minimum in 1i32..100) {
@@ -473,14 +473,14 @@ norn_testkit::proptest::proptest! {
         let (law, wording) = wording_fixture(minimum);
         let en = admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En).expect("bound English");
         let ar = admit_wording(&wording, &law, &requirement_env(), RequirementLocale::Ar).expect("bound Arabic");
-        norn_testkit::proptest::prop_assert_eq!(en.binding, WordingBinding::Bound);
-        norn_testkit::proptest::prop_assert_eq!(ar.binding, WordingBinding::Bound);
-        norn_testkit::proptest::prop_assert_eq!(&en.view.requirement, &ar.view.requirement);
-        norn_testkit::proptest::prop_assert_eq!(ar.view.direction(), "rtl");
+        proptest::prop_assert_eq!(en.binding, WordingBinding::Bound);
+        proptest::prop_assert_eq!(ar.binding, WordingBinding::Bound);
+        proptest::prop_assert_eq!(&en.view.requirement, &ar.view.requirement);
+        proptest::prop_assert_eq!(ar.view.direction(), "rtl");
         let (changed, _) = wording_fixture(minimum.checked_add(1).expect("bounded threshold"));
         let stale = admit_wording(&wording, &changed, &requirement_env(), RequirementLocale::Ar).expect("unverified view");
-        norn_testkit::proptest::prop_assert_eq!(stale.binding, WordingBinding::Unverified);
-        norn_testkit::proptest::prop_assert_eq!(stale.view.requirement, wording.requirement);
+        proptest::prop_assert_eq!(stale.binding, WordingBinding::Unverified);
+        proptest::prop_assert_eq!(stale.view.requirement, wording.requirement);
     }
 }
 
