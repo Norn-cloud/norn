@@ -30,18 +30,9 @@ impl ScaledInteger {
         }
     }
 
-    fn canonical(mut self) -> Self {
-        if self.unscaled == 0 {
-            return Self::zero();
-        }
-        while self.scale > 0 && self.unscaled % 10 == 0 {
-            self.unscaled /= 10;
-            let Some(next_scale) = self.scale.checked_sub(1) else {
-                break;
-            };
-            self.scale = next_scale;
-        }
-        self
+    fn canonical(self) -> Self {
+        let (unscaled, scale) = super::decimal::canonical_parts(self.unscaled, self.scale);
+        Self { unscaled, scale }
     }
 
     fn checked_add(self, rhs: Self, path: &str) -> Result<Self, LedgerAmountLoweringError> {

@@ -17,16 +17,76 @@ use crate::{CellStore, CommitOutcome, InstalledDefinitionInput, Model, Receipt};
 /// The commitment preimage; absence is a tombstone, not an empty live object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct FactSnapshot {
+pub struct FactSnapshot {
+    /// Execution world of the committed incarnation.
     pub world: String,
+    /// Identity root shared by the type hierarchy.
     pub root_type: String,
+    /// Concrete object type at this version.
     pub object_type: String,
+    /// Authenticated type ancestry at this version.
     pub lineage: Vec<String>,
+    /// Definition model used by the writer.
     pub model_hash: String,
+    /// Stable fact identity within the root type.
     pub key: String,
+    /// Tenant scope recorded by the writer.
     pub scope: String,
+    /// Immutable incarnation number, including tombstones.
     pub version: u64,
+    /// Exact committed values; absence denotes a tombstone.
     pub values: Option<BTreeMap<String, Value>>,
+}
+
+/// Store-authenticated source evidence for a single historical incarnation.
+/// Exporting this record preserves knowledge time in the hashed receipt. It is
+/// not authorization or publication authority; importing hosts must revalidate.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactVersionEvidence {
+    snapshot: FactSnapshot,
+    snapshot_sha256: String,
+    receipt: Receipt,
+}
+
+/// Immutable knowledge coordinate; the frontier disambiguates equal logical clocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnowledgeCutoff {
+    /// Inclusive authenticated recorded-time bound.
+    pub recorded_at: norn_kernel::LogicalTime,
+    /// Inclusive immutable source commit frontier (zero is the empty history).
+    pub frontier: u64,
+}
+
+/// A bounded historical lookup distinguishes absence from exhausted evidence.
+#[derive(Debug)]
+pub enum HistoricalEvidence {
+    /// Authenticated incarnation; a tombstone retains its source receipt.
+    Found(Box<FactVersionEvidence>),
+    /// No incarnation was known at the requested cutoff.
+    Missing,
+    /// No partial answer is returned after the read budget is exhausted.
+    Exhausted,
+}
+
+impl FactVersionEvidence {
+    /// Immutable value commitment, including world, scope and definition pins.
+    #[must_use]
+    pub const fn snapshot(&self) -> &FactSnapshot {
+        &self.snapshot
+    }
+
+    /// Norn1 digest of the complete snapshot preimage.
+    #[must_use]
+    pub fn snapshot_sha256(&self) -> &str {
+        &self.snapshot_sha256
+    }
+
+    /// Emitting receipt; its authenticated logical time is knowledge time.
+    #[must_use]
+    pub const fn receipt(&self) -> &Receipt {
+        &self.receipt
+    }
 }
 
 // A projection may omit unproven fields, but each retained member must stay
@@ -101,6 +161,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         version: u64,
     ) -> Result<Receipt, CellError> {
+        self.fact_version_evidence(world, object_type, key, version)
+            .map(|evidence| evidence.receipt)
+    }
+
+    fn fact_version_evidence(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        version: u64,
+    ) -> Result<FactVersionEvidence, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
         let row: Option<(String, String, i64)> = self.conn.query_optional(
             &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND \"version\" = ?4"),
@@ -123,7 +194,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         {
             return Err(unproven_snapshot());
         }
-        Ok(receipt)
+        Ok(FactVersionEvidence {
+            snapshot,
+            snapshot_sha256: hash,
+            receipt,
+        })
     }
 
     /// Authenticate one exact fact's emitting receipt within a shared read budget.
@@ -140,6 +215,25 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<Receipt>, CellError> {
+        self.fact_version_evidence_with_budget(world, object_type, key, version, budget)
+            .map(|evidence| evidence.map(|evidence| evidence.receipt))
+    }
+
+    /// Export authenticated values, source digest and emitting receipt together.
+    /// ASOF-KNOWLEDGE-1: recorded time comes from the receipt, never an event's
+    /// claimed effective timestamp. No partial evidence is returned on exhaustion.
+    /// Authorization and selecting the eligible incarnation belong to the host.
+    ///
+    /// # Errors
+    /// Missing/corrupt snapshot or receipt, identity mismatch, or engine failure.
+    pub fn fact_version_evidence_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        version: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<FactVersionEvidence>, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
         let bytes: Option<i64> = self.conn.query_optional(
             &format!("SELECT octet_length(f.\"snapshot\") + octet_length(f.\"hash\") + COALESCE(octet_length(r.\"world\"), 0) + COALESCE(octet_length(r.\"idempotency_key\"), 0) + COALESCE(octet_length(r.\"request_hash\"), 0) + octet_length(r.\"receipt\") + octet_length(r.\"receipt_hash\") FROM \"{FACT_VALUES}\" f JOIN \"{RECEIPT}\" r ON r.\"commit_seq\" = f.\"commit_seq\" WHERE f.\"world\" = ?1 AND f.\"root_type\" = ?2 AND f.\"id\" = ?3 AND f.\"version\" = ?4"),
@@ -154,8 +248,83 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if !budget.charge_rows(2) || !budget.charge(bytes) {
             return Ok(None);
         }
-        self.receipt_for_fact_version(world, object_type, key, version)
+        self.fact_version_evidence(world, object_type, key, version)
             .map(Some)
+    }
+
+    /// ASOF-KNOWLEDGE-1: choose the newest authenticated incarnation known by
+    /// the inclusive cutoff. Effective-time interpretation and authorization
+    /// remain with the declared question and exporting host.
+    ///
+    /// # Errors
+    /// Corrupt/missing version proof, invalid identity or storage failure.
+    pub fn fact_evidence_known_at_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        known_as_of: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<HistoricalEvidence, CellError> {
+        if known_as_of.frontier > 0 {
+            let bytes: Option<i64> = self.conn.query_optional(
+                &format!("SELECT octet_length(\"receipt\") + octet_length(\"receipt_hash\") + COALESCE(octet_length(\"world\"),0) + COALESCE(octet_length(\"idempotency_key\"),0) + COALESCE(octet_length(\"request_hash\"),0) FROM \"{RECEIPT}\" WHERE \"commit_seq\"=?1"),
+                params![to_i64(known_as_of.frontier,"knowledge frontier")?], |row| row.get(0),
+            )?;
+            let bytes = to_u64(
+                bytes.ok_or_else(unproven_snapshot)?,
+                "frontier receipt bytes",
+            )?;
+            if !budget.charge_rows(1) || !budget.charge(bytes.saturating_add(64)) {
+                return Ok(HistoricalEvidence::Exhausted);
+            }
+            self.receipt_at(known_as_of.frontier)?
+                .ok_or_else(unproven_snapshot)?;
+        }
+        let root = self.root_type(object_type).unwrap_or(object_type);
+        let capacity = budget.remaining_rows() / 2;
+        let limit = capacity.saturating_add(1);
+        let rows = self.conn.query(
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 AND \"commit_seq\"<=?4 ORDER BY \"version\" LIMIT ?5"),
+            params![world, root, key, to_i64(known_as_of.frontier, "knowledge frontier")?, to_i64(u64::try_from(limit).map_err(|_bound| unproven_snapshot())?, "historical limit")?],
+        )?;
+        let versions = rows
+            .into_iter()
+            .map(|row| to_u64(SqlRow(row).get(0)?, "fact version"))
+            .collect::<Result<Vec<_>, CellError>>()?;
+        if versions.len() > capacity {
+            return Ok(HistoricalEvidence::Exhausted);
+        }
+        let mut selected = None;
+        let mut evidence = None;
+        for version in versions {
+            let Some(candidate) =
+                self.fact_version_evidence_with_budget(world, root, key, version, budget)?
+            else {
+                return Ok(HistoricalEvidence::Exhausted);
+            };
+            let next = crate::history_selection::select_known_version(
+                known_as_of.recorded_at.as_millis(),
+                selected,
+                version,
+                candidate.receipt().body.logical_time,
+            );
+            if next != selected {
+                evidence = Some(candidate);
+                selected = next;
+            }
+        }
+        Ok(evidence
+            .filter(|proof| {
+                proof
+                    .snapshot()
+                    .lineage
+                    .iter()
+                    .any(|name| name == object_type)
+            })
+            .map_or(HistoricalEvidence::Missing, |proof| {
+                HistoricalEvidence::Found(Box::new(proof))
+            }))
     }
 
     pub(crate) fn retained_fact_scope(

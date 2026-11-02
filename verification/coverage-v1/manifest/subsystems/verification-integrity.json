@@ -460,6 +460,12 @@
     "verification/stripmine-2026-08-22/scripts/validate.sh",
     "tools/norn-ts/fixtures/stock/stock.source.ts",
     "tools/norn-ts/test/stock-definitions.test.ts",
-    "crates/norn-checker/src/obligations/induction.rs"
+    "crates/norn-checker/src/obligations/induction.rs",
+    "scripts/demo/run.sh",
+    "scripts/demo/jewelry.source.ts",
+    "crates/norn-checker/examples/jewelry_demo.rs",
+    "scripts/demo/drop-01-authored-laws.sh",
+    "scripts/demo/drop-02-exact-values-units.sh",
+    "scripts/demo/drop-common.sh"
   ]
 }
