@@ -264,9 +264,14 @@ mod tests {
     proptest::proptest! {
         #![proptest_config(proptest::test_runner::Config::with_cases(16))]
         #[test]
-        fn oversized_real_report_returns_a_valid_exhaustion_receipt(key_bytes in 20_000usize..40_000) {
+        fn oversized_real_report_returns_a_valid_exhaustion_receipt(holdouts in 160usize..192) {
             let (plan, mut rows) = crate::producer::tests::fixture();
-            for (i, row) in rows.iter_mut().enumerate() { row.key = format!("{}-{i}", "x".repeat(key_bytes)); }
+            let held_out = rows.last().expect("holdout").clone();
+            for i in 0..holdouts {
+                let mut row = held_out.clone();
+                row.key = format!("{}-{i}", "x".repeat(240));
+                rows.push(row);
+            }
             let digest = crate::host::implementation_digest().expect("code");
             let export = export(&plan, &rows, &digest, 1);
             let admitted = norn_checker::function::admit_function_manifest(&crate::host::manifest().expect("manifest")).expect("admission");
