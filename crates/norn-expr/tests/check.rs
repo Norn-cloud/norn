@@ -1669,10 +1669,21 @@ fn val_exact_typed_sites_bind_admission_and_execution() {
             .into_value(),
         Value::Number("1.01".parse().unwrap())
     );
-    assert_eq!(run("null", &decimal(2).optional()).result.unwrap().into_value(), Value::Null);
+    assert_eq!(
+        run("null", &decimal(2).optional())
+            .result
+            .unwrap()
+            .into_value(),
+        Value::Null
+    );
     assert!(run("null", &decimal(2)).result.is_err());
     let nested = Expression::compile("{amount: 1 / 3}").unwrap();
-    assert!(nested.check_typed(&env, env.variables().get("input").unwrap()).is_err(), "structured destinations must stay exact");
+    assert!(
+        nested
+            .check_typed(&env, env.variables().get("input").unwrap())
+            .is_err(),
+        "structured destinations must stay exact"
+    );
     let plain =
         ZenTypeEnv::input_only(fields([("amount", Type::Number)]), EnvOptions::default()).unwrap();
     let expression = Expression::compile("input.amount / 3 > 0").unwrap();
