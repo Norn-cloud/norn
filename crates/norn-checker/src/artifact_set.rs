@@ -311,6 +311,8 @@ pub fn check_artifact_set(
     check_artifact_set_profile(artifacts, context, false)
 }
 
+pub(crate) const CURRENT_SETTING_VERSION: &str = "0.2";
+
 /// PARAM-WIRE-2: only verified retained sets may reuse their tagged value profile.
 pub(crate) fn check_artifact_set_profile(
     artifacts: &[ArtifactEnvelope],
@@ -320,12 +322,12 @@ pub(crate) fn check_artifact_set_profile(
     let mut layout_findings = Vec::new();
     if !retained {
         for artifact in artifacts {
-            if matches!(&artifact.payload, ArtifactPayload::Setting(s) if s.setting_version.get() == Some(&norn_ir::IrVersion02::V0_1))
+            if matches!(&artifact.payload, ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into())))
             {
                 layout_findings.push(Diagnostic {
                     code: DiagnosticCode::new("setting.validation.invalid_payload"),
                     severity: DiagnosticSeverity::Error,
-                    message: "new setting admissions require settingVersion 0.2; retained 0.1 values require their verified receipt".into(),
+                    message: format!("new setting admissions require settingVersion {CURRENT_SETTING_VERSION}; retained value profiles require their verified receipt"),
                     span: None, artifact_id: Some(artifact.artifact_id.clone()),
                     remediation: Some(DiagnosticRemediation::FixDefinition),
                 });
