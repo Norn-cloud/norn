@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/core-physics-v1/proofs/CoreValueLedger.lean",
+    "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreValueLedger.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entrye3535fbb2a136f58667847fbd31dd80406d543d1e44dc50eba1bb7249f6af1d6.evidence.proof.entry3c2800e19371e6138bda03b21cc0c1cdc83e3f67e55b34ca3122007bda880f3d.selectors"
+    }
+  }
+}

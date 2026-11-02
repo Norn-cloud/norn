@@ -236,7 +236,8 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
     }
 
     pub(crate) const fn reader(&self) -> StoreReader<'_, E> {
-        StoreReader::new(self.conn, self.model).with_pending_digests(self.commit_seq, &self.pending_snapshot_digests)
+        StoreReader::new(self.conn, self.model)
+            .with_pending_digests(self.commit_seq, &self.pending_snapshot_digests)
     }
 
     fn commit_seq_sql(&self) -> Result<i64, CellError> {
@@ -2109,8 +2110,14 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         Ok(hash)
     }
 
-    fn retained_fact_scope(&self, root: &str, key: &str, version: u64) -> Result<String, CellError> {
-        self.reader().retained_fact_scope(self.world, root, key, version)
+    fn retained_fact_scope(
+        &self,
+        root: &str,
+        key: &str,
+        version: u64,
+    ) -> Result<String, CellError> {
+        self.reader()
+            .retained_fact_scope(self.world, root, key, version)
     }
 
     #[allow(

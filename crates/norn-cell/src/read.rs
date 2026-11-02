@@ -1225,7 +1225,11 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     }
 
     /// Writer-owned preimages support internal event validation, never evidence export.
-    pub(crate) const fn with_pending_digests(mut self, commit: u64, digests: &'a PendingDigests) -> Self {
+    pub(crate) const fn with_pending_digests(
+        mut self,
+        commit: u64,
+        digests: &'a PendingDigests,
+    ) -> Self {
         self.pending_digests = Some((commit, digests));
         self
     }
