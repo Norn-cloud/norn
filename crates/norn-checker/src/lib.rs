@@ -25,8 +25,8 @@
 // (docs/platform/rust-safety-baseline.md) and keep the same staged burn-down.
 pub mod action_set;
 pub mod artifact_set;
-pub mod codes;
 pub mod classification;
+pub mod codes;
 mod concept_roles;
 pub mod connector_path;
 pub mod consistency;
