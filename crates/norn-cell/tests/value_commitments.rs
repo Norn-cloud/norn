@@ -61,6 +61,20 @@ fn modified(before: &str, after: &str, before_version: u64, after_version: u64) 
 }
 
 #[test]
+fn pre_commitment_store_format_refuses_before_history_verification() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("legacy.sqlite");
+    let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+    store.commit(&batch(vec![put("proof.Item", "item", "original")])).expect("commit");
+    drop(store);
+    let raw = rusqlite::Connection::open(&path).expect("legacy seam");
+    raw.execute("UPDATE _norn_meta SET value='norn.cell.store/7' WHERE key='format'", []).expect("legacy format");
+    raw.execute("UPDATE _norn_fact_values SET snapshot='invalid legacy preimage'", []).expect("unproven history");
+    drop(raw);
+    assert!(matches!(CellStore::open(&path, model(), StoreOptions::default()), Err(CellError::StoreFormat { found, expected }) if found == "norn.cell.store/7" && expected == "norn.cell.store/8"));
+}
+
+#[test]
 fn knowledge_cutoff_admits_one_authenticated_proof_exactly_once() {
     use norn_cell::reactive::BudgetedRead;
     use norn_kernel::{FactKey, LogicalTime};
