@@ -78,11 +78,18 @@ pub fn admit_wording(
     let norm = &wording.requirement.norm;
     let grade = if matches!(norm.law.modality, norn_ir::LawModality::Never {}) {
         norn_ir::deontic::DeonticModality::Prohibition
-    } else { norn_ir::deontic::DeonticModality::Obligation };
-    if norm.modality != grade || norm.authority_id != norm.law.owner
-        || !norm.exceptions.is_empty() || !norm.defeated_by.is_empty()
-        || norm.source.artifact_id != wording.artifact_id || norm.source.pointer != "/requirement/norm"
-        || norm.source.bytes.is_some() || wording.requirement.timing != norn_ir::deontic::RequirementTiming::EveryCommittedState {
+    } else {
+        norn_ir::deontic::DeonticModality::Obligation
+    };
+    if norm.modality != grade
+        || norm.authority_id != norm.law.owner
+        || !norm.exceptions.is_empty()
+        || !norm.defeated_by.is_empty()
+        || norm.source.artifact_id != wording.artifact_id
+        || norm.source.pointer != "/requirement/norm"
+        || norm.source.bytes.is_some()
+        || wording.requirement.timing != norn_ir::deontic::RequirementTiming::EveryCommittedState
+    {
         return Err(WordingError::Document);
     }
     let view = RequirementView {

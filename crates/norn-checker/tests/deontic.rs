@@ -459,7 +459,11 @@ fn wording_fixture(
     let mut requirement = requirement();
     requirement.norm.authority_id = requirement.norm.law.owner.clone();
     requirement.norm.authority_version = "1.0.0".into();
-    requirement.norm.source = norn_ir::deontic::RuleSourceSpan { artifact_id:format!("{}.wording", requirement.norm.law.id), pointer:"/requirement/norm".into(), bytes:None };
+    requirement.norm.source = norn_ir::deontic::RuleSourceSpan {
+        artifact_id: format!("{}.wording", requirement.norm.law.id),
+        pointer: "/requirement/norm".into(),
+        bytes: None,
+    };
     requirement.timing = norn_ir::deontic::RequirementTiming::EveryCommittedState;
     requirement.norm.law.response = norn_ir::LawResponse::Predicate {
         expression: norn_ir::ZenExpression(format!("input.quantity >= {minimum}")),
