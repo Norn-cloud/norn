@@ -199,6 +199,40 @@ fn graph_link_incoming_cardinality_distinguishes_unrelated_declarations() {
     );
 }
 
+#[test]
+fn graph_link_existing_narrow_incoming_contract_survives_broad_base_additions() {
+    let mut types = types();
+    types[2].links[0].cardinality.from = norn_ir::Multiplicity::Many;
+    let mut narrow = types[2].links[0].clone();
+    narrow.cardinality.from = norn_ir::Multiplicity::One;
+    types[3].links.push(narrow);
+    for (first, next) in [
+        ("graph.Child", "graph.Owner"),
+        ("graph.Owner", "graph.Child"),
+    ] {
+        let mut cell = Cell::new(|_| 0).with_types(types.clone());
+        cell.commit(CellCommit {
+            writes: vec![put(first, "a"), put(next, "b"), put("graph.Resource", "t")],
+            links: vec![edge(first, "a", "resource", "t", true)],
+            ..CellCommit::empty()
+        })
+        .expect("initial owner");
+        let attempt = CellCommit {
+            links: vec![edge(next, "b", "resource", "t", true)],
+            events: vec![8],
+            effects: vec![Effect::Perform(law_command(1, 0, 8))],
+            ..CellCommit::empty()
+        };
+        let before = cell.ledger().len();
+        assert!(matches!(
+            cell.commit(attempt),
+            Err(CommitError::LinkCardinality { .. })
+        ));
+        assert_eq!(cell.ledger().len(), before);
+        assert!(cell.outbox().is_empty());
+    }
+}
+
 proptest! {
     #[test]
     fn graph_link_generated_final_edges_match_declaring_relation_cardinality(
