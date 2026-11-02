@@ -1007,3 +1007,24 @@ fn verify_admission_receipt(
         limits,
     )
 }
+
+#[test]
+fn val_env_action_json_leaf_and_exact_refinement_share_the_action_dialect() {
+    let mut action: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"
+    ))
+    .expect("action fixture");
+    action["payload"]["inputSchema"] = json!({"type":"object","properties":{
+        "payload":{"type":["null","boolean","number","string","array","object"]},
+        "amount":{"type":"number","nornType":{"kind":"decimal","scale":2}}
+    },"required":["payload","amount"],"additionalProperties":false});
+    let artifacts = envelopes(&[action]);
+    let env = derive_type_env(&artifacts, &[], &ResourceLimitProfile::norn_limits_v1())
+        .expect("action dialect binds both leaves");
+    assert!(
+        env.records()
+            .keys()
+            .any(|name| name.ends_with("inputSchema"))
+    );
+    env.reference().expect("env/2 pin");
+}

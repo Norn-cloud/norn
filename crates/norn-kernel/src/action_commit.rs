@@ -1763,25 +1763,28 @@ fn derive_row_values<X>(
             ),
         }));
     }
-    let base_env = catalog
+    let catalog_env = catalog
         .base_expression_environment()
         .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
-    let excluded = config
+    let mut excluded: BTreeSet<String> = config
         .derive
         .keys()
         .map(|property| property.as_str().to_owned())
         .collect();
-    let base_env = base_env
-        .bind_self_to_stored_fields(&collection.child_type, &excluded)
-        .map_err(|error| {
-            ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
-                reason: error.to_string(),
-            })
-        })?;
-    let env =
-        norn_expr::schema::action_environment(action, Some(&base_env), action.derive.len())
-            .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
     for (property, expression) in &config.derive {
+        let base_env = catalog_env
+            .clone()
+            .bind_self_to_stored_fields(&collection.child_type, &excluded)
+            .map_err(|error| {
+                ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                    reason: error.to_string(),
+                })
+            })?;
+        let env =
+            norn_expr::schema::action_environment(action, Some(&base_env), action.derive.len())
+                .map_err(|reason| {
+                    ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason })
+                })?;
         let context = row_expression_context::<X>(input, &proposed)?;
         let invalid = |reason| {
             ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
@@ -1810,6 +1813,7 @@ fn derive_row_values<X>(
         )?;
         let value = expression_value_to_runtime(&evaluated).map_err(invalid)?;
         proposed.insert(property.as_str().to_owned(), value);
+        excluded.remove(property.as_str());
     }
     Ok(proposed)
 }

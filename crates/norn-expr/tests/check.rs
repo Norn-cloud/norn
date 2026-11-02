@@ -1978,3 +1978,32 @@ fn val_exact_admitted_legacy_inputs_keep_generated_presence_and_actual_fuel() {
             .is_err()
     );
 }
+
+#[test]
+fn val_rate_dynamic_currency_is_outside_the_bounded_exact_profile() {
+    let source = Some(norn_ir::metric::DimensionPath {
+        links: Vec::new(),
+        property: norn_ir::PropertyId("currency".into()),
+    });
+    let env = ZenTypeEnv::input_only(
+        fields([
+            ("currency", Type::enumeration(["USD", "EUR"])),
+            (
+                "amount",
+                Type::Decimal {
+                    scale: 2,
+                    unit: None,
+                    currency_source: source,
+                    per_unit: None,
+                    rounding: norn_ir::Rounding::Refuse,
+                },
+            ),
+        ]),
+        EnvOptions::default(),
+    )
+    .unwrap();
+    let expression = Expression::compile("input.amount == input.amount").unwrap();
+    assert!(expression.check_typed(&env, &Type::Bool).is_err());
+    check_expression_with(&expression, &env, &Type::Bool, &roomy_limits())
+        .expect("legacy profile remains available");
+}

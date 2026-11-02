@@ -2834,3 +2834,53 @@ fn caller_cannot_choose_an_owned_child_lifecycle_initial_state() {
         Some(&JsonValue::String("draft".to_owned()))
     );
 }
+
+#[test]
+fn val_exact_later_row_derivation_reads_the_materialized_earlier_value() {
+    let mut definitions = types_with_derived_idx();
+    let child = definitions
+        .iter_mut()
+        .find(|definition| definition.name.as_str() == CHILD)
+        .expect("child definition");
+    for property in &mut child.properties {
+        if matches!(property.id.as_str(), "derived_idx" | "double_quantity") {
+            property.property_type = norn_ir::PropertyType::Decimal {
+                scale: norn_ir::WholeNumber(0),
+                unit: None,
+                currency_source: None,
+                per_unit: None,
+                rounding: None,
+            };
+        }
+    }
+    let catalog = entity_catalog(&definitions);
+    let mut cell = native_cell_for(&definitions);
+    let action = action_with_derivations(
+        "test.order.derived_chain",
+        "true",
+        &json!({"derived_idx":"self.idx","double_quantity":"self.derived_idx * 2"}),
+    );
+    commit_action(
+        &mut cell,
+        &catalog,
+        &call(
+            &action,
+            "exact-derived-chain",
+            action_input(
+                "0",
+                &json!({"title":"initial"}),
+                &json!([add("row-a", "A", 1)]),
+            ),
+        ),
+        &Allow,
+    )
+    .expect("later exact derivation reads the earlier stored value");
+    assert_derived_idx(&cell, "row-a", 1);
+    let row = cell.load(&row_key("row-a")).expect("row loads");
+    assert_eq!(
+        row.values
+            .as_ref()
+            .and_then(|values| values.get("double_quantity")),
+        Some(&integer(2))
+    );
+}

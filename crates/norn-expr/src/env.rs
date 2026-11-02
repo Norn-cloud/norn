@@ -475,12 +475,29 @@ impl ZenTypeEnv {
     ///
     /// # Errors
     /// Refuses malformed schemas or colliding schema record identities.
-    pub fn bind_exact_schema(
-        mut self,
+    pub fn bind_exact_schema(self, name: &str, value: &norn_ir::JsonValue) -> Result<Self, String> {
+        let schema = crate::schema::Schema::parse(value, name).map_err(|e| e.reason)?;
+        self.bind_parsed_exact_schema(name, &schema)
+    }
+
+    /// VAL-ENV: retain the ActionIR input dialect when pinning exact refinements.
+    ///
+    /// # Errors
+    /// Refuses malformed action inputs or colliding schema record identities.
+    pub fn bind_exact_action_schema(
+        self,
         name: &str,
         value: &norn_ir::JsonValue,
     ) -> Result<Self, String> {
-        let schema = crate::schema::Schema::parse(value, name).map_err(|e| e.reason)?;
+        let schema = crate::schema::Schema::parse_action(value, name).map_err(|e| e.reason)?;
+        self.bind_parsed_exact_schema(name, &schema)
+    }
+
+    fn bind_parsed_exact_schema(
+        mut self,
+        name: &str,
+        schema: &crate::schema::Schema,
+    ) -> Result<Self, String> {
         if !schema.has_exact() {
             return Ok(self);
         }

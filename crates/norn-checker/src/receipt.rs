@@ -874,7 +874,11 @@ pub fn recover_legacy_admission_receipt(
         .map_err(|errors| {
             invalid_receipt(format!("cannot derive receipt environment: {errors:?}"))
         })?
-        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)?;
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+        .map_err(|_error| ReceiptError::ReceiptHashMismatch {
+            expected: expected_sha256.to_owned(),
+            actual: current_sha256.clone(),
+        })?;
     if checked.receipt.admitted {
         let mut historical_current = checked.receipt;
         historical_current.type_env = Some(type_env.clone());
@@ -969,7 +973,14 @@ pub fn derive_type_env(
                         "exact.{}.{}.{}",
                         artifact.artifact_id, artifact.version, member
                     );
-                    env = env.bind_exact_schema(&name, schema).map_err(|reason| {
+                    let bound = if matches!(&artifact.payload, norn_ir::ArtifactPayload::Action(_))
+                        && member == "inputSchema"
+                    {
+                        env.bind_exact_action_schema(&name, schema)
+                    } else {
+                        env.bind_exact_schema(&name, schema)
+                    };
+                    env = bound.map_err(|reason| {
                         vec![norn_expr::EnvError::Unresolved {
                             site: name,
                             name: reason,

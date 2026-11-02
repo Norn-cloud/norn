@@ -227,14 +227,18 @@ impl<'a> TypeCatalog<'a> {
             interfaces: &interfaces,
             extensions: &extensions,
         };
-        norn_expr::ZenTypeEnv::from_artifact_set(&definitions, norn_expr::EnvOptions::default())
-            .map_err(|errors| {
-                errors
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            })
+        norn_expr::ZenTypeEnv::from_artifact_set_for_checking(
+            &definitions,
+            &BTreeSet::new(),
+            norn_expr::EnvOptions::default(),
+        )
+        .map_err(|errors| {
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
     }
 
     /// Materialize declared defaults without filling other absent properties
