@@ -2221,6 +2221,26 @@ impl<'a> Checker<'a> {
                 self.number(first?)?;
                 Some(T::Number)
             }
+            F::Round if arguments.len() == 3 => {
+                self.exact = true;
+                self.number(first?)?;
+                self.string(arguments.get(2)?)?;
+                if !matches!(arguments.get(1), Some(Node::Number(n)) if n.to_string().parse::<u8>().is_ok_and(|n| n <= 18))
+                    || !matches!(
+                        arguments.get(2),
+                        Some(Node::String(
+                            "refuse" | "toward_zero" | "half_even" | "half_away_from_zero"
+                        ))
+                    )
+                {
+                    return self.report(
+                        node,
+                        "core.values.inexact",
+                        "round requires a literal scale 0..18 and mode".to_owned(),
+                    );
+                }
+                Some(T::Number)
+            }
             F::Round | F::Trunc => {
                 if arguments.is_empty() || arguments.len() > 2 {
                     return self.report(
@@ -2472,9 +2492,12 @@ pub(crate) fn exact_admission<'n>(
     metadata: &AstMetadata,
     destination: bool,
 ) -> Vec<Diagnostic> {
-    let mut pending = vec![root];
+    let mut pending = vec![(root, destination)];
     let mut out = Vec::new();
-    while let Some(node) = pending.pop() {
+    while let Some((node, destination)) = pending.pop() {
+        let round = matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() >= 2);
+        let site = destination
+            || matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() == 3);
         let reason = if matches!(
             node,
             Node::Binary {
@@ -2492,10 +2515,10 @@ pub(crate) fn exact_admission<'n>(
             }
         ) {
             Some("membership is outside the exact arithmetic profile")
-        } else if matches!(node, Node::FunctionCall { kind, .. } if !matches!(kind, FunctionKind::Internal(InternalFunction::Len)))
+        } else if matches!(node, Node::FunctionCall { kind, .. } if !(matches!(kind, FunctionKind::Internal(InternalFunction::Len)) || round && site))
         {
             Some("function requires an explicit supported exact site")
-        } else if matches!(node, Node::Number(value) if value.scale() > 18) {
+        } else if !destination && matches!(node, Node::Number(value) if value.scale() > 18) {
             Some("numeric literal exceeds the exact arithmetic scale bound")
         } else {
             None
@@ -2507,7 +2530,9 @@ pub(crate) fn exact_admission<'n>(
                 span: metadata.get(&address(node)).map_or((0, 0), |m| m.span),
             });
         }
-        bounds::children(node, &mut pending);
+        let mut children = Vec::new();
+        bounds::children(node, &mut children);
+        pending.extend(children.into_iter().map(|child| (child, site)));
     }
     out
 }

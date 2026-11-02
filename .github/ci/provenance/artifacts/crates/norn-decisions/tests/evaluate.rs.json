@@ -1,5 +1,11 @@
 {
+<<<<<<< HEAD
   "sha256": "f0bab36bc26da3ea34f60cefa62f3b40fd47bf077e198dbfb89e387753a44885",
+||||||| c991943fb
+  "sha256": "bd9d3387b73dfb9f6c56a102e25db82806d5cc28015e7b67767e53786ac7a03f",
+=======
+  "sha256": "c5080e0684507680aff0a5fe74f8fbf7bf29f72d9b8d531553e4677db162c712",
+>>>>>>> origin/core01/demo-exact-runtime
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",

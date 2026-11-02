@@ -77,3 +77,9 @@ VAL-ENV binds `currency_source` in new `norn.expr.env/2` admissions; retained re
 VAL-UNIT admits same-code addition, subtraction and comparison, scalar multiplication and same-code quantity division to a scalar; a numeric literal inherits the sole quantity unit with an explanation diagnostic naming that unit, while declared unitless operands, mixed codes, compound units and inverse units refuse until #351.
 
 VAL-RATE is a Decimal refinement with mandatory `currencySource` and `perUnit`, no quantity `unit`, and one declared scale/rounding: Rate<C,U> × Quantity<U> → Money<C>, Money<C> ÷ Quantity<U> → Rate<C,U>, and same-type comparison/addition/subtraction are the bounded contract; all other compound operations refuse, multiplication stores at the destination Money scale/rounding (Refuse by default), and env `/2` fingerprints both bindings while `/1` refuses rates.
+
+VAL-ROUND explicit `round(value, scale, mode)` enters its declared site before evaluating the operand and lowers to the same ScaledArithmetic rescale; a two-argument round at an exact destination inherits its effective mode, while a predicate has no implicit mode, and nested sites do not authorize adjacent division.
+
+VAL-ROUND storage materializes explicit non-Refuse Decimal modes through the shared rescale adapter before effective bounds, including record members; the same effective-property canonicalizer serves object/link writes, defaults and migration adapters. Invalid observed source values remain evidence and fail strict value checking. Artifact activation remains closed pending the remaining typed consumer migrations.
+
+VAL-EXACT-1 kernel object invariants bind the catalog-derived environment and Boolean destination to typed admission and evaluation before commit, so exact products are admitted and unqualified division refuses.

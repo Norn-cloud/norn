@@ -16,6 +16,25 @@ pub struct ScaledArithmetic {
 }
 
 impl ScaledArithmetic {
+    /// VAL-ROUND: explicit modes override inherited sites; absent modes never round.
+    pub fn rounding_site(
+        scale: u32,
+        mode: Option<Rounding>,
+        inherited: Option<Self>,
+        exact: bool,
+    ) -> Result<Option<Self>, &'static str> {
+        if mode.is_none() && inherited.is_none() && !exact {
+            return Ok(None);
+        }
+        let rounding = mode
+            .or_else(|| inherited.map(|site| site.rounding))
+            .ok_or("rounding must be declared")?;
+        if scale > 18 {
+            return Err("invalid exact site scale");
+        }
+        Ok(Some(Self { scale, rounding }))
+    }
+
     /// VAL-EXACT-1: exact operations derive their scale without a rounding site.
     pub fn exact_result_scale(op: &str, a: u32, b: u32) -> Result<u32, &'static str> {
         let scale = match op {

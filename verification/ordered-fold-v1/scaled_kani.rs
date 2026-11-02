@@ -228,3 +228,40 @@ fn exact_division_signed_halves_and_refusals() {
         .divide(Decimal::ZERO, Decimal::ONE)
         .is_err());
 }
+
+/// VAL-ROUND: all u32 scales, finite mode choices and inherited/explicit precedence.
+#[kani::proof]
+fn explicit_round_site_requires_a_mode_and_bounds_scale() {
+    fn mode(choice: u8) -> Option<super::Rounding> {
+        match choice % 5 {
+            0 => None,
+            1 => Some(super::Rounding::Refuse),
+            2 => Some(super::Rounding::TowardZero),
+            3 => Some(super::Rounding::HalfEven),
+            _ => Some(super::Rounding::HalfAwayFromZero),
+        }
+    }
+    let scale: u32 = kani::any();
+    let declared = mode(kani::any());
+    let inherited =
+        mode(kani::any()).map(|rounding| super::ScaledArithmetic { scale: 2, rounding });
+    let exact: bool = kani::any();
+    let result = super::ScaledArithmetic::rounding_site(scale, declared, inherited, exact);
+    if let Some(site) = result.as_ref().ok().and_then(|site| *site) {
+        assert!(scale <= 18);
+        assert_eq!(site.scale, scale);
+        assert_eq!(
+            Some(site.rounding),
+            declared.or_else(|| inherited.map(|site| site.rounding))
+        );
+    }
+    assert_eq!(
+        matches!(result, Ok(None)),
+        declared.is_none() && inherited.is_none() && !exact
+    );
+    assert_eq!(
+        result.is_err(),
+        (declared.is_none() && inherited.is_none() && exact)
+            || (scale > 18 && (declared.is_some() || inherited.is_some() || exact))
+    );
+}

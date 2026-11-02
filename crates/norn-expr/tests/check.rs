@@ -1743,3 +1743,94 @@ fn val_exact_declared_division_refuses_zero_instead_of_producing_null() {
         );
     }
 }
+
+#[test]
+fn val_round_explicit_site_scopes_division_and_rescale() {
+    let env = ZenTypeEnv::input_only(fields([("x", Type::Number)]), EnvOptions::default()).unwrap();
+    let run = |source: &str, expected: &Type| {
+        Expression::compile(source)
+            .unwrap()
+            .evaluate_typed_metered(&Value::Null, EvaluationBudget::default(), &env, expected)
+            .result
+            .map(|e| e.into_value())
+    };
+    for (mode, expected) in [
+        ("half_even", "1"),
+        ("half_away_from_zero", "1.01"),
+        ("toward_zero", "1"),
+    ] {
+        assert_eq!(
+            run(&format!("round(1.005, 2, '{mode}')"), &Type::Number).unwrap(),
+            Value::Number(expected.parse().unwrap())
+        );
+    }
+    assert_eq!(
+        run("round(1 / 3, 2, 'half_even') == 0.33", &Type::Bool).unwrap(),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(
+            "round(round(1 / 3, 3, 'half_even'), 2, 'toward_zero') == 0.33",
+            &Type::Bool
+        )
+        .unwrap(),
+        Value::Bool(true)
+    );
+    for source in [
+        "round(1 / 3, 2, 'refuse')",
+        "round(1 / 0, 2, 'half_even')",
+        "round(1 / 3, 2, 'half_even') + 1 / 3",
+        "round((1 / 3) * 3, 2, 'half_even')",
+    ] {
+        assert!(run(source, &Type::Number).is_err(), "{source}");
+    }
+    let destination = Type::Decimal {
+        scale: 2,
+        unit: None,
+        rounding: norn_ir::Rounding::HalfAwayFromZero,
+    };
+    assert_eq!(
+        run("round(1.005, 2)", &destination).unwrap(),
+        Value::Number("1.01".parse().unwrap())
+    );
+    // Legacy two-argument round stays on the existing function and retains its fuel.
+    let old = Expression::compile("round(1.005, 2)")
+        .unwrap()
+        .evaluate_metered(&Value::Null, EvaluationBudget::default());
+    assert_eq!(old.units_used, 6, "preserve legacy round fuel");
+    assert_eq!(
+        old.result.unwrap().into_value(),
+        Value::Number("1.01".parse().unwrap())
+    );
+    for source in ["round(1, 2, 'unknown')", "round(1, 19, 'half_even')"] {
+        assert!(Expression::compile(source).is_err());
+    }
+}
+
+#[test]
+fn val_round_dynamic_divisor_is_nonnullable_at_an_explicit_site() {
+    let env = ZenTypeEnv::input_only(
+        fields([("a", Type::Number), ("b", Type::Number)]),
+        EnvOptions::default(),
+    )
+    .unwrap();
+    let expression = Expression::compile("round(input.a / input.b, 2, 'half_even')").unwrap();
+    let checked = expression.check_typed(&env, &Type::Number).unwrap();
+    for (b, success) in [("3", true), ("0", false)] {
+        let context = Value::object([(
+            "input",
+            Value::object([
+                ("a", Value::Number("1".parse().unwrap())),
+                ("b", Value::Number(b.parse().unwrap())),
+            ]),
+        )]);
+        let attempt = expression.evaluate_typed_metered(
+            &context,
+            EvaluationBudget::default(),
+            &env,
+            &Type::Number,
+        );
+        assert_eq!(attempt.result.is_ok(), success);
+        assert!(attempt.units_used <= checked.cost().units());
+    }
+}
