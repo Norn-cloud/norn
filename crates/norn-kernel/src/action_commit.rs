@@ -1012,7 +1012,8 @@ where
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the admitted action effect, host, and turn policy are explicit commit inputs"
+    clippy::too_many_lines,
+    reason = "the pinned writer and primary transition share authorization, captured fences and one commit"
 )]
 fn commit_transition<H>(
     host: &mut H,

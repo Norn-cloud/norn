@@ -4037,3 +4037,59 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
             .exists()
     );
 }
+
+fn synchronous_writer() -> norn_kernel::SynchronousRule {
+    let object = |properties: Value, required: Value| json!({"type":"object","properties":properties,"required":required,"additionalProperties":false});
+    let text = json!({"type":"string"});
+    let empty = object(json!({}), json!([]));
+    let values = object(json!({"so_number":text,"status":{"type":"string","enum":["draft"]}}), json!(["so_number","status"]));
+    let fact = object(json!({"op":{"type":"string","enum":["create"]},"objectType":{"type":"string","enum":["commerce.Quote"]},"key":text,"values":values}), json!(["op","objectType","key","values"]));
+    let root = serde_json::from_value(json!({
+        "ruleId":"example.atomic.writer","ruleVersion":"2.0","contract":"decide","scopeRequired":["orgId","environmentId"],
+        "inputSchema":object(json!({"slice":empty,"event":object(json!({"input":object(json!({"so_number":text}),json!(["so_number"])),"actor":text,"operationId":text}),json!(["input","actor","operationId"]))}),json!(["slice","event"])),
+        "outputSchema":object(json!({"facts":{"type":"array","items":fact},"commands":{"type":"array","items":empty},"timers":{"type":"array","items":empty}}),json!(["facts","commands","timers"])),
+        "graph":{"contentType":"application/vnd.gorules.decision","nodes":[
+            {"id":"in","type":"inputNode","name":"input","position":{"x":0,"y":0}},
+            {"id":"effects","type":"expressionNode","name":"effects","position":{"x":1,"y":0},"content":{"expressions":[{"id":"f","key":"facts","value":"[{op:'create',objectType:'commerce.Quote',key:event.actor,values:{so_number:event.actor,status:'draft'}}]"},{"id":"c","key":"commands","value":"[]"},{"id":"t","key":"timers","value":"[]"}]}},
+            {"id":"out","type":"outputNode","name":"output","position":{"x":2,"y":0}}
+        ],"edges":[{"id":"a","sourceId":"in","targetId":"effects"},{"id":"b","sourceId":"effects","targetId":"out"}]}
+    })).unwrap();
+    norn_kernel::SynchronousRule::admit(norn_ir::ActionRuleRef { artifact_id:"example.atomic.writer.rule".into(),version:"1.0.0".into() }, &root, &BTreeMap::new(), norn_decisions::DecisionBinding {profile_id:"norn-zen/6".into(),environment_hash:"test".into()}).unwrap()
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn synchronous_writer_is_atomic_authorized_and_replay_bound(actor in "agent:[a-z]{1,20}") {
+        let types = order_types();
+        let rules = [synchronous_writer()];
+        let catalog = TypeCatalog::new(&types).with_action_rules(&rules);
+        let mut action = approve_with_submit_command("input.so_number");
+        action.synchronous_rule = Some(norn_ir::ActionRuleRef {artifact_id:"example.atomic.writer.rule".into(),version:"1.0.0".into()});
+        action.writes.push(norn_ir::ActionWrite {entity_kind:"commerce.Quote".into(),change:norn_ir::WriteChange::Created});
+        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        let order = seed(&mut cell, ORDER, "SO-1", "draft");
+        let mut request = call(&action, "SO-1", "atomic-rule"); request.actor = actor.clone();
+        commit_action(&mut cell, &catalog, &request, &Allow).unwrap();
+        assert_eq!(cell.ledger().len(), 2);
+        assert_eq!(cell.ledger().last().unwrap().written.len(), 3);
+        assert_eq!(status(&cell, &order), Some(JsonValue::String("approved".into())));
+        assert!(cell.load(&FactKey::new("commerce.Quote", actor)).unwrap().exists());
+        assert_eq!(cell.outbox().len(), 1);
+        assert!(matches!(commit_action(&mut cell, &catalog, &request, &Allow).unwrap(), ActionOutcome::Replayed {..}));
+        request.scope.insert("orgId".into(), "different".into());
+        assert_refused(&mut cell, &catalog, &request, &Allow, "action.idempotency_conflict");
+        request.scope = scope();
+        let mut denied = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        seed(&mut denied, ORDER, "SO-1", "draft");
+        struct DenyQuote;
+        impl ActionAuthorizer for DenyQuote {
+            fn authorize(&self, r: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+                if r.target.object_type.as_str() == "commerce.Quote" { Err(ActionDenial::Forbidden { reason:"fixture".into() }) } else { Ok(()) }
+            }
+        }
+        assert_refused(&mut denied, &catalog, &request, &DenyQuote, "action.permission_denied");
+        assert!(denied.outbox().is_empty());
+        action.writes.retain(|write| write.entity_kind == ORDER);
+        assert_refused(&mut denied, &catalog, &call(&action, "SO-1", "uncovered"), &Allow, "core.txn.unchecked_writer");
+    }
+}
