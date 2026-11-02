@@ -4,12 +4,19 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// An opaque 128-bit cell identity, encoded as exactly 32 lowercase hex digits.
-#[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-#[schemars(with = "String", regex(pattern = "^[0-9a-f]{32}$"))]
 pub struct CellId(String);
+
+impl JsonSchema for CellId {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CellId".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({ "type": "string", "pattern": "^[0-9a-f]{32}$" })
+    }
+}
 
 impl TryFrom<String> for CellId {
     type Error = &'static str;
