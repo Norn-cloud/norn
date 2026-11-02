@@ -1,5 +1,9 @@
 //! PROOF-BIND-1: inventory admitted pack laws; generate goals, never proof badges.
-use std::{collections::BTreeSet, error::Error, io::Read as _};
+use std::{
+    collections::BTreeSet,
+    error::Error,
+    io::{Read as _, Write as _},
+};
 
 use norn_checker::obligations::{ApprovedContract, DefinitionSource};
 use norn_checker::{ArtifactRef, EntityArtifactSetContext, check_artifact_set};
@@ -45,12 +49,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             )
         })
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
-    println!(
+    writeln!(
+        std::io::stdout().lock(),
         "{}",
         serde_json::to_string(&json!({
             "authority":"projection_only", "laws":laws,
             "challenge":challenge.body(), "sourceDigest":source.exact_digest()
         }))?
-    );
+    )?;
     Ok(())
 }
