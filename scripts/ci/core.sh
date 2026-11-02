@@ -216,15 +216,24 @@ plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal"}}
-# core.sh step seconds from Public core run 41519803350.
+# Warm nextest runtimes and phase seconds: Boat run 41541177097;
+# heavy-3: run 41481733800; integration: hosted run 41519803350.
 weights = {
-    "test/heavy-1": 315, "test/heavy-2": 485, "test/heavy-3": 259,
-    "test/heavy-4": 260, "test/heavy-5": 294, "test/heavy-6": 282,
-    "test/rest-1": 311, "test/rest-2": 307, "test/rest-3": 288,
-    "phase/doctest": 55, "phase/features": 281, "phase/wasm": 49,
-    "phase/clippy": 87, "phase/doc": 40, "phase/guards": 54,
-    "phase/integration": 400, "phase/provenance": 15, "phase/test-shards": 141,
+    "test/heavy-1": 30, "test/heavy-2": 122, "test/heavy-3": 84,
+    "test/heavy-4": 43, "test/heavy-5": 27, "test/heavy-6": 29,
+    "test/rest-1": 143, "test/rest-2": 59, "test/rest-3": 62,
+    "phase/doctest": 6, "phase/features": 239, "phase/wasm": 97,
+    "phase/clippy": 75, "phase/doc": 60, "phase/guards": 369,
+    "phase/integration": 400, "phase/provenance": 17, "phase/test-shards": 5,
 }
+# Cold test tasks spent 163–193 seconds compiling, before nextest's runtime.
+# Charge that once per bundle; later shards reuse the same test binaries.
+compile_seconds = 180
+def compiles_tests(task):
+    return task.startswith("test/") or task == "phase/test-shards"
+def cold_cost(task):
+    return weights[task] + (compile_seconds if compiles_tests(task) else 0)
+
 if set(weights) != known:
     raise SystemExit("bundle task inventory differs from core.sh")
 if not isinstance(plan, dict) or plan.get("mode") not in {"full", "affected"}:
@@ -238,12 +247,15 @@ for field, prefix in (("shard", "test/"), ("phase", "phase/")):
 if len(tasks) != len(set(tasks)) or set(tasks) - known:
     raise SystemExit("duplicate or unknown planned task")
 target_seconds = 11 * 60
-count = min(6, len(tasks), (sum(weights[task] for task in tasks) + target_seconds - 1) // target_seconds)
-bins, costs = [[] for _ in range(count)], [0] * count
-for task in sorted(tasks, key=lambda task: (-weights[task], task)):
-    index = min(range(count), key=lambda index: (costs[index], index))
+count = min(6, len(tasks), (sum(cold_cost(task) for task in tasks) + target_seconds - 1) // target_seconds)
+bins, costs, compiled = [[] for _ in range(count)], [0] * count, [False] * count
+for task in sorted(tasks, key=lambda task: (-cold_cost(task), task)):
+    def added_cost(index):
+        return weights[task] + (compile_seconds if compiles_tests(task) and not compiled[index] else 0)
+    index = min(range(count), key=lambda index: (costs[index] + added_cost(index), index))
+    costs[index] += added_cost(index)
     bins[index].append(task)
-    costs[index] += weights[task]
+    compiled[index] |= compiles_tests(task)
 bundles = [{"id": f"b{index}", "tasks": tasks} for index, tasks in enumerate(bins) if tasks]
 if sorted(task for bundle in bundles for task in bundle["tasks"]) != sorted(tasks):
     raise SystemExit("bundle inventory dropped a planned task")
