@@ -214,6 +214,24 @@ fn assessment(
     })
 }
 
+// Statistical binary64 outputs are approximate evidence, not exact business decimals.
+fn report_value(report: &impl serde::Serialize) -> Result<norn_ir::RuntimeValue, ForecastFailure> {
+    fn tag(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Number(number) if number.is_f64() => {
+                *value = serde_json::json!({ "encoding": "ieee754-binary64", "value": number.to_string() });
+            }
+            serde_json::Value::Array(items) => { for item in items { tag(item); } }
+            serde_json::Value::Object(fields) => { for item in fields.values_mut() { tag(item); } }
+            _ => {}
+        }
+    }
+    let mut value = serde_json::to_value(report).map_err(failure)?;
+    tag(&mut value);
+    norn_ir::RuntimeValue::from_json_text(serde_json::to_string(&value).map_err(failure)?)
+        .map_err(failure)
+}
+
 /// Bind exact export pins and prepare actual library evidence behind the host Function.
 /// ANALYTICS-FUNCTION-INPUT-1: invalid quality/time evidence keeps model scores absent.
 /// # Errors
@@ -251,7 +269,7 @@ pub fn prepare_forecast(
         summary.rmse_nanos = Some(nanos(report.rmse)?);
         summary.baseline_rmse_nanos = Some(nanos(report.baseline_rmse)?);
         summary.diagnostics_passed = report.fit.diagnostics.iter().all(|d| d.passed);
-        summary.report = Some(norn_ir::runtime::encode(&report).map_err(failure)?);
+        summary.report = Some(report_value(&report)?);
     }
     Ok(summary)
 }
@@ -348,6 +366,14 @@ pub(crate) mod tests {
     }
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(32))]
+        #[test]
+        fn approximate_evidence_preserves_binary64_bits(bits in any::<u64>()) {
+            let value = f64::from_bits(bits);
+            prop_assume!(value.is_finite());
+            let encoded = report_value(&value).expect("approximate evidence");
+            let decoded = encoded.as_object().and_then(|fields| fields.get("value")).and_then(norn_ir::RuntimeValue::as_str).expect("tagged binary64").parse::<f64>().expect("roundtrip float");
+            prop_assert_eq!(decoded.to_bits(),value.to_bits());
+        }
         #[test]
         fn representable_report_units_round_trip(n in 0i32..1_000_000_000) {
             prop_assert_eq!(nanos(f64::from(n) / 1_000_000_000.0).expect("nanos"), i64::from(n));
