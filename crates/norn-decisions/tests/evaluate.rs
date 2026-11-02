@@ -1752,3 +1752,20 @@ proptest::proptest! {
         proptest::prop_assert_eq!(value, Value::Bool(a*b>0));
     }
 }
+
+proptest::proptest! {
+    #[test]
+    fn val_round_explicit_expression_matches_declared_rescale(a in -10000_i32..10000, selected in 0_usize..4) {
+        use norn_ir::Rounding;
+        let mode = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][selected];
+        let spelling = mode.canonical_field().unwrap_or("refuse");
+        let number: norn_expr::Number = format!("{}{}.{:03}", if a<0 {"-"} else {""}, a.abs()/1000, a.abs()%1000).parse().unwrap();
+        let site = norn_ir::PropertyType::Decimal { scale:norn_ir::WholeNumber(2), rounding:Some(mode), unit:None, currency_source:None };
+        let expected = norn_expr::rescale_decimal(&site, &number);
+        let env = norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::new(), norn_expr::EnvOptions::default()).unwrap();
+        let source = norn_expr::Expression::compile(&format!("round({}, 2, '{spelling}')", number.as_str())).unwrap();
+        let result = source.evaluate_typed_metered(&Value::Null, EvaluationBudget::default(), &env, &norn_expr::Type::Number).result;
+        proptest::prop_assert_eq!(result.is_ok(), expected.is_ok());
+        if let (Ok(actual), Ok(expected)) = (result, expected) { proptest::prop_assert_eq!(actual.into_value(), Value::Number(expected)); }
+    }
+}
