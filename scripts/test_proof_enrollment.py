@@ -217,7 +217,7 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertIn("heavy-1", combined["shard"])
         self.assertIn("heavy-3", combined["shard"])
         self.assertEqual(combined["rest_shards"], 3)
-        self.assertEqual(combined["phase"], ["guards", "provenance"])
+        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy"])
         self.assertNotIn("heavy-1", self.plan("--affected", self.base, first)["shard"])
         self.assertEqual(self.plan("--affected", self.base)["mode"], "full")
 
@@ -238,7 +238,7 @@ class AffectedPlanTests(unittest.TestCase):
         self.commit("docs/synthetic.md")
         plan = self.plan("--affected", self.base)
         self.assertEqual(plan["shard"], ["rest-1"])
-        self.assertEqual(plan["phase"], ["guards", "provenance"])
+        self.assertEqual(plan["phase"], ["guards", "provenance", "clippy"])
         self.assertEqual(plan["packages"], "norn-skeleton-guard")
 
 
