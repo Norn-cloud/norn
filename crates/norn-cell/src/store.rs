@@ -2908,35 +2908,43 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// Serialization, observation-size or queue-position limits, or SQL errors.
     pub fn inject(&mut self, observation_id: &str, observed: &Value) -> Result<bool, CellError> {
-        self.conn.transaction(|| -> Result<bool, CellError> {
-            let seen: Option<i64> = self.conn.query_optional(
-                &format!("SELECT 1 FROM \"{INBOX}\" WHERE \"observation_id\" = ?1"),
-                params![observation_id],
-                |row| row.get::<i64>(0),
-            )?;
-            if seen.is_some() {
-                return Ok(false);
-            }
-            let serialized = canonical_json(observed)?;
-            if serialized.len() > MAX_OBSERVATION_BYTES {
-                return Err(CellError::OutOfRange("observation bytes"));
-            }
-            let maximum: i64 = self.conn.query_row(
-                &format!("SELECT COALESCE(MAX(\"position\"), 0) FROM \"{INBOX}\""),
-                params![],
-                |row| row.get::<i64>(0),
-            )?;
-            let position = to_i64(
-                next(to_u64(maximum, "inbox position")?, "inbox position")?,
-                "inbox position",
-            )?;
-            self.conn.execute(
-                &format!(
-                    "INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, NULL)"
-                ),
-                params![position, observation_id, serialized],
-            )?;
-            Ok(true)
-        })
+        self.conn
+            .transaction(|| inject_observation(&self.conn, observation_id, observed))
     }
+}
+
+/// Insert bounded inbox evidence inside the caller's immediate transaction.
+pub(crate) fn inject_observation<E: SqlEngine>(
+    conn: &E,
+    observation_id: &str,
+    observed: &Value,
+) -> Result<bool, CellError> {
+    let seen: Option<i64> = conn.query_optional(
+        &format!("SELECT 1 FROM \"{INBOX}\" WHERE \"observation_id\" = ?1"),
+        params![observation_id],
+        |row| row.get::<i64>(0),
+    )?;
+    if seen.is_some() {
+        return Ok(false);
+    }
+    let serialized = canonical_json(observed)?;
+    if serialized.len() > MAX_OBSERVATION_BYTES {
+        return Err(CellError::OutOfRange("observation bytes"));
+    }
+    let maximum: i64 = conn.query_row(
+        &format!("SELECT COALESCE(MAX(\"position\"), 0) FROM \"{INBOX}\""),
+        params![],
+        |row| row.get::<i64>(0),
+    )?;
+    let position = to_i64(
+        next(to_u64(maximum, "inbox position")?, "inbox position")?,
+        "inbox position",
+    )?;
+    conn.execute(
+        &format!(
+            "INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, NULL)"
+        ),
+        params![position, observation_id, serialized],
+    )?;
+    Ok(true)
 }
