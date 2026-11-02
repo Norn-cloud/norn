@@ -491,7 +491,7 @@ fn symlink_to_outside_candidate_is_never_read() {
 }
 
 const COVERAGE_INDEX: &str = "verification/coverage-v1/manifest/index.json";
-const COVERAGE_LEDGER: &str = "verification/coverage-v1/manifest/subsystems/quantity-ledger/obligations/405720fb8e3c84b81891f680d0238570aaaff188c222d8007ae07924b778b0d5.json";
+const COVERAGE_LEDGER: &str = "verification/coverage-v1/manifest/subsystems/quantity-ledger/obligations/2b6e3370813437d16485a55299d0d399cbbc4a57dc45f9202e8652184984af26.json";
 
 fn policy_fixture() -> Fixture {
     let mut fixture = Fixture::new();
@@ -624,8 +624,8 @@ fn trusted_policy_reads_entry_obligations_and_refuses_malformed_or_removed_entri
         drop_file(&mut candidate, COVERAGE_LEDGER);
         let directory = "verification/coverage-v1/manifest/subsystems/quantity-ledger";
         let id = "synthetic-preserved-obligation";
-        let hash = hex::encode(Sha256::digest(serde_json::to_vec(id).unwrap()));
-        let name = if change == "identity" { "wrong" } else { &hash };
+        let hash = "2b6e3370813437d16485a55299d0d399cbbc4a57dc45f9202e8652184984af26";
+        let name = if change == "identity" { "wrong" } else { hash };
         let mut value = json!({"order": 0, "value": id});
         if change == "order" {
             value["order"] = json!(true);
