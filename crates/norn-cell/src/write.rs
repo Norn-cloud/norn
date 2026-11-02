@@ -214,6 +214,7 @@ pub(crate) struct Writer<'a, E: SqlEngine> {
     world: &'a str,
     commit_seq: u64,
     batch_output_facts: Option<BTreeSet<(String, String, String, u64)>>,
+    pending_snapshot_digests: crate::read::PendingDigests,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -230,11 +231,13 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             world: &batch.world,
             commit_seq,
             batch_output_facts: None,
+            pending_snapshot_digests: BTreeMap::new(),
         }
     }
 
-    const fn reader(&self) -> StoreReader<'a, E> {
+    pub(crate) const fn reader(&self) -> StoreReader<'_, E> {
         StoreReader::new(self.conn, self.model)
+            .with_pending_digests(self.commit_seq, &self.pending_snapshot_digests)
     }
 
     fn commit_seq_sql(&self) -> Result<i64, CellError> {
@@ -280,7 +283,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             let changed = self.write_changed_properties(write)?;
             let derived = self.derived_properties(write);
             let lineage_properties = changed.union(&derived).cloned().collect();
-            let row = self.write(write)?;
+            let mut row = self.write(write)?;
             Self::record_changed_properties(
                 &mut changed_properties,
                 write.target().0,
@@ -325,7 +328,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             {
                 records.push(record);
             }
-            self.capture_value_commitment(&row)?;
+            row.snapshot_sha256 = Some(self.capture_value_commitment(&row)?);
             written.push(row);
         }
         for fact in &self.batch.facts {
@@ -340,7 +343,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             let concrete_before = self.live(object_type, key)?;
             self.apply_fact(fact)?;
             Self::record_changed_properties(&mut changed_properties, object_type, key, &changed);
-            let row = self.canonical_written_row(object_type, key, concrete_before)?;
+            let mut row = self.canonical_written_row(object_type, key, concrete_before)?;
             if changed.is_empty() && matches!(fact, FactChange::Set { .. }) {
                 self.apply_occurrence_lineage_to_version(
                     &row.object_type,
@@ -363,7 +366,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     records.push(record);
                 }
             }
-            self.capture_value_commitment(&row)?;
+            row.snapshot_sha256 = Some(self.capture_value_commitment(&row)?);
             written.push(row);
         }
         // All snapshots were captured before later mutations.
@@ -461,8 +464,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     if version == 0 {
                         None
                     } else {
-                        Some(self.reader().retained_fact_scope(
-                            self.world,
+                        Some(self.retained_fact_scope(
                             self.reader().root_type(object_type)?,
                             key,
                             version,
@@ -495,6 +497,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             object_type,
             key: key.to_owned(),
             version,
+            snapshot_sha256: None,
         })
     }
 
@@ -714,6 +717,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             object_type: concrete_type,
             key: key.to_owned(),
             version,
+            snapshot_sha256: None,
         })
     }
 
@@ -2079,7 +2083,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
     /// markings. Action calls inherit target labels at enqueue; command tasks
     /// inherit the attributed call's immutable snapshot. Unscoped rule and
     /// observation detail is unknown.
-    fn capture_value_commitment(&self, row: &WrittenRow) -> Result<(), CellError> {
+    fn capture_value_commitment(&mut self, row: &WrittenRow) -> Result<String, CellError> {
         let root = self.reader().root_type(&row.object_type)?.to_owned();
         let record = self
             .reader()
@@ -2094,19 +2098,26 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             scope: match &record {
                 Some(record) => record.scope.clone(),
                 None if row.version == 1 => self.batch.scope.clone(),
-                None => self.reader().retained_fact_scope(
-                    self.world,
-                    &root,
-                    &row.key,
-                    row.version.saturating_sub(1),
-                )?,
+                None => self.retained_fact_scope(&root, &row.key, row.version.saturating_sub(1))?,
             },
             version: row.version,
             values: record.map(|record| record.values),
         };
         let hash = hash_json(&snapshot)?;
         self.conn.execute(&format!("INSERT INTO \"{}\" (\"world\", \"root_type\", \"object_type\", \"id\", \"version\", \"commit_seq\", \"snapshot\", \"hash\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", crate::system::FACT_VALUES), params![self.world, root, row.object_type, row.key, to_i64(row.version, "fact version")?, self.commit_seq_sql()?, canonical_json(&snapshot)?, hash])?;
-        Ok(())
+        self.pending_snapshot_digests
+            .insert((root, row.key.clone(), row.version), hash.clone());
+        Ok(hash)
+    }
+
+    fn retained_fact_scope(
+        &self,
+        root: &str,
+        key: &str,
+        version: u64,
+    ) -> Result<String, CellError> {
+        self.reader()
+            .retained_fact_scope(self.world, root, key, version)
     }
 
     #[allow(
@@ -2261,6 +2272,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 object_type: object_type.clone(),
                 key: key.clone(),
                 version,
+                snapshot_sha256: None,
             }])?;
         }
         Ok(())

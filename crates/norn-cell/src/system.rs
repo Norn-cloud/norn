@@ -28,10 +28,9 @@
 use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 
-/// Pre-alpha format /7 binds exact values and durable markings on top of
-/// main's pending-link indexes (/4), quantity v2 and cell-wide clock (/6).
-/// Stores /2 through /6 must be recreated, never upgraded in place.
-pub const STORE_FORMAT: &str = "norn.cell.store/7";
+/// Pre-alpha format /8 binds producing receipts to exact incarnation digests.
+/// Stores /2 through /7 must be recreated, never upgraded in place.
+pub const STORE_FORMAT: &str = "norn.cell.store/8";
 /// Reverse index of pending relation intents, maintained with their records.
 pub(crate) const PENDING_LINK_INDEX: &str = "_norn_pending_link";
 
