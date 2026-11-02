@@ -29,7 +29,11 @@ A destination Decimal with omitted rounding supplies effective Refuse just like 
 
 VAL-ROUND keeps `norn.expr.env/1` bytes and pins unchanged by omitting canonical Refuse, adding a rounding field only for newly admitted non-default policies that strict older decoders reject; a version bump is required only when existing bytes or their meaning change.
 
+The initial unit vocabulary is the ordinary pinned `core.units` pack, not a kernel allowlist. Its `core.units.code` enum admits `g`, `mg`, `kg`, `1`, `%`, `[ppth]`, `{each}`, `s`, `min`, `h`, `d` and `wk`. Each unit has a value type containing its fixed code, dimension and positive exact rational factor to gram, unity, each or second. Count remains distinct from dimensionless values. The pack provenance pins UCUM essence 2.2 and its source digest; currencies remain ISO 4217 money. Full UCUM and QUDT admission are deferred to #351. Selecting another unit descriptor refuses; conversion requires an explicit declared expression and rounding site. Catalog membership alone does not establish arithmetic compatibility.
+
 ## Evaluation and enforcement
+
+Unit-bearing entity declarations pin the vocabulary with one required exact-version `entity` dependency on `core.units`. Artifact-set admission resolves that visible catalog for object, interface, extension and shared value-type declarations, including nested record members. An absent, ambiguous or incompatible pin, unknown code or unsupported system refuses as `core.values.unit_mismatch`. The initial vocabulary supports UCUM only; admission never infers aliases or converts values.
 
 1. Construction decodes exact numeric tokens without a float round trip; rejects non-finite, range/scale overflow and unknown units. Canonical equality ignores representational trailing zeroes but preserves declared type/unit and original source evidence bytes separately.
 2. Admission resolves key components, normalization order, type/unit compatibility and uniqueness roots. Text admission follows existing NFC-only semantics; it must not silently normalize signed source bytes. Missing and explicit null differ; nullable is declared.
@@ -53,6 +57,8 @@ Evidence expected: structural codec/schema checks; runtime-enforced uniqueness/r
 
 - **VAL-ROUNDTRIP:** Given `9007199254740993` and `0.10` exact inputs, when sent through each governed surface and replayed, then numeric identity is unchanged; float coercion refuses.
 - **VAL-ROUND:** Given scale 2 with midpoint-away rounding, when evaluating `1.005` and `-1.005`, then results are `1.01` and `-1.01`; a zero divisor refuses without effects.
+- **VAL-UNIT-CATALOG:** Given the pinned bounded unit catalog, known codes and their exact factor records admit; unknown codes, currencies and substituted dimensions or factors refuse. A gram descriptor cannot contain a kilogram code.
+- **VAL-UNIT-PIN:** Given a decimal UnitRef, the exact visible vocabulary pin and code/system must resolve; missing/wrong/ambiguous pins and unknown/case-changed/system-mismatched units refuse, including inside a record.
 - **ID-COLLISION:** Given two subtypes sharing a key root, when concurrent creates use the same normalized key, then exactly one commits; another tenant may use its own same key.
 - **ID-RENAME:** Given a posted event linked to object A, when A's label/business key changes and is later tombstoned, then historical links still resolve A; reusing A's identity refuses.
 - **TIME-DST:** Given an ambiguous local timestamp without a pinned disambiguation policy, when admitted, then refuse; an explicit earlier/later choice replays identically.
