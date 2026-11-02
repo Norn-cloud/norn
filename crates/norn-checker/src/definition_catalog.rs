@@ -2,6 +2,7 @@
 use crate::action_set::{Admission, AdmittedType};
 use crate::entity_artifacts::{Decoded, Layer, decode_v2};
 use crate::entity_lowering::{EntityForm, entity_object_type};
+use crate::lifecycle_writes::{FactSchema, fact_decisions};
 use crate::receipt::ArtifactRef;
 /// Failure to compute a projected artifact's semantic identity.
 pub use crate::receipt::ReceiptError as CatalogError;
@@ -12,14 +13,14 @@ use norn_ir::definition_catalog::{
 };
 use norn_ir::{
     ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactPayload, BusinessPackRoot,
-    EntityRoot, Lifecycle, ObjectTypeDef, Property, PropertyType, PropertyTypeDef,
+    EntityRoot, FactChangeOp, Lifecycle, ObjectTypeDef, Property, PropertyType, PropertyTypeDef,
     PropertyTypeName,
 };
 use std::collections::BTreeSet;
 /// Project admitted candidates and installed artifacts into sorted catalog rows.
 ///
 /// Call only after `check_artifact_set` admits the set. This slice projects
-/// entities and dependency edges, action writes. See verification/definition-catalog-v1/SPEC.md.
+/// entities and dependency edges, action writes, decide-graph writes. See verification/definition-catalog-v1/SPEC.md.
 ///
 /// # Errors
 /// Returns `CatalogError` if an artifact semantic hash cannot be computed.
@@ -61,7 +62,11 @@ pub fn project(
             rows.action(artifact, &admission);
         }
     }
-
+    for (artifact, output) in fact_decisions(all.iter().copied()) {
+        if let Some(schema) = FactSchema::of(&output) {
+            rows.fact_writes(artifact, &schema, &admission);
+        }
+    }
     Ok(rows.finish())
 }
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -485,6 +490,66 @@ impl Rows {
             | Member::State { .. }
             | Member::ObjectMap { .. }
             | Member::Law { .. } => false,
+        }
+    }
+
+    fn fact_writes(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        schema: &FactSchema<'_>,
+        admission: &Admission<'_>,
+    ) {
+        let ops = schema.ops();
+        let values = |name: &str| schema.values(name).unwrap_or_default();
+        for type_name in values("objectType") {
+            let Some(admitted) = admission.named(type_name) else {
+                continue;
+            };
+            let lineage = PinnedType::lineage(admitted, admission);
+            let owner = PinnedType::of(admitted);
+            let mut candidates = Vec::new();
+            if ops.contains(&FactChangeOp::Transition) {
+                for lifecycle in values("lifecycle") {
+                    for transition in values("transition") {
+                        if let Some(declared) = self.resolve(
+                            &Member::Transition {
+                                type_name: type_name.to_owned(),
+                                lifecycle: lifecycle.to_owned(),
+                                transition: transition.to_owned(),
+                            },
+                            &lineage,
+                        ) {
+                            candidates.push((declared, WriteVia::FactTransition));
+                        }
+                    }
+                }
+            }
+            if ops.contains(&FactChangeOp::Set) {
+                for property in values("property") {
+                    if let Some(declared) =
+                        self.resolve(&property_member(type_name, property), &lineage)
+                    {
+                        candidates.push((declared, WriteVia::FactSet));
+                    }
+                }
+            }
+            if ops.iter().any(|op| {
+                matches!(
+                    op,
+                    FactChangeOp::Create | FactChangeOp::Patch | FactChangeOp::Delete
+                )
+            }) {
+                candidates.push((owner.type_ref(), WriteVia::FactObject));
+            }
+            for (target, via) in candidates {
+                if self.declares(&target) {
+                    self.writes.insert(WritesRow {
+                        writer: at(artifact, Member::Artifact {}),
+                        target,
+                        via,
+                    });
+                }
+            }
         }
     }
 }
