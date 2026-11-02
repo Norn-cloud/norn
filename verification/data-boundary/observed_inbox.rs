@@ -287,11 +287,15 @@ fn demo_measurement_definitions() -> (String, Model) {
             .expect("exact source");
             let artifact: ArtifactEnvelope = norn_ir::runtime::decode(&source).expect("artifact");
             if [
-                "demo.erpnext.StockEntryMeasurement.entity", "demo.erpnext.Measurement.interface",
-                "demo.erpnext.classifications.entity", "demo.erpnext.purity.law",
-                "demo.erpnext.fine_mass_definition.law", "demo.erpnext.measurements.source",
+                "demo.erpnext.StockEntryMeasurement.entity",
+                "demo.erpnext.Measurement.interface",
+                "demo.erpnext.classifications.entity",
+                "demo.erpnext.purity.law",
+                "demo.erpnext.fine_mass_definition.law",
+                "demo.erpnext.measurements.source",
                 "demo.erpnext.measurements.mapping",
-            ].contains(&artifact.artifact_id.as_str())
+            ]
+            .contains(&artifact.artifact_id.as_str())
                 || [
                     "core.value_types.entity",
                     "std.value_types.entity",
@@ -362,11 +366,13 @@ fn checked_raw(raw: &norn_dataplane::RawObservation) -> Result<Observed<RuntimeV
     Ok(Observed {
         id: ObservationId(raw.observation_id()),
         provenance: Provenance {
-            source: submission.source, source_id: submission.source_id,
+            source: submission.source,
+            source_id: submission.source_id,
             mapping_version: submission.mapping_version,
             observed_at: LogicalTime::from_millis(raw.extracted_at),
         },
-        input: RuntimeValue::from_json_text(&submission.payload.to_string()).map_err(Refusal::host)?,
+        input: RuntimeValue::from_json_text(&submission.payload.to_string())
+            .map_err(Refusal::host)?,
     })
 }
 
@@ -375,66 +381,245 @@ fn checked_raw(raw: &norn_dataplane::RawObservation) -> Result<Observed<RuntimeV
 fn signed_webhook_and_missed_delivery_sweep_replay_pack_law_quarantine_and_recovery() {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use hmac::{Hmac, Mac};
-    use norn_dataplane::{frappe::{FrappeSource, ingest_frappe_webhook}, sweep::{FrappeSweep, SweepFeed}};
+    use norn_dataplane::{
+        frappe::{FrappeSource, ingest_frappe_webhook},
+        sweep::{FrappeSweep, SweepFeed},
+    };
     use sha2::Sha256;
     let (definitions, model) = demo_measurement_definitions();
-    let scope = CellScope { org_id:"org_demo".into(), environment_id:"dev".into() };
-    let directory = std::path::PathBuf::from(std::env::var("NORN_TEST_SCRATCH").expect("scratch")).with_extension("replay");
+    let scope = CellScope {
+        org_id: "org_demo".into(),
+        environment_id: "dev".into(),
+    };
+    let directory = std::path::PathBuf::from(std::env::var("NORN_TEST_SCRATCH").expect("scratch"))
+        .with_extension("replay");
     std::fs::create_dir_all(&directory).expect("directory");
     let path = directory.join("feed.sqlite");
-    let host = DevHost::new(NativeEngine::open(&path, StoreOptions::default()).expect("engine"), &definitions, scope.clone(), LogicalTime::from_millis(1793527260000)).expect("host");
-    let source = FrappeSource { source:"synthetic-erpnext".into(), redaction:None };
+    let host = DevHost::new(
+        NativeEngine::open(&path, StoreOptions::default()).expect("engine"),
+        &definitions,
+        scope.clone(),
+        LogicalTime::from_millis(1793527260000),
+    )
+    .expect("host");
+    let source = FrappeSource {
+        source: "synthetic-erpnext".into(),
+        redaction: None,
+    };
     let input = norn_cell::mapping_bundle::MappingInput {
-        mapping:"demo.erpnext.measurements.mapping".into(), dataset:"Stock Entry Measurement".into(),
-        connector_instance:"demo".into(), partition:"measurements".into(),
-        recorded_at:norn_ir::provenance::UtcTimestamp("2026-11-01T10:01:00Z".into()),
+        mapping: "demo.erpnext.measurements.mapping".into(),
+        dataset: "Stock Entry Measurement".into(),
+        connector_instance: "demo".into(),
+        partition: "measurements".into(),
+        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-01T10:01:00Z".into()),
     };
     let body = br#"{"event":"on_update","doc":{"doctype":"Stock Entry Measurement","name":"MEAS-1","modified":"2026-11-01 10:00:00","parent":"SYN-SE-1","custom_metal":"gold","custom_role":"input","custom_gross_grams":60000,"custom_purity":1.20,"custom_fine_grams":72000,"custom_occurred_at":"2026-10-26T10:00:00Z","custom_lot":"SYN-LOT-1"}}"#;
     let secret = b"synthetic-test-only-webhook-key";
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret).expect("fixture key"); mac.update(body);
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret).expect("fixture key");
+    mac.update(body);
     let signature = STANDARD.encode(mac.finalize().into_bytes());
-    assert!(host.observe_mapped_submission(&scope, &input, || {
-        ingest_frappe_webhook(&source, secret, body, Some("invalid signature"), 1793527260000).map_err(Refusal::host).and_then(|raw| checked_raw(&raw))
-    }).is_err());
+    assert!(
+        host.observe_mapped_submission(&scope, &input, || {
+            ingest_frappe_webhook(
+                &source,
+                secret,
+                body,
+                Some("invalid signature"),
+                1793527260000,
+            )
+            .map_err(Refusal::host)
+            .and_then(|raw| checked_raw(&raw))
+        })
+        .is_err()
+    );
     let store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("read");
-    assert!(store.read().pending_observations().expect("no rejected capture").is_empty()); drop(store);
-    let raw = ingest_frappe_webhook(&source, secret, body, Some(&signature), 1793527260000).expect("authenticated adapter");
-    let (id, inserted) = host.observe_mapped_submission(&scope, &input, || checked_raw(&raw)).expect("capture"); assert!(inserted);
-    for _ in 0..3 { assert_eq!(host.observe_mapped_submission(&scope, &input, || checked_raw(&raw)).expect("webhook redelivery"), (id.clone(), false)); }
-    let mut cell = norn_cell::SqliteCell::<norn_kernel::ObservationEvent, norn_ir::RuntimeObject, norn_ir::RuntimeObject>::open(&path, model.clone(), StoreOptions::default(), "org_demo/dev", |_| std::collections::BTreeMap::new()).expect("driver");
-    assert!(cell.store().read().object(norn_cell::MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("capture has no write authority").is_none());
-    assert_eq!(cell.store().read().pending_observations().expect("one complete bundle").len(), 1);
+    assert!(
+        store
+            .read()
+            .pending_observations()
+            .expect("no rejected capture")
+            .is_empty()
+    );
+    drop(store);
+    let raw = ingest_frappe_webhook(&source, secret, body, Some(&signature), 1793527260000)
+        .expect("authenticated adapter");
+    let (id, inserted) = host
+        .observe_mapped_submission(&scope, &input, || checked_raw(&raw))
+        .expect("capture");
+    assert!(inserted);
+    for _ in 0..3 {
+        assert_eq!(
+            host.observe_mapped_submission(&scope, &input, || checked_raw(&raw))
+                .expect("webhook redelivery"),
+            (id.clone(), false)
+        );
+    }
+    let mut cell = norn_cell::SqliteCell::<
+        norn_kernel::ObservationEvent,
+        norn_ir::RuntimeObject,
+        norn_ir::RuntimeObject,
+    >::open(
+        &path,
+        model.clone(),
+        StoreOptions::default(),
+        "org_demo/dev",
+        |_| std::collections::BTreeMap::new(),
+    )
+    .expect("driver");
+    assert!(
+        cell.store()
+            .read()
+            .object(
+                norn_cell::MAIN_WORLD,
+                "demo.erpnext.StockEntryMeasurement",
+                "MEAS-1"
+            )
+            .expect("capture has no write authority")
+            .is_none()
+    );
+    assert_eq!(
+        cell.store()
+            .read()
+            .pending_observations()
+            .expect("one complete bundle")
+            .len(),
+        1
+    );
     assert!(cell.process_mapping_bundle(&id).expect("process inbox"));
-    assert!(!cell.process_mapping_bundle(&id).expect("processed redelivery"));
-    let before = cell.store().read().observation_findings(norn_cell::MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("purity finding");
+    assert!(
+        !cell
+            .process_mapping_bundle(&id)
+            .expect("processed redelivery")
+    );
+    let before = cell
+        .store()
+        .read()
+        .observation_findings(
+            norn_cell::MAIN_WORLD,
+            "demo.erpnext.StockEntryMeasurement",
+            "MEAS-1",
+        )
+        .expect("purity finding");
     assert_eq!(before.len(), 1);
-    assert!(matches!(&before[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id,..} if law_id=="demo.erpnext.purity_in_range"));
+    assert!(
+        matches!(&before[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id,..} if law_id=="demo.erpnext.purity_in_range")
+    );
     assert_eq!(before[0].status, norn_ir::DataQualityFindingStatus::Open);
-    let page = cell.store().read().authoritative_page(norn_cell::MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", None, 10).expect("quarantine population");
-    assert!(page.records.is_empty()); assert_eq!(page.quarantine_count, 1);
+    let page = cell
+        .store()
+        .read()
+        .authoritative_page(
+            norn_cell::MAIN_WORLD,
+            "demo.erpnext.StockEntryMeasurement",
+            None,
+            10,
+        )
+        .expect("quarantine population");
+    assert!(page.records.is_empty());
+    assert_eq!(page.quarantine_count, 1);
     drop(cell);
     // The correction webhook was missed: hydrate the full document through the ingress sweep.
-    let sweep = FrappeSweep { source, doctype:"Stock Entry Measurement".into(), page_size:10, lookback_secs:60 };
+    let sweep = FrappeSweep {
+        source,
+        doctype: "Stock Entry Measurement".into(),
+        page_size: 10,
+        lookback_secs: 60,
+    };
     let command = sweep.start_cycle(SweepFeed::Documents, None).expect("plan");
     let listing = br#"{"data":[{"name":"MEAS-1","modified":"2026-11-01 10:02:00"}]}"#;
-    assert_eq!(sweep.plan_documents(&command, listing).expect("full document request").len(), 1);
+    assert_eq!(
+        sweep
+            .plan_documents(&command, listing)
+            .expect("full document request")
+            .len(),
+        1
+    );
     let document = br#"{"message":{"doctype":"Stock Entry Measurement","name":"MEAS-1","modified":"2026-11-01 10:02:00","parent":"SYN-SE-1","custom_metal":"gold","custom_role":"input","custom_gross_grams":60000,"custom_purity":0.90,"custom_fine_grams":54000,"custom_occurred_at":"2026-10-26T10:00:00Z","custom_lot":"SYN-LOT-1"}}"#.to_vec();
-    let page = sweep.ingest(&command, listing, &[document], 1793527380000).expect("missed delivery evidence");
-    assert!(page.exhausted && page.next.is_some()); assert_eq!(page.observations.len(), 1);
+    let page = sweep
+        .ingest(&command, listing, &[document], 1793527380000)
+        .expect("missed delivery evidence");
+    assert!(page.exhausted && page.next.is_some());
+    assert_eq!(page.observations.len(), 1);
     let correction = &page.observations[0];
-    let (fixed, inserted) = host.observe_mapped_submission(&scope, &input, || checked_raw(correction)).expect("capture correction"); assert!(inserted);
+    let (fixed, inserted) = host
+        .observe_mapped_submission(&scope, &input, || checked_raw(correction))
+        .expect("capture correction");
+    assert!(inserted);
     assert_ne!(fixed, id);
-    assert_eq!(host.observe_mapped_submission(&scope, &input, || checked_raw(correction)).expect("sweep replay"), (fixed.clone(), false));
-    let mut cell = norn_cell::SqliteCell::<norn_kernel::ObservationEvent, norn_ir::RuntimeObject, norn_ir::RuntimeObject>::open(&path, model, StoreOptions::default(), "org_demo/dev", |_| std::collections::BTreeMap::new()).expect("restart");
-    assert!(cell.process_mapping_bundle(&fixed).expect("governed recovery"));
-    let after = cell.store().read().observation_findings(norn_cell::MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("retained finding");
-    assert_eq!(after.len(), 1); assert_eq!(after[0].id, before[0].id); assert_eq!(after[0].status, norn_ir::DataQualityFindingStatus::Resolved);
-    let record = cell.store().read().authoritative_object(norn_cell::MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("eligible again").expect("record");
-    assert_eq!(record.version, 2); assert_eq!(record.values["purity"], RuntimeValue::from_json_text("0.90").expect("exact purity"));
-    assert!(!cell.process_mapping_bundle(&fixed).expect("processed sweep replay"));
-    assert!(cell.store().read().pending_observations().expect("consumed evidence").is_empty());
-    let page = cell.store().read().authoritative_page(norn_cell::MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", None, 10).expect("aggregate population");
-    assert_eq!(page.records.len(), 1); assert_eq!(page.quarantine_count, 0);
+    assert_eq!(
+        host.observe_mapped_submission(&scope, &input, || checked_raw(correction))
+            .expect("sweep replay"),
+        (fixed.clone(), false)
+    );
+    let mut cell = norn_cell::SqliteCell::<
+        norn_kernel::ObservationEvent,
+        norn_ir::RuntimeObject,
+        norn_ir::RuntimeObject,
+    >::open(
+        &path,
+        model,
+        StoreOptions::default(),
+        "org_demo/dev",
+        |_| std::collections::BTreeMap::new(),
+    )
+    .expect("restart");
+    assert!(
+        cell.process_mapping_bundle(&fixed)
+            .expect("governed recovery")
+    );
+    let after = cell
+        .store()
+        .read()
+        .observation_findings(
+            norn_cell::MAIN_WORLD,
+            "demo.erpnext.StockEntryMeasurement",
+            "MEAS-1",
+        )
+        .expect("retained finding");
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].id, before[0].id);
+    assert_eq!(after[0].status, norn_ir::DataQualityFindingStatus::Resolved);
+    let record = cell
+        .store()
+        .read()
+        .authoritative_object(
+            norn_cell::MAIN_WORLD,
+            "demo.erpnext.StockEntryMeasurement",
+            "MEAS-1",
+        )
+        .expect("eligible again")
+        .expect("record");
+    assert_eq!(record.version, 2);
+    assert_eq!(
+        record.values["purity"],
+        RuntimeValue::from_json_text("0.90").expect("exact purity")
+    );
+    assert!(
+        !cell
+            .process_mapping_bundle(&fixed)
+            .expect("processed sweep replay")
+    );
+    assert!(
+        cell.store()
+            .read()
+            .pending_observations()
+            .expect("consumed evidence")
+            .is_empty()
+    );
+    let page = cell
+        .store()
+        .read()
+        .authoritative_page(
+            norn_cell::MAIN_WORLD,
+            "demo.erpnext.StockEntryMeasurement",
+            None,
+            10,
+        )
+        .expect("aggregate population");
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.quarantine_count, 0);
     // The planned cursor is not persisted by this cut; no full cursor-convergence claim.
-    drop(cell); drop(host); std::fs::remove_dir_all(directory).expect("cleanup");
+    drop(cell);
+    drop(host);
+    std::fs::remove_dir_all(directory).expect("cleanup");
 }
