@@ -2054,6 +2054,23 @@ impl<'a> Admission<'a> {
             .map(|defined| AdmittedType { defined })
     }
 
+    /// The definition an entity artifact id declares (mapping targets).
+    pub(crate) fn declared_by(
+        &self,
+        artifact_id: &str,
+        version: Option<&str>,
+    ) -> Option<AdmittedType<'_, 'a>> {
+        let mut definitions = self.model.by_name.values().flatten().filter(|defined| {
+            defined.artifact.artifact_id == artifact_id
+                && version.is_none_or(|version| defined.artifact.version == version)
+        });
+        let defined = definitions.next()?;
+        definitions
+            .next()
+            .is_none()
+            .then_some(AdmittedType { defined })
+    }
+
     /// The definition an action effect pins, when its pinned entity artifact
     /// defines the effect's object kind ([`effect_target_findings`]).
     pub(crate) fn effect_target(
