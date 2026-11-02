@@ -1669,11 +1669,17 @@ fn val_exact_runtime_preserves_predicates_intermediates_and_explicit_stores() {
     ] {
         assert!(run(source, None).is_err(), "{source}");
     }
-    assert_eq!(run("1 / 2", Some(&site(None))).unwrap(), Value::Number("0.5".parse().unwrap()));
+    assert_eq!(
+        run("1 / 2", Some(&site(None))).unwrap(),
+        Value::Number("0.5".parse().unwrap())
+    );
     assert!(run("1 / 3", Some(&site(None))).is_err());
     assert!(run("1.005", Some(&site(None))).is_err());
     assert!(run("(1 / 3) * 3", Some(&site(Some(Rounding::HalfEven)))).is_err());
-    assert_eq!(run("'a' + 'b' == 'ab' && 1.25 * 0.1 > 0", None).unwrap(), Value::Bool(true));
+    assert_eq!(
+        run("'a' + 'b' == 'ab' and 1.25 * 0.1 > 0", None).unwrap(),
+        Value::Bool(true)
+    );
     let expression = Expression::compile("1 / 3").unwrap();
     assert!(
         expression

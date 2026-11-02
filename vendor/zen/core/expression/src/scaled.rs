@@ -102,7 +102,8 @@ impl ScaledArithmetic {
             return Err("number is outside the declared exact scale");
         }
         let exponent = i64::from(self.scale) + i64::from(b.scale()) - i64::from(a.scale());
-        let factor = 10_i128.pow(exponent.unsigned_abs() as u32);
+        let places = u32::try_from(exponent.unsigned_abs()).map_err(|_overflow| "division scale overflow")?;
+        let factor = 10_i128.pow(places);
         let (numerator, denominator) = if exponent >= 0 {
             (
                 a.mantissa()

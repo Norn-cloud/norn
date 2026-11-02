@@ -93,10 +93,11 @@ impl Expression {
         let result = (|| {
             let profile = match site {
                 Some(norn_ir::PropertyType::Decimal {
-                    scale,
-                    rounding,
-                    ..
-                }) => Some(crate::convert::scaled_site(scale.0, rounding.unwrap_or(norn_ir::Rounding::Refuse))?),
+                    scale, rounding, ..
+                }) => Some(crate::convert::scaled_site(
+                    scale.0,
+                    rounding.unwrap_or(norn_ir::Rounding::Refuse),
+                )?),
                 None => None,
                 Some(_) => {
                     return Err(ExprError::Evaluation {
