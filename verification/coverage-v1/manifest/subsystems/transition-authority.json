@@ -499,6 +499,9 @@
     "verification/kernel-l1/version_kani.rs",
     "verification/kernel-l1/version_verus.rs",
     "crates/norn-cell/tests/temporal_source_world.rs",
+    "crates/norn-api/src/refusal.rs",
+    "crates/norn-api/src/scope.rs",
+    "crates/norn-api/tests/host_perimeter.rs",
     "crates/norn-kernel/src/guard_diagnostic.rs",
     "verification/kernel-l1/guard_diagnostic_kani.rs"
   ]
