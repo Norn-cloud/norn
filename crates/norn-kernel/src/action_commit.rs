@@ -4523,40 +4523,7 @@ fn prepare_action_input_inner<'a, X>(
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     let profile = ResourceLimitProfile::norn_limits_v1();
     let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
-    check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
-    // ACTION-ACTOR-1: caller JSON cannot supply authority, including nested receipts.
-    let mut pending: Vec<_> = raw_input.values().collect();
-    for field in ["actor", "approved"] {
-        if raw_input.contains_key(field) {
-            return Err(ActionRefusal::InvalidInput {
-                field: field.into(),
-            });
-        }
-    }
-    while let Some(value) = pending.pop() {
-        match value {
-            RuntimeValue::Object(fields) => {
-                for field in ["actor", "approved"] {
-                    if fields.contains_key(field) {
-                        return Err(ActionRefusal::InvalidInput {
-                            field: field.into(),
-                        });
-                    }
-                }
-                pending.extend(fields.values());
-            }
-            RuntimeValue::Array(values) => pending.extend(values),
-            RuntimeValue::Null
-            | RuntimeValue::Bool(_)
-            | RuntimeValue::Number(_)
-            | RuntimeValue::String(_) => {}
-        }
-    }
-    if actor.is_some_and(|a| a.len() > max_input_bytes || a.trim().is_empty()) {
-        return Err(ActionRefusal::InvalidInput {
-            field: "actor".into(),
-        });
-    }
+    check_action_identity_input::<X>(raw_input, actor, max_input_bytes)?;
     if !has_action_preparation_features(action) {
         validate_action_input(action, raw_input)?;
         return Ok(ActionInputPreparation {
@@ -4650,6 +4617,43 @@ fn prepare_action_input_inner<'a, X>(
         receipt_evidence_bytes,
         precondition_outcomes: Vec::new(),
     })
+}
+
+/// ACTION-ACTOR-1: bounded caller JSON cannot supply identity or approval claims.
+fn check_action_identity_input<X>(
+    raw_input: &JsonObject,
+    actor: Option<&str>,
+    max_bytes: usize,
+) -> Result<(), ActionRefusal<X>> {
+    check_canonical_object_bound::<X>("caller input", raw_input, max_bytes)?;
+    let mut objects = vec![raw_input];
+    let mut values = Vec::new();
+    while let Some(object) = objects.pop() {
+        for field in ["actor", "approved"] {
+            if object.contains_key(field) {
+                return Err(ActionRefusal::InvalidInput {
+                    field: field.into(),
+                });
+            }
+        }
+        values.extend(object.values());
+        while let Some(value) = values.pop() {
+            match value {
+                RuntimeValue::Object(object) => objects.push(object),
+                RuntimeValue::Array(items) => values.extend(items),
+                RuntimeValue::Null
+                | RuntimeValue::Bool(_)
+                | RuntimeValue::Number(_)
+                | RuntimeValue::String(_) => {}
+            }
+        }
+    }
+    if actor.is_some_and(|a| a.len() > max_bytes || a.trim().is_empty()) {
+        return Err(ActionRefusal::InvalidInput {
+            field: "actor".into(),
+        });
+    }
+    Ok(())
 }
 
 fn prepare_action_derivation<X>(
