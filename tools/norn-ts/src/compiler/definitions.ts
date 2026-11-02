@@ -813,11 +813,13 @@ class DefinitionCompiler {
     const law = this.json(need("law")) as unknown as L.LawIR
     const wordingNode = members.get("wordings")
     const wordingData = wordingNode ? this.json(wordingNode) : undefined
-    let wordings: L.LawDef["wordings"]
-    try { if (wordingData !== undefined) wordings = L.decodeLawWordings(wordingData) }
-    catch (error) { throw new CompileError("NORN-FLOW-LITERAL", `invalid law wordings: ${String(error)}`, wordingNode ?? call) }
-    if (wordings && Object.keys(wordings).some(id => id !== law.id)) throw new CompileError("NORN-FLOW-LITERAL", "wording key must equal its law ID", wordingNode ?? call)
-    return L.law({ id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")), law, ...(wordings ? { wordings } : {}), dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
+    try {
+      const wordings = wordingData === undefined ? undefined : L.decodeLawWordings(wordingData)
+      return L.law({ id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")), law, ...(wordings ? { wordings } : {}), dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
+    } catch (error) {
+      if (error instanceof CompileError) throw error
+      throw new CompileError("NORN-FLOW-LITERAL", `invalid law wordings: ${String(error)}`, wordingNode ?? call)
+    }
   }
 
   private connector(call: ts.CallExpression): C.ConnectorDef {

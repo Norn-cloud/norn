@@ -85,6 +85,8 @@ test("wording sidecars retain typed EN/AR slots without altering LawIR", () => {
   expect(L.wordingArtifacts(def)).toMatchObject([{format:"norn.law_wording/1", lawArtifactId:golden.artifactId,
     lawSha256:"0".repeat(64), requirement:{norm:{law:golden.payload}, wording:{response:text}}}])
   expect(() => L.decodeLawWordings({bad:{lawDigest:"0".repeat(64), slots:{scope:text}}})).toThrow()
+  expect(() => L.decodeLawWordings({ [golden.payload.id]: { lawDigest:"bad", slots:{scope:text,activation:text,component:text,response:text} } })).toThrow()
+  expect(() => L.decodeLawWordings({ [golden.payload.id]: { lawDigest:"0".repeat(64), slots:{scope:text,activation:text,component:text,response:{en:" ",ar:" "}} } })).toThrow()
   const dir = mkdtempSync(join(ROOT, "wording-"))
   try {
     const { _tag, ...meta } = def
@@ -93,5 +95,13 @@ test("wording sidecars retain typed EN/AR slots without altering LawIR", () => {
     if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
     expect(canonicalJson(pack.artifacts)).toBe(canonicalJson([L.lowerLaw(def, { ...options, sourcePath: relative(join(TOOL_ROOT, "../.."), join(dir, "law.ts")) }).artifact]))
     expect(pack.wordingArtifacts).toEqual(L.wordingArtifacts(def))
+    for (const change of [{modality:{kind:"eventually" as const}}, {modality:{kind:"until" as const,predicate:"true"}}, {timing:{kind:"within" as const,millis:"10"}}, {response:{kind:"action" as const,artifactId:"toy.action"}}, {response:{kind:"transition" as const,objectType:"toy.Type",property:"status",transitionId:"go"}}]) {
+      const unsupported = { ...meta, law:{...meta.law,...change} }
+      expect(() => L.law(unsupported)).toThrow()
+      writeFileSync(join(dir,"law.ts"), L.printLaw(unsupported))
+      const refused = compilePack(dir, { ...options, root: join(TOOL_ROOT,"../..") })
+      expect(refused.ok).toBe(false)
+      if (!refused.ok) expect(refused.failures.flatMap(f=>f.diagnostics).some(d=>d.code === "NORN-FLOW-LITERAL")).toBe(true)
+    }
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
