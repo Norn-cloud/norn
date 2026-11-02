@@ -463,6 +463,9 @@
     "tools/norn-ts/fixtures/stock-parity/scenarios.ts",
     "tools/norn-ts/src/parity/stock-trace.ts",
     "tools/norn-ts/test/stock-trace.test.ts",
+    "crates/norn-checker/src/metric/compute/arithmetic.rs",
+    "crates/norn-checker/src/metric/compute/contribution.rs",
+    "verification/query-compute-v1/arithmetic_kani.rs",
     "verification/canonical-values-v1/diagnostic_kani.rs"
   ]
 }
