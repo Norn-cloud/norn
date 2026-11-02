@@ -5142,6 +5142,40 @@ norn_testkit::proptest::proptest! {
     }
 }
 
+fn measurement_model(artifacts: &[norn_ir::ArtifactEnvelope]) -> Model {
+    let (mut objects, mut properties, mut interfaces) = (Vec::new(), Vec::new(), Vec::new());
+    for artifact in artifacts
+        .iter()
+        .filter(|a| a.kind() == norn_ir::ArtifactKind::Entity)
+    {
+        let root: norn_ir::EntityRoot = serde_json::from_str(
+            &serde_json::to_string(&artifact.payload.to_json_value()).expect("compiled root JSON"),
+        )
+        .expect("entity root");
+        match root {
+            norn_ir::EntityRoot::V2(root) => objects.push(root.object_type),
+            norn_ir::EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
+            norn_ir::EntityRoot::V2Interface(root) => interfaces.push(root.interface),
+            norn_ir::EntityRoot::V2Markings(_) => {}
+            norn_ir::EntityRoot::V1(_) | norn_ir::EntityRoot::V2Extension(_) => {
+                panic!("unexpected fixture entity root")
+            }
+        }
+    }
+    Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
+        .expect("pack model")
+        .with_governing_laws(artifacts)
+        .expect("pack laws")
+}
+
+fn measurement_values(purity: &str) -> BTreeMap<String, Value> {
+    let mut values: BTreeMap<String, Value> = serde_json::from_str(r#"{"id":"MEAS-1","metal":"gold","role":"input","gross_grams":1,"occurred_at":"2026-11-01T10:01:00Z"}"#).expect("measurement");
+    let decimal = Value::from_json_text(purity).expect("exact purity");
+    values.insert("purity".into(), decimal.clone());
+    values.insert("fine_grams".into(), decimal);
+    values
+}
+
 fn purity_quality_host(
     path: &std::path::Path,
 ) -> norn_cell::SqliteCell<
@@ -5149,29 +5183,57 @@ fn purity_quality_host(
     norn_kernel::cell_host::JsonObject,
     norn_kernel::cell_host::JsonObject,
 > {
-    let object = json!({"name":"quality.Measurement", "properties":[{"id":"purity", "type":{"kind":"decimal", "scale":6}}]});
-    let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_value(json!([
-        {"irVersion":"0.1", "artifactId":"quality.Measurement.entity", "kind":"entity", "namespace":"quality", "name":"Measurement", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[], "provenance":{"source":"authoring_sdk"}, "payload":{"entityVersion":"2.0", "objectType":object}},
-        {"irVersion":"0.1", "artifactId":"quality.purity.law", "kind":"law", "namespace":"quality", "name":"purity", "version":"0.1.0", "lifecycle":"draft", "scope":{"orgId":"org_demo", "environmentId":"dev"}, "dependencies":[{"artifactId":"quality.Measurement.entity", "kind":"entity", "version":"0.1.0", "required":true}], "provenance":{"source":"authoring_sdk"}, "payload":{
-            "lawVersion":"0.1", "id":"purity_in_range", "owner":"quality.controls", "severity":"error", "rationale":"Purity must be within zero and one", "provenance":{"source":"authoring_sdk"}, "subject":"quality.Measurement", "scope":{"root":{"kind":"entity", "id":"quality.Measurement"}, "objectTypes":["quality.Measurement"]}, "modality":{"kind":"always"}, "response":{"kind":"predicate", "expression":"self.purity >= 0 and self.purity <= 1"}
-        }}
-    ])).expect("typed synthetic declarations");
-    assert!(
-        norn_checker::check_artifact_set(
-            &artifacts,
-            &norn_checker::EntityArtifactSetContext {
-                registry: &std::collections::BTreeSet::new(),
-                base: &[],
-                tenant: None
-            }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut artifacts: Vec<norn_ir::ArtifactEnvelope> = [
+        "demo.erpnext.StockEntryMeasurement.entity",
+        "demo.erpnext.purity.law",
+        "demo.erpnext.fine_mass_definition.law",
+        "demo.erpnext.Measurement.interface",
+        "demo.erpnext.classifications.entity",
+    ]
+    .iter()
+    .map(|id| {
+        serde_json::from_str(
+            &std::fs::read_to_string(
+                root.join(format!("registry/packs/demo-erpnext/artifacts/{id}.json")),
+            )
+            .expect("pack artifact"),
         )
-        .is_empty()
+        .expect("compiled artifact")
+    })
+    .collect();
+    artifacts.extend(
+        [
+            "core.value_types.entity",
+            "std.value_types.entity",
+            "core.Agent.interface",
+            "core.AgentRole.interface",
+            "core.Resource.interface",
+            "core.EconomicEvent.interface",
+            "core.Commitment.interface",
+            "core.Hold.interface",
+            "core.LedgerEffect.interface",
+            "core.Claim.interface",
+        ]
+        .iter()
+        .map(|id| {
+            serde_json::from_str::<norn_ir::ArtifactEnvelope>(
+                &std::fs::read_to_string(root.join(format!("registry/core/artifacts/{id}.json")))
+                    .expect("core artifact"),
+            )
+            .expect("compiled core")
+        }),
     );
-    let model =
-        Model::from_definitions(&[serde_json::from_value(object).expect("measurement")], &[])
-            .expect("model")
-            .with_governing_laws(&artifacts)
-            .expect("laws");
+    let findings = norn_checker::check_artifact_set(
+        &artifacts,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &std::collections::BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+    let model = measurement_model(&artifacts);
     let mut input = install_input("quality", 1_793_527_260_000, &model);
     input.canonical_set = String::from_utf8(
         norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set"),
@@ -5184,24 +5246,26 @@ fn purity_quality_host(
     norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("host")
 }
 
-fn capture_purity(
-    cell: &mut norn_cell::SqliteCell<
-        norn_kernel::ObservationEvent,
-        norn_kernel::cell_host::JsonObject,
-        norn_kernel::cell_host::JsonObject,
-    >,
+type MeasurementCell = norn_cell::SqliteCell<
+    norn_kernel::ObservationEvent,
+    norn_kernel::cell_host::JsonObject,
+    norn_kernel::cell_host::JsonObject,
+>;
+
+fn capture_purity(cell: &mut MeasurementCell, delivery: &str, purity: &str) {
+    capture_measurement(cell, delivery, &measurement_values(purity));
+}
+
+fn capture_measurement(
+    cell: &mut MeasurementCell,
     delivery: &str,
-    purity: &str,
+    values: &BTreeMap<String, Value>,
 ) {
     use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
     use norn_kernel::{
         CellHost, DecisionTurn, FactKey, ObservationId, Observed, Provenance, TypeCatalog, World,
         load_slice,
     };
-    let values = BTreeMap::from([(
-        "purity".to_owned(),
-        Value::from_json_text(purity).expect("exact decimal"),
-    )]);
     let provenance: norn_ir::InstanceProvenance = serde_json::from_value(json!({"source":{"system":"synthetic-erpnext", "record":"Stock Entry Measurement/MEAS-1"}, "mappingVersion":"synthetic.measurements@1", "recordedAt":"2026-11-01T10:01:00Z", "sourceFields":["purity"]})).expect("source provenance");
     let observed = Observed {
         id: ObservationId(delivery.to_owned()),
@@ -5223,8 +5287,11 @@ fn capture_purity(
     assert!(!cell.inject(&observed).expect("same source delivery"));
     let pending = cell.observe().expect("observe").expect("pending");
     let model = cell.store().model().clone();
-    let catalog = TypeCatalog::new(model.object_types()).with_governing_laws(model.law_artifacts());
-    let key = FactKey::new("quality.Measurement", "MEAS-1");
+    let catalog = TypeCatalog::new(model.object_types())
+        .with_interfaces(model.interfaces())
+        .with_property_types(model.property_types())
+        .with_governing_laws(model.law_artifacts());
+    let key = FactKey::new("demo.erpnext.StockEntryMeasurement", "MEAS-1");
     let slice = load_slice(cell, [key.clone()]).expect("slice");
     let turn = DecisionTurn {
         id: delivery.into(),
@@ -5234,7 +5301,7 @@ fn capture_purity(
     };
     let snapshot = ObservedSnapshot {
         key: &key,
-        values: &values,
+        values,
         lifecycles: &[],
         provenance: &provenance,
     };
@@ -5263,21 +5330,21 @@ norn_testkit::proptest::proptest! {
             drop(cell);
             cell = norn_cell::SqliteCell::open(&path, model, StoreOptions::default(), "org_demo/dev", |_| BTreeMap::new()).expect("restart");
             let reader = cell.store().read();
-            let raw = reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").expect("captured");
+            let raw = reader.object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("raw").expect("captured");
             norn_testkit::proptest::prop_assert!(reader.observation_is_quarantined(MAIN_WORLD, &raw).expect("quarantine"));
-            norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
-            let page = reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("authoritative projection");
+            norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("projection").is_none());
+            let page = reader.authoritative_page(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", None, 10).expect("authoritative projection");
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
             norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
             norn_testkit::proptest::prop_assert_eq!(page.scanned_through.as_deref(), Some("MEAS-1"));
-            let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
+            let findings = reader.observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("findings");
             norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
             norn_testkit::proptest::prop_assert_eq!(findings[0].status, norn_ir::DataQualityFindingStatus::Open);
         }
         capture_purity(&mut cell, "corrected", "0.80");
         let reader = cell.store().read();
-        norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_some());
-        let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("review");
+        norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("projection").is_some());
+        let findings = reader.observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("review");
         norn_testkit::proptest::prop_assert_eq!(findings[0].status, norn_ir::DataQualityFindingStatus::Resolved);
         let persisted: Vec<_> = reader.ledger_page(0, 100).expect("ledger").into_iter().filter(|event| event.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")).collect();
         norn_testkit::proptest::prop_assert_eq!(persisted.len(), 1);
@@ -5293,7 +5360,7 @@ fn obs_recovery_upgrade_uses_each_findings_retained_model(fraction in 501u16..10
     let path = directory.path().join("upgrade.sqlite");
     let mut cell = purity_quality_host(&path);
     capture_purity(&mut cell, "original", "1.20");
-    let original = cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings")[0].clone();
+    let original = cell.store().read().observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("findings")[0].clone();
     let previous = cell.store().read().installed_definitions(None).expect("definitions").expect("installed");
     let mut artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(&previous.canonical_set).expect("artifacts");
     let mut snapshot = cell.store().model().definitions_snapshot();
@@ -5301,7 +5368,7 @@ fn obs_recovery_upgrade_uses_each_findings_retained_model(fraction in 501u16..10
     law["version"] = json!("0.2.0");
     law["payload"]["response"]["expression"] = json!("self.purity >= 0 and self.purity <= 0.5");
     artifacts[1] = serde_json::from_value(law).expect("tightened law");
-    snapshot.law_artifacts = vec![artifacts[1].clone()];
+    snapshot.law_artifacts = artifacts.iter().filter(|a| a.kind() == norn_ir::ArtifactKind::Law).cloned().collect();
     let model = Model::from_snapshot(&snapshot).expect("retained candidate");
     let mut input = install_input("tightened", previous.installed_at.checked_add(1).expect("next epoch"), &model);
     input.canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set")).expect("UTF8");
@@ -5310,7 +5377,7 @@ fn obs_recovery_upgrade_uses_each_findings_retained_model(fraction in 501u16..10
     let mut store = CellStore::open(&path, old_model, StoreOptions::default()).expect("store");
     store.install_definitions(model, input, Some(previous.version), "org_demo/dev").expect("upgrade");
     let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
-    let review = |cell: &norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject>| cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("version-bound review");
+    let review = |cell: &norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject>| cell.store().read().observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("version-bound review");
     assert_eq!(review(&cell)[0].status, norn_ir::DataQualityFindingStatus::Open);
     capture_purity(&mut cell, "still-invalid", "1.30");
     assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Open));
@@ -5318,15 +5385,15 @@ fn obs_recovery_upgrade_uses_each_findings_retained_model(fraction in 501u16..10
     let findings = review(&cell);
     assert_eq!(findings.iter().find(|f| f.id == original.id).expect("original retained").status, norn_ir::DataQualityFindingStatus::Resolved);
     assert!(findings.iter().any(|f| f.status == norn_ir::DataQualityFindingStatus::Open));
-    assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("still quarantined").is_none());
+    assert!(cell.store().read().authoritative_object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("still quarantined").is_none());
     capture_purity(&mut cell, "passes-both-laws", "0.40");
     assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Resolved));
-    assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("recovered").is_some());
+    assert!(cell.store().read().authoritative_object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("recovered").is_some());
     let original_event = cell.store().read().ledger_page(0, 100).expect("history").into_iter().find(|e| e.event.get("fact").and_then(|f| f.get("id")).and_then(Value::as_str) == Some(original.id.as_str())).expect("original event");
     assert_eq!(original_event.event.get("fact").and_then(|f| f.get("status")).and_then(Value::as_str), Some("open"));
     let engine = NativeEngine::open(&path, StoreOptions::default()).expect("cache connection");
-    engine.execute(&format!("UPDATE {} SET {} = {} + 1", quote_identifier("o:quality.Measurement"), quote_identifier(VERSION_COLUMN), quote_identifier(VERSION_COLUMN)), &[]).expect("unproven mutable version");
-    assert!(cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").is_err(), "unproven correction refuses");
+    engine.execute(&format!("UPDATE {} SET {} = {} + 1", quote_identifier("o:demo.erpnext.StockEntryMeasurement"), quote_identifier(VERSION_COLUMN), quote_identifier(VERSION_COLUMN)), &[]).expect("unproven mutable version");
+    assert!(cell.store().read().observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").is_err(), "unproven correction refuses");
 }
 
 }
@@ -5338,13 +5405,10 @@ fn obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses() {
     let mut cell = purity_quality_host(&directory.path().join("quality.sqlite"));
     let mut native = CellCommit::empty();
     native.writes.push(FactWrite {
-        key: FactKey::new("quality.Measurement", "MEAS-1"),
+        key: FactKey::new("demo.erpnext.StockEntryMeasurement", "MEAS-1"),
         expected: FactVersion::ABSENT,
         mutation: FactMutation::Put {
-            values: BTreeMap::from([(
-                "purity".into(),
-                Value::from_json_text("1.20").expect("decimal"),
-            )]),
+            values: measurement_values("1.20"),
         },
     });
     let refusal = cell.commit(native).expect_err("native invalid purity");
@@ -5352,7 +5416,7 @@ fn obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses() {
     assert!(
         cell.store()
             .read()
-            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1")
             .expect("raw")
             .is_none()
     );
@@ -5360,11 +5424,11 @@ fn obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses() {
     let findings = cell
         .store()
         .read()
-        .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1")
         .expect("persisted findings");
     assert_eq!(findings.len(), 1);
     assert!(
-        matches!(&findings[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range")
+        matches!(&findings[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "demo.erpnext.purity_in_range")
     );
 }
 
@@ -5387,10 +5451,10 @@ norn_testkit::proptest::proptest! {
                 norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
                 let verified = reader.verified_history_event(&findings[0]).expect("proof").expect("retained producer");
                 let finding: norn_ir::DataQualityFinding = norn_ir::runtime::decode(verified.get("fact").expect("fact")).expect("finding");
-                norn_testkit::proptest::prop_assert!(matches!(&finding.rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range"), "retained purity law pin");
+                norn_testkit::proptest::prop_assert!(matches!(&finding.rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "demo.erpnext.purity_in_range"), "retained purity law pin");
                 if let Some(ref before) = id { norn_testkit::proptest::prop_assert_eq!(before, &finding.id); }
                 id = Some(finding.id);
-                norn_testkit::proptest::prop_assert!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").is_some());
+                norn_testkit::proptest::prop_assert!(reader.object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("raw").is_some());
             }
         }
     }
@@ -5524,14 +5588,14 @@ fn obs_evidence_legacy_candidates_do_not_block_a_verified_producer() {
     assert_eq!(verified, 1, "proof search passes the first candidate page");
     assert_eq!(
         reader
-            .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1")
             .expect("paged review")
             .len(),
         1
     );
     assert!(
         reader
-            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1")
             .expect("raw")
             .is_some()
     );
@@ -5547,15 +5611,6 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
         .expect("installed");
     let mut artifacts: Vec<norn_ir::ArtifactEnvelope> =
         serde_json::from_str(&previous.canonical_set).expect("retained");
-    let mut entity = serde_json::to_value(&artifacts[0]).expect("entity");
-    entity["payload"]["objectType"]["implements"] = json!(["quality.Measured"]);
-    entity["dependencies"] = json!([{ "artifactId":"quality.Measured.interface", "kind":"entity", "version":"0.1.0", "required":true }]);
-    artifacts[0] = serde_json::from_value(entity.clone()).expect("entity");
-    entity["dependencies"] = json!([]);
-    let interface = json!({"name":"quality.Measured", "properties":[{"id":"purity", "type":{"kind":"decimal", "scale":6}}]});
-    entity["artifactId"] = json!("quality.Measured.interface");
-    entity["payload"] = json!({"entityVersion":"2.0", "interface":interface});
-    artifacts.push(serde_json::from_value(entity).expect("interface"));
     let mut source: serde_json::Value = serde_json::from_str(include_str!(
         "../../../fixtures/ir/synthetic-contact.source_schema.json"
     ))
@@ -5575,25 +5630,16 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
     mapping["artifactId"] = json!("quality.mapping");
     mapping["dependencies"] = json!([
         {"artifactId":"quality.source", "kind":"source_schema", "version":"1.0.0", "required":true},
-        {"artifactId":"quality.Measurement.entity", "kind":"entity", "version":"0.1.0", "required":true},
-        {"artifactId":"quality.Measured.interface", "kind":"entity", "version":"0.1.0", "required":true}
+        {"artifactId":"demo.erpnext.StockEntryMeasurement.entity", "kind":"entity", "version":"0.1.0", "required":true},
+        {"artifactId":"demo.erpnext.Measurement.interface", "kind":"entity", "version":"0.1.0", "required":true}
     ]);
     mapping["payload"]["source"] =
         json!({"schemaId":"quality.source", "version":"1.0.0", "sha256":pin.sha256});
-    mapping["payload"]["interfaces"] = json!(["quality.Measured.interface"]);
-    mapping["payload"]["maps"] = json!([{"id":"measurement", "source":{"dataset":"Rows"}, "target":{"entity":"quality.Measurement.entity", "interface":"quality.Measured.interface"}, "subject":"input.name", "sourceRecord":"input.name", "properties":[{"property":"purity", "value":"input.purity"}]}]);
+    mapping["payload"]["interfaces"] = json!(["demo.erpnext.Measurement.interface"]);
+    mapping["payload"]["maps"] = json!([{"id":"measurement", "source":{"dataset":"Rows"}, "target":{"entity":"demo.erpnext.StockEntryMeasurement.entity", "interface":"demo.erpnext.Measurement.interface"}, "subject":"input.name", "sourceRecord":"input.name", "properties":[{"property":"id","value":"input.name"},{"property":"metal","value":"'gold'"},{"property":"role","value":"'input'"},{"property":"gross_grams","value":"1"},{"property":"purity","value":"input.purity"},{"property":"fine_grams","value":"input.purity"},{"property":"occurred_at","value":"'2026-11-01T10:01:00Z'"}],"gaps":[{"member":"lot","reason":"deferred","note":"synthetic fixture"},{"member":"event","reason":"deferred","note":"synthetic fixture"}]}]);
     artifacts.push(source);
     artifacts.push(serde_json::from_value(mapping).expect("mapping"));
-    let object =
-        serde_json::to_value(&artifacts[0]).expect("object")["payload"]["objectType"].clone();
-    let model = Model::from_definitions_with_interfaces(
-        &[serde_json::from_value(object).expect("object")],
-        &[],
-        &[serde_json::from_value(interface).expect("interface")],
-    )
-    .expect("model")
-    .with_governing_laws(&artifacts)
-    .expect("laws");
+    let model = measurement_model(&artifacts);
     let findings = norn_checker::check_artifact_set(
         &artifacts,
         &norn_checker::EntityArtifactSetContext {
@@ -5696,10 +5742,10 @@ norn_testkit::proptest::proptest! {
             let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
             norn_testkit::proptest::prop_assert_eq!(cell.process_mapping_bundle(&id).expect("processing"), index == 0);
             let reader = cell.store().read();
-            let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("review");
+            let findings = reader.observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("review");
             norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
-            norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
-            norn_testkit::proptest::prop_assert!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").is_some());
+            norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("projection").is_none());
+            norn_testkit::proptest::prop_assert!(reader.object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("raw").is_some());
             let persisted = reader.ledger_page(0, 100).expect("history").into_iter().filter(|e| e.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")).count();
             norn_testkit::proptest::prop_assert_eq!(persisted, 1);
             drop(cell);
@@ -5749,7 +5795,7 @@ fn mapping_bundle_processing_refuses_forged_output_without_consumption() {
     assert!(
         cell.store()
             .read()
-            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1")
             .expect("fact")
             .is_none()
     );
@@ -6099,8 +6145,34 @@ fn mapping_bundle_refuses_mismatched_delivery_identity_without_consumption() {
     assert!(
         cell.store()
             .read()
-            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1")
             .expect("fact")
             .is_none()
     );
+}
+
+// DATA-QUALITY-PACK-1: each admitted law recovers independently; quarantine is any open finding.
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn pack_laws_redelivery_and_partial_recovery_keep_each_governing_pin(deliveries in 2usize..5) {
+        use norn_testkit::proptest::prelude::*;
+        let directory = tempfile::tempdir().expect("directory");
+        let mut cell = purity_quality_host(&directory.path().join("pack.sqlite"));
+        let mut values = measurement_values("1.20");
+        values.insert("fine_grams".into(), Value::from_json_text("0.5").expect("fine mass"));
+        for delivery in 0..deliveries { capture_measurement(&mut cell, &format!("bad-{delivery}"), &values); }
+        let review = |cell: &MeasurementCell| cell.store().read().observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("review");
+        prop_assert_eq!(review(&cell).len(), 2);
+        values.insert("purity".into(), Value::from_json_text("0.8").expect("valid purity"));
+        capture_measurement(&mut cell, "purity-fixed", &values);
+        let findings = review(&cell);
+        for finding in &findings {
+            let norn_ir::DataQualityRuleRef::Law { law_id, .. } = &finding.rule_ref else { panic!("admitted pack law") };
+            prop_assert_eq!(finding.status == norn_ir::DataQualityFindingStatus::Resolved, law_id == "demo.erpnext.purity_in_range");
+        }
+        prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("quarantine").is_none());
+        capture_purity(&mut cell, "fine-fixed", "0.8");
+        prop_assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Resolved));
+        prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("recovery").is_some());
+    }
 }

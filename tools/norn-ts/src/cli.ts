@@ -11,7 +11,7 @@ function option(name: string): string | undefined {
   return index < 0 ? undefined : flags[index + 1]
 }
 if (!input || (command !== "check" && command !== "compile" && command !== "profile")) {
-  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--out FILE]\n")
+  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--out FILE] [--wording-out FILE]\n")
   process.exit(2)
 }
 if (command === "profile") {
@@ -32,6 +32,8 @@ if (!pack.ok) {
 }
 if (command === "compile") {
   const output = option("--out")
+  const wordingOutput = option("--wording-out")
+  if (wordingOutput) writeFileSync(wordingOutput, `${JSON.stringify(pack.wordingArtifacts)}\n`)
   const document = `${JSON.stringify(pack.artifacts)}\n`
   if (output) writeFileSync(output, document)
   else process.stdout.write(document)
