@@ -23,6 +23,7 @@ use std::sync::Arc;
 /// Native concept whose declared actions own restatement approval and activation.
 pub const RESTATEMENT_TYPE: &str = "core.analytics.Restatement";
 const INVALID: &str = "core.world.invalid_restatement";
+const MAX_SLICES: usize = 16;
 
 /// A declared question at one effective/knowledge-time slice.
 pub struct RestatementSlice<'a> {
@@ -222,7 +223,7 @@ impl<E: SqlEngine> CellStore<E> {
         if id.is_empty()
             || reason.trim().is_empty()
             || slice_ids.is_empty()
-            || slice_ids.len() > 16
+            || slice_ids.len() > MAX_SLICES
             || slice_ids.iter().any(String::is_empty)
         {
             return Err(refused(INVALID));
@@ -322,7 +323,10 @@ impl<E: SqlEngine> CellStore<E> {
         }
         let expected: BTreeSet<String> = serde_json::from_str(text(&build.values, "slice_ids")?)
             .map_err(|_invalid| refused(INVALID))?;
-        if slices.len() != expected.len()
+        if expected.is_empty()
+            || expected.len() > MAX_SLICES
+            || expected.iter().any(String::is_empty)
+            || slices.len() != expected.len()
             || slices
                 .iter()
                 .map(|s| s.id.to_owned())

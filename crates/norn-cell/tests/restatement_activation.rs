@@ -762,3 +762,70 @@ fn candidate_budget_includes_the_complete_staged_slot() {
         ))
     ));
 }
+
+#[test]
+fn resumed_slice_declarations_keep_the_same_admission_bound() {
+    for declared in [
+        BTreeSet::new(),
+        BTreeSet::from([String::new()]),
+        (0..17).map(|n| format!("slice-{n}")).collect(),
+    ] {
+        let directory = tempfile::tempdir().expect("directory");
+        let (mut store, plan, context, _) = setup(&directory.path().join("cell.sqlite"));
+        store
+            .begin_restatement(
+                ID,
+                context.clone(),
+                0,
+                "resume boundary",
+                &BTreeSet::from(["week".into(), "loss".into()]),
+            )
+            .expect("initial declaration");
+        let mut values = store
+            .read()
+            .object(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+            .expect("slot")
+            .expect("present")
+            .values;
+        values.insert(
+            "slice_ids".into(),
+            norn_ir::RuntimeValue::from(
+                serde_json::to_string(&declared).expect("persisted declaration"),
+            ),
+        );
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: SCOPE.into(),
+                logical_time: context.now_ms,
+                writes: vec![norn_cell::FactWriteRow::Put {
+                    object_type: RESTATEMENT_TYPE.into(),
+                    key: ID.into(),
+                    values,
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("authenticated alternate writer");
+        let point = cutoff(&store, &context);
+        let build = store
+            .resume_restatement(ID, context.clone())
+            .expect("authenticated resume");
+        let slices = declared
+            .iter()
+            .map(|id| RestatementSlice {
+                id,
+                plan: plan.clone(),
+                context: context.clone(),
+                cutoff: point,
+            })
+            .collect();
+        assert!(matches!(
+            store.prepare_restatement(build, slices, |_| panic!(
+                "invalid persisted declaration must refuse before input reads"
+            )),
+            Err(norn_cell::CellError::ComputeRefused(
+                "core.world.invalid_restatement"
+            ))
+        ));
+    }
+}
