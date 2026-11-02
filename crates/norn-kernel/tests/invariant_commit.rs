@@ -3048,9 +3048,9 @@ norn_testkit::proptest::proptest! {
         let mut extra = property_types[0].clone();
         extra.name = norn_ir::PropertyTypeName("test.other".into());
         property_types.push(extra);
-        let mut extensions: Vec<norn_ir::ObjectTypeExtension> = ["alpha", "beta"].into_iter().map(|namespace| {
+        let mut extensions: Vec<norn_ir::ObjectTypeExtension> = [("alpha", "first"), ("alpha", "second"), ("beta", "third")].into_iter().map(|(namespace, member)| {
             serde_json::from_value(json!({"namespace":namespace,"target":"test.Quantity",
-                "properties":[{"id":format!("{namespace}__amount"),"type":{"kind":"decimal","scale":3}}]})).unwrap()
+                "properties":[{"id":format!("{namespace}__{member}"),"type":{"kind":"decimal","scale":3}}]})).unwrap()
         }).collect();
         let rule = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&property_types)
             .with_extensions(&extensions).property_domain_rule_ref(&definition.name,&norn_ir::PropertyId("reading".into())).unwrap();
