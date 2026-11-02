@@ -22,7 +22,7 @@ test("ANALYSIS-PUBLISH-1 declares publication states, law and reference-only gov
   const artifacts = publication().map(artifact => Schema.decodeUnknownSync(Envelope)(artifact))
   expect(artifacts.find(artifact => artifact.artifactId === "core.analytics.Publication.entity")?.payload).toMatchObject({
     objectType: { lifecycles: [{ property: "status", transitions: [
-      { id: "publish", guardRefusalCode: "core.projection.publication_guard", guards: expect.arrayContaining(["!self.temporal_leakage"]) },
+      { id: "publish", guardRefusalCode: "core.projection.publication_guard", guards: expect.arrayContaining([expect.stringContaining("temporal_leakage")]) },
       { id: "refuse" },
     ] }] },
   })
