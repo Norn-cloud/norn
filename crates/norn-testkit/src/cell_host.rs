@@ -1913,6 +1913,7 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
 
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
+    use CommitError::{InvariantBudgetExceeded, InvariantModel};
     Ok(match error {
         CommitError::Law { key, reason } => CommitError::Law { key, reason },
         CommitError::OwnedRowsProtected { key } => CommitError::OwnedRowsProtected { key },
@@ -2000,11 +2001,11 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
             message,
             outcome,
         },
-        CommitError::InvariantBudgetExceeded { key, limit } => {
-            CommitError::InvariantBudgetExceeded { key, limit }
+        InvariantBudgetExceeded { key, limit } => {
+            InvariantBudgetExceeded { key, limit }
         }
-        CommitError::InvariantModel { key, interface } => {
-            CommitError::InvariantModel { key, interface }
+        InvariantModel { key, interface } => {
+            InvariantModel { key, interface }
         }
         CommitError::ObservationAuthorization => CommitError::ObservationAuthorization,
         CommitError::EventLimitExceeded { limit, actual } => {
