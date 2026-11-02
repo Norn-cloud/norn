@@ -176,6 +176,7 @@ async fn exports_without_model_hash_and_unsupported_versions_are_refused() {
     let export = dir.path().join("export");
     let target = dir.path().join("restored.sqlite");
     let record = fixture(&export).await;
+    let cell_id = record.bindings["cell_id"].clone();
     let original_manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(export.join(MANIFEST_PATH)).expect("manifest"))
             .expect("decode");
@@ -205,7 +206,7 @@ async fn exports_without_model_hash_and_unsupported_versions_are_refused() {
             serde_json::to_vec(&manifest).expect("json"),
         )
         .expect("manifest");
-        let error = restore(&export, &target)
+        let error = restore(&export, &target, &cell_id)
             .await
             .expect_err("incompatible export");
         if remove_hash {
@@ -419,6 +420,12 @@ async fn restore_replays_original_link_creation_across_property_replacement() {
     let target = directory.path().join("restored.sqlite");
     let mut store = CellStore::open_in_memory(model()).expect("store");
     store.bind("scope", "org_demo/dev").expect("binding");
+    let cell_id = String::from(
+        store
+            .cell_id()
+            .expect("cell identity")
+            .expect("qualified source"),
+    );
     let mut first = initial_batch();
     // This fixture exercises link replay; pending commands intentionally gain
     // host-local perform fences during restore and belong to separate tests.
@@ -433,7 +440,7 @@ async fn restore_replays_original_link_creation_across_property_replacement() {
     let expected = store.read().dump().expect("tables");
     let mut exporter = Exporter::local(&export).expect("exporter");
     export_all(&store, &mut exporter).await;
-    restore(&export, &target).await.expect("restore");
+    restore(&export, &target, &cell_id).await.expect("restore");
     let restored = CellStore::open(&target, model(), StoreOptions::default()).expect("reopen");
     assert_eq!(restored.read().dump().expect("replayed tables"), expected);
     let page = restored
@@ -482,29 +489,21 @@ async fn fixture(dir: &std::path::Path) -> ExportRecord {
 async fn restore(
     dir: &std::path::Path,
     target: &std::path::Path,
+    cell_id: &str,
 ) -> Result<norn_cell::RestoreReport, RestoreError> {
-    {
-        let expected_bindings = {
-            let mut expected = bindings();
-            let source = Exporter::local(dir)
-                .expect("exporter")
-                .verify()
-                .await
-                .expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
-            expected
-        };
-        CellStore::restore_from(
-            &mut Exporter::local(dir).expect("exporter"),
-            target,
-            model(),
-            "org_demo/dev",
-            &expected_bindings,
-            StoreOptions::default(),
-        )
-        .await
-    }
+    let mut expected = bindings();
+    expected.insert("cell_id".to_owned(), cell_id.to_owned());
+    CellStore::restore_from(
+        &mut Exporter::local(dir).expect("exporter"),
+        target,
+        model(),
+        "org_demo/dev",
+        &expected,
+        StoreOptions::default(),
+    )
+    .await
 }
+
 fn write_record(dir: &std::path::Path, record: &ExportRecord, old_hash: &str) {
     std::fs::write(
         dir.join(object_path(old_hash).expect("path").as_ref()),
@@ -519,19 +518,20 @@ async fn tampered_object_missing_object_broken_previous_receipt_and_sequence_are
     let export = dir.path().join("export");
     let target = dir.path().join("restored.sqlite");
     let original = fixture(&export).await;
+    let cell_id = original.bindings["cell_id"].clone();
     let address = original.hash().expect("hash");
     let mut tampered = original.clone();
     tampered.batch.logical_time += 1;
     write_record(&export, &tampered, &address);
     assert!(matches!(
-        restore(&export, &target).await,
+        restore(&export, &target, &cell_id).await,
         Err(RestoreError::Export(ExportError::ContentAddressMismatch))
     ));
     assert!(!target.exists());
     std::fs::remove_file(export.join(object_path(&address).expect("path").as_ref()))
         .expect("remove");
     assert!(matches!(
-        restore(&export, &target).await,
+        restore(&export, &target, &cell_id).await,
         Err(RestoreError::Export(ExportError::Storage(_)))
     ));
     assert!(!target.exists());
@@ -560,7 +560,7 @@ async fn tampered_object_missing_object_broken_previous_receipt_and_sequence_are
             serde_json::to_vec(&manifest).expect("json"),
         )
         .expect("manifest");
-        let error = restore(&export, &target).await.expect_err(change);
+        let error = restore(&export, &target, &cell_id).await.expect_err(change);
         assert!(
             match variant {
                 0 => matches!(error, RestoreError::Export(ExportError::GenesisMismatch)),
@@ -580,6 +580,7 @@ async fn wrong_model_scope_bindings_existing_target_and_self_consistent_false_re
     let export = dir.path().join("export");
     let target = dir.path().join("restored.sqlite");
     let original = fixture(&export).await;
+    let cell_id = original.bindings["cell_id"].clone();
     let mut exporter = Exporter::local(&export).expect("exporter");
     let other_model = Model::from_definitions(&[], &[]).expect("empty model");
     assert!(matches!(
@@ -645,7 +646,7 @@ async fn wrong_model_scope_bindings_existing_target_and_self_consistent_false_re
     assert!(!target.exists());
     std::fs::write(&target, "keep").expect("existing");
     assert!(matches!(
-        restore(&export, &target).await,
+        restore(&export, &target, &cell_id).await,
         Err(RestoreError::TargetExists(_))
     ));
     assert_eq!(std::fs::read_to_string(&target).expect("preserved"), "keep");
@@ -660,7 +661,7 @@ async fn wrong_model_scope_bindings_existing_target_and_self_consistent_false_re
         .await
         .expect("self-consistent envelope");
     assert!(matches!(
-        restore(&false_export, &target).await,
+        restore(&false_export, &target, &cell_id).await,
         Err(RestoreError::ReceiptMismatch(1))
     ));
     assert!(!target.exists());
@@ -692,6 +693,12 @@ async fn unknown_external_outcomes_are_fenced_across_reopen_and_generation_repla
     let target = dir.path().join("restored.sqlite");
     let mut original = CellStore::open_in_memory(model()).expect("store");
     original.bind("scope", "org_demo/dev").expect("bind");
+    let cell_id = String::from(
+        original
+            .cell_id()
+            .expect("cell identity")
+            .expect("qualified source"),
+    );
     original
         .commit(&CommitBatch {
             effects: vec![EffectRow::Enqueue {
@@ -712,7 +719,7 @@ async fn unknown_external_outcomes_are_fenced_across_reopen_and_generation_repla
         .expect("unexported inbox");
     let mut exporter = Exporter::local(&export).expect("exporter");
     export_all(&original, &mut exporter).await;
-    let report = restore(&export, &target).await.expect("restore");
+    let report = restore(&export, &target, &cell_id).await.expect("restore");
     assert_eq!(report.fenced_commands, 1);
     for replace in [false, true] {
         let mut restored =
@@ -754,6 +761,12 @@ async fn exported_perform_claim_is_replayed_but_restore_fence_stays_first() {
     let target = dir.path().join("restored.sqlite");
     let mut original = CellStore::open_in_memory(model()).expect("store");
     original.bind("scope", "org_demo/dev").expect("bind");
+    let cell_id = String::from(
+        original
+            .cell_id()
+            .expect("cell identity")
+            .expect("qualified source"),
+    );
     original
         .commit(&CommitBatch {
             effects: vec![EffectRow::Enqueue {
@@ -795,7 +808,7 @@ async fn exported_perform_claim_is_replayed_but_restore_fence_stays_first() {
 
     let mut exporter = Exporter::local(&export).expect("exporter");
     export_all(&original, &mut exporter).await;
-    let report = restore(&export, &target).await.expect("restore");
+    let report = restore(&export, &target, &cell_id).await.expect("restore");
     assert_eq!(report.fenced_commands, 1);
 
     // Reopening retains both the replayed claim and the host-local restore
@@ -826,6 +839,12 @@ async fn missing_intermediate_commit_reordered_head_and_changed_manifest_are_ref
     let target = dir.path().join("restored.sqlite");
     let mut store = CellStore::open_in_memory(model()).expect("store");
     store.bind("scope", "org_demo/dev").expect("bind");
+    let cell_id = String::from(
+        store
+            .cell_id()
+            .expect("cell identity")
+            .expect("qualified source"),
+    );
     for seq in 1..=3 {
         store.commit(&batch(seq)).expect("commit");
     }
@@ -840,7 +859,7 @@ async fn missing_intermediate_commit_reordered_head_and_changed_manifest_are_ref
     );
     std::fs::remove_file(&middle_path).expect("missing intermediate commit");
     assert!(matches!(
-        restore(&export, &target).await,
+        restore(&export, &target, &cell_id).await,
         Err(RestoreError::Export(ExportError::Storage(_)))
     ));
     assert!(!target.exists());
@@ -858,7 +877,7 @@ async fn missing_intermediate_commit_reordered_head_and_changed_manifest_are_ref
     )
     .expect("reorder");
     assert!(matches!(
-        restore(&export, &target).await,
+        restore(&export, &target, &cell_id).await,
         Err(RestoreError::Export(ExportError::SequenceMismatch))
     ));
     assert!(!target.exists());
@@ -870,7 +889,7 @@ async fn missing_intermediate_commit_reordered_head_and_changed_manifest_are_ref
     )
     .expect("manifest");
     assert!(matches!(
-        restore(&export, &target).await,
+        restore(&export, &target, &cell_id).await,
         Err(RestoreError::Export(ExportError::ManifestMismatch))
     ));
     assert!(!target.exists());
@@ -883,6 +902,12 @@ async fn self_consistent_export_with_wrong_timer_preimage_fails_replay_and_clean
     let target = dir.path().join("restored.sqlite");
     let mut store = CellStore::open_in_memory(model()).expect("store");
     store.bind("scope", "org_demo/dev").expect("bind");
+    let cell_id = String::from(
+        store
+            .cell_id()
+            .expect("cell identity")
+            .expect("qualified source"),
+    );
     store
         .commit(&CommitBatch {
             effects: vec![EffectRow::Schedule {
@@ -913,7 +938,7 @@ async fn self_consistent_export_with_wrong_timer_preimage_fails_replay_and_clean
         .await
         .expect("self-consistent export envelope");
     assert!(matches!(
-        restore(&export, &target).await,
+        restore(&export, &target, &cell_id).await,
         Err(RestoreError::InputMismatch(2))
     ));
     assert!(!target.exists());
