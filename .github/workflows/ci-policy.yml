@@ -13,12 +13,14 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-# A newer push to a pull request cancels the run of its older head. Every other
-# event (merge-queue groups, main, the comment and trusted lanes) gets a group
-# of its own, so concurrency never cancels or holds it back.
+# A newer push to a pull request cancels the run of its older head, and a newer
+# push to main cancels the older main run: each main commit was already gated by
+# its merge group, so only the latest main head needs the health/cache run.
+# Every other event (merge-queue groups, the comment and trusted lanes) gets a
+# group of its own, so concurrency never cancels or holds it back.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
   core:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
