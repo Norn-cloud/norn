@@ -292,3 +292,46 @@ fn parameter_exact_1_reuses_exact_decimal_refusals() {
         assert_eq!(findings(setting), []);
     }
 }
+
+#[test]
+fn parameter_malformed_literals_have_invalid_payload_diagnostics() {
+    for literal in ["", "1.", "-", "--1"] {
+        let mut setting = fixture(SETTING_FIXTURE);
+        setting["payload"]["value"] = json!(literal);
+        let errors = findings(setting);
+        assert!(errors.iter().any(|(code, path, _)| {
+            code == "setting.validation.invalid_payload" && path == "payload.value"
+        }), "{errors:?}");
+    }
+}
+
+fn parameter_action() -> Value {
+    let mut action = fixture(include_str!("../../../fixtures/ir/retail-reorder.action.json"));
+    action["payload"]["inputSchema"]["properties"]["effectiveAt"] = json!({"type":"string"});
+    action["payload"]["inputSchema"]["required"] =
+        json!(["requestId", "skuId", "quantity", "effectiveAt"]);
+    action["payload"]["slice"] = json!([
+        {"name":"root", "objectType":"retail.Sku", "key":{"property":{"from":"input","property":"skuId"}}},
+        {"name":"rates", "objectType":"retail.Sku", "key":{"link":{"from":"root","link":"rates"}}},
+        {"name":"selected", "objectType":"retail.Sku", "key":{"parameter":{"from":"rates","settingKey":"tax","effectiveAt":"effectiveAt","precedence":[{"orgId":"org_demo"},{}]}}}
+    ]);
+    action
+}
+
+#[test]
+fn parameter_effective_input_is_guaranteed_before_admission() {
+    let mut action = parameter_action();
+    assert_eq!(findings(action.clone()), []);
+    action["payload"]["inputSchema"]["required"] = json!(["requestId", "skuId", "quantity"]);
+    assert!(findings(action).iter().any(|(code, _, _)| code == "action.validation.invalid_payload"));
+}
+
+#[test]
+fn parameter_precedence_refuses_duplicate_decoded_scopes() {
+    assert_eq!(findings(parameter_action()), []);
+    for scopes in [json!([{}, {}]), json!([{}, {"orgId":null}])] {
+        let mut action = parameter_action();
+        action["payload"]["slice"][2]["key"]["parameter"]["precedence"] = scopes;
+        assert!(findings(action).iter().any(|(code, _, _)| code == "action.validation.invalid_payload"));
+    }
+}

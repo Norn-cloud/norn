@@ -2230,8 +2230,13 @@ fn validate_setting_typed_value(
         (Some("number"), Some(JsonValue::Number(n))) if historical && n.is_finite() => {}
         (Some("number"), Some(JsonValue::String(value))) if !historical => {
             if let Err(error) = norn_ir::SettingValue::decimal(value) {
+                let code = if matches!(&error, norn_ir::RuntimeValueError::InvalidJson { .. }) {
+                    CODE
+                } else {
+                    "core.values.inexact"
+                };
                 diagnostics.push(invalid_diagnostic(
-                    "core.values.inexact",
+                    code,
                     error.to_string(),
                     "payload.value",
                     artifact_id,
