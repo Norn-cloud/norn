@@ -1,0 +1,824 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RequirementView",
+  "description": "A read-only editor projection carries the original IR, not a parsed sentence.\nUI consumers must honor `direction()` and render text as text, never HTML.",
+  "type": "object",
+  "properties": {
+    "locale": {
+      "type": "string"
+    },
+    "requirement": {
+      "$ref": "#/$defs/StructuredRequirement"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "requirement",
+    "locale"
+  ],
+  "$defs": {
+    "DeonticModality": {
+      "description": "The normative grade is separate from the temporal wrapper in `law`.",
+      "type": "string",
+      "enum": [
+        "obligation",
+        "permission",
+        "prohibition"
+      ]
+    },
+    "DeonticRule": {
+      "description": "A law template with explicit authority, exceptions and preferences.\n`law.condition`, `law.timing` and `law.response` supply typed slots;\n`law.modality` must agree with the normative grade before law lowering.",
+      "type": "object",
+      "properties": {
+        "authorityId": {
+          "type": "string"
+        },
+        "authorityVersion": {
+          "type": "string"
+        },
+        "defeatedBy": {
+          "description": "Explicit rule identities preferred to this rule; not numeric authority ranking.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuleException"
+          }
+        },
+        "law": {
+          "$ref": "#/$defs/LawIR"
+        },
+        "modality": {
+          "$ref": "#/$defs/DeonticModality"
+        },
+        "source": {
+          "$ref": "#/$defs/RuleSourceSpan"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "law",
+        "modality",
+        "authorityId",
+        "authorityVersion",
+        "source"
+      ]
+    },
+    "IrVersion01": {
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "type": "string",
+      "enum": [
+        "0.1"
+      ]
+    },
+    "LawIR": {
+      "description": "One protected law; its predicates use the subject's `self` environment.",
+      "type": "object",
+      "properties": {
+        "condition": {
+          "description": "Optional pointwise activation predicate (not an edge trigger).",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "description": "Stable identity, preserved by all authoring faces.",
+          "type": "string"
+        },
+        "lawVersion": {
+          "description": "Wire format version.",
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "modality": {
+          "description": "Admitted temporal wrapper.",
+          "$ref": "#/$defs/LawModality"
+        },
+        "owner": {
+          "description": "Principal or registry owner of changes to this law.",
+          "type": "string"
+        },
+        "provenance": {
+          "description": "Source and interpretation provenance.",
+          "$ref": "#/$defs/LawProvenance"
+        },
+        "rationale": {
+          "description": "Reviewed explanation.",
+          "type": "string"
+        },
+        "response": {
+          "description": "Predicate or exact ontology-bound behavior/invariant identity.",
+          "$ref": "#/$defs/LawResponse"
+        },
+        "scope": {
+          "description": "Applicability, independent of the artifact's authorization scope.",
+          "$ref": "#/$defs/LawScope"
+        },
+        "severity": {
+          "description": "Reporting severity, independent of proof status.",
+          "$ref": "#/$defs/LawSeverity"
+        },
+        "subject": {
+          "description": "Exact ontology object type whose record is bound as `self`.",
+          "type": "string"
+        },
+        "timing": {
+          "description": "Optional progress bound.",
+          "$ref": "#/$defs/LawTiming"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "lawVersion",
+        "id",
+        "owner",
+        "severity",
+        "rationale",
+        "provenance",
+        "scope",
+        "subject",
+        "modality",
+        "response"
+      ]
+    },
+    "LawModality": {
+      "description": "Scoped temporal vocabulary; nested temporal operators have no wire representation.",
+      "oneOf": [
+        {
+          "description": "Response holds at every applicable point.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "always"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Response holds at no applicable point.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "never"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Response must occur in the future; fairness belongs to a later verifier.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "eventually"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Strong until: response holds until the Boolean stop predicate occurs.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "until"
+            },
+            "predicate": {
+              "description": "Ordinary ZEN stop predicate.",
+              "$ref": "#/$defs/ZenExpression"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "predicate"
+          ]
+        }
+      ]
+    },
+    "LawProvenance": {
+      "description": "Reviewed law provenance; optional members are absent rather than synthesized nulls.",
+      "type": "object",
+      "properties": {
+        "actorId": {
+          "description": "Reviewing/authoring principal.",
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "Source timestamp, never read from a clock by this library.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Existing source taxonomy.",
+          "$ref": "#/$defs/ProvenanceSource"
+        },
+        "sourcePath": {
+          "description": "Original source path or reviewed source document.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source"
+      ]
+    },
+    "LawResponse": {
+      "description": "Response slots resolve to existing ontology definitions.",
+      "oneOf": [
+        {
+          "description": "Boolean state predicate.",
+          "type": "object",
+          "properties": {
+            "expression": {
+              "description": "Ordinary ZEN text.",
+              "$ref": "#/$defs/ZenExpression"
+            },
+            "kind": {
+              "type": "string",
+              "const": "predicate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "expression"
+          ]
+        },
+        {
+          "description": "Existing invariant, never a second expression copy.",
+          "type": "object",
+          "properties": {
+            "invariantId": {
+              "description": "Stable invariant member id.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "invariant"
+            },
+            "objectType": {
+              "description": "Effective owner object type.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType",
+            "invariantId"
+          ]
+        },
+        {
+          "description": "Exact ActionIR artifact identity.",
+          "type": "object",
+          "properties": {
+            "artifactId": {
+              "description": "Artifact id, resolved through a pinned dependency.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "action"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "artifactId"
+          ]
+        },
+        {
+          "description": "Existing lifecycle transition.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transition"
+            },
+            "objectType": {
+              "description": "Exact object type.",
+              "type": "string"
+            },
+            "property": {
+              "description": "Lifecycle property.",
+              "type": "string"
+            },
+            "transitionId": {
+              "description": "Transition member id.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType",
+            "property",
+            "transitionId"
+          ]
+        }
+      ]
+    },
+    "LawRoot": {
+      "description": "Named application boundary; authorization still comes from the envelope.",
+      "oneOf": [
+        {
+          "description": "Organization/company boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "company"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "description": "Application boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "app"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "description": "Cell ownership root.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "cell"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "description": "Exact entity type boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "entity"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
+      ]
+    },
+    "LawScope": {
+      "description": "Applicability of a law. All filters are conjunctive; type lists denote a union.",
+      "type": "object",
+      "properties": {
+        "commitments": {
+          "description": "Commitment registry object types, not a new process primitive.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lifecycleStates": {
+          "description": "Optional lifecycle-state filter.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LawStateScope"
+          }
+        },
+        "objectTypes": {
+          "description": "Nonempty exact type names, including the subject or its ancestors.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "root": {
+          "description": "Company/app/cell/entity scope identity; no implicit global default.",
+          "$ref": "#/$defs/LawRoot"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "objectTypes"
+      ]
+    },
+    "LawSeverity": {
+      "description": "User-facing reporting severity.",
+      "oneOf": [
+        {
+          "description": "Violations require attention.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "Advisory law.",
+          "type": "string",
+          "const": "warning"
+        }
+      ]
+    },
+    "LawStateScope": {
+      "description": "One lifecycle-state selector.",
+      "type": "object",
+      "properties": {
+        "objectType": {
+          "description": "Exact object type name.",
+          "type": "string"
+        },
+        "property": {
+          "description": "Lifecycle property identity.",
+          "type": "string"
+        },
+        "states": {
+          "description": "Nonempty admitted state names.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "property",
+        "states"
+      ]
+    },
+    "LawTiming": {
+      "description": "Progress timing. Exact milliseconds are decimal text, avoiding JS number rounding.",
+      "oneOf": [
+        {
+          "description": "Relative elapsed duration from activation.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "within"
+            },
+            "millis": {
+              "description": "Positive canonical unsigned milliseconds, bounded by u64.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "millis"
+          ]
+        },
+        {
+          "description": "Absolute deadline stored on the subject record.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "before_deadline"
+            },
+            "property": {
+              "description": "Exact timestamp property identity.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property"
+          ]
+        }
+      ]
+    },
+    "LocalizedRequirement": {
+      "description": "One complete translation, including every phrase used by the renderer.",
+      "type": "object",
+      "properties": {
+        "activation": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "component": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "direction": {
+          "$ref": "#/$defs/TextDirection"
+        },
+        "labels": {
+          "$ref": "#/$defs/RequirementLabels"
+        },
+        "response": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "scope": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "terms": {
+          "$ref": "#/$defs/RequirementTerms"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "direction",
+        "scope",
+        "activation",
+        "component",
+        "response",
+        "labels",
+        "terms"
+      ]
+    },
+    "ProvenanceSource": {
+      "type": "string",
+      "enum": [
+        "authoring_sdk",
+        "agent",
+        "migration",
+        "import",
+        "system"
+      ]
+    },
+    "RequirementLabels": {
+      "description": "Complete display vocabulary; missing fields refuse at decode.",
+      "type": "object",
+      "properties": {
+        "component": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "condition": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "exception": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "grade": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "preferences": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "response": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "scope": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "timing": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "condition",
+        "component",
+        "grade",
+        "timing",
+        "response",
+        "source",
+        "preferences",
+        "exception"
+      ]
+    },
+    "RequirementTerms": {
+      "description": "Complete display vocabulary; missing fields refuse at decode.",
+      "type": "object",
+      "properties": {
+        "application": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "cell": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "commitments": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "company": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "entity": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "everyCommittedState": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "grounding": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "obligation": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "permission": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "prohibition": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "sameCommit": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "company",
+        "application",
+        "cell",
+        "entity",
+        "commitments",
+        "obligation",
+        "permission",
+        "prohibition",
+        "sameCommit",
+        "everyCommittedState",
+        "grounding"
+      ]
+    },
+    "RequirementTiming": {
+      "description": "Closed safety fragment. No event activation, clocks, fairness or progress.",
+      "oneOf": [
+        {
+          "description": "Condition and response are evaluated at every applicable committed state.",
+          "type": "string",
+          "const": "every_committed_state"
+        },
+        {
+          "description": "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit.",
+          "type": "string",
+          "const": "same_commit"
+        }
+      ]
+    },
+    "RequirementWording": {
+      "description": "LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.\nWording is never executable and does not change the law's semantic identity.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/LocalizedRequirement"
+      },
+      "minProperties": 1
+    },
+    "RuleByteRange": {
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "RuleException": {
+      "description": "A reviewed conditional exception. No implicit necessity or legal judgement.",
+      "type": "object",
+      "properties": {
+        "condition": {
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/RuleSourceSpan"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "condition",
+        "source"
+      ]
+    },
+    "RuleSourceSpan": {
+      "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleByteRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pointer": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "pointer"
+      ]
+    },
+    "StructuredRequirement": {
+      "description": "Structured authoring over the existing law and normative source model.",
+      "type": "object",
+      "properties": {
+        "norm": {
+          "$ref": "#/$defs/DeonticRule"
+        },
+        "timing": {
+          "$ref": "#/$defs/RequirementTiming"
+        },
+        "wording": {
+          "$ref": "#/$defs/RequirementWording"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "norm",
+        "timing",
+        "wording"
+      ]
+    },
+    "TextDirection": {
+      "type": "string",
+      "enum": [
+        "ltr",
+        "rtl"
+      ]
+    },
+    "ZenExpression": {
+      "description": "Source text of one ZEN Expression (the IR's single expression language,\nruling 2026-09-25 §3): a decision-table cell, switch condition, expression\nassignment, or action precondition.\n\nStored verbatim; parsing and type checking belong to `norn-expr` and\n`norn-checker`.",
+      "type": "string"
+    }
+  }
+}
