@@ -144,6 +144,11 @@ async fn restore_requires_same_explicit_identity_and_export_refuses_unqualified_
     let restored = CellStore::open(&target, model(), StoreOptions::default()).expect("reopen");
     assert_eq!(restored.cell_id().expect("id"), Some(a()));
     let mut old = record;
+    old.bindings.remove("cell_identity_format");
+    assert!(matches!(
+        old.advance(&norn_cell::export::ExportManifest::default()),
+        Err(norn_cell::export::ExportError::IdentityMismatch)
+    ));
     old.bindings.remove("cell_id");
     let mut old_exporter = Exporter::local(&dir.path().join("legacy")).expect("exporter");
     assert!(matches!(
