@@ -249,7 +249,7 @@ impl Rows {
         match *root {
             EntityRoot::V2(root) => self.object_type(artifact, &root.object_type, effective),
             EntityRoot::V2Interface(root) => {
-                let def = root.interface;
+                let def = &root.interface;
                 let name = def.name.as_str().to_owned();
                 self.types.insert(TypeRow {
                     at: at(artifact, type_member(name.clone())),
