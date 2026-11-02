@@ -492,6 +492,13 @@
       "tier": "T3"
     },
     {
+      "code": "core.projection.publication_guard",
+      "message": "analytical publication refused by declared policy: {detail}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T6"
+    },
+    {
       "code": "core.values.inexact",
       "message": "the number is outside the exact 96-bit decimal profile (scale at most 28)",
       "severity": "error",
@@ -1607,6 +1614,13 @@
     {
       "code": "lifecycle.validation.invalid_guard",
       "message": "guard {index} of transition {id} is not a ZEN Expression: {error}",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "lifecycle.validation.invalid_guard_diagnostic",
+      "message": "guardRefusalCode must retain an inherited registered runtime error",
       "severity": "error",
       "since": "0.1.0",
       "tier": "T2"

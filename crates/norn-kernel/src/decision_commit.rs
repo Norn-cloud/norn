@@ -1501,6 +1501,8 @@ pub enum DecisionRefusal<X> {
     /// A guard of the transition is false.
     #[error("{key}: guard `{guard}` of transition {transition} does not hold")]
     GuardFalse {
+        /// Registered guard diagnostic, preserving the underlying failure.
+        diagnostic: Option<&'static str>,
         /// The object.
         key: FactKey,
         /// The transition.
@@ -1513,8 +1515,10 @@ pub enum DecisionRefusal<X> {
         "{key}: guard `{guard}` of transition {transition} could not be evaluated ({reason}); refused fail-closed"
     )]
     GuardError {
+        /// Registered guard diagnostic, preserving the underlying failure.
+        diagnostic: Option<&'static str>,
         /// The object.
-        key: FactKey,
+        key: Box<FactKey>,
         /// The transition.
         transition: String,
         /// The guard source.
@@ -1619,8 +1623,12 @@ impl<X> DecisionRefusal<X> {
             Self::UnknownLifecycle { .. } => lifecycle_codes::NOT_A_LIFECYCLE,
             Self::UnresolvedLifecycle { .. } => "decision.unresolved_lifecycle",
             Self::UnknownTransition { .. } => lifecycle_codes::UNKNOWN_TRANSITION,
-            Self::GuardFalse { .. } => "decision.guard_false",
-            Self::GuardError { .. } => "decision.guard_error",
+            Self::GuardFalse { diagnostic, .. } => {
+                crate::guard_diagnostic::guard_failure_code(*diagnostic, false)
+            }
+            Self::GuardError { diagnostic, .. } => {
+                crate::guard_diagnostic::guard_failure_code(*diagnostic, true)
+            }
             Self::InvalidOutput { .. } => "decision.invalid_output",
             Self::Stale { .. } => "decision.stale_state",
             Self::NotPending { .. } => "decision.not_pending",
@@ -1650,14 +1658,13 @@ impl<X> DecisionRefusal<X> {
             | Self::UnresolvedLifecycle { key, .. }
             | Self::UnknownTransition { key, .. }
             | Self::GuardFalse { key, .. }
-            | Self::GuardError { key, .. }
             | Self::Stale { key, .. }
             | Self::AccountingPosting { key, .. }
             | Self::InvariantBudgetExceeded { key, .. }
             | Self::TraversalLimitExceeded { key, .. } => Some(key),
-            Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
-                Some(key.as_ref())
-            }
+            Self::InvariantViolation { key, .. }
+            | Self::NotFromState { key, .. }
+            | Self::GuardError { key, .. } => Some(key.as_ref()),
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
@@ -2618,8 +2625,14 @@ fn check_guards<X>(
     if declared.guards.is_empty() {
         return Ok(());
     }
+    let diagnostic = declared
+        .guard_refusal_code
+        .as_deref()
+        .and_then(norn_checker::codes::lookup)
+        .map(|entry| entry.code);
     let guard_error = |guard: &str, reason: String| DecisionRefusal::GuardError {
-        key: key.clone(),
+        diagnostic,
+        key: Box::new(key.clone()),
         transition: declared.id.as_str().to_owned(),
         guard: guard.to_owned(),
         reason,
@@ -2640,6 +2653,7 @@ fn check_guards<X>(
             Ok(true) => {}
             Ok(false) => {
                 return Err(DecisionRefusal::GuardFalse {
+                    diagnostic,
                     key: key.clone(),
                     transition: declared.id.as_str().to_owned(),
                     guard: guard.as_str().to_owned(),

@@ -62,6 +62,7 @@ mod decider;
 pub mod decision_commit;
 mod effect;
 mod envelope;
+mod guard_diagnostic;
 pub mod limits;
 pub mod naming_series;
 mod observations;

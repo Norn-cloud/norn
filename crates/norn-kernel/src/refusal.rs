@@ -377,16 +377,59 @@ fn lifecycle_guard(
     transition: &str,
     guard: &str,
     error: Option<&str>,
+    underlying_code: Option<&str>,
 ) -> BTreeMap<String, RuntimeValue> {
     let mut values = refusal_values([("transition", transition.into()), ("guard", guard.into())]);
     let (name, value) = error.map_or(("result", RuntimeValue::Bool(false)), |error| {
         ("error", error.into())
     });
     values.insert(name.to_owned(), value);
+    if let Some(code) = underlying_code {
+        values.insert("underlyingCode".to_owned(), code.into());
+    }
     values
 }
 
 impl<X> DecisionRefusal<X> {
+    fn lifecycle_guard_reason(&self) -> Option<RefusalReason> {
+        let (key, transition, guard, error, diagnostic) = if let Self::GuardFalse {
+            key,
+            transition,
+            guard,
+            diagnostic,
+        } = self
+        {
+            (key, transition, guard, None, diagnostic)
+        } else if let Self::GuardError {
+            key,
+            transition,
+            guard,
+            reason,
+            diagnostic,
+        } = self
+        {
+            (
+                key.as_ref(),
+                transition,
+                guard,
+                Some(reason.as_str()),
+                diagnostic,
+            )
+        } else {
+            return None;
+        };
+        let (law, underlying) = if error.is_some() {
+            ("lifecycle.guard_evaluable", "decision.guard_error")
+        } else {
+            ("lifecycle.guard", "decision.guard_false")
+        };
+        Some(RefusalReason {
+            law: law.to_owned(),
+            subject: key.to_string(),
+            values: lifecycle_guard(transition, guard, error, diagnostic.map(|_| underlying)),
+        })
+    }
+
     fn lifecycle_reason(&self) -> Option<RefusalReason> {
         let reason = match self {
             Self::NotFromState {
@@ -444,25 +487,9 @@ impl<X> DecisionRefusal<X> {
                     ("transition", RuntimeValue::String(transition.clone())),
                 ]),
             )),
-            Self::GuardFalse {
-                key,
-                transition,
-                guard,
-            } => Some((
-                "lifecycle.guard",
-                key,
-                lifecycle_guard(transition, guard, None),
-            )),
-            Self::GuardError {
-                key,
-                transition,
-                guard,
-                reason,
-            } => Some((
-                "lifecycle.guard_evaluable",
-                key,
-                lifecycle_guard(transition, guard, Some(reason)),
-            )),
+            Self::GuardFalse { .. } | Self::GuardError { .. } => {
+                return self.lifecycle_guard_reason();
+            }
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }

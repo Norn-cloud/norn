@@ -507,6 +507,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     entry(
+        crate::lifecycles::codes::PUBLICATION_GUARD,
+        Tier::T6,
+        "analytical publication refused by declared policy: {detail}",
+    ),
+    entry(
         "customization.validation.invalid_payload",
         Tier::T2,
         "CustomizationIR payload is invalid at {path}: {detail}",
@@ -1301,6 +1306,11 @@ pub static REGISTRY: &[CodeEntry] = &[
         "lifecycle.validation.invalid_guard",
         Tier::T2,
         "guard {index} of transition {id} is not a ZEN Expression: {error}",
+    ),
+    entry(
+        crate::lifecycles::codes::INVALID_GUARD_DIAGNOSTIC,
+        Tier::T2,
+        "guardRefusalCode must retain an inherited registered runtime error",
     ),
     entry(
         "lifecycle.validation.invalid_transition_id",

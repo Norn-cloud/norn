@@ -83,6 +83,7 @@ fn refusal_categories_are_stable() {
         ),
         (
             decision(DecisionRefusal::GuardFalse {
+                diagnostic: None,
                 key: key.clone(),
                 transition: "submit".into(),
                 guard: "self.amount > 0".into(),
