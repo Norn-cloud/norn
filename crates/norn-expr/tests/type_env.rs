@@ -1004,7 +1004,8 @@ fn val_rate_env2_pins_denominator_and_refuses_historical_serialization() {
             .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
             .is_err()
     );
-    let value: serde_json::Value = serde_json::from_slice(&env("g").canonical_json().unwrap()).unwrap();
+    let value: serde_json::Value =
+        serde_json::from_slice(&env("g").canonical_json().unwrap()).unwrap();
     assert_eq!(
         value["records"]["norn:Input"]["fields"]["price"]["type"]["perUnit"]["code"],
         "g"
