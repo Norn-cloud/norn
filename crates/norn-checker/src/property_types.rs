@@ -416,6 +416,15 @@ fn resolve<'a>(
     }
 }
 
+/// VAL-ROUND: a decoded policy cannot activate legacy expression arithmetic.
+fn check_rounding_site(base: &[&str], rounding: Option<norn_ir::Rounding>, out: &mut Vec<Diagnostic>) {
+    if rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse) {
+        out.push(error(crate::property_codec::INEXACT,
+            "VAL-ROUND: rounding requires the exact-site expression/store profile; this declaration is not yet executable".to_owned(),
+            span_at(base, &["type", "rounding"])));
+    }
+}
+
 /// Per-kind member checks of one type (`scale`, `unit`, enum `values`); `base`
 /// is the JSON-pointer prefix of the object holding `type`.
 pub(crate) fn check_type_members(
@@ -462,12 +471,7 @@ pub(crate) fn check_type_members(
             rounding,
             ..
         } => {
-            // VAL-ROUND: a decoded policy cannot activate legacy expression arithmetic.
-            if rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse) {
-                out.push(error(crate::property_codec::INEXACT,
-                    "VAL-ROUND: rounding requires the exact-site expression/store profile; this declaration is not yet executable".to_owned(),
-                    span_at(base, &["type", "rounding"])));
-            }
+            check_rounding_site(base, *rounding, out);
             if scale.0 > MAX_DECIMAL_SCALE {
                 out.push(error(
                     codes::SCALE_OUT_OF_RANGE,

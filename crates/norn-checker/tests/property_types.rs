@@ -351,25 +351,24 @@ fn val_round_declarations_fail_closed_until_exact_site_binding() {
 #[test]
 fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
     use norn_ir::{PropertyType, Rounding, WholeNumber};
-    let mut site = PropertyType::Decimal {
-        scale: WholeNumber(2),
-        rounding: None,
+    let site = |scale, rounding| PropertyType::Decimal {
+        scale: WholeNumber(scale),
+        rounding,
         unit: None,
         currency_source: None,
     };
-    assert!(norn_expr::rescale_decimal(&site, &"1.005".parse().expect("number")).is_err());
+    let exact = site(2, None);
+    assert!(norn_expr::rescale_decimal(&exact, &"1.005".parse().expect("number")).is_err());
     assert_eq!(
-        norn_expr::rescale_decimal(&site, &"1.0100".parse().expect("number"))
+        norn_expr::rescale_decimal(&exact, &"1.0100".parse().expect("number"))
             .expect("exact")
             .as_str(),
         "1.01"
     );
-    if let PropertyType::Decimal { rounding, .. } = &mut site {
-        *rounding = Some(Rounding::HalfAwayFromZero);
-    }
+    let rounded = site(2, Some(Rounding::HalfAwayFromZero));
     for text in ["1.005", "-1.005"] {
         assert_eq!(
-            norn_expr::rescale_decimal(&site, &text.parse().expect("number"))
+            norn_expr::rescale_decimal(&rounded, &text.parse().expect("number"))
                 .expect("rounds")
                 .as_str(),
             if text.starts_with('-') {
@@ -380,13 +379,8 @@ fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
         );
     }
     for scale in [19, 28, u64::MAX] {
-        if let PropertyType::Decimal {
-            scale: declared, ..
-        } = &mut site
-        {
-            declared.0 = scale;
-        }
-        assert!(norn_expr::rescale_decimal(&site, &"0".parse().expect("number")).is_err());
+        let unsupported = site(scale, None);
+        assert!(norn_expr::rescale_decimal(&unsupported, &"0".parse().expect("number")).is_err());
     }
     assert!(
         norn_expr::rescale_decimal(&PropertyType::Integer {}, &"1".parse().expect("number"))
