@@ -60,7 +60,7 @@ Per the [coordinator ruling, point 2](https://github.com/Norn-cloud/norn/issues/
 
 Evidence: structural identity/admission, runtime activation/parameter pins, generated interpretation/refinement goals; semantic preservation stays unknown until checked. Published releases pin IR, dependencies, parameter schema, migrations, Function/tool digests and evidence.
 
-`OVERLAY-LINEAR-1` projects the supported typed Boolean/linear/equality syntax into source-derived SMT goals using the ordinary bounded parser and type environment. Unsupported AST forms refuse; projection alone supplies no solver evidence or admission authority.
+`OVERLAY-LINEAR-1` projects the supported typed Boolean/linear/equality syntax into source-derived SMT goals using the ordinary bounded parser and type environment. Unsupported AST forms refuse; projection alone supplies no solver evidence or admission authority. Division is refused until checked-Decimal range/precision semantics are lowered; the remaining arithmetic goals require numerical correspondence before solver evidence is accepted.
 
 ## Named acceptance scenarios
 

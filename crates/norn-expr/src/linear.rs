@@ -10,7 +10,7 @@ pub struct LinearGuard {
     variables: BTreeMap<Vec<String>, Type>,
 }
 impl LinearGuard {
-    /// SMT-LIB Boolean term, with explicit arithmetic definedness conditions.
+    /// Mathematical SMT-LIB term; Decimal range/rounding is not solver evidence.
     #[must_use]
     pub fn predicate(&self) -> &str {
         &self.predicate
@@ -42,12 +42,22 @@ fn unsupported() -> ExprError {
 }
 
 /// Compile a guard using the ordinary parser, bounds and type environment.
+/// Division is refused until checked-Decimal precision semantics are lowered.
 /// # Errors
 /// Refuses untyped predicates, calls, dynamic paths, nullable/opaque operands,
-/// quantifiers, and products/divisors with unsupported variable dependence.
+/// quantifiers, division, and products with unsupported variable dependence.
 pub fn linear_guard(source: &str, env: &ZenTypeEnv) -> Result<LinearGuard, ExprError> {
     let expression = Expression::compile(source)?;
-    check_expression(&expression, env, &Type::Bool).map_err(|_error| unsupported())?;
+    check_expression(&expression, env, &Type::Bool).map_err(|diagnostics| ExprError::Compile {
+        message: format!(
+            "unsupported_predicate: {}",
+            diagnostics
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+    })?;
     IntelliSense::new()
         .with_strict(true)
         .with_ast(source, false, |ast, _| {
@@ -57,7 +67,7 @@ pub fn linear_guard(source: &str, env: &ZenTypeEnv) -> Result<LinearGuard, ExprE
             };
             let term = compiler.emit(ast)?;
             Ok(LinearGuard {
-                predicate: format!("(and {} {})", term.defined, term.smt),
+                predicate: term.smt,
                 variables: compiler.variables,
             })
         })
@@ -74,7 +84,6 @@ struct Term {
     smt: String,
     constant: bool,
     kind: Kind,
-    defined: String,
 }
 struct Compiler<'a> {
     env: &'a ZenTypeEnv,
@@ -104,7 +113,8 @@ impl Compiler<'_> {
             Type::Integer | Type::Decimal { .. } | Type::Number => Kind::Number,
             Type::Bool => Kind::Bool,
             Type::Text { .. } | Type::Enum { .. } => Kind::Text,
-            Type::Timestamp { .. }
+            Type::DecimalBinding { .. }
+            | Type::Timestamp { .. }
             | Type::Date
             | Type::Duration
             | Type::Record(_)
@@ -117,7 +127,6 @@ impl Compiler<'_> {
             smt: linear_symbol(&path),
             constant: false,
             kind,
-            defined: "true".into(),
         })
     }
     fn emit(&mut self, node: &Node<'_>) -> Result<Term, ExprError> {
@@ -159,7 +168,6 @@ impl Compiler<'_> {
                     smt: format!("({operator} {})", term.smt),
                     constant: term.constant,
                     kind: term.kind,
-                    defined: term.defined,
                 });
             }
             Node::Binary {
@@ -186,7 +194,6 @@ impl Compiler<'_> {
             smt,
             constant,
             kind,
-            defined: "true".into(),
         })
     }
     fn binary(&mut self, left: &Node<'_>, op: &str, right: &Node<'_>) -> Result<Term, ExprError> {
@@ -196,30 +203,16 @@ impl Compiler<'_> {
         let (operator, kind) = match op {
             "+" | "-" if numeric => (op, Kind::Number),
             "*" if numeric && (left.constant || right.constant) => ("*", Kind::Number),
-            "/" if numeric && right.constant => ("/", Kind::Number),
             "and" | "or" if left.kind == Kind::Bool && right.kind == Kind::Bool => (op, Kind::Bool),
             "==" if left.kind == right.kind => ("=", Kind::Bool),
             "!=" if left.kind == right.kind => ("distinct", Kind::Bool),
             "<" | ">" | "<=" | ">=" if numeric => (op, Kind::Bool),
             _ => return Err(unsupported()),
         };
-        let defined = match op {
-            "and" => format!(
-                "(and {} (or (not {}) {}))",
-                left.defined, left.smt, right.defined
-            ),
-            "or" => format!("(and {} (or {} {}))", left.defined, left.smt, right.defined),
-            "/" => format!(
-                "(and {} {} (not (= {} 0)))",
-                left.defined, right.defined, right.smt
-            ),
-            _ => format!("(and {} {})", left.defined, right.defined),
-        };
         Ok(Term {
             smt: format!("({operator} {} {})", left.smt, right.smt),
             constant: left.constant && right.constant,
             kind,
-            defined,
         })
     }
 }
