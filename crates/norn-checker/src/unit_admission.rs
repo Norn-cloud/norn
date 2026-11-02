@@ -162,7 +162,11 @@ fn visit_schema(
     out: &mut Vec<Diagnostic>,
 ) {
     if depth > 64 {
-        let mut diagnostic = crate::property_types::error(MISMATCH, "unit admission exceeds the bounded schema traversal depth".to_owned(), Span::pointer(path.to_owned()));
+        let mut diagnostic = crate::property_types::error(
+            MISMATCH,
+            "unit admission exceeds the bounded schema traversal depth".to_owned(),
+            Span::pointer(path.to_owned()),
+        );
         diagnostic.artifact_id = Some(owner.artifact_id.clone());
         out.push(diagnostic);
         return;
