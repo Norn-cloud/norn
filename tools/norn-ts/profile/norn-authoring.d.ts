@@ -240,6 +240,12 @@ declare module "@norn/authoring" {
           readonly objectIdField: keyof I & string
           readonly lifecycle: string
           readonly transition: string
+          readonly acceptReceipt?: {
+            readonly referenceField: keyof I & string
+            readonly manifestDigest: string
+            readonly digestProperty: string
+            readonly resultBindings: Readonly<Record<string, string>>
+          }
         }
       | {
           readonly kind: "upsert_input_object"

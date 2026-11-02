@@ -507,10 +507,10 @@
     },
     {
       "code": "core.values.inexact",
-      "message": "value cannot be represented in the shared exact decimal profile",
+      "message": "the number is outside the exact 96-bit decimal profile (scale at most 28)",
       "severity": "error",
-      "since": "0.1.0",
-      "tier": "T1"
+      "since": "0.2.0",
+      "tier": "T6"
     },
     {
       "code": "customization.validation.invalid_payload",
@@ -3191,6 +3191,20 @@
       "message": "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",
       "severity": "error",
       "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.ordered_fold_invalid",
+      "message": "ordered-fold declaration violates the typed, ordered, bounded structural contract",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.ordered_fold_unsupported",
+      "message": "ordered-fold execution is unavailable in this semantics profile",
+      "severity": "error",
+      "since": "0.2.0",
       "tier": "T2"
     },
     {

@@ -449,6 +449,7 @@
     "tools/norn-ts/corpus/support/definitions.ts",
     "tools/norn-ts/corpus/support/hostile-effect.ts",
     "tools/norn-ts/corpus/support/reexport-effect.ts",
+    "tools/norn-ts/fixtures/definitions/accept-receipt.source.ts",
     "tools/norn-ts/fixtures/definitions/access-principal-attribute.source.ts",
     "tools/norn-ts/fixtures/definitions/action-preconditions.source.ts",
     "tools/norn-ts/fixtures/definitions/acyclic.source.ts",
@@ -501,6 +502,9 @@
     "verification/kernel-l1/VersionProof.lean",
     "verification/kernel-l1/version_kani.rs",
     "verification/kernel-l1/version_verus.rs",
-    "crates/norn-cell/tests/temporal_source_world.rs"
+    "crates/norn-cell/tests/temporal_source_world.rs",
+    "crates/norn-api/src/refusal.rs",
+    "crates/norn-api/src/scope.rs",
+    "crates/norn-api/tests/host_perimeter.rs"
   ]
 }

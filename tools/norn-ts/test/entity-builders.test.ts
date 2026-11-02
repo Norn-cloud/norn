@@ -402,3 +402,9 @@ test("parameter slices and typed context expressions retain their shared contrac
   expect(compiled.artifacts).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ preconditions: ["input.value == slice.selected.value"], slice: expect.arrayContaining([expect.objectContaining({ key: { parameter: { from: "settings", settingKey: "example.rate", defaultFrom: "fallback", effectiveAt: "effective_at", precedence: [{ orgId: "org_demo", environmentId: "dev" }, { orgId: "org_demo" }, {}] } } })]) }) }))
   if (checker) expect(checker.checkArtifactSet(compiled.artifacts).admitted).toBe(true)
 }, 30_000)
+
+test("acceptReceipt syntax lowers reference and result bindings", () => {
+  const result = compileDefinitions(join(TOOL_ROOT, "fixtures/definitions/accept-receipt.source.ts"), { scope, sourcePath: "tools/norn-ts/fixtures/definitions/accept-receipt.source.ts" })
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.artifacts[1]).toMatchObject({ payload: { effectProgram: { acceptReceipt: { referenceField: "receipt", digestProperty: "digest", resultBindings: { score: "score" } } } } })
+})
