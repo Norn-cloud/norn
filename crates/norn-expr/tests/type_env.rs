@@ -883,7 +883,9 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
         (decoded.kind.as_str(), decoded.scale, decoded.unit),
         ("decimal", 2, None)
     );
-    let mut hashes = BTreeSet::from([fields(decimal(norn_ir::Rounding::Refuse)).content_sha256().unwrap()]);
+    let mut hashes = BTreeSet::from([fields(decimal(norn_ir::Rounding::Refuse))
+        .content_sha256()
+        .unwrap()]);
     for mode in [
         norn_ir::Rounding::TowardZero,
         norn_ir::Rounding::HalfEven,
