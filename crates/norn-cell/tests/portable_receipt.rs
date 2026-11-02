@@ -353,3 +353,62 @@ fn malformed_declared_function_envelope_refuses_without_effects() {
     );
     assert_eq!(target.read().dump().expect("after"), before);
 }
+
+#[test]
+fn portable_export_validation_checks_function_cell_world_and_commit() {
+    let mut source = store(1);
+    source
+        .commit(&CommitBatch {
+            world: "main".into(),
+            effects: vec![command(RuntimeValue::Null)],
+            ..CommitBatch::default()
+        })
+        .expect("seed");
+    let record = source.export_record(1).expect("record").expect("present");
+    let mut invocation: FunctionInvocation = serde_json::from_str(include_str!(
+        "../../../fixtures/function/invocation.wasm.json"
+    ))
+    .expect("invocation");
+    let legacy = invocation.provenance_commit.clone();
+    for (origin, accepted) in [
+        (
+            CommitProvenance::Qualified(QualifiedCommit::new(id(1), "main".into(), 1)),
+            true,
+        ),
+        (
+            CommitProvenance::Qualified(QualifiedCommit::new(id(2), "main".into(), 1)),
+            false,
+        ),
+        (
+            CommitProvenance::Qualified(QualifiedCommit::new(id(1), "fork".into(), 1)),
+            false,
+        ),
+        (
+            CommitProvenance::Qualified(QualifiedCommit::new(id(1), "main".into(), 2)),
+            false,
+        ),
+        (legacy, false),
+    ] {
+        invocation.provenance_commit = origin;
+        let mut fixture = record.clone();
+        fixture.batch.effects = vec![command(function_envelope(
+            norn_ir::runtime::encode(&invocation).expect("invocation"),
+        ))];
+        fixture.receipt.body.request_hash = local_hash(&fixture.batch);
+        fixture.receipt.hash = local_hash(&fixture.receipt.body);
+        fixture
+            .portable_receipt
+            .as_mut()
+            .expect("portable")
+            .receipt_hash = fixture.receipt.hash.clone();
+        let result = fixture.advance(&norn_cell::export::ExportManifest::default());
+        if accepted {
+            result.expect("matching Function dispatch");
+        } else {
+            assert!(matches!(
+                result,
+                Err(norn_cell::export::ExportError::IdentityMismatch)
+            ));
+        }
+    }
+}

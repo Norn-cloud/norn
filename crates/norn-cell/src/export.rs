@@ -201,6 +201,12 @@ impl ExportRecord {
             if !portable.validates(&cell, &self.receipt) {
                 return Err(ExportError::IdentityMismatch);
             }
+            crate::portable_receipt::validate_batch_dispatches(
+                Some(&cell),
+                &self.batch,
+                body.commit_seq,
+            )
+            .map_err(|_refused| ExportError::IdentityMismatch)?;
         }
         self.manifest_at(seq)
     }

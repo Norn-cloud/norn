@@ -177,6 +177,15 @@ pub(crate) fn validate_dispatches(
     if matches!(mode, ReceiptMode::LegacyReplay) {
         return Ok(());
     }
+    let cell = crate::cell_identity::read(engine)?;
+    validate_batch_dispatches(cell.as_ref(), batch, commit)
+}
+
+pub(crate) fn validate_batch_dispatches(
+    cell: Option<&norn_ir::cell_id::CellId>,
+    batch: &CommitBatch,
+    commit: u64,
+) -> Result<(), CellError> {
     for effect in &batch.effects {
         let crate::EffectRow::Enqueue { command } = effect else {
             continue;
@@ -189,12 +198,9 @@ pub(crate) fn validate_dispatches(
                 "new Function dispatch requires cell-qualified provenance".to_owned(),
             ));
         };
-        let cell = crate::cell_identity::read(engine)?;
         if invocation.world != batch.world
             || origin.commit != commit
-            || cell
-                .as_ref()
-                .is_none_or(|cell| !origin.belongs_to(cell, &batch.world))
+            || cell.is_none_or(|cell| !origin.belongs_to(cell, &batch.world))
         {
             return Err(CellError::Encoding(
                 "Function dispatch provenance does not match its committing cell/world/position"
