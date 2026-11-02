@@ -6,7 +6,7 @@ use std::{
 use norn_cell::catalog::{CatalogSnapshot, resource_types};
 use norn_cell::reactive::{ReactiveLimits, SliceQuery};
 use norn_cell::{
-    CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
+    CellError, CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
 };
 use norn_checker::{EntityArtifactSetContext, receipt::check_artifact_set_with_receipt};
 use norn_ir::access::{AccessIr, AccessRule, AccessScope, ScopeDimension};
@@ -152,7 +152,7 @@ fn main() -> DemoResult<()> {
             binding: None,
         };
         let result = snapshot.read(&query, &limits, &pdp, &request, &scope)?;
-        if !result.complete {
+        if !result.complete || result.items.len() >= usize::try_from(query.limit)? {
             return Err(format!("incomplete catalog slice: {}", query.object_type).into());
         }
         if first.is_none() {
@@ -191,6 +191,7 @@ fn main() -> DemoResult<()> {
         .err()
         .ok_or("missing scope admitted")?;
     writeln!(stdout, "CURRENT: missing trusted scope refused: {error}")?;
+    let virtual_type = row.object_type.clone();
     let result = store.commit(&CommitBatch {
         world: MAIN_WORLD.into(),
         scope: "org_demo/dev".into(),
@@ -202,7 +203,13 @@ fn main() -> DemoResult<()> {
         }],
         ..CommitBatch::default()
     });
-    let error = result.err().ok_or("catalog write admitted")?;
+    let error = match result {
+        Err(CellError::UnknownObjectType(object_type)) if object_type == virtual_type => {
+            CellError::UnknownObjectType(object_type)
+        }
+        Err(error) => return Err(format!("unexpected catalog write error: {error}").into()),
+        Ok(_) => return Err("catalog write admitted".into()),
+    };
     writeln!(stdout, "CURRENT: catalog write refused: {error}")?;
     if store.verified_head()? != head {
         return Err("catalog reads/refusals changed the cell".into());
