@@ -36,6 +36,24 @@ fn command(value: RuntimeValue) -> EffectRow {
     }
 }
 
+fn function_envelope(invocation: RuntimeValue) -> RuntimeValue {
+    norn_ir::runtime::encode(&norn_kernel::Command {
+        id: norn_kernel::CommandId("same-command".into()),
+        generation: norn_kernel::Generation(0),
+        idempotency_key: norn_kernel::IdempotencyKey("same-operation".into()),
+        freshness: norn_kernel::FreshnessPolicy::AppendOnly,
+        deadline: None,
+        payload: RuntimeValue::Object(std::collections::BTreeMap::from([
+            (
+                "type".into(),
+                RuntimeValue::String("norn.function/v1".into()),
+            ),
+            ("invocation".into(), invocation),
+        ])),
+    })
+    .expect("production Function envelope")
+}
+
 #[test]
 fn same_local_commit_and_operation_have_distinct_portable_identities() {
     let mut a = store(1);
@@ -234,6 +252,7 @@ fn wrong_function_origin_refuses_before_any_effect() {
         for payload in [
             norn_ir::runtime::encode(&invocation).expect("direct invocation"),
             norn_ir::runtime::encode(&wrapped).expect("wrapped invocation"),
+            function_envelope(norn_ir::runtime::encode(&invocation).expect("Function invocation")),
         ] {
             let batch = CommitBatch {
                 world: "main".into(),
@@ -277,10 +296,8 @@ fn legacy_invocations_replay_locally_but_cannot_be_new_dispatches() {
         "../../../fixtures/function/invocation.wasm.json"
     ))
     .expect("legacy");
-    let nested = RuntimeValue::Object(std::collections::BTreeMap::from([(
-        "invocation".into(),
-        norn_ir::runtime::encode(&invocation).expect("payload"),
-    )]));
+    let nested =
+        function_envelope(norn_ir::runtime::encode(&invocation).expect("legacy invocation"));
     let legacy_batch = CommitBatch {
         effects: vec![command(nested.clone())],
         ..CommitBatch::default()
@@ -320,4 +337,19 @@ fn legacy_invocations_replay_locally_but_cannot_be_new_dispatches() {
     );
     assert!(rebuilt.portable_receipt(1).is_err());
     assert!(rebuilt.export_command(1, "same-command").is_err());
+}
+
+#[test]
+fn malformed_declared_function_envelope_refuses_without_effects() {
+    let mut target = store(1);
+    let before = target.read().dump().expect("before");
+    assert!(
+        target
+            .commit(&CommitBatch {
+                effects: vec![command(function_envelope(RuntimeValue::Null))],
+                ..CommitBatch::default()
+            })
+            .is_err()
+    );
+    assert_eq!(target.read().dump().expect("after"), before);
 }

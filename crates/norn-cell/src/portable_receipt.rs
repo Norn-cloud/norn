@@ -181,7 +181,7 @@ pub(crate) fn validate_dispatches(
         let crate::EffectRow::Enqueue { command } = effect else {
             continue;
         };
-        let Some(invocation) = function_invocation(&command.command) else {
+        let Some(invocation) = function_invocation(&command.command)? else {
             continue;
         };
         let Some(origin) = invocation.provenance_commit.qualified() else {
@@ -207,10 +207,19 @@ pub(crate) fn validate_dispatches(
 
 pub(crate) fn function_invocation(
     value: &norn_ir::RuntimeValue,
-) -> Option<norn_ir::function::FunctionInvocation> {
-    let payload = value
+) -> Result<Option<norn_ir::function::FunctionInvocation>, CellError> {
+    let payload = value.get("payload").unwrap_or(value);
+    let declared =
+        payload.get("type").and_then(norn_ir::RuntimeValue::as_str) == Some("norn.function/v1");
+    let invocation = value
         .get("invocation")
-        .or_else(|| value.get("payload"))
-        .unwrap_or(value);
-    norn_ir::runtime::decode(payload).ok()
+        .or_else(|| payload.get("invocation"))
+        .unwrap_or(payload);
+    match norn_ir::runtime::decode(invocation) {
+        Ok(invocation) => Ok(Some(invocation)),
+        Err(reason) if declared => Err(CellError::Encoding(format!(
+            "invalid Function envelope: {reason}"
+        ))),
+        Err(_) => Ok(None),
+    }
 }
