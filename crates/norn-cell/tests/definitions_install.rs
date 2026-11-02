@@ -6123,7 +6123,7 @@ norn_testkit::proptest::proptest! {
         let mut expected_id = None;
         for attempt in 0..deliveries {
             let mut raw = bundle_raw("MEAS-1", &format!("1.{fraction:03}"));
-            raw.input.as_object_mut().expect("raw object").insert("extracted_at".into(), Value::from(100i64 + attempt));
+            raw.input.as_object_mut().expect("raw object").insert("extracted_at".into(), Value::from(100i64.checked_add(attempt).expect("receipt metadata")));
             let (id, inserted) = store.inject_mapping_bundle(&raw, &input).expect("conflict capture");
             norn_testkit::proptest::prop_assert_eq!(inserted, attempt == 0);
             if let Some(expected) = &expected_id { norn_testkit::proptest::prop_assert_eq!(&id, expected); }
@@ -6138,13 +6138,13 @@ norn_testkit::proptest::proptest! {
             let mut forged = conflict.clone(); forged.finding.message.push('!');
             norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_conflict(&forged), Err(CellError::MappingBundleMismatch)));
             let bypass = format!("mapping-bundle:{}", conflict.incoming.digest);
-            if attempt + 1 == deliveries {
+            if attempt.checked_add(1) == Some(deliveries) {
                 let forged = norn_kernel::Observed { id: norn_kernel::ObservationId(bypass.clone()), provenance: raw.provenance.clone(), input: norn_ir::runtime::encode(&conflict.incoming).expect("bundle") };
                 store.inject(&bypass, &norn_ir::runtime::encode(&forged).expect("envelope")).expect("untrusted claim");
             }
             let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
             norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&id), Err(CellError::UnsupportedMappingProfile)));
-            if attempt + 1 == deliveries {
+            if attempt.checked_add(1) == Some(deliveries) {
                 let delivery = norn_kernel::CellHost::observe(&mut cell).expect("queue").expect("conflict");
                 norn_kernel::CellHost::commit(&mut cell, norn_kernel::CellCommit::empty().consuming(delivery.consumed())).expect("ordinary acknowledgement receipt");
                 norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&bypass), Err(CellError::UnsupportedMappingProfile)));
