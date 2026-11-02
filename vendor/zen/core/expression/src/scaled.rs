@@ -95,6 +95,21 @@ impl ScaledArithmetic {
             .map_err(|_| "number exceeds the exact decimal range")
     }
 
+    /// VAL-ROUND: divide exact operands directly into a declared rounding site.
+    pub fn divide(self, a: Decimal, b: Decimal) -> Result<Decimal, &'static str> {
+        Self::exact_result_scale("Add", a.scale(), b.scale())?;
+        if self.scale > 18 { return Err("number is outside the declared exact scale"); }
+        let exponent = i64::from(self.scale) + i64::from(b.scale()) - i64::from(a.scale());
+        let factor = 10_i128.pow(exponent.unsigned_abs() as u32);
+        let (numerator, denominator) = if exponent >= 0 {
+            (a.mantissa().checked_mul(factor).ok_or("dividend overflow")?, b.mantissa())
+        } else {
+            (a.mantissa(), b.mantissa().checked_mul(factor).ok_or("divisor overflow")?)
+        };
+        Decimal::try_from_i128_with_scale(self.quotient(numerator, denominator)?, self.scale)
+            .map_err(|_| "number exceeds the exact decimal range")
+    }
+
     pub fn binary(self, op: &str, a: Decimal, b: Decimal) -> Result<Decimal, &'static str> {
         let (a, b) = (self.coefficient(a)?, self.coefficient(b)?);
         let factor = 10_i128.pow(self.scale);

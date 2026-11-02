@@ -61,11 +61,11 @@ impl VM {
         let policy = self
             .meter
             .as_ref()
-            .and_then(|m| m.arithmetic().map(|p| (m, p)));
-        if let Some((meter, profile)) = policy {
-            check_scaled_value(scope.base(), meter, profile)?;
+            .filter(|m| m.arithmetic().is_some() || m.exact_arithmetic());
+        if let Some(meter) = policy.filter(|m| !m.exact_arithmetic()) {
+            check_scaled_value(scope.base(), meter)?;
             for (_, local) in scope.locals() {
-                check_scaled_value(local, meter, profile)?;
+                check_scaled_value(local, meter)?;
             }
         }
         #[allow(unused_mut)]
@@ -75,8 +75,8 @@ impl VM {
         }
 
         let output = inner.run(scope)?;
-        if let Some((meter, profile)) = policy {
-            check_scaled_value(&output, meter, profile)?;
+        if let Some(meter) = policy {
+            check_scaled_value(&output, meter)?;
         }
         Ok(output)
     }
@@ -85,17 +85,18 @@ impl VM {
 fn check_scaled_value(
     value: &Variable,
     meter: &crate::meter::Meter,
-    profile: crate::scaled::ScaledArithmetic,
 ) -> VMResult<()> {
     let mut pending = vec![value.clone()];
     while let Some(value) = pending.pop() {
         meter.charge(1).map_err(BudgetExhausted)?;
         match value {
             Number(number) => {
-                profile.coefficient(number).map_err(|message| OpcodeErr {
-                    opcode: "ScaledArithmetic".into(),
-                    message: message.into(),
-                })?;
+                let result = if meter.exact_arithmetic() {
+                    crate::scaled::ScaledArithmetic::exact_result_scale("Add", number.scale(), 0).map(|_| ())
+                } else {
+                    meter.arithmetic().ok_or("missing arithmetic site").and_then(|p| p.coefficient(number).map(|_| ()))
+                };
+                result.map_err(|message| OpcodeErr { opcode: "ScaledArithmetic".into(), message: message.into() })?;
             }
             Array(items) => {
                 let items = items.borrow();
@@ -171,7 +172,8 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             self.ip += 1;
 
             self.charge(op)?;
-            if let Some(profile) = self.meter.and_then(|meter| meter.arithmetic()) {
+            if let Some(meter) = self.meter.filter(|m| m.arithmetic().is_some() || m.exact_arithmetic()) {
+                let exact = meter.exact_arithmetic();
                 let failure = |message: &str| OpcodeErr {
                     opcode: "ScaledArithmetic".into(),
                     message: message.into(),
@@ -187,11 +189,25 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                             Opcode::Multiply => "Multiply",
                             _ => "Divide",
                         };
-                        self.push(Number(profile.binary(name, a, b).map_err(failure)?));
+                        let result = if exact && name != "Divide" {
+                            crate::scaled::ScaledArithmetic::exact_binary(name, a, b)
+                        } else {
+                            let profile = meter.arithmetic().ok_or_else(|| failure("division requires a declared result scale and rounding"))?;
+                            if exact { profile.divide(a, b) } else { profile.binary(name, a, b) }
+                        };
+                        self.push(Number(result.map_err(failure)?));
                         continue;
                     }
+                    Opcode::Add if exact && matches!((self.peek(1), self.peek(0)), (Some(String(_)), Some(String(_)))) => {}
+                    Opcode::In if exact => return Err(failure("membership outside the exact arithmetic profile")),
+                    Opcode::Equal | Opcode::Compare(_) if exact => {
+                        if let (Some(Number(a)), Some(Number(b))) = (self.peek(1), self.peek(0)) {
+                            crate::scaled::ScaledArithmetic::exact_compare(*a, *b).map_err(failure)?;
+                        }
+                    }
                     Opcode::PushNumber(n) => {
-                        profile.coefficient(*n).map_err(failure)?;
+                        if exact { crate::scaled::ScaledArithmetic::exact_result_scale("Add", n.scale(), 0).map_err(failure)?; }
+                        else { meter.arithmetic().ok_or_else(|| failure("missing arithmetic site"))?.coefficient(*n).map_err(failure)?; }
                     }
                     Opcode::Modulo | Opcode::Exponent | Opcode::CallMethod { .. } => {
                         return Err(failure("operation outside the scaled arithmetic profile"));

@@ -23,6 +23,8 @@ The declaration adapter is checked against generated signed-integer references. 
 
 Within the single `ScaledArithmetic`, exact `+`/`−` derive the maximum operand scale, `×` derives their sum and comparisons align scales exactly, refusing a derived scale above 18 or coefficient overflow; division, rescale and `round` require an explicit result scale and rounding at a destination Decimal or `round(x, n, mode)` site.
 
+The explicit exact-expression runtime uses this same VM/core, retains intermediate scales and meters refusal paths; division requires a declared destination mode, and final Decimal quantization happens only at the destination. Plain Number and OrderedFold keep their existing execution paths. Expression admission, explicit round lowering and store activation remain separate cuts; unsupported operations refuse.
+
 ## Evaluation and enforcement
 
 1. Construction decodes exact numeric tokens without a float round trip; rejects non-finite, range/scale overflow and unknown units. Canonical equality ignores representational trailing zeroes but preserves declared type/unit and original source evidence bytes separately.

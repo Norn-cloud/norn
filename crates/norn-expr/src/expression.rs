@@ -77,7 +77,34 @@ impl Expression {
     /// remaining units are spent.
     #[must_use]
     pub fn evaluate_metered(&self, context: &Value, budget: EvaluationBudget) -> EvaluationAttempt {
+        self.evaluate_with_meter(context, Meter::new(budget.units()))
+    }
+
+    /// VAL-EXACT-1 / VAL-ROUND: use exact intermediates and an optional destination.
+    /// Only an explicitly declared rounding mode permits division.
+    #[must_use]
+    pub fn evaluate_exact_metered(&self, context: &Value, budget: EvaluationBudget, site: Option<&norn_ir::PropertyType>) -> EvaluationAttempt {
         let meter = Meter::new(budget.units());
+        let result = (|| {
+            let profile = match site {
+                Some(norn_ir::PropertyType::Decimal { scale, rounding: Some(mode), .. }) => Some(crate::convert::scaled_site(scale.0, *mode)?),
+                Some(norn_ir::PropertyType::Decimal { .. }) | None => None,
+                Some(_) => return Err(ExprError::Evaluation { message: "exact site must be a declared Decimal".to_owned() }),
+            };
+            let evaluated = self.evaluate_with_meter(context, meter.with_exact_arithmetic(profile));
+            let mut evaluated = evaluated.result?;
+            if let Some(site) = site {
+                let Value::Number(number) = &evaluated.value else {
+                    return Err(ExprError::Evaluation { message: "Decimal site requires a numeric result".to_owned() });
+                };
+                evaluated.value = Value::Number(crate::rescale_decimal(site, number)?);
+            }
+            Ok(evaluated)
+        })();
+        EvaluationAttempt { result, units_used: meter.used().min(meter.limit()) }
+    }
+
+    fn evaluate_with_meter(&self, context: &Value, meter: Meter) -> EvaluationAttempt {
         let mut vm = VM::new();
         vm.set_meter(Some(meter.clone()));
         let result = (|| {
@@ -110,7 +137,7 @@ impl Expression {
         })();
         EvaluationAttempt {
             result,
-            units_used: meter.used().min(budget.units()),
+            units_used: meter.used().min(meter.limit()),
         }
     }
 }

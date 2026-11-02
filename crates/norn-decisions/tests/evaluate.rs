@@ -1630,3 +1630,44 @@ proptest::proptest! {
         }
     }
 }
+
+#[test]
+fn val_exact_runtime_preserves_predicates_intermediates_and_explicit_stores() {
+    use norn_ir::{PropertyType, Rounding, WholeNumber};
+    use norn_expr::Expression;
+    let site = |rounding| PropertyType::Decimal { scale: WholeNumber(2), rounding, unit: None, currency_source: None };
+    let run = |source: &str, site: Option<&PropertyType>| Expression::compile(source).unwrap().evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), site).result.map(|v| v.into_value());
+    assert_eq!(run("1.25 * 0.1 > 0", None).unwrap(), Value::Bool(true));
+    assert_eq!(run("1.25 == 1.20 + 0.05", None).unwrap(), Value::Bool(true));
+    assert_eq!(run("(1.25 * 0.1) * 100", Some(&site(Some(Rounding::HalfEven)))).unwrap(), Value::Number("12.5".parse().unwrap()));
+    for (source, expected) in [("1.005 / 1", "1.01"), ("-1.005 / 1", "-1.01")] {
+        assert_eq!(run(source, Some(&site(Some(Rounding::HalfAwayFromZero)))).unwrap(), Value::Number(expected.parse().unwrap()));
+    }
+    for source in ["1 / 3", "1 / 0", "round(1.005, 2)", "1e-18 * 0.1", "79228162514264337593543950335 + 1"] { assert!(run(source, None).is_err(), "{source}"); }
+    assert!(run("1 / 2", Some(&site(None))).is_err());
+    assert!(run("1.005", Some(&site(None))).is_err());
+    let expression = Expression::compile("1 / 3").unwrap();
+    assert!(expression.evaluate(&Value::Null, EvaluationBudget::default()).is_ok());
+    let failed = expression.evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), None);
+    assert!(failed.result.is_err() && failed.units_used > 0);
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_exact_runtime_division_matches_signed_integer_reference(a in -10000_i32..10000, b in 1_i32..100, mode in 0..4_usize) {
+        use norn_ir::{PropertyType, Rounding, WholeNumber};
+        let rounding = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][mode];
+        let site = PropertyType::Decimal { scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None };
+        let expression = norn_expr::Expression::compile(&format!("{a} / {b}")).unwrap();
+        let result = expression.evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), Some(&site)).result;
+        let numerator = a * 100;
+        if rounding == Rounding::Refuse && numerator % b != 0 { proptest::prop_assert!(result.is_err()); }
+        else {
+            let q = numerator / b; let r = (numerator % b).abs();
+            let increment = match rounding { Rounding::Refuse | Rounding::TowardZero => false, Rounding::HalfEven => 2*r > b || (2*r == b && q%2 != 0), Rounding::HalfAwayFromZero => 2*r >= b };
+            let expected = q + if increment { a.signum() } else { 0 };
+            let text = format!("{}{}.{:02}", if expected < 0 { "-" } else { "" }, expected.abs()/100, expected.abs()%100);
+            proptest::prop_assert_eq!(result.unwrap().into_value(), Value::Number(text.parse().unwrap()));
+        }
+    }
+}
