@@ -118,10 +118,19 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
 
 impl<E: SqlEngine> StoreReader<'_, E> {
     // OBS-EVIDENCE-1: cell-owned observation preparation retains raw versions in quarantine.
-    fn mapping_observation_slice(&self, key: &FactKey) -> Result<norn_kernel::FactSlice, CellError> {
+    fn mapping_observation_slice(
+        &self,
+        key: &FactKey,
+    ) -> Result<norn_kernel::FactSlice, CellError> {
         let state = norn_kernel::FactState {
-            version: norn_kernel::FactVersion(self.version(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)?),
-            values: self.object(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)?.map(|r| r.values),
+            version: norn_kernel::FactVersion(self.version(
+                crate::MAIN_WORLD,
+                key.object_type.as_str(),
+                &key.key,
+            )?),
+            values: self
+                .object(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)?
+                .map(|r| r.values),
         };
         Ok(norn_kernel::FactSlice::from([(key.clone(), state)]))
     }

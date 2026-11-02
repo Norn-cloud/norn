@@ -1388,10 +1388,20 @@ where
         }
         let guard = |reader: &StoreReader<'_, S>| {
             if authorization.is_none() {
-                for read in &commit.reads { reader.refuse_disputed_subject(&read.key).map_err(CommitError::Host)?; }
+                for read in &commit.reads {
+                    reader
+                        .refuse_disputed_subject(&read.key)
+                        .map_err(CommitError::Host)?;
+                }
                 for read in &commit.link_reads {
-                    reader.refuse_disputed_subject(&read.source).map_err(CommitError::Host)?;
-                    for target in &read.targets { reader.refuse_disputed_subject(&target.key.target).map_err(CommitError::Host)?; }
+                    reader
+                        .refuse_disputed_subject(&read.source)
+                        .map_err(CommitError::Host)?;
+                    for target in &read.targets {
+                        reader
+                            .refuse_disputed_subject(&target.key.target)
+                            .map_err(CommitError::Host)?;
+                    }
                 }
             }
             let model = reader.model();
