@@ -6107,7 +6107,7 @@ fn mapping_bundle_refuses_mismatched_delivery_identity_without_consumption() {
 
 norn_testkit::proptest::proptest! {
     #[test]
-    fn feed_conflict_replay_preserves_first_capture_and_one_finding(fraction in 1u16..1000, deliveries in 2u64..5) {
+    fn feed_conflict_replay_preserves_first_capture_and_one_finding(fraction in 1u16..1000, deliveries in 2i64..5) {
         let dir = tempfile::tempdir().expect("directory");
         let path = dir.path().join("conflict.sqlite");
         let mut store = mapping_bundle_store(&path);
@@ -6123,7 +6123,7 @@ norn_testkit::proptest::proptest! {
         let mut expected_id = None;
         for attempt in 0..deliveries {
             let mut raw = bundle_raw("MEAS-1", &format!("1.{fraction:03}"));
-            raw.input.as_object_mut().expect("raw object").insert("extracted_at".into(), Value::from(100u64 + attempt));
+            raw.input.as_object_mut().expect("raw object").insert("extracted_at".into(), Value::from(100i64 + attempt));
             let (id, inserted) = store.inject_mapping_bundle(&raw, &input).expect("conflict capture");
             norn_testkit::proptest::prop_assert_eq!(inserted, attempt == 0);
             if let Some(expected) = &expected_id { norn_testkit::proptest::prop_assert_eq!(&id, expected); }
@@ -6169,16 +6169,43 @@ fn feed_conflict_uses_ingress_content_and_partition_semantics() {
     let input = bundle_input();
     store.inject_mapping_bundle(&raw, &input).expect("original");
     let mut metadata = raw.clone();
-    metadata.input.as_object_mut().expect("raw object").insert("cursor".into(), Value::from("new cursor"));
-    metadata.input.as_object_mut().expect("raw object").insert("pipeline_version".into(), Value::from("pipeline/2"));
-    let (id, _) = store.inject_mapping_bundle(&metadata, &input).expect("metadata");
+    metadata
+        .input
+        .as_object_mut()
+        .expect("raw object")
+        .insert("cursor".into(), Value::from("new cursor"));
+    metadata
+        .input
+        .as_object_mut()
+        .expect("raw object")
+        .insert("pipeline_version".into(), Value::from("pipeline/2"));
+    let (id, _) = store
+        .inject_mapping_bundle(&metadata, &input)
+        .expect("metadata");
     assert!(id.starts_with("mapping-bundle:"));
-    for (field, value) in [("source_version", Value::from("2")), ("kind", Value::from("delete")), ("redaction", norn_ir::runtime_object! {"policy"=>"synthetic"})] {
-        let mut changed = raw.clone(); changed.input.as_object_mut().expect("raw object").insert(field.into(), value);
-        let (id, _) = store.inject_mapping_bundle(&changed, &input).expect("conflict");
+    for (field, value) in [
+        ("source_version", Value::from("2")),
+        ("kind", Value::from("delete")),
+        (
+            "redaction",
+            norn_ir::runtime_object! {"policy"=>"synthetic"},
+        ),
+    ] {
+        let mut changed = raw.clone();
+        changed
+            .input
+            .as_object_mut()
+            .expect("raw object")
+            .insert(field.into(), value);
+        let (id, _) = store
+            .inject_mapping_bundle(&changed, &input)
+            .expect("conflict");
         assert!(id.starts_with("mapping-conflict:"));
     }
-    let mut partition = input; partition.partition.push('x');
-    let (id, _) = store.inject_mapping_bundle(&bundle_raw("MEAS-1", "1.20"), &partition).expect("independent partition");
+    let mut partition = input;
+    partition.partition.push('x');
+    let (id, _) = store
+        .inject_mapping_bundle(&bundle_raw("MEAS-1", "1.20"), &partition)
+        .expect("independent partition");
     assert!(id.starts_with("mapping-bundle:"));
 }

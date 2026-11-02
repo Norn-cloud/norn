@@ -30,7 +30,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         record: &ObjectRecord,
     ) -> Result<bool, CellError> {
-        if world == crate::MAIN_WORLD && !self.source_conflict_findings(&record.object_type, &record.id)?.is_empty() {
+        if world == crate::MAIN_WORLD
+            && !self
+                .source_conflict_findings(&record.object_type, &record.id)?
+                .is_empty()
+        {
             return Ok(true);
         }
         Ok(self
@@ -100,8 +104,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
-        let mut findings: Vec<_> = self.review_findings(world, object_type, key)?.into_iter().map(|(finding, _)| finding).collect();
-        if world == crate::MAIN_WORLD { findings.extend(self.source_conflict_findings(object_type, key)?); }
+        let mut findings: Vec<_> = self
+            .review_findings(world, object_type, key)?
+            .into_iter()
+            .map(|(finding, _)| finding)
+            .collect();
+        if world == crate::MAIN_WORLD {
+            findings.extend(self.source_conflict_findings(object_type, key)?);
+        }
         Ok(findings)
     }
 

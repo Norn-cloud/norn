@@ -2908,7 +2908,8 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// Serialization, observation-size or queue-position limits, or SQL errors.
     pub fn inject(&mut self, observation_id: &str, observed: &Value) -> Result<bool, CellError> {
-        self.conn.transaction(|| inject_observation(&self.conn, observation_id, observed))
+        self.conn
+            .transaction(|| inject_observation(&self.conn, observation_id, observed))
     }
 }
 

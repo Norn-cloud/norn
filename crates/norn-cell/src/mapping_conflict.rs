@@ -1,6 +1,14 @@
 //! FEED-CURSOR-1 / OBS-EVIDENCE-1: preserve immutable source-event conflicts.
-use crate::{CellError, CellStore, StoreReader, engine::{SqlEngine, params}, mapping_bundle::MappingBundle, system::INBOX};
-use norn_ir::{DataQualityFinding, DataQualityFindingStatus, DataQualityLineage, DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, DataQualitySubject, RuntimeValue};
+use crate::{
+    CellError, CellStore, StoreReader,
+    engine::{SqlEngine, params},
+    mapping_bundle::MappingBundle,
+    system::INBOX,
+};
+use norn_ir::{
+    DataQualityFinding, DataQualityFindingStatus, DataQualityLineage, DataQualityOutcome,
+    DataQualityRuleRef, DataQualitySeverity, DataQualitySubject, RuntimeValue,
+};
 use norn_kernel::{ObservationId, Observed};
 use serde::{Deserialize, Serialize};
 
@@ -17,53 +25,112 @@ pub struct MappingConflict {
 }
 
 fn field<'a>(bundle: &'a MappingBundle, name: &str) -> Result<&'a str, CellError> {
-    bundle.raw.get(name).and_then(RuntimeValue::as_str)
-        .filter(|s| !s.trim().is_empty()).ok_or(CellError::MappingBundleMismatch)
+    bundle
+        .raw
+        .get(name)
+        .and_then(RuntimeValue::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or(CellError::MappingBundleMismatch)
 }
 
 fn content(bundle: &MappingBundle) -> Result<String, CellError> {
-    Ok(norn_ir::canonical::domain_hash_hex(b"norn.source.content.v1\0", &(
-        field(bundle, "kind")?, field(bundle, "source_version")?,
-        field(bundle, "payload_digest")?, bundle.raw.get("redaction").filter(|v| !v.is_null()),
-    ))?)
+    Ok(norn_ir::canonical::domain_hash_hex(
+        b"norn.source.content.v1\0",
+        &(
+            field(bundle, "kind")?,
+            field(bundle, "source_version")?,
+            field(bundle, "payload_digest")?,
+            bundle.raw.get("redaction").filter(|v| !v.is_null()),
+        ),
+    )?)
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
     /// Find a conflict against the first captured source event, including consumed captures.
-    pub(crate) fn mapping_conflict(&self, incoming: &MappingBundle) -> Result<Option<MappingConflict>, CellError> {
+    pub(crate) fn mapping_conflict(
+        &self,
+        incoming: &MappingBundle,
+    ) -> Result<Option<MappingConflict>, CellError> {
         let new = content(incoming)?;
         let captured: Option<(String, String)> = self.conn.query_optional(
             &format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND json_extract(observed, '$.input.input.connectorInstance') = ?1 AND json_extract(observed, '$.input.input.partition') = ?2 AND json_extract(observed, '$.input.raw.source') = ?3 AND json_extract(observed, '$.input.raw.source_id') = ?4 AND json_extract(observed, '$.input.raw.event_id') = ?5 ORDER BY position LIMIT 1"),
             params![&incoming.input.connector_instance, &incoming.input.partition, field(incoming,"source")?, field(incoming,"source_id")?, field(incoming,"event_id")?],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        let Some((stored_id, captured)) = captured else { return Ok(None); };
+        let Some((stored_id, captured)) = captured else {
+            return Ok(None);
+        };
         let observed: Observed<RuntimeValue> = serde_json::from_str(&captured)?;
-        let accepted: MappingBundle = norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+        let accepted: MappingBundle =
+            norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
         self.recheck_mapping_bundle(&accepted)?;
-        if observed.id.0 != stored_id || stored_id != format!("mapping-bundle:{}", accepted.digest) {
+        if observed.id.0 != stored_id || stored_id != format!("mapping-bundle:{}", accepted.digest)
+        {
             return Err(CellError::MappingBundleMismatch);
         }
         let old = content(&accepted)?;
-        if old == new { return Ok(None); }
-        let evidence = norn_ir::canonical::domain_hash_hex(b"norn.source.conflict.v1\0", &(
-            &incoming.input.connector_instance, &incoming.input.partition,
-            field(incoming,"source")?, field(incoming,"source_id")?, field(incoming,"event_id")?, old, new,
-        ))?;
-        let subjects = accepted.records.iter().chain(&incoming.records)
-            .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key)).collect();
+        if old == new {
+            return Ok(None);
+        }
+        let evidence = norn_ir::canonical::domain_hash_hex(
+            b"norn.source.conflict.v1\0",
+            &(
+                &incoming.input.connector_instance,
+                &incoming.input.partition,
+                field(incoming, "source")?,
+                field(incoming, "source_id")?,
+                field(incoming, "event_id")?,
+                old,
+                new,
+            ),
+        )?;
+        let subjects = accepted
+            .records
+            .iter()
+            .chain(&incoming.records)
+            .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key))
+            .collect();
         let finding = DataQualityFinding::v2(
-            DataQualityRuleRef::Builtin { id: "core.boundary.import_finding".into(), version: "1".into() },
-            subjects, DataQualitySeverity::Error, "conflicting immutable source event content",
-            DataQualityOutcome::NotSatisfied, accepted.records.iter().chain(&incoming.records)
-                .map(|r| DataQualityLineage::new(r.provenance.clone(), vec![observed.id.0.clone(), format!("mapping-bundle:{}", incoming.digest)])).collect(), incoming.input.recorded_at.clone(),
-            incoming.input.recorded_at.clone(), DataQualityFindingStatus::Open,
-        )?.with_evidence_digest(evidence)?;
-        Ok(Some(MappingConflict { accepted_bundle_id: observed.id.0, incoming: incoming.clone(), finding }))
+            DataQualityRuleRef::Builtin {
+                id: "core.boundary.import_finding".into(),
+                version: "1".into(),
+            },
+            subjects,
+            DataQualitySeverity::Error,
+            "conflicting immutable source event content",
+            DataQualityOutcome::NotSatisfied,
+            accepted
+                .records
+                .iter()
+                .chain(&incoming.records)
+                .map(|r| {
+                    DataQualityLineage::new(
+                        r.provenance.clone(),
+                        vec![
+                            observed.id.0.clone(),
+                            format!("mapping-bundle:{}", incoming.digest),
+                        ],
+                    )
+                })
+                .collect(),
+            incoming.input.recorded_at.clone(),
+            incoming.input.recorded_at.clone(),
+            DataQualityFindingStatus::Open,
+        )?
+        .with_evidence_digest(evidence)?;
+        Ok(Some(MappingConflict {
+            accepted_bundle_id: observed.id.0,
+            incoming: incoming.clone(),
+            finding,
+        }))
     }
 
     /// OBS-EVIDENCE-1: disputed source identities quarantine every affected live subject.
-    pub(crate) fn source_conflict_findings(&self, object_type: &str, key: &str) -> Result<Vec<DataQualityFinding>, CellError> {
+    pub(crate) fn source_conflict_findings(
+        &self,
+        object_type: &str,
+        key: &str,
+    ) -> Result<Vec<DataQualityFinding>, CellError> {
         let rows = self.conn.query(&format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
         let mut findings = Vec::new();
         for values in rows {
@@ -71,10 +138,23 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let stored_id: String = row.get(0)?;
             let encoded: String = row.get(1)?;
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
-            let conflict: MappingConflict = norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+            let conflict: MappingConflict =
+                norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
             self.recheck_mapping_conflict(&conflict)?;
-            if observed.id.0 != stored_id || stored_id != format!("mapping-conflict:{}", conflict.finding.id) { return Err(CellError::MappingBundleMismatch); }
-            if conflict.finding.subjects.iter().any(|s| s.object_type.as_str() == object_type && s.key == key) {
+            if observed.id.0 != stored_id
+                || stored_id != format!("mapping-conflict:{}", conflict.finding.id)
+            {
+                return Err(CellError::MappingBundleMismatch);
+            }
+            let root = self.root_type(object_type)?;
+            let mut affected = false;
+            for subject in &conflict.finding.subjects {
+                if subject.key == key && self.root_type(subject.object_type.as_str())? == root {
+                    affected = true;
+                }
+            }
+            if affected
+            {
                 findings.push(conflict.finding);
             }
         }
@@ -96,14 +176,30 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
 /// FEED-CURSOR-1: comparison and evidence capture share the caller's write transaction.
 pub(crate) fn capture<E: SqlEngine>(
-    store: &CellStore<E>, raw: &Observed<RuntimeValue>, bundle: &MappingBundle,
+    store: &CellStore<E>,
+    raw: &Observed<RuntimeValue>,
+    bundle: &MappingBundle,
 ) -> Result<(String, bool), CellError> {
     let (id, input) = if let Some(conflict) = store.read().mapping_conflict(bundle)? {
-        (format!("mapping-conflict:{}", conflict.finding.id), norn_ir::runtime::encode(&conflict).map_err(CellError::Encoding)?)
+        (
+            format!("mapping-conflict:{}", conflict.finding.id),
+            norn_ir::runtime::encode(&conflict).map_err(CellError::Encoding)?,
+        )
     } else {
-        (format!("mapping-bundle:{}", bundle.digest), norn_ir::runtime::encode(bundle).map_err(CellError::Encoding)?)
+        (
+            format!("mapping-bundle:{}", bundle.digest),
+            norn_ir::runtime::encode(bundle).map_err(CellError::Encoding)?,
+        )
     };
-    let observed = Observed { id: ObservationId(id.clone()), provenance: raw.provenance.clone(), input };
-    let inserted = crate::store::inject_observation(&store.conn, &id, &norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?)?;
+    let observed = Observed {
+        id: ObservationId(id.clone()),
+        provenance: raw.provenance.clone(),
+        input,
+    };
+    let inserted = crate::store::inject_observation(
+        &store.conn,
+        &id,
+        &norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?,
+    )?;
     Ok((id, inserted))
 }
