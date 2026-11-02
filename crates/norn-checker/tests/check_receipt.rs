@@ -172,9 +172,15 @@ fn flow_source_map(
     }
 }
 
-fn historical_env(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope], limits: &ResourceLimitProfile) -> norn_expr::TypeEnvRef {
-    derive_type_env(artifacts, base, limits).expect("historical definitions")
-        .reference_at_version(norn_expr::env::TypeEnvVersion::V1).expect("historical environment")
+fn historical_env(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> norn_expr::TypeEnvRef {
+    derive_type_env(artifacts, base, limits)
+        .expect("historical definitions")
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+        .expect("historical environment")
 }
 
 fn as_legacy_receipt(receipt: &CheckReceipt) -> (String, String) {
@@ -721,7 +727,9 @@ fn historical_receipt_verification_does_not_rerun_current_admission() {
         checker_version: "0.1.0".to_owned(),
         artifact_set: ArtifactSetRef::of_legacy(&candidate_envelopes, &base_envelopes)
             .expect("artifact set hash"),
-        limit_profile: limits.reference_at_version(norn_expr::env::TypeEnvVersion::V1).expect("limit hash"),
+        limit_profile: limits
+            .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+            .expect("limit hash"),
         expr_profile: "norn-zen/4".to_owned(),
         identifier_profile: "norn-identifiers/legacy".to_owned(),
         type_env: Some(type_env),
