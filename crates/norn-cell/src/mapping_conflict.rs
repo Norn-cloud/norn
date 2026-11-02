@@ -259,7 +259,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
         }
         for subject in subjects {
-            index.roots_by_key.entry(subject.1.clone()).or_default().insert(subject.0.clone());
+            index
+                .roots_by_key
+                .entry(subject.1.clone())
+                .or_default()
+                .insert(subject.0.clone());
             index
                 .subjects
                 .entry(subject)
@@ -297,19 +301,40 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.with_source_dispute_index(|index| {
             let mut seen = BTreeSet::new();
             let mut findings = Vec::new();
-            for root in roots.as_ref().into_iter().flatten().chain(index.roots_by_key.get(key).into_iter().flatten().filter(|_root| roots.is_none())) {
-                for (kind, finding) in index.subjects.get(&(root.clone(), key.to_owned())).into_iter().flatten() {
-                    if *kind == identity && seen.insert(finding.id.clone()) { findings.push(finding.clone()); }
+            for root in roots.as_ref().into_iter().flatten().chain(
+                index
+                    .roots_by_key
+                    .get(key)
+                    .into_iter()
+                    .flatten()
+                    .filter(|_root| roots.is_none()),
+            ) {
+                for (kind, finding) in index
+                    .subjects
+                    .get(&(root.clone(), key.to_owned()))
+                    .into_iter()
+                    .flatten()
+                {
+                    if *kind == identity && seen.insert(finding.id.clone()) {
+                        findings.push(finding.clone());
+                    }
                 }
             }
             findings
         })
     }
 
-    pub(crate) fn indexed_source_dispute(&self, world: &str, object_type: &str, key: &str) -> Result<bool, CellError> {
+    pub(crate) fn indexed_source_dispute(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+    ) -> Result<bool, CellError> {
         let roots = self.source_dispute_roots(world, object_type, key)?;
         self.with_source_dispute_index(|index| match &roots {
-            Some(roots) => roots.iter().any(|root| index.subjects.contains_key(&(root.clone(), key.to_owned()))),
+            Some(roots) => roots
+                .iter()
+                .any(|root| index.subjects.contains_key(&(root.clone(), key.to_owned()))),
             None => index.roots_by_key.contains_key(key),
         })
     }

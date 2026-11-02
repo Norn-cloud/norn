@@ -2965,11 +2965,20 @@ impl SqlEngine for CountedEngine {
             return Ok(None);
         };
         if self.counter.revision_bumps.get() > 0 {
-            self.counter.revision_bumps.set(self.counter.revision_bumps.get().saturating_sub(1));
-            let epoch = self.counter.revision_epoch.get().checked_add(1).ok_or(CellError::OutOfRange("test revision"))?;
+            self.counter
+                .revision_bumps
+                .set(self.counter.revision_bumps.get().saturating_sub(1));
+            let epoch = self
+                .counter
+                .revision_epoch
+                .get()
+                .checked_add(1)
+                .ok_or(CellError::OutOfRange("test revision"))?;
             self.counter.revision_epoch.set(epoch);
         }
-        let remote = remote.checked_add(self.counter.revision_epoch.get()).ok_or(CellError::OutOfRange("test revision"))?;
+        let remote = remote
+            .checked_add(self.counter.revision_epoch.get())
+            .ok_or(CellError::OutOfRange("test revision"))?;
         Ok(Some((writes, remote)))
     }
 
@@ -6683,21 +6692,34 @@ norn_testkit::proptest::proptest! {
     }
 }
 
-
 #[test]
 fn source_dispute_index_revision_is_unavailable_for_rolled_back_state() {
     let engine = NativeEngine::open_in_memory().expect("engine");
-    engine.execute("CREATE TABLE cache_test (value INTEGER)", &[]).expect("table");
-    let before = engine.read_cache_revision().expect("committed revision").expect("cacheable");
+    engine
+        .execute("CREATE TABLE cache_test (value INTEGER)", &[])
+        .expect("table");
+    let before = engine
+        .read_cache_revision()
+        .expect("committed revision")
+        .expect("cacheable");
     let rolled_back: Result<(), CellError> = engine.transaction(|| {
         engine.execute("INSERT INTO cache_test VALUES (1)", &[])?;
-        assert_eq!(engine.read_cache_revision()?, None, "uncommitted state cannot seed a persistent cache");
+        assert_eq!(
+            engine.read_cache_revision()?,
+            None,
+            "uncommitted state cannot seed a persistent cache"
+        );
         Err(CellError::Engine("intentional rollback".into()))
     });
     assert!(rolled_back.is_err());
-    let after = engine.read_cache_revision().expect("committed revision").expect("cacheable again");
+    let after = engine
+        .read_cache_revision()
+        .expect("committed revision")
+        .expect("cacheable again");
     assert_ne!(before, after);
-    let count: i64 = engine.query_row("SELECT COUNT(*) FROM cache_test", &[], |row| row.get(0)).expect("rollback contents");
+    let count: i64 = engine
+        .query_row("SELECT COUNT(*) FROM cache_test", &[], |row| row.get(0))
+        .expect("rollback contents");
     assert_eq!(count, 0);
 }
 
@@ -6706,28 +6728,60 @@ fn source_dispute_index_retries_churn_and_returns_a_distinct_retryable_refusal()
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("revision-churn.sqlite");
     let store = mapping_bundle_store(&path);
-    let model = store.model().clone(); drop(store);
+    let model = store.model().clone();
+    drop(store);
     let counter = WriteCounter::default();
-    let engine = CountedEngine { inner:NativeEngine::open(&path, StoreOptions::default()).expect("engine"), counter:counter.clone() };
+    let engine = CountedEngine {
+        inner: NativeEngine::open(&path, StoreOptions::default()).expect("engine"),
+        counter: counter.clone(),
+    };
     let store = CellStore::from_engine(engine, model).expect("store");
     for churn in 1..=8 {
         counter.revision_bumps.set(churn);
         counter.evidence_reads.set(0);
-        let result = store.read().observation_findings(MAIN_WORLD, "quality.Measurement", "clean");
+        let result = store
+            .read()
+            .observation_findings(MAIN_WORLD, "quality.Measurement", "clean");
         if churn < 7 {
             assert!(result.expect("bounded retry stabilizes").is_empty());
         } else {
             assert!(matches!(result, Err(CellError::SourceEvidenceChanged)));
         }
-        assert!(counter.evidence_reads.get() <= 6, "at most three complete rebuild attempts");
+        assert!(
+            counter.evidence_reads.get() <= 6,
+            "at most three complete rebuild attempts"
+        );
     }
 }
 
-fn assert_interface_dispute_fences(cell: &norn_cell::SqliteCell<Value, Value, norn_ir::RuntimeObject, CountedEngine>, clean: &norn_kernel::FactKey) {
+fn assert_interface_dispute_fences(
+    cell: &norn_cell::SqliteCell<Value, Value, norn_ir::RuntimeObject, CountedEngine>,
+    clean: &norn_kernel::FactKey,
+) {
     for target in ["MEAS-1", "MEAS-0"] {
-        let link = norn_kernel::LinkKey::new(clean.clone(), "unused", norn_kernel::FactKey::new("quality.Measured", target));
-        assert!(matches!(norn_kernel::CellHost::load_link(cell, &link), Err(CellError::QualityEvaluation(_))), "both live and missing interface roots retain quarantine");
+        let link = norn_kernel::LinkKey::new(
+            clean.clone(),
+            "unused",
+            norn_kernel::FactKey::new("quality.Measured", target),
+        );
+        assert!(
+            matches!(
+                norn_kernel::CellHost::load_link(cell, &link),
+                Err(CellError::QualityEvaluation(_))
+            ),
+            "both live and missing interface roots retain quarantine"
+        );
     }
-    let link = norn_kernel::LinkKey::new(clean.clone(), "unused", norn_kernel::FactKey::new("quality.Measured", "clean-interface"));
-    assert!(matches!(norn_kernel::CellHost::load_link(cell, &link), Err(CellError::UnknownLink {..})), "clean interfaces reach ordinary link validation");
+    let link = norn_kernel::LinkKey::new(
+        clean.clone(),
+        "unused",
+        norn_kernel::FactKey::new("quality.Measured", "clean-interface"),
+    );
+    assert!(
+        matches!(
+            norn_kernel::CellHost::load_link(cell, &link),
+            Err(CellError::UnknownLink { .. })
+        ),
+        "clean interfaces reach ordinary link validation"
+    );
 }

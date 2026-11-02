@@ -1351,19 +1351,33 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
 
     /// Resolve interface identities in the requested world; missing identities
     /// require a conservative lookup across verified indexed roots for that key.
-    pub(crate) fn source_dispute_roots(&self, world: &str, object_type: &str, key: &str) -> Result<Option<Vec<String>>, CellError> {
+    pub(crate) fn source_dispute_roots(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+    ) -> Result<Option<Vec<String>>, CellError> {
         match self.root_type(object_type) {
             Ok(root) => return Ok(Some(vec![root.to_owned()])),
-            Err(CellError::UnknownObjectType(_)) if self.model.interfaces().any(|interface| interface.name.as_str() == object_type) => {},
+            Err(CellError::UnknownObjectType(_))
+                if self
+                    .model
+                    .interfaces()
+                    .any(|interface| interface.name.as_str() == object_type) => {}
             Err(error) => return Err(error),
         }
-        let candidates = self.model.object_types()
+        let candidates = self
+            .model
+            .object_types()
             .filter(|definition| self.model.is_a(definition.name.as_str(), object_type))
             .map(|definition| self.root_type(definition.name.as_str()).map(str::to_owned))
             .collect::<Result<BTreeSet<_>, _>>()?;
         let mut roots = Vec::new();
         for root in candidates {
-            if self.root_row(world, &root, key)?.is_some_and(|(concrete, _scope, _version)| self.model.is_a(&concrete, object_type)) {
+            if self
+                .root_row(world, &root, key)?
+                .is_some_and(|(concrete, _scope, _version)| self.model.is_a(&concrete, object_type))
+            {
                 roots.push(root);
             }
         }
