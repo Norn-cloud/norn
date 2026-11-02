@@ -94,7 +94,9 @@ pub fn dispatch_smt(
 }
 #[cfg(not(target_family = "wasm"))]
 mod host {
-    use super::{Digest, Duration, Path, Sha256, SmtBound, SmtEvidence, SmtResult, Z3_VERSION, answer};
+    use super::{
+        Digest, Duration, Path, Sha256, SmtBound, SmtEvidence, SmtResult, Z3_VERSION, answer,
+    };
     use std::{
         fs::File,
         io::{Read, Seek, SeekFrom, Write},
@@ -128,8 +130,12 @@ mod host {
         deadline: Instant,
         limit: usize,
     ) -> Result<String, &'static str> {
-        if Instant::now() >= deadline { return Err("timeout"); }
-        if input.len() > limit { return Err("invalid_bound"); }
+        if Instant::now() >= deadline {
+            return Err("timeout");
+        }
+        if input.len() > limit {
+            return Err("invalid_bound");
+        }
         let mut stdin = tempfile::tempfile().map_err(|_error| "io")?;
         stdin.write_all(input.as_bytes()).map_err(|_error| "io")?;
         stdin.seek(SeekFrom::Start(0)).map_err(|_error| "io")?;
@@ -196,8 +202,7 @@ mod host {
         }
         let version = run(binary, &["--version"], "", deadline, bound.bytes)?;
         evidence.z3_version = Some(version.trim().into());
-        if version.split_whitespace().nth(2) != Some(Z3_VERSION)
-        {
+        if version.split_whitespace().nth(2) != Some(Z3_VERSION) {
             return Err("unsupported_version");
         }
         let marker = format!("norn_smt_{}", evidence.obligation_sha256);
@@ -229,7 +234,9 @@ mod host {
                 &marker,
             )? {
                 SmtResult::Sat(model) if !model.is_empty() => Ok(SmtResult::Sat(model)),
-                SmtResult::Sat(_) | SmtResult::Unsat | SmtResult::Unknown(_) => Err("model_unavailable"),
+                SmtResult::Sat(_) | SmtResult::Unsat | SmtResult::Unknown(_) => {
+                    Err("model_unavailable")
+                }
             },
             SmtResult::Unsat => Ok(SmtResult::Unsat),
             SmtResult::Unknown(_) => Err("solver_unknown"),
