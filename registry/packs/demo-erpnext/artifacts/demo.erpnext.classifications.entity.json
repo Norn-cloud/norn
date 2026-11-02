@@ -3,7 +3,7 @@
   "dependencies": [],
   "irVersion": "0.1",
   "kind": "entity",
-  "lifecycle": "draft",
+  "lifecycle": "active",
   "name": "Demo admission classifications",
   "namespace": "demo",
   "payload": {
@@ -57,12 +57,9 @@
     ]
   },
   "provenance": {
-    "source": "authoring_sdk",
-    "sourcePath": "registry/packs/demo-erpnext/markings.ts"
+    "source": "system",
+    "sourcePath": "registry/packs/demo-erpnext/artifacts/demo.erpnext.classifications.entity.json"
   },
-  "scope": {
-    "environmentId": "dev",
-    "orgId": "org_demo"
-  },
+  "scope": {},
   "version": "0.1.0"
 }

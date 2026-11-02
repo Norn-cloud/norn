@@ -1,0 +1,74 @@
+{
+  "artifactId": "demo.erpnext.ScrapMelt.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Synthetic scrap melt measurements",
+  "namespace": "demo.erpnext",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Accepted fine-metal input, output and recorded loss; stock and value effects remain unqualified.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Conversion"
+      ],
+      "name": "demo.erpnext.ScrapMelt",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "input_quantity",
+          "type": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "output_quantity",
+          "type": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "loss_quantity",
+          "type": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-erpnext/artifacts/demo.erpnext.ScrapMelt.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

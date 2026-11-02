@@ -353,6 +353,7 @@ declare module "@norn/authoring" {
       readonly id: string
       readonly title: string
       readonly version: string
+      readonly wordings?: ReturnType<typeof import("../src/builder/law.ts").decodeLawWordings>
       readonly law: import("../src/builder/law.ts").LawIR
       readonly dependencies: import("../src/builder/law.ts").LawDef["dependencies"]
     }): LawDefinition

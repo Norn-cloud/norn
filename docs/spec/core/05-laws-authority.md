@@ -15,6 +15,8 @@ Reuse `LawIR`, `LawScope`, `LawRoot`, `LawModality` (temporal), `LawTiming`, `La
 | Evidence | generated goal/statement digest, full writer/mapping closure, semantics/compiler/tool pins, parameter assumptions, bounds/fairness, result and proof digests, assurance level. |
 | Delegation | authenticated principal, acting agent/session, accountable delegator, parent grant, scope/resources/actions/expiry/budget, revocation generation; every child is an attenuation. |
 
+LAW-WORDING-PIN-1 keeps EN/AR display in separate compiler-produced wording artifacts, keyed by stable law ID and pinned to the law artifact digest; checker admission uses StructuredRequirement and the shared renderer, and stale or mismatched wording is displayed as unverified without changing LawIR or proof status. The compiler-derived normative grade, authority, source and timing remain bound to the declaration; display slots cannot alter them.
+
 B0 #316 admits a closed pointwise safety/commit fragment. #322 renders EN/AR without changing semantic IDs. Event occurrence, arbitrary temporal logic and progress are not implied by these PRs.
 
 ## Semantics and obligations
