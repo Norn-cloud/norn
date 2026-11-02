@@ -613,7 +613,9 @@ pub fn verify_admission_receipt(
                 .join("; ")
         ))
     })?;
-    let version = parsed.type_env.as_ref()
+    let version = parsed
+        .type_env
+        .as_ref()
         .and_then(|reference| norn_expr::env::TypeEnvVersion::from_number(reference.version))
         .ok_or_else(|| invalid_receipt("unsupported receipt type-environment version"))?;
     let expected_env = derived_env.reference_at_version(version)?;

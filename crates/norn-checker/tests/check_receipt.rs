@@ -227,11 +227,16 @@ fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
     let limits = ResourceLimitProfile::norn_limits_v1();
     let mut receipt = receipt(&values);
     assert_eq!(receipt.type_env.as_ref().unwrap().version, 2);
-    receipt.type_env = Some(derive_type_env(&artifacts, &[], &limits).unwrap()
-        .reference_at_version(norn_expr::env::TypeEnvVersion::V1).unwrap());
+    receipt.type_env = Some(
+        derive_type_env(&artifacts, &[], &limits)
+            .unwrap()
+            .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+            .unwrap(),
+    );
     let stored = compact(&receipt);
     let hash = receipt.content_sha256().unwrap();
-    verify_admission_receipt(&stored, &hash, &artifacts, &[], &limits).expect("historical /1 receipt verifies");
+    verify_admission_receipt(&stored, &hash, &artifacts, &[], &limits)
+        .expect("historical /1 receipt verifies");
     let mut relabelled: Value = serde_json::from_str(&stored).unwrap();
     relabelled["typeEnv"]["version"] = json!(2);
     let relabelled = compact_value(&relabelled);

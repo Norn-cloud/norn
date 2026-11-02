@@ -13,12 +13,19 @@ impl TypeEnvVersion {
     /// Decode a receipt's version without reinterpreting unknown formats.
     #[must_use]
     pub const fn from_number(version: u32) -> Option<Self> {
-        match version { 1 => Some(Self::V1), 2 => Some(Self::V2), _ => None }
+        match version {
+            1 => Some(Self::V1),
+            2 => Some(Self::V2),
+            _ => None,
+        }
     }
 
     /// The exact version written in the canonical preimage and reference.
     #[must_use]
     pub const fn number(self) -> u32 {
-        match self { Self::V1 => 1, Self::V2 => 2 }
+        match self {
+            Self::V1 => 1,
+            Self::V2 => 2,
+        }
     }
 }

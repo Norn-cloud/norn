@@ -53,7 +53,10 @@ fn pretty(bytes: &[u8]) -> String {
 #[test]
 fn retail_env_matches_golden_snapshot() {
     let env = Model::retail().env();
-    let actual = pretty(&env.canonical_json_at_version(norn_expr::env::TypeEnvVersion::V1).expect("canonical"));
+    let actual = pretty(
+        &env.canonical_json_at_version(norn_expr::env::TypeEnvVersion::V1)
+            .expect("canonical"),
+    );
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN);
     if std::env::var_os("NORN_BLESS").is_some() {
         std::fs::write(&path, &actual).expect("write golden");
@@ -65,7 +68,9 @@ fn retail_env_matches_golden_snapshot() {
 #[test]
 fn retail_env_hash_is_pinned() {
     let env = Model::retail().env();
-    let reference = env.reference_at_version(norn_expr::env::TypeEnvVersion::V1).expect("hash");
+    let reference = env
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+        .expect("hash");
     assert_eq!(reference.id, TYPE_ENV_ID);
     assert_eq!(reference.version, 1);
     assert_eq!(
@@ -149,7 +154,9 @@ fn properties_map_to_typed_fields() {
         property(Type::Decimal {
             scale: 2,
             rounding: norn_ir::Rounding::Refuse,
-            unit: None, currency_source: None, })
+            unit: None,
+            currency_source: None,
+        })
     );
     // `ref` resolves; the property's own `nullable` makes it optional.
     assert_eq!(
@@ -161,7 +168,9 @@ fn properties_map_to_typed_fields() {
                 unit: Some(UnitRef {
                     system: UnitSystem::Ucum,
                     code: "kg".to_owned()
-                }), currency_source: None, }
+                }),
+                currency_source: None,
+            }
             .optional()
         )
     );
@@ -569,7 +578,9 @@ fn structured_property_members_have_closed_expression_types() {
         Type::Decimal {
             scale: 6,
             rounding: norn_ir::Rounding::Refuse,
-            unit: None, currency_source: None, }
+            unit: None,
+            currency_source: None,
+        }
     );
     assert!(!members.contains_key("unknown"));
 }
@@ -843,7 +854,14 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
         }
     }
     assert_eq!(model.env().canonical_json().unwrap(), default);
-    assert_eq!(model.env().reference_at_version(norn_expr::env::TypeEnvVersion::V1).unwrap().sha256, RETAIL_ENV_SHA256);
+    assert_eq!(
+        model
+            .env()
+            .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+            .unwrap()
+            .sha256,
+        RETAIL_ENV_SHA256
+    );
     let fields = |ty| {
         ZenTypeEnv::input_only(
             BTreeMap::from([("amount".to_owned(), ty)]),
@@ -854,7 +872,9 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
     let decimal = |rounding| Type::Decimal {
         scale: 2,
         unit: None,
-        rounding, currency_source: None, };
+        rounding,
+        currency_source: None,
+    };
     let bytes = fields(decimal(norn_ir::Rounding::Refuse))
         .canonical_json()
         .unwrap();
@@ -898,25 +918,49 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
 #[test]
 fn val_env_v2_binds_currency_sources_and_preserves_v1_projection() {
     use norn_expr::env::TypeEnvVersion::{V1, V2};
-    let env = |property: &str| ZenTypeEnv::input_only(BTreeMap::from([("money".to_owned(), Type::Decimal {
-        scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse,
-        currency_source: Some(norn_ir::metric::DimensionPath { links: Vec::new(), property: property.parse().unwrap() }),
-    })]), EnvOptions::default()).unwrap();
+    let env = |property: &str| {
+        ZenTypeEnv::input_only(
+            BTreeMap::from([(
+                "money".to_owned(),
+                Type::Decimal {
+                    scale: 2,
+                    unit: None,
+                    rounding: norn_ir::Rounding::Refuse,
+                    currency_source: Some(norn_ir::metric::DimensionPath {
+                        links: Vec::new(),
+                        property: property.parse().unwrap(),
+                    }),
+                },
+            )]),
+            EnvOptions::default(),
+        )
+        .unwrap()
+    };
     let first = env("currency");
     let second = env("settlement_currency");
     assert_eq!(first.reference().unwrap().version, TYPE_ENV_VERSION);
     assert_ne!(first.reference().unwrap(), second.reference().unwrap());
-    assert_eq!(first.reference_at_version(V1).unwrap(), second.reference_at_version(V1).unwrap());
+    assert_eq!(
+        first.reference_at_version(V1).unwrap(),
+        second.reference_at_version(V1).unwrap()
+    );
     let old = first.reference_at_version(V1).unwrap();
     assert_ne!(old.sha256, first.reference_at_version(V2).unwrap().sha256);
-    let bytes: serde_json::Value = serde_json::from_slice(&first.canonical_json().unwrap()).unwrap();
+    let bytes: serde_json::Value =
+        serde_json::from_slice(&first.canonical_json().unwrap()).unwrap();
     assert_eq!(bytes["variables"]["input"]["kind"], "record");
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
-    struct LegacyDecimal { kind: String, scale: u64 }
+    struct LegacyDecimal {
+        kind: String,
+        scale: u64,
+    }
     let value = &bytes["records"]["norn:Input"]["fields"]["money"]["type"];
-    let error = serde_json::from_value::<LegacyDecimal>(value.clone()).err().unwrap();
+    let error = serde_json::from_value::<LegacyDecimal>(value.clone())
+        .err()
+        .unwrap();
     assert!(error.to_string().contains("unknown field `currencySource`"));
-    let legacy: LegacyDecimal = serde_json::from_value(serde_json::json!({"kind":"decimal","scale":2})).unwrap();
+    let legacy: LegacyDecimal =
+        serde_json::from_value(serde_json::json!({"kind":"decimal","scale":2})).unwrap();
     assert_eq!((legacy.kind.as_str(), legacy.scale), ("decimal", 2));
 }

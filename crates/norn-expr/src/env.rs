@@ -198,10 +198,22 @@ impl Type {
                 }
                 if version == TypeEnvVersion::V2 {
                     if let Some(source) = currency_source {
-                        fields.push(("currencySource", object([
-                            ("links", JsonValue::Array(source.links.iter().map(|link| string(link.as_str())).collect())),
-                            ("property", string(source.property.as_str())),
-                        ])));
+                        fields.push((
+                            "currencySource",
+                            object([
+                                (
+                                    "links",
+                                    JsonValue::Array(
+                                        source
+                                            .links
+                                            .iter()
+                                            .map(|link| string(link.as_str()))
+                                            .collect(),
+                                    ),
+                                ),
+                                ("property", string(source.property.as_str())),
+                            ]),
+                        ));
                     }
                 }
                 if let Some(mode) = rounding.canonical_field() {
@@ -852,7 +864,10 @@ impl ZenTypeEnv {
     ///
     /// # Errors
     /// As [`Self::canonical_json`].
-    pub fn canonical_json_at_version(&self, version: TypeEnvVersion) -> Result<Vec<u8>, CanonicalJsonError> {
+    pub fn canonical_json_at_version(
+        &self,
+        version: TypeEnvVersion,
+    ) -> Result<Vec<u8>, CanonicalJsonError> {
         norn_ir::canonical::serialize(&self.canonical_value_at_version(version))
     }
 
@@ -878,11 +893,15 @@ impl ZenTypeEnv {
     ///
     /// # Errors
     /// As [`Self::canonical_json`].
-    pub fn reference_at_version(&self, version: TypeEnvVersion) -> Result<TypeEnvRef, CanonicalJsonError> {
+    pub fn reference_at_version(
+        &self,
+        version: TypeEnvVersion,
+    ) -> Result<TypeEnvRef, CanonicalJsonError> {
         Ok(TypeEnvRef {
             id: TYPE_ENV_ID.to_owned(),
             version: version.number(),
-            sha256: TYPE_ENV_HASH_PROFILE.hash_canonical_bytes(&self.canonical_json_at_version(version)?),
+            sha256: TYPE_ENV_HASH_PROFILE
+                .hash_canonical_bytes(&self.canonical_json_at_version(version)?),
         })
     }
 }
@@ -915,7 +934,10 @@ fn record_value(record: &RecordType, version: TypeEnvVersion) -> JsonValue {
             };
             (
                 name.clone(),
-                object([("type", field.ty.to_canonical_value(version)), ("source", source)]),
+                object([
+                    ("type", field.ty.to_canonical_value(version)),
+                    ("source", source),
+                ]),
             )
         })
         .collect();
