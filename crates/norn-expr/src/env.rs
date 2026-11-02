@@ -91,6 +91,11 @@ pub enum Type {
         /// The unit of a quantity, if declared.
         unit: Option<UnitRef>,
     },
+    /// An interface Decimal whose unit and scale must be bound before use.
+    DecimalBinding {
+        /// Interface-local same-unit/scale group.
+        group: String,
+    },
     /// Any exact decimal number (no declared scale).
     Number,
     /// An RFC 3339 instant with an explicit offset (a string on the wire).
@@ -147,6 +152,7 @@ impl Type {
             | Self::Text { .. }
             | Self::Integer
             | Self::Decimal { .. }
+            | Self::DecimalBinding { .. }
             | Self::Number
             | Self::Timestamp { .. }
             | Self::Date
@@ -191,6 +197,7 @@ impl Type {
                     ),
                 }
             }
+            Self::DecimalBinding { group } => kind("decimal-binding", [("group", string(group))]),
             Self::Number => kind("number", []),
             Self::Timestamp { timezone } => {
                 kind("timestamp", [("timezone", string(tz_policy(*timezone)))])
@@ -220,6 +227,7 @@ impl Type {
             | Self::Text { .. }
             | Self::Integer
             | Self::Decimal { .. }
+            | Self::DecimalBinding { .. }
             | Self::Number
             | Self::Timestamp { .. }
             | Self::Date
@@ -240,6 +248,7 @@ impl fmt::Display for Type {
             } => write!(f, "text<{}>", text_format(*format)),
             Self::Integer => f.write_str("integer"),
             Self::Decimal { scale, .. } => write!(f, "decimal<{scale}>"),
+            Self::DecimalBinding { group } => write!(f, "decimal-binding<{group}>"),
             Self::Number => f.write_str("number"),
             Self::Timestamp { .. } => f.write_str("timestamp"),
             Self::Date => f.write_str("date"),
@@ -1534,6 +1543,9 @@ impl<'d, 'e> Derivation<'d, 'e> {
                 PropertyType::Decimal { scale, unit, .. } => Type::Decimal {
                     scale: scale.0,
                     unit: unit.clone(),
+                },
+                PropertyType::DecimalBinding { group } => Type::DecimalBinding {
+                    group: group.clone(),
                 },
                 PropertyType::Boolean {} => Type::Bool,
                 PropertyType::Timestamp { timezone } => Type::Timestamp {
