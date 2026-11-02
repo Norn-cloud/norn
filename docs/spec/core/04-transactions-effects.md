@@ -68,6 +68,7 @@ Both destinations exclude objectIdField and every effective identity-key compone
 Only the cell host resolves authenticated, scoped evidence; unsupported hosts refuse.
 Execution stays closed until consumption and effects commit atomically, with no partial persistence on refusal.
 
+The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 
 ### Durable flow scheduling and identity (#515)
 
