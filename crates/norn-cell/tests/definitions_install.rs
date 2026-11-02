@@ -2937,6 +2937,7 @@ struct WriteCounter {
     attempts: std::rc::Rc<std::cell::Cell<usize>>,
     forbid: std::rc::Rc<std::cell::Cell<bool>>,
     outgoing_reads: std::rc::Rc<std::cell::Cell<usize>>,
+    evidence_reads: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
 struct CountedEngine {
@@ -2963,6 +2964,10 @@ impl SqlEngine for CountedEngine {
     }
 
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        if sql.contains("observation_id LIKE 'mapping-conflict:%'") || sql.contains("observation_id LIKE 'mapping-identity:%'") {
+            self.counter.evidence_reads.set(self.counter.evidence_reads.get().saturating_add(1));
+        }
+
         if sql.starts_with("SELECT \"_target\" FROM ") {
             assert!(sql.ends_with("LIMIT ?3"), "unbounded outgoing query: {sql}");
             assert!(matches!(params.last(), Some(SqlValue::Integer(limit)) if *limit <= 1001));
@@ -6555,5 +6560,69 @@ fn source_dispute_non_main_reads_refuse_until_core08_retains_the_frontier() {
                 CellError::QualityEvaluation(_)
             ))
         ));
+    }
+}
+
+
+#[test]
+fn source_dispute_index_reuses_verified_snapshot_and_refuses_external_tampering() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("indexed-disputes.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    let input = bundle_input();
+    let (id, _) = store.inject_mapping_bundle(&bundle_raw("MEAS-1", "0.90"), &input).expect("capture");
+    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    cell.process_mapping_bundle(&id).expect("canonical fact");
+    let model = cell.store().model().clone();
+    drop(cell);
+    store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("reopen");
+    for number in 0..16 {
+        let name = format!("MEAS-{number}");
+        store.inject_mapping_bundle(&bundle_raw(&name, "0.90"), &input).expect("first");
+        store.inject_mapping_bundle(&bundle_raw(&name, "1.20"), &input).expect("conflict");
+    }
+    drop(store);
+    let counter = WriteCounter::default();
+    let counted = CountedEngine { inner:NativeEngine::open(&path, StoreOptions::default()).expect("engine"), counter:counter.clone() };
+    let store = CellStore::from_engine(counted, model).expect("counted store");
+    let cell: norn_cell::SqliteCell<Value, Value, Value, CountedEngine> = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("host");
+    let clean = norn_kernel::FactKey::new("quality.Measurement", "unrelated");
+    let disputed = norn_kernel::FactKey::new("quality.Measurement", "MEAS-1");
+    counter.evidence_reads.set(0);
+    assert!(norn_kernel::CellHost::load_reference(&cell, &disputed, 0).expect("budget first").is_none());
+    assert_eq!(counter.evidence_reads.get(), 0);
+    norn_kernel::CellHost::load(&cell, &clean).expect("warm complete index");
+    assert_eq!(counter.evidence_reads.get(), 2, "one conflict and one identity scan");
+    for _ in 0..32 {
+        norn_kernel::CellHost::load(&cell, &clean).expect("negative indexed lookup");
+        assert!(matches!(norn_kernel::CellHost::load(&cell, &disputed), Err(CellError::QualityEvaluation(_))));
+    }
+    assert_eq!(counter.evidence_reads.get(), 2, "no unrelated evidence is decoded per operand");
+    let external = NativeEngine::open(&path, StoreOptions::default()).expect("external connection");
+    external.execute("UPDATE _norn_inbox SET observed = json_set(observed, '$.input.finding.message', 'forged') WHERE observation_id LIKE 'mapping-conflict:%'", &[]).expect("synthetic corruption");
+    assert!(norn_kernel::CellHost::load_bounded(&cell, &disputed, 0).expect("budget still first").is_none());
+    assert_eq!(counter.evidence_reads.get(), 2);
+    assert!(matches!(norn_kernel::CellHost::load(&cell, &clean), Err(CellError::MappingBundleMismatch)));
+    assert!(counter.evidence_reads.get() > 2, "external edit invalidates negative membership too");
+}
+
+// OBS-DISPUTE-LOOKUP-1: a later mapping context extends a cached source dispute.
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn source_dispute_index_refreshes_later_contexts_and_redelivery(prefix in "[A-Z]{1,5}", deliveries in 1usize..4) {
+        let dir = tempfile::tempdir().expect("directory");
+        let mut store = mapping_bundle_store(&dir.path().join("late-context.sqlite"));
+        let input = bundle_input();
+        let original = bundle_raw(&prefix, "0.90");
+        store.inject_mapping_bundle(&original, &input).expect("accepted");
+        store.inject_mapping_bundle(&bundle_raw(&prefix, "1.20"), &input).expect("conflict");
+        let alternate_key = format!("{prefix}-ALT");
+        norn_testkit::proptest::prop_assert!(store.read().observation_findings(MAIN_WORLD, "quality.Measurement", &alternate_key).expect("warm negative").is_empty());
+        let mut alternate = input.clone(); alternate.mapping = "quality.alternate".into();
+        for _ in 0..deliveries {
+            store.inject_mapping_bundle(&original, &alternate).expect("later context or replay");
+            let findings = store.read().observation_findings(MAIN_WORLD, "quality.Measurement", &alternate_key).expect("refreshed membership");
+            norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+        }
     }
 }

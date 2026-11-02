@@ -1735,6 +1735,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// The last head this store verified (#2975): verification at open,
     /// then [`Self::verified_head`] extends it over later commits only.
     verified: RefCell<LedgerHead>,
+    source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
@@ -2078,6 +2079,7 @@ impl<E: SqlEngine> CellStore<E> {
             #[cfg(feature = "native")]
             export_notify: Arc::new(Notify::new()),
             verified: RefCell::new(LedgerHead::genesis()),
+            source_disputes: RefCell::default(),
             quantity_boundary: Cell::new(None),
         }
     }
@@ -2342,7 +2344,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// Committed-state reads.
     #[must_use]
     pub fn read(&self) -> StoreReader<'_, E> {
-        StoreReader::new(&self.conn, &self.model)
+        StoreReader::new(&self.conn, &self.model).with_source_disputes(&self.source_disputes)
             .with_quantity_boundary(self.quantity_boundary.get())
     }
 
@@ -2646,7 +2648,7 @@ impl<E: SqlEngine> CellStore<E> {
                 &self.conn, &self.model, effective_batch, boundary, prior_receipt.as_ref(),
             )?;
             admitted_boundary.set(boundary.or(new_boundary));
-            let quality_reader = StoreReader::new(&self.conn, &self.model);
+            let quality_reader = StoreReader::new(&self.conn, &self.model).with_source_disputes(&self.source_disputes);
             let quality_cutoff = prior_receipt.as_ref().map_or_else(|| quality_reader.next_commit_seq(), |receipt| Ok(receipt.body.commit_seq))?;
             crate::observation_quality::deduplicate(&quality_reader, &mut quantity_batch, quality_cutoff)?;
             let effective_batch = &quantity_batch;
@@ -2662,7 +2664,7 @@ impl<E: SqlEngine> CellStore<E> {
                 }
                 return Err(CellError::IdempotencyConflict(key.clone()).into());
             }
-            let reader = StoreReader::new(&self.conn, &self.model);
+            let reader = StoreReader::new(&self.conn, &self.model).with_source_disputes(&self.source_disputes);
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
@@ -2746,7 +2748,7 @@ impl<E: SqlEngine> CellStore<E> {
             probe(CommitPoint::LinksApplied)?;
             if let Some(validate) = self.candidate_validator.get() {
                 validate(
-                    &StoreReader::new(&self.conn, commit_model),
+                    &StoreReader::new(&self.conn, commit_model).with_source_disputes(&self.source_disputes),
                     effective_batch,
                     installation.is_some(),
                 )?;
@@ -2857,7 +2859,7 @@ impl<E: SqlEngine> CellStore<E> {
         outcome: &Value,
     ) -> Result<bool, CellError> {
         self.conn.transaction(|| -> Result<bool, CellError> {
-            let head = StoreReader::new(&self.conn, &self.model).head_command()?;
+            let head = StoreReader::new(&self.conn, &self.model).with_source_disputes(&self.source_disputes).head_command()?;
             let is_head = head.as_ref().is_some_and(|head| {
                 head.command.command_id == command_id
                     && head.command.generation == generation

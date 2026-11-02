@@ -142,3 +142,13 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 4. Complete B1 mapping/role preservation with 06; EVENT-MULTI and source echo tests.
 5. Add uncertainty/reconciliation state contract, then dispatch/lookup tests, then compensation races with 04; each supported provider declares its assumptions.
 6. Qualify manifest-projected WASM/worker execution, secrets, bounds and replay; unsupported profiles stay refused.
+
+OBS-DISPUTE-LOOKUP-1: governed subject lookups reuse a complete, recomputed
+in-memory subject index only while SQLite `total_changes()` and `data_version`
+remain unchanged; any local write, rollback or external commit invalidates it.
+Rebuilding checks every retained conflict/NFC finding and all mapping contexts
+against their retained definitions before publishing positive or negative
+membership. Later mapping contexts therefore extend an existing dispute.
+No caller claim or persisted membership grants authority. A cold snapshot costs
+one evidence rebuild; repeated operands use indexed membership without decoding
+unrelated evidence. Bounded fact/reference reads apply their byte budget first.

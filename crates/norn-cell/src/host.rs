@@ -1512,7 +1512,6 @@ where
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, CellError> {
         let reader = self.store.read();
-        reader.refuse_disputed_subject(key)?;
         let mut limits =
             ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
         limits.max_candidate_bytes_per_commit = max_bytes;
@@ -1533,6 +1532,7 @@ where
             crate::reactive::BudgetedIdentityRead::Missing => (None, None),
             crate::reactive::BudgetedIdentityRead::Exhausted => return Ok(None),
         };
+        reader.refuse_disputed_subject(key)?;
         Ok(Some(BoundedFact {
             concrete_type,
             state: FactState { version, values },
@@ -1545,7 +1545,6 @@ where
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, CellError> {
         let reader = self.store.read();
-        reader.refuse_disputed_subject(key)?;
         let profile = norn_ir::ResourceLimitProfile::norn_limits_v1();
         let mut limits = ReactiveLimits::from_profile(&profile);
         limits.max_candidate_bytes_per_commit = max_bytes;
@@ -1574,6 +1573,7 @@ where
             },
             BudgetedRead::Exhausted => return Ok(None),
         };
+        reader.refuse_disputed_subject(key)?;
         Ok(Some(state))
     }
 
