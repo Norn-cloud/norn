@@ -1939,6 +1939,9 @@ impl<E: SqlEngine> CellStore<E> {
     /// engine already contains a store for another format or model;
     /// [`CellError::LedgerCorrupt`] when its ledger does not verify; engine
     /// errors otherwise.
+    /// Fresh stores use SQLite's `lower`, `hex`, and `randomblob` functions.
+    /// Hosts excluding these functions must use [`Self::from_engine_with_identity_source`]
+    /// or [`Self::from_engine_bound`]. Reopening never invokes the identity source.
     pub fn from_engine(conn: E, model: Model) -> Result<Self, CellError> {
         Self::from_engine_with_identity_source(conn, model, crate::cell_identity::generate)
     }
