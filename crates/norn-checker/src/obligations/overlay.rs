@@ -53,7 +53,6 @@ impl OverlayPlan {
         &self.retained_sha256
     }
     /// Source-derived conjunctions; satisfiability has not been established.
-    #[must_use]
     pub fn goals(
         &self,
     ) -> impl Iterator<Item = (&norn_ir::mapping::InterpretationEndpoint, &[LinearGuard])> {
@@ -264,7 +263,10 @@ fn entity_guards(
                     .collect(),
             )
         }
-        _ => return Err(refuse("unsupported_predicate")),
+        norn_ir::EntityRoot::V2Extension(_)
+        | norn_ir::EntityRoot::V2PropertyTypes(_)
+        | norn_ir::EntityRoot::V2Markings(_)
+        | norn_ir::EntityRoot::V1(_) => return Err(refuse("unsupported_predicate")),
     };
     let bound = bound.map_err(|_error| refuse("unsupported_predicate"))?;
     let guards = invariants
