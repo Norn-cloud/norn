@@ -213,6 +213,26 @@ async fn equivalent_governed_surfaces() {
         let (accepted, failed) = invoke(surface, &url, "demo", input.clone(), "melt").await;
         assert!(!failed, "{surface}: {accepted}");
         assert_eq!(accepted["replayed"], false);
+        assert_eq!(accepted["record"]["actionId"], "demo.melt.record");
+        assert_eq!(accepted["record"]["actor"], "demo");
+        let measurement = host
+            .cell()
+            .expect("cell")
+            .store()
+            .read()
+            .object("main", "demo.MeltMeasurement", "melt-1")
+            .expect("read")
+            .expect("committed measurement");
+        for (property, number) in [
+            ("input_fine_g", "100"),
+            ("output_fine_g", "99.2"),
+            ("loss_fine_g", "0.8"),
+        ] {
+            assert_eq!(
+                measurement.values.get(property),
+                Some(&norn_ir::RuntimeValue::from_json_text(number).expect("exact mass"))
+            );
+        }
         let before = dump(&host);
         for retry_surface in ["http", "mcp", "cli", "ui"] {
             let (replayed, failed) =
@@ -222,7 +242,8 @@ async fn equivalent_governed_surfaces() {
             assert_eq!(replayed["record"], accepted["record"]);
             assert_eq!(dump(&host), before, "retry commits nothing");
         }
-        let (denied, failed) = invoke(surface, &url, "forbidden", input, "denied").await;
+        let (denied, failed) = invoke(surface, &url, "forbidden",
+            json!({"id":"melt-denied","input_fine_g":"100.000","output_fine_g":"99.200","loss_fine_g":"0.800"}), "denied").await;
         assert!(failed, "{surface}: {denied}");
         assert_eq!(denied["code"], "authz.denied");
         assert_eq!(denied["category"], "permission");
