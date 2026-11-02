@@ -10,7 +10,7 @@ It holds every check over the typed IR in `norn-ir` (T1-CHK-1, #2524, moved them
 - `conformance/diagnostic-codes/` is the authoritative per-code conformance directory; `codes::conformance_manifest()` assembles the same public manifest for other frontends (#2425).
 - `diagnostics_to_json` is the stable diagnostic JSON format (`norn-checker/diagnostics@1`); `check_artifact_json` is the decode-then-check JSON admission entry point. The implemented Rust `norn check` command emits an admission report JSON envelope, not this standalone diagnostic format.
 - `fixtures/invalid/manifest.json` (repo root) lists invalid artifacts with `file`/`reason`/`error_at`/`code`; `tests/diagnostic_snapshots.rs` asserts each is rejected with that code at that JSON pointer and pins the full JSON output in `tests/snapshots/`. `fixtures/rule-ir-v2/invalid/manifest.json` is the same for the RuleIR v2 Norn-profile rejection corpus (one fixture per profile code; `jdm_profile.rs`), snapshotted in `tests/snapshots/rule-ir-v2/`.
-- Regenerate the manifest and snapshots with `NORN_CHECKER_UPDATE_GOLDENS=1 cargo test -p norn-checker --test code_registry --test diagnostic_snapshots`, then review the diff.
+- Regenerate snapshots with `NORN_CHECKER_UPDATE_GOLDENS=1 cargo test -p norn-checker --test diagnostic_snapshots`, then review the diff.
 
 ## Check receipts (#2851)
 
