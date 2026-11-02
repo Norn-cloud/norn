@@ -4639,6 +4639,26 @@
         "sha256"
       ]
     },
+    "InterpretationFormat": {
+      "description": "Only the interpretation wire format decodes here.",
+      "oneOf": [
+        {
+          "description": "First interpretation contract.",
+          "type": "string",
+          "const": "norn.interpretation/1"
+        }
+      ]
+    },
+    "InterpretationRole": {
+      "description": "A law interpretation is neither source evidence nor term correspondence.",
+      "oneOf": [
+        {
+          "description": "Subject to contract totality and preservation obligations.",
+          "type": "string",
+          "const": "law_interpretation"
+        }
+      ]
+    },
     "Invariant": {
       "description": "One declared invariant of an object type or interface.",
       "type": "object",
@@ -5453,6 +5473,35 @@
         "properties"
       ]
     },
+    "LawInterpretationIr": {
+      "description": "Typed interpretation contract. Admission refuses until conformance exists.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "Closed format discriminator.",
+          "$ref": "#/$defs/InterpretationFormat"
+        },
+        "role": {
+          "description": "Explicit semantic role.",
+          "$ref": "#/$defs/InterpretationRole"
+        },
+        "sourceLayer": {
+          "description": "Layer whose contract must be preserved.",
+          "$ref": "#/$defs/InterpretationEndpoint"
+        },
+        "targetLayer": {
+          "description": "Layer interpreting that contract.",
+          "$ref": "#/$defs/InterpretationEndpoint"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "role",
+        "sourceLayer",
+        "targetLayer"
+      ]
+    },
     "LawModality": {
       "description": "Scoped temporal vocabulary; nested temporal operators have no wire representation.",
       "oneOf": [
@@ -6237,8 +6286,8 @@
         "reason"
       ]
     },
-    "MappingPayload": {
-      "description": "The payload of a `mapping` artifact: an interface-scoped mapping\n([`mapping::MappingIr`], T8-MAP-1a).",
+    "MappingIr": {
+      "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
       "type": "object",
       "properties": {
         "entitlements": {
@@ -6291,6 +6340,19 @@
         "source",
         "interfaces",
         "maps"
+      ]
+    },
+    "MappingPayload": {
+      "description": "The payload of a `mapping` artifact: source-record transforms or a\nseparately checked law interpretation ([`mapping::MappingDocument`]).",
+      "oneOf": [
+        {
+          "description": "Source records produce ordinary entity facts, never inherited laws.",
+          "$ref": "#/$defs/MappingIr"
+        },
+        {
+          "description": "A separately checked interpretation between exact ontology layers.",
+          "$ref": "#/$defs/LawInterpretationIr"
+        }
       ]
     },
     "MappingRelation": {

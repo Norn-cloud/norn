@@ -43,6 +43,44 @@ const MAPPING_ID: &str = "erpnext.norn_core";
 const FASHION_SOURCE_ID: &str = "erpnext.fashion_source_schema";
 const FASHION_MAPPING_ID: &str = "erpnext.fashion_item.mapping";
 
+#[test]
+fn map_roles_unqualified_interpretations_refuse_admission_and_record_compilation() {
+    use norn_ir::mapping::{
+        InterpretationEndpoint, InterpretationFormat, InterpretationRole, LawInterpretationIr,
+    };
+    let endpoint = |id: &str| InterpretationEndpoint {
+        artifact_id: id.to_owned(),
+        version: "1.0.0".to_owned(),
+        sha256: "a".repeat(64),
+    };
+    let document = LawInterpretationIr {
+        format: InterpretationFormat::V1,
+        role: InterpretationRole::LawInterpretation,
+        source_layer: endpoint("toy.capacity"),
+        target_layer: endpoint("toy.credit"),
+    };
+    let artifact = envelope(
+        "toy.capacity_credit",
+        "mapping",
+        &serde_json::to_value(document).expect("typed interpretation serializes"),
+    );
+    let findings = check_artifact_set(
+        std::slice::from_ref(&artifact),
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.is_error() && f.code == "mapping.interpretation.unsupported"),
+        "{findings:#?}"
+    );
+    assert!(compile_mapping_artifact(&artifact, &[], &[]).is_err());
+}
+
 fn ir_fixtures() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../norn-ir/tests/fixtures")
 }
