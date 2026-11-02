@@ -1,0 +1,95 @@
+{
+  "artifactId": "demo.erpnext.Measurement.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Synthetic ERPNext measurement evidence",
+  "namespace": "demo.erpnext",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "demo.erpnext.Measurement",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "metal",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "gold"
+              },
+              {
+                "value": "silver"
+              }
+            ]
+          }
+        },
+        {
+          "id": "role",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "input"
+              },
+              {
+                "value": "output"
+              },
+              {
+                "value": "loss"
+              }
+            ]
+          }
+        },
+        {
+          "id": "gross_grams",
+          "type": {
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "purity",
+          "type": {
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "id": "fine_grams",
+          "type": {
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-erpnext/artifacts/demo.erpnext.Measurement.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
