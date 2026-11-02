@@ -60,24 +60,26 @@ fn findings(artifacts: &[ArtifactEnvelope]) -> Vec<norn_checker::Diagnostic> {
 fn pricing(artifacts: &[ArtifactEnvelope]) -> (ObjectTypeDef, norn_ir::ActionRoot) {
     let entity = artifacts
         .iter()
-        .find_map(|a| match &a.payload {
-            ArtifactPayload::Entity(payload) => Some(
+        .find_map(|a| {
+            let ArtifactPayload::Entity(payload) = &a.payload else {
+                return None;
+            };
+            Some(
                 payload
                     .to_json_value()
                     .decode::<EntityRootV2>()
                     .expect("entity root")
                     .object_type,
-            ),
-            _ => None,
+            )
         })
         .expect("exchange price type");
     let action = artifacts
         .iter()
-        .find_map(|a| match &a.payload {
-            ArtifactPayload::Action(payload) => {
-                Some(payload.to_json_value().decode().expect("action root"))
-            }
-            _ => None,
+        .find_map(|a| {
+            let ArtifactPayload::Action(payload) = &a.payload else {
+                return None;
+            };
+            Some(payload.to_json_value().decode().expect("action root"))
         })
         .expect("pricing action");
     (entity, action)
