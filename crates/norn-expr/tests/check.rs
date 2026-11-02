@@ -1863,7 +1863,8 @@ fn rate_environment(currency: &str, denominator: &str) -> (ZenTypeEnv, Type) {
         ("grams".into(), decimal(Some(unit("g")), None, None)),
         ("scalar".into(), Type::Number),
     ]);
-    let env = ZenTypeEnv::input_only(fields, norn_expr::EnvOptions::default()).unwrap();
+    let env = ZenTypeEnv::input_only(fields, norn_expr::EnvOptions::default())
+        .expect("fixed currency rate environment");
     let money = Type::Decimal {
         scale: 2,
         unit: None,

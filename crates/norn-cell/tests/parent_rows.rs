@@ -2836,7 +2836,7 @@ fn caller_cannot_choose_an_owned_child_lifecycle_initial_state() {
 }
 
 #[test]
-fn val_exact_later_row_derivation_reads_the_materialized_earlier_value() {
+fn val_exact_row_derivation_refuses_another_derived_target_without_writes() {
     let mut definitions = types_with_derived_idx();
     let child = definitions
         .iter_mut()
@@ -2860,7 +2860,7 @@ fn val_exact_later_row_derivation_reads_the_materialized_earlier_value() {
         "true",
         &json!({"derived_idx":"self.idx","double_quantity":"self.derived_idx * 2"}),
     );
-    commit_action(
+    let refusal = commit_action(
         &mut cell,
         &catalog,
         &call(
@@ -2874,13 +2874,13 @@ fn val_exact_later_row_derivation_reads_the_materialized_earlier_value() {
         ),
         &Allow,
     )
-    .expect("later exact derivation reads the earlier stored value");
-    assert_derived_idx(&cell, "row-a", 1);
-    let row = cell.load(&row_key("row-a")).expect("row loads");
-    assert_eq!(
-        row.values
-            .as_ref()
-            .and_then(|values| values.get("double_quantity")),
-        Some(&integer(2))
+    .expect_err("row derivation targets remain excluded from the shared scope");
+    assert_eq!(refusal.code(), "decision.invalid_output");
+    assert!(
+        cell.load(&row_key("row-a"))
+            .expect("row loads")
+            .values
+            .is_none()
     );
+    assert!(cell.commits().expect("ledger loads").is_empty());
 }
