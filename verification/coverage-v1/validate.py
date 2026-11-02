@@ -408,8 +408,12 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     # Bind commands to executable steps and the matrices that cover the plan;
     # comments, environment values and a cheap-only invocation earn no credit.
     workflow = yaml.load(source, Loader=WorkflowLoader)
-    require(workflow["on"].get("pull_request") == {"types": ["opened", "synchronize", "reopened", "ready_for_review"]},
-            "pull_request must preserve existing activities and admit ready_for_review")
+    require(workflow.get("on") == {
+        "pull_request": {"types": ["opened", "synchronize", "reopened", "ready_for_review"]},
+        "pull_request_target": None,
+        "issue_comment": {"types": ["created", "edited", "deleted"]},
+        "push": {"branches": ["main"]}, "merge_group": None, "workflow_dispatch": None,
+    }, "workflow must preserve every trigger and admit ready_for_review")
     require(workflow.get("concurrency") == {
         "group": "${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
         "cancel-in-progress": "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",

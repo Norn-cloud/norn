@@ -656,6 +656,14 @@ def workflow_context_canaries(source: str) -> None:
             expression = re.sub(r"!(?!=)", " not ", expression)
             if bool(eval(expression, {"__builtins__": {}}, {})) != (event != "pull_request"):
                 raise AssertionError(f"cancelled verdict scheduling drift: {event}")
+        for trigger in workflow["on"]:
+            document = copy.deepcopy(workflow)
+            del document["on"][trigger]
+            rejected(f"removed trigger {trigger}", document)
+        for name in ("core", "plan", "test", "phase", "full"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["steps"][-1]["shell"] = "/usr/bin/true {0}"
+            rejected(f"{name} shell override", document)
         for key in ("DRAFT", "BASE", "HEAD_SHA", "CORE", "PLANNED", "TEST", "PHASE"):
             document = copy.deepcopy(workflow)
             document["jobs"]["full"]["steps"][0]["env"][key] = "forged"
