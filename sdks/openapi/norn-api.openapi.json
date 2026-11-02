@@ -5999,9 +5999,16 @@
       },
       "NornIrIrVersion01": {
         "type": "string",
-        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy and derived roots and of ontology business packs.",
         "enum": [
           "0.1"
+        ]
+      },
+      "NornIrIrVersion02": {
+        "type": "string",
+        "description": "Exact-decimal setting wire profile; older profiles require explicit migration.",
+        "enum": [
+          "0.2"
         ]
       },
       "NornIrJdmCustomNodeContent": {
@@ -7453,7 +7460,7 @@
       },
       "NornIrLayoutIrVersion01": {
         "type": "string",
-        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy and derived roots and of ontology business packs.",
         "enum": [
           "0.1"
         ]
@@ -11239,7 +11246,7 @@
                 "type": "string"
               },
               "settingVersion": {
-                "$ref": "#/components/schemas/NornIrIrVersion01"
+                "$ref": "#/components/schemas/NornIrIrVersion02"
               },
               "supersedes": {
                 "$ref": "#/components/schemas/NornIrSettingSupersedes",
