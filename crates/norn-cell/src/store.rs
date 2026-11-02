@@ -1516,6 +1516,10 @@ pub struct WrittenRow {
     pub key: String,
     /// The new version.
     pub version: u64,
+    /// SNAPSHOT-RECEIPT-1: producing receipt commits to this incarnation.
+    /// Missing legacy commitments deserialize but never prove historical values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_sha256: Option<String>,
 }
 
 /// Ordered atomic intents/results. A singleton retains its canonical scalar encoding.
@@ -2644,7 +2648,7 @@ impl<E: SqlEngine> CellStore<E> {
             probe(CommitPoint::LinksApplied)?;
             if let Some(validate) = self.candidate_validator.get() {
                 validate(
-                    &StoreReader::new(&self.conn, commit_model),
+                    &writer.reader(),
                     effective_batch,
                     installation.is_some(),
                 )?;

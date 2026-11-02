@@ -504,6 +504,8 @@
     "crates/norn-cell/tests/temporal_source_world.rs",
     "crates/norn-api/src/refusal.rs",
     "crates/norn-api/src/scope.rs",
-    "crates/norn-api/tests/host_perimeter.rs"
+    "crates/norn-api/tests/host_perimeter.rs",
+    "crates/norn-cell/src/receipt_commitment.rs",
+    "verification/kernel-l1/receipt_commitment_kani.rs"
   ]
 }
