@@ -65,7 +65,7 @@ correspondence against an independent transitive-closure oracle; these are bound
 Admission computes effective types from retained exact definitions, resolves interfaces and specialization, rejects cycles and conflicting diamond members. Reuse `EffectiveCatalog::target_types` for law subject resolution. Inherited constraints are conjoined, never replaced. A lifecycle transition selects its declared source state, evaluates all inherited/local guards and produces explicit effects for 04.
 
 GRAPH-STATE-1 keeps unreachable or ambiguous observed lifecycle states in typed
-findings with source provenance. Only a unique declared path projects lifecycle
+findings with source provenance. Only a unique shortest declared path projects lifecycle
 state; an observation cannot reopen a posted terminal state. Commands still use
 the ordinary lifecycle/guard and immutable-state admission checks.
 
