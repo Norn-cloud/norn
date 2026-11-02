@@ -63,7 +63,7 @@ class GuaranteesScenarios(unittest.TestCase):
 
     def test_guarantees_committed_inputs_are_immutable_during_workspace_edits(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             files = {"verification/coverage-v1/manifest/index.json": {},
                      "verification/coverage-v1/manifest/subsystems/core.json": {"obligations": ["LAW"]},
                      **{name: {"obligations": []} for name in matrix.REGISTRIES},
