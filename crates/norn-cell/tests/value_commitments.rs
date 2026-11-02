@@ -2000,7 +2000,9 @@ fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
         bounded.max_candidate_bytes_per_commit = bytes;
         let mut budget = DecodeBudget::new(&bounded);
         match read(20, &mut budget).expect("bounded historical read") {
-            HistoricalEvidence::Exhausted => partial_refuses |= budget.remaining_rows() <= limits.max_scan.saturating_sub(7);,
+            HistoricalEvidence::Exhausted => {
+                partial_refuses |= budget.remaining_rows() <= limits.max_scan.saturating_sub(7);
+            },
             HistoricalEvidence::Found(proof) => assert_eq!(proof.snapshot().version, 2, "complete latest eligible answer"),
             HistoricalEvidence::Missing => panic!("retained eligible answer disappeared"),
         }
