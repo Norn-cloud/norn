@@ -299,3 +299,16 @@ fn val_unit_unrelated_deep_payload_does_not_report_a_unit_mismatch() {
             .any(|finding| finding.code == MISMATCH)
     );
 }
+
+proptest! {
+    #[test]
+    fn val_unit_action_literal_thresholds_keep_the_inferred_unit(minimum in 0_u16..1000) {
+        let mut document: serde_json::Value = serde_json::from_str(include_str!("../../../tools/norn-ts/fixtures/definitions/jewelry-pricing.ir.json")).expect("compiled fixture");
+        let action = document.as_array_mut().expect("artifact set").iter_mut().find(|a| a["kind"] == "action").expect("action");
+        action["payload"]["preconditions"][0] = format!("fine_g > {minimum}").into();
+        let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_value(document).expect("threshold variation");
+        let diagnostics = norn_checker::check_artifact_set(&artifacts, &norn_checker::EntityArtifactSetContext { registry: &BTreeSet::new(), base: &[units::pack().expect("units")], tenant: None });
+        prop_assert!(diagnostics.iter().all(|d| d.severity != norn_ir::DiagnosticSeverity::Error), "{diagnostics:?}");
+        prop_assert!(diagnostics.iter().any(|d| d.code == "core.values.literal_unit" && d.message.contains("unit g") && d.severity == norn_ir::DiagnosticSeverity::Info), "{diagnostics:?}");
+    }
+}
