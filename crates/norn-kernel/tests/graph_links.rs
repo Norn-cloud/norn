@@ -88,7 +88,7 @@ fn draft() -> CellCommit<u8, u8, u8> {
             edge("graph.Happening", "h", "destination", "b", true),
         ],
         events: vec![7],
-        effects: vec![Effect::Command(law_command(0))],
+        effects: vec![Effect::Perform(law_command(0, 0, 7))],
         ..CellCommit::empty()
     }
 }
