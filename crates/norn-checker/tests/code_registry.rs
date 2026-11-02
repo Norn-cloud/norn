@@ -111,6 +111,27 @@ fn dotted_source_literals() -> BTreeMap<String, BTreeSet<String>> {
             }
         }
     }
+    // Tool diagnostics have a separate emission authority; checker codes still
+    // require a Rust emission regardless of TypeScript mentions.
+    let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/norn-ts");
+    let output = std::process::Command::new("bun")
+        .arg(tool.join("src/cli-code-registry.ts"))
+        .output()
+        .expect("Bun is required to validate CLI diagnostic emission sites");
+    assert!(
+        output.status.success(),
+        "CLI emission scanner failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let codes: Vec<String> = serde_json::from_slice(&output.stdout).expect("CLI emissions JSON");
+    for code in codes {
+        if code.starts_with("cli.") {
+            found
+                .entry(code)
+                .or_default()
+                .insert("tools/norn-ts".to_owned());
+        }
+    }
     found
 }
 

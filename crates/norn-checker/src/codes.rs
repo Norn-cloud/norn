@@ -11,6 +11,8 @@
 //! Tiers follow the 2026-08-27 authoring/checker ruling
 //! (`knowledge/architecture/design-rulings-2026-08-27-authoring-gateway-checkers.md`).
 
+// CLI/authoring codes use the dedicated cli.* namespace. Their emission
+// authority is tools/norn-ts; all other codes require a Rust checker emission.
 use norn_ir::DiagnosticSeverity;
 
 /// The envelope declares an IR version this checker does not support.

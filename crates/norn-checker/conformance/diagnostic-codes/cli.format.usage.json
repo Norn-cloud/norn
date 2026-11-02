@@ -1,0 +1,7 @@
+{
+  "code": "cli.format.usage",
+  "message": "Unknown formatter option; use norn fmt [path...] [--check] [--json].",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}
