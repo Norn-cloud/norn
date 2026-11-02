@@ -26,10 +26,24 @@
             "building"
           ],
           "property": "status",
-          "terminal": [
-            "active"
-          ],
           "transitions": [
+            {
+              "from": [
+                "building"
+              ],
+              "guards": [
+                "(self.candidate != '') and (self.candidate_digest != '')"
+              ],
+              "id": "stage",
+              "to": "ready"
+            },
+            {
+              "from": [
+                "active"
+              ],
+              "id": "rebuild",
+              "to": "building"
+            },
             {
               "from": [
                 "ready"
