@@ -214,8 +214,8 @@ fn catalog_access(capabilities: &[&str]) -> (norn_authz::Pdp, norn_authz::Access
     );
     let schema = AuthzSchema::from_projected_cedarschema(&projection.schema).expect("schema");
     let access = serde_json::from_value(json!({"accessVersion":"0.1", "policyId":"test.catalog", "rules":
-        ["Type", "Property"].iter().map(|name| json!({"ruleId":format!("read_{name}"),
-            "actions":["norn.read"], "resourceType":format!("norn.catalog.{name}"), "scope":{"dimensions":["org"]}})).collect::<Vec<_>>()
+        (["Type", "Property"].iter().map(|name| json!({"ruleId":format!("read_{name}"),
+            "actions":["norn.read"], "resourceType":format!("norn.catalog.{name}"), "scope":{"dimensions":["org"]}})).collect::<Vec<_>>())
     })).expect("AccessIR");
     let scope = ScopeKey {
         org: "test".into(),
