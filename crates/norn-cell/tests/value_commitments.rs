@@ -297,7 +297,6 @@ proptest! {
     }
 }
 
-
 #[test]
 fn commitments_capture_each_materialized_version_and_survive_restart() {
     let dir = tempfile::tempdir().expect("directory");
