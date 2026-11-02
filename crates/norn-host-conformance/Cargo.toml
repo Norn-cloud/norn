@@ -11,5 +11,14 @@ description = "Native persisted Function and publication correspondence tests"
 name = "perform"
 path = "tests/perform.rs"
 
+[dev-dependencies]
+norn-metrics = { path = "../norn-metrics" }
+norn-cell = { path = "../norn-cell" }
+norn-kernel = { path = "../norn-kernel" }
+norn-ir = { path = "../norn-ir" }
+norn-checker = { path = "../norn-checker" }
+proptest = "1.11.0"
+serde_json = "1.0.150"
+
 [lints]
 workspace = true
