@@ -618,6 +618,52 @@ fn trusted_policy_preserves_retained_core_obligations() {
     );
 }
 
+#[test]
+fn trusted_policy_reads_entry_obligations_and_refuses_malformed_or_removed_entries() {
+    let base = policy_fixture();
+    for change in ["none", "missing", "empty", "identity", "order", "extra"] {
+        let mut candidate = policy_fixture();
+        drop_file(&mut candidate, COVERAGE_LEDGER);
+        let directory = "verification/coverage-v1/manifest/subsystems/quantity-ledger";
+        candidate.add(
+            &format!("{directory}/index.json"),
+            br#"{"obligations":{"$entries":"obligations"}}"#,
+            "code",
+        );
+        let id = "synthetic-preserved-obligation";
+        let hash = "2b6e3370813437d16485a55299d0d399cbbc4a57dc45f9202e8652184984af26";
+        let name = if change == "identity" { "wrong" } else { hash };
+        let mut value = json!({"order": 0, "value": id});
+        if change == "order" {
+            value["order"] = json!(true);
+        }
+        if change == "extra" {
+            value["extra"] = json!(true);
+        }
+        let path = format!("{directory}/obligations/{name}.json");
+        candidate.add(&path, &serde_json::to_vec(&value).unwrap(), "code");
+        if matches!(change, "missing" | "empty") {
+            drop_file(&mut candidate, &path);
+            if change == "empty" {
+                fs::remove_dir(candidate.root().join(format!("{directory}/obligations"))).unwrap();
+            }
+        }
+        candidate.save();
+        index_fixture(&candidate);
+        let baseline = if change == "empty" {
+            candidate.root()
+        } else {
+            base.root()
+        };
+        let errors = norn_skeleton_guard::ci::run(candidate.root(), baseline);
+        if matches!(change, "none" | "empty") {
+            assert!(errors.is_empty(), "{errors:?}");
+        } else {
+            assert!(!errors.is_empty(), "accepted {change}");
+        }
+    }
+}
+
 /// Remove `path` and its record from a fixture, as a pull request would.
 fn drop_file(fixture: &mut Fixture, path: &str) {
     fixture.records.retain(|record| record["path"] != path);
