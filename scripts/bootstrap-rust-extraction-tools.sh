@@ -58,6 +58,9 @@ if [[ ! -x "$opam_binary" ]]; then
     "$opam_binary"
   chmod +x "$opam_binary"
 fi
+printf '%s  %s\n' \
+  "edfca2630c373b44b7ee1c2f81cd8dcf67468d0db57d6c02158de553ac63dbd4" \
+  "$opam_binary" | sha256sum --check --status
 ln -sfn "$opam_binary" "$bin_root/opam"
 
 fstar_archive="$download_root/fstar-v$FSTAR_VERSION-Linux-x86_64.tar.gz"
@@ -88,7 +91,7 @@ export RUSTUP_TOOLCHAIN="$HAX_RUST_TOOLCHAIN"
 export OPAMROOT="$tool_root/opam-root"
 export PATH="$bin_root:$CARGO_HOME/bin:$PATH"
 # OCaml native compilation is memory intensive even with only four CPUs.
-export OPAMJOBS="${OPAMJOBS:-${NORN_VERIFICATION_BUILD_JOBS:-2}}"
+export OPAMJOBS="${OPAMJOBS:-1}"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-${NORN_VERIFICATION_BUILD_JOBS:-2}}"
 export OPAMSWITCH="$OPAM_SWITCH"
 receipt="$tool_root/extraction-install.sha256"
@@ -99,7 +102,7 @@ installation_digest() {
   sha256sum "${BASH_SOURCE[0]}"
   "$opam_binary" list --installed --short --columns=name,version
   find -L "$OPAMROOT/$OPAM_SWITCH/bin" "$OPAMROOT/$OPAM_SWITCH/lib" \
-    "$CARGO_HOME/bin" "$tool_root/rustup/toolchains" \
+    "$bin_root" "$CARGO_HOME/bin" "$tool_root/rustup/toolchains" \
     "$source_root/aeneas/bin" "$source_root/aeneas/charon/bin" \
     "$fstar_root" -type f -print0 | sort -z | xargs -0 -r sha256sum
 }
@@ -142,9 +145,8 @@ export OPAMSWITCH="$OPAM_SWITCH"
 eval "$("$opam_binary" env --set-root --set-switch --shell=sh)"
 
 (
-
-    cd "$source_root/hax"
-    ./setup.sh -j "${NORN_VERIFICATION_BUILD_JOBS:-2}" --no-cleanup
+  cd "$source_root/hax"
+  ./setup.sh -j "${NORN_VERIFICATION_BUILD_JOBS:-2}" --no-cleanup
 )
 ln -sfn "$CARGO_HOME/bin/cargo-hax" "$bin_root/cargo-hax"
 ln -sfn "$CARGO_HOME/bin/driver-hax-frontend-exporter" "$bin_root/driver-hax-frontend-exporter"
