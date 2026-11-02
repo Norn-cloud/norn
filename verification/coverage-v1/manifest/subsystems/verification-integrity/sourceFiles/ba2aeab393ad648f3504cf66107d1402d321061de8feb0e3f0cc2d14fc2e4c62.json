@@ -1,0 +1,4 @@
+{
+  "order": 27,
+  "value": "crates/norn-checker-wasm/scripts/build-pkg.sh"
+}

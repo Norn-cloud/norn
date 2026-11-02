@@ -1,0 +1,60 @@
+{
+  "obligations": {
+    "$entries": "obligations"
+  },
+  "obligationClaims": {
+    "$entries": "obligationClaims"
+  },
+  "runtime": {
+    "status": "tested",
+    "artifacts": {
+      "$entries": "runtime.artifacts"
+    },
+    "commands": {
+      "$entries": "runtime.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "runtime.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "runtime.resultArtifacts"
+    }
+  },
+  "model": {
+    "status": "partial",
+    "bound": "Admission/projection full nondeterministic models: BMC depth8. Quantity: exact enumeration of four 4-step resolution paths and both 15-step expiry paths, original submit/full invariant, 46 semantic transitions and 52 init/prefix checks. No quantity Apalache BMC verdict; general step remains sampled.",
+    "artifacts": {
+      "$entries": "model.artifacts"
+    },
+    "commands": {
+      "$entries": "model.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "model.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "model.resultArtifacts"
+    }
+  },
+  "proof": {
+    "status": "deferred",
+    "artifacts": {
+      "$entries": "proof.artifacts"
+    },
+    "commands": {
+      "$entries": "proof.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "proof.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "proof.resultArtifacts"
+    }
+  },
+  "limitations": {
+    "$entries": "limitations"
+  },
+  "sourceFiles": {
+    "$entries": "sourceFiles"
+  }
+}

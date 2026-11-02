@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+    "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry66fcc0fba4e26fae354f31143712a611643290b3d48db24686ae65fbb8968fae.evidence.proof.entry996c46e9dedcecf28bd15b5f3ba6e695f59a85e42c05962296be188ce5b8189a.selectors"
+    }
+  }
+}

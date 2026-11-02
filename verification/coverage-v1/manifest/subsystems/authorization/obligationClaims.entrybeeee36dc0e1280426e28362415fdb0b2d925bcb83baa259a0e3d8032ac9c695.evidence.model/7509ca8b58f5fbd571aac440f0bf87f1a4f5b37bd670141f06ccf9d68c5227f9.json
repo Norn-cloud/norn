@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt",
+    "command": "quint verify verification/stripmine-2026-08-22/models/authorization-commit-boundary.qnt --backend apalache --invariants typeOk atMostOnce acceptedOnlyWithExactBindings acceptedOnlyWithFreshVersions acceptedOnlyWithinValidityWindow rejectionPreservesCommitAuthority --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entrybeeee36dc0e1280426e28362415fdb0b2d925bcb83baa259a0e3d8032ac9c695.evidence.model.entry7509ca8b58f5fbd571aac440f0bf87f1a4f5b37bd670141f06ccf9d68c5227f9.selectors"
+    }
+  }
+}

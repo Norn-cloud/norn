@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "The trusted-assumption manifest records the current external boundary; independent toolchain reproduction and negative canary proofs are still needed for stronger supply-chain assurance."
+}
