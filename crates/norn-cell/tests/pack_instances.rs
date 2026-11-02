@@ -635,6 +635,7 @@ fn incomplete_stale_or_mixed_instance_bindings_refuse_before_install() {
     }
 }
 norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config { failure_persistence: None, ..norn_testkit::proptest::test_runner::Config::default() })]
     #[test]
     fn generated_stale_target_pins_never_bind_a_pack_instance(hash in "[0-9a-f]{64}") {
         static SOURCE: std::sync::LazyLock<Vec<ArtifactEnvelope>> = std::sync::LazyLock::new(artifacts);
