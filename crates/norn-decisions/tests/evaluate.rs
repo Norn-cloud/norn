@@ -1738,3 +1738,14 @@ proptest::proptest! {
         proptest::prop_assert_eq!(environment(mode).content_sha256().unwrap() == omitted.content_sha256().unwrap(), mode == Rounding::Refuse);
     }
 }
+
+proptest::proptest! {
+    #[test]
+    fn val_exact_typed_products_preserve_integer_reference(a in -1000_i32..1000, b in -1000_i32..1000) {
+        let env = norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::from([("x".to_owned(), norn_expr::Type::Decimal { scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse })]), norn_expr::EnvOptions::default()).unwrap();
+        let context = Value::object([("input", Value::object([("x", Value::Number(format!("{}{}.{:02}", if a<0 {"-"} else {""}, a.abs()/100, a.abs()%100).parse().unwrap()))]))]);
+        let expression = norn_expr::Expression::compile(&format!("input.x * {b} > 0")).unwrap();
+        let value = expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &norn_expr::Type::Bool).result.unwrap().into_value();
+        proptest::prop_assert_eq!(value, Value::Bool(a*b>0));
+    }
+}

@@ -69,3 +69,5 @@ At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `ru
 3. Enforce key/alias history and reference fences at commit; add concurrent collision/tombstone tests.
 4. Add temporal/calendar/content-reference pins and TIME-DST/BLOB-MISSING tests; align 06/08 temporal lookup.
 5. Add governed merge/split plans after 04/06 migration checks; prove old-reference preservation with ID-RENAME extensions.
+
+Typed admission marks actual Decimal reads and declared destinations, admits derived exact predicates, and rejects destination-free division or unsupported inexact functions as `core.values.inexact`; kernel invariant evaluation binds that admission and the shared exact VM to the same catalog and source. Other consumer/store activation and explicit round lowering remain separate cuts.
