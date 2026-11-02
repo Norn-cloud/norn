@@ -502,6 +502,13 @@
     "crates/norn-cell/tests/temporal_source_world.rs",
     "crates/norn-api/src/refusal.rs",
     "crates/norn-api/src/scope.rs",
-    "crates/norn-api/tests/host_perimeter.rs"
+    "crates/norn-api/tests/host_perimeter.rs",
+    "crates/norn-cell/src/compute.rs",
+    "crates/norn-cell/src/compute/historical.rs",
+    "crates/norn-cell/src/compute/ivm.rs",
+    "crates/norn-cell/src/history_selection.rs",
+    "crates/norn-cell/tests/historical_delta.rs",
+    "crates/norn-cell/tests/historical_question.rs",
+    "verification/kernel-l1/history_selection_kani.rs"
   ]
 }

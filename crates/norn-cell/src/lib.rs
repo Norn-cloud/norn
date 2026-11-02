@@ -30,11 +30,13 @@
 //!   commit consumes.
 
 mod codec;
+pub mod compute;
 pub mod engine;
 pub mod error;
 pub mod export;
 mod export_journal;
 mod history;
+mod history_selection;
 pub mod host;
 mod migration;
 pub mod model;
@@ -50,7 +52,7 @@ pub mod system;
 mod write;
 
 pub use error::CellError;
-pub use history::{FactSnapshot, FactVersionEvidence};
+pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{

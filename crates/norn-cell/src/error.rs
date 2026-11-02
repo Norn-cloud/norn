@@ -20,6 +20,9 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// Deterministic query semantics or snapshot preconditions refused.
+    #[error("{0}")]
+    ComputeRefused(&'static str),
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,

@@ -10,7 +10,7 @@ use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::ExportRecord;
 use crate::export_journal::ConsumedInput;
-use crate::read::{LedgerEntry, ObjectRecord, StoreReader, to_i64, to_u64};
+use crate::read::{LedgerEntry, LedgerHead, ObjectRecord, StoreReader, to_i64, to_u64};
 use crate::system::{FACT_VALUES, GENESIS_HASH, INBOX, RECEIPT, RUN, STORE_FORMAT};
 use crate::{CellStore, CommitOutcome, InstalledDefinitionInput, Model, Receipt};
 
@@ -47,6 +47,105 @@ pub struct FactVersionEvidence {
     snapshot: FactSnapshot,
     snapshot_sha256: String,
     receipt: Receipt,
+}
+
+/// Immutable knowledge coordinate; the frontier disambiguates equal logical clocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnowledgeCutoff {
+    /// Inclusive authenticated recorded-time bound.
+    pub recorded_at: norn_kernel::LogicalTime,
+    /// Inclusive immutable source commit frontier (zero is the empty history).
+    pub frontier: u64,
+}
+
+/// A bounded historical lookup distinguishes absence from exhausted evidence.
+#[derive(Debug)]
+pub enum HistoricalEvidence {
+    /// Authenticated incarnation; a tombstone retains its source receipt.
+    Found(Box<FactVersionEvidence>),
+    /// No incarnation was known at the requested cutoff.
+    Missing,
+    /// No partial answer is returned after the read budget is exhausted.
+    Exhausted,
+}
+
+// A cache is bound to one immutable reader, never action JSON or another cell.
+pub(crate) struct HistoryRead<'r, 'c, S: SqlEngine> {
+    reader: &'r StoreReader<'c, S>,
+    receipts: BTreeMap<u64, Receipt>,
+}
+fn fact_receipt_matches(snapshot: &FactSnapshot, receipt: &Receipt) -> bool {
+    receipt.body.world == snapshot.world
+        && receipt.body.written.iter().any(|row| {
+            row.object_type == snapshot.object_type
+                && row.key == snapshot.key
+                && row.version == snapshot.version
+        })
+}
+impl<S: SqlEngine> HistoryRead<'_, '_, S> {
+    fn receipt(
+        &mut self,
+        commit: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<&Receipt>, CellError> {
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.receipts.entry(commit) {
+            let Some(receipt) = self.reader.receipt_at_with_budget(commit, budget)? else {
+                return Ok(None);
+            };
+            entry.insert(receipt);
+        }
+        Ok(self.receipts.get(&commit))
+    }
+    pub(crate) fn known_at(
+        &mut self,
+        world: &str,
+        kind: &str,
+        key: &str,
+        cutoff: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<HistoricalEvidence, CellError> {
+        let reader = self.reader;
+        let root = reader.root_type(kind).unwrap_or(kind);
+        reader.select_evidence_known_at_with_budget(
+            world,
+            kind,
+            key,
+            cutoff,
+            budget,
+            |version, budget| self.evidence(world, root, key, version, budget),
+        )
+    }
+    fn evidence(
+        &mut self,
+        world: &str,
+        kind: &str,
+        key: &str,
+        version: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<FactVersionEvidence>, CellError> {
+        let root = self.reader.root_type(kind).unwrap_or(kind);
+        let metadata:Option<(i64,i64)>=self.reader.conn.query_optional(
+            &format!("SELECT octet_length(snapshot)+octet_length(hash)+128,commit_seq FROM \"{FACT_VALUES}\" WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4"),
+            params![world,root,key,to_i64(version,"fact version")?],|row|Ok((row.get(0)?,row.get(1)?)),
+        )?;
+        let (bytes, commit) = metadata.ok_or_else(unproven_snapshot)?;
+        if !budget.charge_rows(1) || !budget.charge(to_u64(bytes, "snapshot bytes")?) {
+            return Ok(None);
+        }
+        let snapshot = self.reader.proven_snapshot(world, kind, key, version)?;
+        let snapshot_sha256 = hash_json(&snapshot)?;
+        let Some(receipt) = self.receipt(to_u64(commit, "fact commit")?, budget)? else {
+            return Ok(None);
+        };
+        if !fact_receipt_matches(&snapshot, receipt) {
+            return Err(unproven_snapshot());
+        }
+        Ok(Some(FactVersionEvidence {
+            snapshot,
+            snapshot_sha256,
+            receipt: receipt.clone(),
+        }))
+    }
 }
 
 impl FactVersionEvidence {
@@ -166,12 +265,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let receipt = self
             .receipt_at(to_u64(commit_seq, "fact commit seq")?)?
             .ok_or_else(unproven_snapshot)?;
-        if hash_json(&receipt.body)? != receipt.hash
-            || receipt.body.world != world
-            || !receipt.body.written.iter().any(|row| {
-                row.object_type == snapshot.object_type && row.key == key && row.version == version
-            })
-        {
+        if hash_json(&receipt.body)? != receipt.hash || !fact_receipt_matches(&snapshot, &receipt) {
             return Err(unproven_snapshot());
         }
         Ok(FactVersionEvidence {
@@ -230,6 +324,147 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         self.fact_version_evidence(world, object_type, key, version)
             .map(Some)
+    }
+
+    /// ASOF-KNOWLEDGE-1: choose the newest authenticated incarnation known by
+    /// the inclusive cutoff. Effective-time interpretation and authorization
+    /// remain with the declared question and exporting host.
+    ///
+    /// # Errors
+    /// Corrupt/missing version proof, invalid identity or storage failure.
+    pub fn fact_evidence_known_at_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        known_as_of: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<HistoricalEvidence, CellError> {
+        let mut history = self.history_read();
+        if known_as_of.frontier > 0 && history.receipt(known_as_of.frontier, budget)?.is_none() {
+            return Ok(HistoricalEvidence::Exhausted);
+        }
+        history.known_at(world, object_type, key, known_as_of, budget)
+    }
+
+    pub(crate) fn history_read(&self) -> HistoryRead<'_, '_, E> {
+        HistoryRead {
+            reader: self,
+            receipts: BTreeMap::new(),
+        }
+    }
+
+    fn select_evidence_known_at_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        known_as_of: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+        mut resolve: impl FnMut(
+            u64,
+            &mut crate::reactive::DecodeBudget,
+        ) -> Result<Option<FactVersionEvidence>, CellError>,
+    ) -> Result<HistoricalEvidence, CellError> {
+        let root = self.root_type(object_type).unwrap_or(object_type);
+        let capacity = budget.remaining_rows() / 2;
+        let limit = capacity.saturating_add(1);
+        let rows = self.conn.query(
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 AND \"commit_seq\"<=?4 ORDER BY \"commit_seq\", \"version\" LIMIT ?5"),
+            params![world, root, key, to_i64(known_as_of.frontier, "knowledge frontier")?, to_i64(u64::try_from(limit).map_err(|_bound| unproven_snapshot())?, "historical limit")?],
+        )?;
+        let versions = rows
+            .into_iter()
+            .map(|row| to_u64(SqlRow(row).get(0)?, "fact version"))
+            .collect::<Result<Vec<_>, CellError>>()?;
+        if versions.len() > capacity {
+            return Ok(HistoricalEvidence::Exhausted);
+        }
+        let mut selected = None;
+        let mut evidence = None;
+        for version in versions {
+            let Some(candidate) = resolve(version, budget)? else {
+                return Ok(HistoricalEvidence::Exhausted);
+            };
+            let next = crate::history_selection::select_known_version(
+                known_as_of.recorded_at.as_millis(),
+                selected,
+                version,
+                candidate.receipt().body.logical_time,
+            );
+            if next != selected {
+                evidence = Some(candidate);
+                selected = next;
+            }
+        }
+        Ok(evidence
+            .filter(|proof| {
+                proof
+                    .snapshot()
+                    .lineage
+                    .iter()
+                    .any(|name| name == object_type)
+            })
+            .map_or(HistoricalEvidence::Missing, |proof| {
+                HistoricalEvidence::Found(Box::new(proof))
+            }))
+    }
+
+    /// Read a pinned receipt only after admitting its complete encoded size.
+    /// ASOF-KNOWLEDGE-1: absence/corruption refuses; None means budget exhaustion.
+    /// # Errors
+    /// Missing/corrupt receipt or engine failure. The empty frontier has no receipt.
+    pub fn receipt_at_with_budget(
+        &self,
+        commit_seq: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<Receipt>, CellError> {
+        let bytes: Option<i64> = self.conn.query_optional(
+            &format!("SELECT octet_length(\"receipt\") + octet_length(\"receipt_hash\") + COALESCE(octet_length(\"world\"),0) + COALESCE(octet_length(\"idempotency_key\"),0) + COALESCE(octet_length(\"request_hash\"),0) FROM \"{RECEIPT}\" WHERE \"commit_seq\"=?1"),
+            params![to_i64(commit_seq,"knowledge frontier")?], |row| row.get(0),
+        )?;
+        let bytes = to_u64(
+            bytes.ok_or_else(unproven_snapshot)?,
+            "frontier receipt bytes",
+        )?;
+        if !budget.charge_rows(1) || !budget.charge(bytes.saturating_add(64)) {
+            return Ok(None);
+        }
+        let receipt = self.receipt_at(commit_seq)?.ok_or_else(unproven_snapshot)?;
+        if hash_json(&receipt.body)? != receipt.hash {
+            return Err(unproven_snapshot());
+        }
+        Ok(Some(receipt))
+    }
+
+    /// Bind a historical result to the actual immutable ledger prefix.
+    /// ASOF-KNOWLEDGE-1: a frontier recorded after its cutoff refuses.
+    /// # Errors
+    /// Unproven/future receipt, invalid ledger span, or engine failure.
+    pub fn historical_revision_with_budget(
+        &self,
+        cutoff: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<LedgerHead>, CellError> {
+        if cutoff.frontier == 0 {
+            return Ok(Some(LedgerHead::genesis()));
+        }
+        let Some(receipt) = self.receipt_at_with_budget(cutoff.frontier, budget)? else {
+            return Ok(None);
+        };
+        if receipt.body.logical_time > cutoff.recorded_at.as_millis() {
+            return Err(CellError::TemporalLeakage);
+        }
+        let seq = crate::history_selection::receipt_last_sequence(
+            receipt.body.first_event_seq,
+            receipt.body.event_count,
+        )
+        .ok_or_else(unproven_snapshot)?;
+        Ok(Some(LedgerHead {
+            seq,
+            hash: receipt.body.ledger_head,
+            commits: receipt.body.commit_seq,
+        }))
     }
 
     pub(crate) fn retained_fact_scope(
