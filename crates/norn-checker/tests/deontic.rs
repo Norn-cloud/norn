@@ -467,7 +467,8 @@ fn wording_fixture(
         "format":"norn.law_wording/1", "artifactId":format!("{}.wording", requirement.norm.law.id),
         "lawArtifactId":law.artifact_id, "lawSha256":norn_checker::ArtifactRef::of(&law).expect("pin").sha256, "requirement":requirement,
     });
-    let wording = norn_checker::law_wording::LawWordingArtifact::parse(&document.to_string()).expect("compiled wording");
+    let wording = norn_checker::law_wording::LawWordingArtifact::parse(&document.to_string())
+        .expect("compiled wording");
     (law, wording)
 }
 
@@ -504,8 +505,14 @@ fn wording_admission_refuses_missing_templates_and_malformed_pins() {
         Err(WordingError::Requirement(_))
     ));
     wording.law_sha256 = "0".repeat(64);
-    assert!(matches!(admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En), Err(WordingError::Requirement(_))));
-    assert!(norn_checker::law_wording::LawWordingArtifact::parse(r#"{"format":"one","format":"two"}"#).is_err());
+    assert!(matches!(
+        admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En),
+        Err(WordingError::Requirement(_))
+    ));
+    assert!(
+        norn_checker::law_wording::LawWordingArtifact::parse(r#"{"format":"one","format":"two"}"#)
+            .is_err()
+    );
     wording.law_sha256 = "not-a-digest".into();
     assert!(matches!(
         admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En),

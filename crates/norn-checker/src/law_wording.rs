@@ -117,7 +117,7 @@ impl LawWordingArtifact {
     /// # Errors
     /// Refuses unknown/missing fields, malformed JSON and invalid structured requirements.
     pub fn parse(input: &str) -> Result<Self, WordingError> {
-        norn_canonical::parse_json_verbatim(input).map_err(|_| WordingError::Document)?;
+        norn_canonical::parse_json_verbatim(input).map_err(|_error| WordingError::Document)?;
         let value: serde_json::Value =
             serde_json::from_str(input).map_err(WordingError::Encoding)?;
         let fields = value.as_object().ok_or(WordingError::Document)?;
