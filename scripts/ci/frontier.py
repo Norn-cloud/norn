@@ -7,7 +7,9 @@
 `collect` reads run, job, step and PR timeline timings through `gh api`. v3 records every paginated per-attempt job, including cancelled service and
 reclamation overlap, job queue time and READY-to-plan latency. Merge throughput
 counts distinct merged PRs in the measured window; it is separate from successful
-qualification identities. Missing READY timestamps remain unknown.
+qualification identities. Missing READY timestamps remain unknown. Missing job
+queue timestamps remain unknown; pre-start intervals include dependencies and
+are reported separately, never substituted for runner queue time.
 `check` recomputes the statistics from the stored rows offline and
 fails on drift, so the summary can never disagree with its evidence.
 
@@ -104,10 +106,11 @@ def row(spec):
                  for step in job.get("steps", [])]
         service = duration(start, end) if job["conclusion"] != "skipped" else 0
         entries.append({"id": job["id"], "name": job["name"], "conclusion": job["conclusion"],
-                        "created_at": job.get("created_at", created), "started_at": start, "completed_at": end,
+                        "created_at": job.get("created_at"), "started_at": start, "completed_at": end,
                         "service_s": service,
-                        "queue_s": duration(job.get("created_at", created), start)
+                        "queue_s": (duration(job["created_at"], start) if job.get("created_at") else None)
                         if job["conclusion"] != "skipped" else 0,
+                        "pre_start_s": duration(created, start) if job["conclusion"] != "skipped" else 0,
                         "cancelled_s": service if job["conclusion"] == "cancelled" else 0,
                         "reclaim_s": sum(step["s"] for step in steps
                                          if step["name"] == "Reclaim runner disk space"),
@@ -130,10 +133,13 @@ def attempt_document(rows, merges):
         if len({j["id"] for j in r["jobs"]}) != len(r["jobs"]):
             raise ValueError("duplicate job")
         for job in r["jobs"]:
-            if min(job[k] for k in ("service_s", "queue_s", "cancelled_s", "reclaim_s")) < 0:
+            if min(job[k] for k in ("service_s", "cancelled_s", "reclaim_s", "pre_start_s")) < 0:
                 raise ValueError("negative job duration")
             expected = duration(job["started_at"], job["completed_at"]) if job["conclusion"] != "skipped" else 0
-            queue = duration(job["created_at"], job["started_at"]) if job["conclusion"] != "skipped" else 0
+            queue = (duration(job["created_at"], job["started_at"]) if job["created_at"] else None) if job["conclusion"] != "skipped" else 0
+            pre_start = duration(r["created_at"], job["started_at"]) if job["conclusion"] != "skipped" else 0
+            if job["pre_start_s"] != pre_start:
+                raise ValueError("pre-start interval drift")
             if job["queue_s"] != queue:
                 raise ValueError("job queue drift")
             if job["service_s"] != expected or job["cancelled_s"] != (expected if job["conclusion"] == "cancelled" else 0):
@@ -156,7 +162,11 @@ def attempt_document(rows, merges):
     executed = [j for j in jobs if j["conclusion"] != "skipped" and j["started_at"]]
     # Reclaim inside a cancelled job is included in both costs, never added twice.
     totals = {key: sum(j[key] for j in jobs)
-              for key in ("service_s", "queue_s", "cancelled_s", "reclaim_s")}
+              for key in ("service_s", "cancelled_s", "reclaim_s", "pre_start_s")}
+    queued = [j for j in executed if j["queue_s"] is not None]
+    totals["known_queue_s"] = sum(j["queue_s"] for j in queued)
+    totals["unknown_queue_jobs"] = len(executed) - len(queued)
+    totals["queue_s"] = totals["known_queue_s"] if not totals["unknown_queue_jobs"] else None
     totals["cancelled_attempt_service_s"] = sum(j["service_s"] for r in rows
                                                 if r["conclusion"] == "cancelled" for j in r["jobs"])
     totals["retained_service_s"] = totals["service_s"] - totals["cancelled_s"]
@@ -173,7 +183,7 @@ def attempt_document(rows, merges):
                         "attempt_elapsed_s": dist([duration(r["created_at"], r["completed_at"]) for r in rows]) if rows else None,
                         "admission_latency_s": dist(admission) if admission else None,
                         "job_service_s": dist([j["service_s"] for j in executed]) if executed else None,
-                        "job_queue_s": dist([j["queue_s"] for j in executed]) if executed else None,
+                        "job_queue_s": dist([j["queue_s"] for j in queued]) if queued else None,
                         "successful_qualifications": len(qualifications),
                         "merged_prs": len(merged), "merges_per_hour": len(merged) * 3600 / window if window else 0}}
 
@@ -198,7 +208,7 @@ def self_test():
     finish = "2026-11-02T00:01:00Z"
     job = {"id": 1, "name": "full", "conclusion": "cancelled", "started_at": stamp,
            "created_at": "2026-11-01T23:59:50Z", "completed_at": finish, "service_s": 60, "queue_s": 10, "cancelled_s": 60,
-           "reclaim_s": 20, "steps": [{"name": "Reclaim runner disk space", "s": 20}]}
+           "reclaim_s": 20, "pre_start_s": 0, "steps": [{"name": "Reclaim runner disk space", "s": 20}]}
     first = {"run_id": 1, "attempt": 1, "event": "pull_request", "head_sha": "head",
              "created_at": stamp, "completed_at": finish, "conclusion": "cancelled",
              "ready_at": stamp, "admitted_at": finish, "jobs": [job]}
@@ -213,6 +223,12 @@ def self_test():
     assert result["retained_service_s"] == 60 and result["reclaim_s"] == 40
     assert result["queue_s"] == 20 and result["merged_prs"] == 1 and result["merges_per_hour"] == 60
     assert result["admission_latency_s"]["p50"] == 60 and result["successful_qualifications"] == 1
+    unknown = copy.deepcopy(first)
+    unknown["jobs"][0].update(created_at=None, queue_s=None)
+    incomplete = attempt_document([unknown], [])["summary"]
+    assert incomplete["queue_s"] is None and incomplete["unknown_queue_jobs"] == 1
+    assert incomplete["known_queue_s"] == 0 and incomplete["service_s"] == 60
+    assert incomplete["job_queue_s"] is None
     for mutate in (lambda r: r.append(r[0]), lambda r: r[0]["jobs"].append(r[0]["jobs"][0]),
                    lambda r: r[0]["jobs"][0].update(service_s=61),
                    lambda r: r[0]["jobs"][0].update(reclaim_s=21)):
@@ -267,10 +283,13 @@ def self_test():
                 body = "run-name: " + RUN_NAME if pinned else "name: Public core"
                 return {"content": base64.b64encode(body.encode()).decode()}
             if "/jobs?" in path:
-                return {"jobs": []}
+                return {"jobs": [{"id": 9, "name": "phase", "conclusion": "success",
+                                  "started_at": finish, "completed_at": finish}]}
             raise AssertionError(f"unattributed timeline or raw-head workflow lookup: {path}")
         with patch.dict(globals(), gh=ready_api):
-            assert row(f"4:{attempt}")["ready_at"] == expected
+            observed = row(f"4:{attempt}")
+            assert observed["ready_at"] == expected and observed["jobs"][0]["queue_s"] is None
+            assert observed["jobs"][0]["pre_start_s"] == 0
     with patch.dict(globals(), row=lambda spec: {"run_id": int(spec.split(":")[0]), "attempt": int(spec.split(":")[1])}):
         assert len(collect_attempts(["1:2", "1:2", "1:1"])) == 2
     print("frontier: pagination, attempt deduplication and cost reconciliation passed")
