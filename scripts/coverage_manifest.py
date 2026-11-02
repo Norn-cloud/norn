@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +87,8 @@ def _assemble(directory: Path) -> tuple[dict[str, Any], list[Path]]:
                     raise InvalidCoverageLayout(f"{path}: invalid entry envelope")
                 item = restore(entry["value"], [*parts, "entry" + path.stem])
                 keyed = not isinstance(item, dict) or "id" in item
-                if not re.fullmatch(r"[0-9a-f]{64}\.json", path.name) or (keyed and path.name != entry_id(item) + ".json"):
+                identity = re.fullmatch(r"([0-9a-f]{64})(?:dup[1-9][0-9]*)?\.json", path.name)
+                if not identity or (keyed and identity[1] != entry_id(item)):
                     raise InvalidCoverageLayout(f"{path}: mismatched entry identity")
                 result.append(path)
                 entries.append((entry["order"], path.name, item))
@@ -161,12 +163,13 @@ def write(document: dict[str, Any], directory: Path) -> None:
                 fields.add(field)
                 folder = target / field
                 folder.mkdir()
-                seen = set()
+                seen = {}
                 for order, item in enumerate(value):
                     name = entry_id(item)
-                    if name in seen:
-                        raise InvalidCoverageLayout(f"{field}: duplicate entry identity")
-                    seen.add(name)
+                    occurrence = seen.get(name, 0)
+                    seen[name] = occurrence + 1
+                    if occurrence:
+                        name += f"dup{occurrence}"
                     (folder / f"{name}.json").write_text(json.dumps({"order": order, "value": split(item, [*parts, "entry" + name])}, indent=2) + "\n")
                 return {"$entries": field}
             if isinstance(value, dict):
@@ -198,17 +201,32 @@ def migrate_entries() -> None:
         raise InvalidCoverageLayout("invalid legacy subsystem identity")
     document["subsystems"] = [{"id": path.stem, **body} for path, body in bodies]
     templates = {path.stem: _object(records / (path.relative_to(ROOT).as_posix() + ".json")) for path in old}
-    write(document, COVERAGE)
-    for path in old:
-        (records / (path.relative_to(ROOT).as_posix() + ".json")).unlink()
-    for path in files():
-        relative = path.relative_to(ROOT).as_posix()
-        target = records / (relative + ".json")
-        parts = path.relative_to(COVERAGE).parts
-        value = dict(templates[parts[1]]) if parts[0] == SUBSYSTEMS else _object(target)
-        value["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(value, indent=2) + "\n")
+    record_root = records / COVERAGE.relative_to(ROOT)
+    with tempfile.TemporaryDirectory(dir=COVERAGE.parent) as temporary:
+        staged, staged_records = Path(temporary) / "converted", Path(temporary) / "records"
+        write(document, staged)
+        if load(staged) != document:
+            raise InvalidCoverageLayout("entry conversion did not preserve the complete manifest")
+        for path in files(staged):
+            relative = path.relative_to(staged)
+            target = staged_records / (relative.as_posix() + ".json")
+            value = dict(templates[relative.parts[1]]) if relative.parts[0] == SUBSYSTEMS else _object(record_root / "index.json.json")
+            value["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(value, indent=2) + "\n")
+        replaced = []
+        try:
+            for target, source in ((COVERAGE, staged), (record_root, staged_records)):
+                backup = Path(temporary) / f"original{len(replaced)}"
+                target.rename(backup)
+                replaced.append((target, backup))
+                source.rename(target)
+        except BaseException:
+            for target, backup in reversed(replaced):
+                shutil.rmtree(target, ignore_errors=True)
+                backup.rename(target)
+            raise
+
 
 
 if __name__ == "__main__":

@@ -142,6 +142,8 @@ class EnrollmentTests(unittest.TestCase):
 class CoverageLayoutTests(unittest.TestCase):
     def test_entry_layout_preserves_every_claim_and_order(self):
         document = coverage_manifest.load()
+        subsystem = next(s for s in document["subsystems"] if s["runtime"]["artifacts"])
+        subsystem["runtime"]["artifacts"] *= 2
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "manifest"
             coverage_manifest.write(document, target)

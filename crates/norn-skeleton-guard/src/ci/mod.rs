@@ -325,7 +325,7 @@ pub fn maintainer_approval(
     approver.ok_or_else(|| format!("no admin commented `{command}` unedited"))
 }
 
-/// The split coverage: `index.json` plus one `subsystems/<id>.json` per subsystem.
+/// The split coverage: subsystem metadata and independently addressed obligation entries.
 const COVERAGE_MANIFEST: &str = "verification/coverage-v1/manifest";
 const COVERAGE_SUBSYSTEMS: &str = "verification/coverage-v1/manifest/subsystems";
 
