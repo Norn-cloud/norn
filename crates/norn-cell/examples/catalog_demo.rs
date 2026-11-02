@@ -8,7 +8,10 @@ use norn_cell::reactive::{ReactiveLimits, SliceQuery};
 use norn_cell::{
     CellError, CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
 };
-use norn_checker::{EntityArtifactSetContext, receipt::check_artifact_set_with_receipt};
+use norn_checker::{
+    EntityArtifactSetContext,
+    receipt::{ReceiptSources, check_artifact_set_with_receipt},
+};
 use norn_ir::access::{AccessIr, AccessRule, AccessScope, ScopeDimension};
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, EntityRoot, IrVersion01, ResourceLimitProfile, RuntimeValue,
@@ -22,8 +25,13 @@ type DemoResult<T> = Result<T, Box<dyn Error>>;
 
 fn install(artifacts: &[ArtifactEnvelope]) -> DemoResult<CellStore> {
     let registry = BTreeSet::new();
+    let sources = artifacts
+        .iter()
+        .map(|artifact| RuntimeValue::from_json(serde_json::to_value(artifact)?))
+        .collect::<Result<Vec<_>, _>>()?;
+    let sources = ReceiptSources::new(&sources, &[])?;
     let checked = check_artifact_set_with_receipt(
-        artifacts,
+        &sources,
         &EntityArtifactSetContext {
             registry: &registry,
             base: &[],
