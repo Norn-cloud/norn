@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "quint verify verification/stripmine-2026-08-22/models/quantity-ledger.qnt --backend apalache --invariants typeOk conserved terminalResolvedOnce noTerminalReservation --max-steps 8"
+}

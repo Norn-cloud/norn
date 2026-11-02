@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/models/quantity-authority.qnt",
+    "command": "quint verify verification/stripmine-2026-08-22/models/quantity-authority.qnt --backend apalache --invariants typeOk perUnitLayerConserved atomicAuthorityRecords phaseMatchesCommitCount reversalRestoresBalances noOpPreservesAuthority --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entry02853f8cd0fe13a0b3825ae995755684a2f32d90dafeac6ee2061edbaf710dea.evidence.model.entryd810a772fec9b2c49cb5dcab77b3508b1d84b857a57d738dd05ec2bcf714be1a.selectors"
+    }
+  }
+}

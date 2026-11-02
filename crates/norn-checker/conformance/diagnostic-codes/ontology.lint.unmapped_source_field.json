@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.unmapped_source_field",
+  "message": "source fields of {entity} in {schemaId} are neither mapped nor explicitly ignored: {fields}",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T3"
+}

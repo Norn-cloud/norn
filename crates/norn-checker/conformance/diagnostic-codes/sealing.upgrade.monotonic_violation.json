@@ -1,0 +1,7 @@
+{
+  "code": "sealing.upgrade.monotonic_violation",
+  "message": "base upgrades cannot weaken or remove an existing seal without kernel migration authority",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T4"
+}

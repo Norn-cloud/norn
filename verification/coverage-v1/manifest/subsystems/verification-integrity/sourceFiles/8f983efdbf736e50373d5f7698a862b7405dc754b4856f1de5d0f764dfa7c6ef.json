@@ -1,0 +1,4 @@
+{
+  "order": 60,
+  "value": "crates/norn-checker/src/lint/coverage.rs"
+}
