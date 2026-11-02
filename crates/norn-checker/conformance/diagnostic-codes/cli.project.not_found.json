@@ -1,0 +1,7 @@
+{
+  "code": "cli.project.not_found",
+  "message": "No norn.json found; run norn init <dir> first.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}

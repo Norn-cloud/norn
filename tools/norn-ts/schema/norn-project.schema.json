@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Norn project",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "name",
+    "sources",
+    "scope",
+    "dev",
+    "cell"
+  ],
+  "properties": {
+    "format": {
+      "const": "norn-project/1"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "\\S"
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "orgId",
+        "environmentId"
+      ],
+      "properties": {
+        "orgId": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "environmentId": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      }
+    },
+    "dev": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "port",
+        "actor"
+      ],
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "actor": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      }
+    },
+    "cell": {
+      "type": "string",
+      "pattern": "\\S"
+    }
+  }
+}
