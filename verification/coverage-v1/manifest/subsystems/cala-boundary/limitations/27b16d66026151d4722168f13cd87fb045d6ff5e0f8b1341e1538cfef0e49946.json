@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "Only the partial authority-record presence space is exhaustively enumerated; certificate and commitment identity checks are executable examples and golden vectors, not exhaustive input-space exploration."
+}

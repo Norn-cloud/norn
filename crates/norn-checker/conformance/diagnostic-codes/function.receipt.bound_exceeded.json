@@ -1,0 +1,7 @@
+{
+  "code": "function.receipt.bound_exceeded",
+  "message": "a completed attempt reports {member} {value}, beyond the manifest's bound",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

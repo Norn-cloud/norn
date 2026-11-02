@@ -4,8 +4,12 @@
 import copy
 import importlib.util
 import json
+import shutil
+import subprocess
 import tempfile
+import tomllib
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import coverage_manifest
@@ -102,6 +106,34 @@ class EnrollmentTests(unittest.TestCase):
                     with self.assertRaisesRegex(module.InvalidCoverage, "preparation actions and inputs must match the approved contract"):
                         module.validate_workflow_integrity([], formal_path=path)
 
+    def test_plan_workflow_contract_is_exact(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        workflow = module.yaml.load(module.FORMAL_WORKFLOW.read_text(), Loader=module.WorkflowLoader)
+        for mutation in ("ref", "depth", "credentials", "extra-step", "base", "head", "command", "verdict"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                candidate = copy.deepcopy(workflow)
+                steps = candidate["jobs"]["plan"]["steps"]
+                if mutation == "ref":
+                    steps[0]["with"]["ref"] = "main"
+                elif mutation == "depth":
+                    steps[0]["with"]["fetch-depth"] = 1
+                elif mutation == "credentials":
+                    steps[0]["with"]["persist-credentials"] = True
+                elif mutation == "extra-step":
+                    steps.insert(0, {"run": "echo unexpected"})
+                elif mutation in {"base", "head"}:
+                    steps[-1]["env"]["BASE" if mutation == "base" else "HEAD_SHA"] = "HEAD~1"
+                elif mutation == "command":
+                    steps[-1]["run"] = steps[-1]["run"].replace(' "$HEAD_SHA"', "")
+                else:
+                    candidate["jobs"]["full"]["steps"][0]["run"] += "exit 0\n"
+                path = Path(directory) / "workflow.yml"
+                path.write_text(module.yaml.safe_dump(candidate, sort_keys=False))
+                with self.assertRaises(module.InvalidCoverage):
+                    module.validate_workflow_integrity([], formal_path=path)
+
     def test_missing_generic_obligation_rejected_by_actual_coverage_validator(self):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
         module = importlib.util.module_from_spec(spec)
@@ -140,28 +172,128 @@ class EnrollmentTests(unittest.TestCase):
                 validate(root, candidate, self.gates)
 
 
+class AffectedPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        members = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["members"]
+        for manifest in [ROOT / "Cargo.toml", *(ROOT / m / "Cargo.toml" for m in members)]:
+            target = self.root / manifest.relative_to(ROOT)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(manifest, target)
+        gate = self.root / "crates/norn-skeleton-guard/src/ci/mod.rs"
+        gate.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / gate.relative_to(self.root), gate)
+        self.git("init", "-q")
+        self.git("config", "user.name", "synthetic")
+        self.git("config", "user.email", "synthetic@example.invalid")
+        self.base = self.commit("README.md")
+        self.full = self.plan()
+
+    def git(self, *args):
+        return subprocess.check_output(["git", *args], cwd=self.root, text=True).strip()
+
+    def commit(self, path):
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a") as output:
+            output.write("\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "synthetic change")
+        return self.git("rev-parse", "HEAD")
+
+    def plan(self, *args):
+        return json.loads(subprocess.check_output(
+            ["bash", str(ROOT / "scripts/ci/core.sh"), "plan", *args],
+            cwd=self.root, text=True))
+
+    def test_combined_group_diff_and_explicit_head(self):
+        first = self.commit("crates/norn-cell/src/lib.rs")
+        head = self.commit("crates/norn-expr/src/lib.rs")
+        self.commit(".github/workflows/synthetic.yml")
+        combined = self.plan("--affected", self.base, head)
+        self.assertEqual(combined["mode"], "affected")
+        self.assertIn("heavy-1", combined["shard"])
+        self.assertIn("heavy-3", combined["shard"])
+        self.assertEqual(combined["rest_shards"], 3)
+        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy"])
+        self.assertNotIn("heavy-1", self.plan("--affected", self.base, first)["shard"])
+        self.assertEqual(self.plan("--affected", self.base)["mode"], "full")
+
+    def test_unknown_and_sensitive_paths_force_exact_full_suite(self):
+        paths = [".github/workflows/synthetic.yml", "Cargo.lock",
+                 "rust-toolchain.toml", "verification/kernel-l1/lean-toolchain",
+                 "scripts/ci/core.sh", "verification/coverage-v1/validate.py",
+                 "crates/norn-skeleton-guard/src/ci/mod.rs", "unknown/path"]
+        for path in paths:
+            with self.subTest(path=path):
+                base = self.git("rev-parse", "HEAD")
+                self.commit(path)
+                plan = self.plan("--affected", base)
+                self.assertEqual({k: v for k, v in plan.items() if k != "reason"},
+                                 {k: v for k, v in self.full.items() if k != "reason"})
+
+    def test_markdown_only_keeps_policy_and_provenance(self):
+        self.commit("docs/synthetic.md")
+        plan = self.plan("--affected", self.base)
+        self.assertEqual(plan["shard"], ["rest-1"])
+        self.assertEqual(plan["phase"], ["guards", "provenance", "clippy"])
+        self.assertEqual(plan["packages"], "norn-skeleton-guard")
+
+
 class CoverageLayoutTests(unittest.TestCase):
-    def test_both_layouts_preserve_every_claim_and_order(self):
+    def test_entry_layout_preserves_every_claim_and_order(self):
         document = coverage_manifest.load()
-        # Repeated artifact paths remain valid; occurrence IDs preserve them.
         subsystem = next(s for s in document["subsystems"] if s["runtime"]["artifacts"])
         subsystem["runtime"]["artifacts"] *= 2
-        for split in (False, True):
-            with self.subTest(split=split), tempfile.TemporaryDirectory() as temporary:
-                target = Path(temporary) / "manifest"
-                coverage_manifest.write(document, target, split_entries=split)
-                # Git archives omit empty directories.
-                for folder in sorted(target.rglob("*"), reverse=True):
-                    if folder.is_dir() and not any(folder.iterdir()):
-                        folder.rmdir()
-                self.assertEqual(coverage_manifest.load(target), document)
-                self.assertTrue(coverage_manifest.digest(target))
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "manifest"
+            coverage_manifest.write(document, target)
+            for folder in sorted(target.rglob("*"), reverse=True):
+                if folder.is_dir() and not any(folder.iterdir()):
+                    folder.rmdir()
+            self.assertEqual(coverage_manifest.load(target), document)
+            self.assertTrue(coverage_manifest.digest(target))
+
+    def test_migration_preserves_duplicates_and_rolls_back_failures(self):
+        for failure in (None, "conversion", "commit", "inventory", "index"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                directory = root / "verification/coverage-v1/manifest"
+                record_root = root / ".github/ci/provenance/artifacts/verification/coverage-v1/manifest"
+                body = {"runtime": {"artifacts": ["a.rs", "a.rs"]}}
+                if failure == "conversion":
+                    body["../invalid"] = []
+                for path, value in ((directory / "index.json", {}), (directory / "subsystems/toy.json", body),
+                                    (record_root / "index.json.json", {}), (record_root / "subsystems/toy.json.json", {})):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps(value))
+                if failure == "inventory":
+                    (directory / "subsystems/already-new").mkdir()
+                if failure == "index":
+                    (directory / "index.json").write_text('{"subsystems": []}')
+                before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+                rename = Path.rename
+                def commit(path, target):
+                    if failure == "commit" and path.name == "records":
+                        raise OSError("synthetic swap failure")
+                    return rename(path, target)
+                with mock.patch.multiple(coverage_manifest, ROOT=root, COVERAGE=directory), mock.patch.object(Path, "rename", commit):
+                    if failure:
+                        with self.assertRaises((coverage_manifest.InvalidCoverageLayout, OSError)):
+                            coverage_manifest.migrate_entries()
+                    else:
+                        coverage_manifest.migrate_entries()
+                        self.assertEqual(coverage_manifest.load(directory), {"subsystems": [{"id": "toy", **body}]})
+                if failure:
+                    self.assertEqual({p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}, before)
 
     def test_nested_evidence_additions_touch_independent_files(self):
         original = {"subsystems": [{"id": "toy", "obligationClaims": [{"id": "INV-X", "evidence": {"runtime": [{"artifact": "a.rs", "selectors": ["test:a"]}]}}]}]}
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "manifest"
-            coverage_manifest.write(original, target, split_entries=True)
+            coverage_manifest.write(original, target)
             before = {p.relative_to(target): p.read_bytes() for p in coverage_manifest.files(target)}
             updated = copy.deepcopy(original)
             updated["subsystems"][0]["obligationClaims"][0]["evidence"]["runtime"][0]["selectors"].append("test:b")
@@ -177,59 +309,46 @@ class CoverageLayoutTests(unittest.TestCase):
         document = {"subsystems": [{"id": "toy", "obligationClaims": [{"id": "INV-X", "evidence": {"runtime": bindings}}]}]}
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "manifest"
-            coverage_manifest.write(document, target, split_entries=True)
+            coverage_manifest.write(document, target)
             self.assertEqual(coverage_manifest.load(target), document)
 
     def test_layout_refusals(self):
-        document = {"subsystems": [{"id": "toy", "sourceFiles": ["a.rs", "b.rs"], "obligations": ["INV-X"]}]}
-        for split in (False, True):
-            for mutation in ("stray", "duplicate-key", "symlink", "duplicate-id"):
-                with self.subTest(split=split, mutation=mutation), tempfile.TemporaryDirectory() as temporary:
-                    target = Path(temporary) / "manifest"
-                    coverage_manifest.write(document, target, split_entries=split)
-                    subsystem = target / "subsystems" / ("toy" if split else "toy.json")
-                    metadata = subsystem / "index.json" if split else subsystem
-                    if mutation == "stray":
-                        (target / "stray").write_text("{}")
-                    elif mutation == "duplicate-key":
-                        metadata.write_text('{"sourceFiles":[],"sourceFiles":[]}')
-                    elif mutation == "symlink":
-                        metadata.unlink()
-                        metadata.symlink_to(target / "index.json")
-                    else:
-                        other = target / "subsystems" / ("toy.json" if split else "toy")
-                        if split:
-                            other.write_text("{}")
-                        else:
-                            other.mkdir()
-                            (other / "index.json").write_text("{}")
-                    expected = {"stray": "unknown coverage entries", "duplicate-key": "duplicate JSON key", "symlink": "not a regular file", "duplicate-id": "duplicate subsystem"}[mutation]
-                    with self.assertRaisesRegex(coverage_manifest.InvalidCoverageLayout, expected):
-                        coverage_manifest.load(target)
-
-    def test_subsystem_order_is_identical_in_old_new_and_mixed_layouts(self):
-        expected = {"subsystems": [{"id": "a-b"}, {"id": "a"}]}
-        for split in (False, True):
-            with tempfile.TemporaryDirectory() as temporary:
+        document = {"subsystems": [{"id": "toy", "sourceFiles": ["a.rs"], "obligations": ["INV-X"]}]}
+        for mutation, expected in (("stray", "unknown coverage entries"), ("duplicate-key", "duplicate JSON key"), ("symlink", "not a regular file"), ("legacy", "unknown subsystem files")):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
                 target = Path(temporary) / "manifest"
-                coverage_manifest.write(expected, target, split_entries=split)
-                self.assertEqual(coverage_manifest.load(target), expected)
-                if split:
-                    (target / "subsystems/a-b/index.json").rename(target / "subsystems/a-b.json")
-                    (target / "subsystems/a-b").rmdir()
-                    self.assertEqual(coverage_manifest.load(target), expected)
+                coverage_manifest.write(document, target)
+                metadata = target / "subsystems/toy/index.json"
+                if mutation == "stray":
+                    (target / "stray").write_text("{}")
+                elif mutation == "duplicate-key":
+                    metadata.write_text('{"sourceFiles":[],"sourceFiles":[]}')
+                elif mutation == "symlink":
+                    metadata.unlink()
+                    metadata.symlink_to(target / "index.json")
+                else:
+                    (target / "subsystems/toy.json").write_text('{}')
+                with self.assertRaisesRegex(coverage_manifest.InvalidCoverageLayout, expected):
+                    coverage_manifest.load(target)
+
+    def test_subsystem_order_uses_legacy_identity_order(self):
+        expected = {"subsystems": [{"id": "a-b"}, {"id": "a"}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "manifest"
+            coverage_manifest.write(expected, target)
+            self.assertEqual(coverage_manifest.load(target), expected)
 
     def test_entry_field_validation(self):
         for body in ({"../escaped": []}, {"a": {"b": []}, "a.b": []}):
             with tempfile.TemporaryDirectory() as temporary:
                 target = Path(temporary) / "manifest"
                 with self.assertRaisesRegex(coverage_manifest.InvalidCoverageLayout, "entry field"):
-                    coverage_manifest.write({"subsystems": [{"id": "toy", **body}]}, target, split_entries=True)
+                    coverage_manifest.write({"subsystems": [{"id": "toy", **body}]}, target)
                 self.assertFalse((target / "subsystems/escaped").exists())
         for declaration in ([], {"$entries": "elsewhere"}, {"$entries": "sourceFiles", "extra": True}):
             with tempfile.TemporaryDirectory() as temporary:
                 target = Path(temporary) / "manifest"
-                coverage_manifest.write({"subsystems": [{"id": "toy", "sourceFiles": []}]}, target, split_entries=True)
+                coverage_manifest.write({"subsystems": [{"id": "toy", "sourceFiles": []}]}, target)
                 (target / "subsystems/toy/index.json").write_text(json.dumps({"sourceFiles": declaration}))
                 with self.assertRaises(coverage_manifest.InvalidCoverageLayout):
                     coverage_manifest.load(target)
@@ -238,7 +357,7 @@ class CoverageLayoutTests(unittest.TestCase):
         for change in ("identity", "unknown", "order", "directory", "obligation-suffix"):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
                 target = Path(temporary) / "manifest"
-                coverage_manifest.write({"subsystems": [{"id": "toy", "sourceFiles": ["a.rs"], "obligations": ["INV-X"]}]}, target, split_entries=True)
+                coverage_manifest.write({"subsystems": [{"id": "toy", "sourceFiles": ["a.rs"], "obligations": ["INV-X"]}]}, target)
                 entry = next((target / "subsystems/toy/sourceFiles").iterdir())
                 if change == "obligation-suffix":
                     entry = next((target / "subsystems/toy/obligations").iterdir())

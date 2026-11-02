@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.self_transition",
+  "message": "transition {id} leaves and enters {state}; a transition changes the state",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

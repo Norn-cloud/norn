@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.resolution.conflicting_version",
+  "message": "artifact {artifactId} is in the artifact set at versions {first} and {second}; a resolved set holds one version of each artifact",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

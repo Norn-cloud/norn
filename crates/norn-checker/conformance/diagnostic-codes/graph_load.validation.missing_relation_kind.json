@@ -1,0 +1,7 @@
+{
+  "code": "graph_load.validation.missing_relation_kind",
+  "message": "relationKind must be present",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

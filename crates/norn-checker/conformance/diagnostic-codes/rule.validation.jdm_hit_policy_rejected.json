@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_hit_policy_rejected",
+  "message": "hit policy {policy} is not admitted by the Norn profile: JDM admits first and collect; other DMN hit policies are translated or rejected at DMN ingress (T3-DEC-4)",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

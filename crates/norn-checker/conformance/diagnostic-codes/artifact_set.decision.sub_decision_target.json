@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.decision.sub_decision_target",
+  "message": "sub-decision {key} resolves to {artifactId} version {version}, which is not a RuleIR v2 decision graph",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}
