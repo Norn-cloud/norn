@@ -300,7 +300,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(32))]
     #[test]
     fn selected_old_answer_reproduces_after_each_appended_correction(
-        original in any::<u64>(), corrections in prop::collection::vec(any::<u64>(),1..8),
+        original in any::<u64>(), corrections in prop::collection::vec(any::<u64>(),1..8), same_clock in any::<bool>(),
     ) {
         use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
         use norn_kernel::LogicalTime;
@@ -308,11 +308,12 @@ proptest! {
         store.commit(&CommitBatch{logical_time:10,..batch(vec![put("proof.Item","item",&original.to_string())])}).expect("original");
         let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
         for (time,correction) in (11u64..).zip(corrections) {
-            store.commit(&CommitBatch{logical_time:time,..batch(vec![put("proof.Item","item",&correction.to_string())])}).expect("correction");
+            let recorded=if same_clock {10} else {time};
+            store.commit(&CommitBatch{logical_time:recorded,..batch(vec![put("proof.Item","item",&correction.to_string())])}).expect("correction");
             let HistoricalEvidence::Found(old)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(10),frontier:1},&mut DecodeBudget::new(&limits)).expect("old answer") else {return Err(TestCaseError::fail("old answer lost"))};
             prop_assert_eq!(old.snapshot().version,1);
             prop_assert_eq!(&old.snapshot().values.as_ref().expect("live")["value"],&Value::from(original.to_string()));
-            let HistoricalEvidence::Found(new)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(time),frontier:time.checked_sub(9).expect("fixture frontier")},&mut DecodeBudget::new(&limits)).expect("new answer") else {return Err(TestCaseError::fail("new answer lost"))};
+            let HistoricalEvidence::Found(new)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(recorded),frontier:time.checked_sub(9).expect("fixture frontier")},&mut DecodeBudget::new(&limits)).expect("new answer") else {return Err(TestCaseError::fail("new answer lost"))};
             prop_assert_eq!(&new.snapshot().values.as_ref().expect("live")["value"],&Value::from(correction.to_string()));
         }
     }
