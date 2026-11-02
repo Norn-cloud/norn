@@ -1869,41 +1869,28 @@ fn inverse_roles_cannot_shadow_members_of_descendant_interfaces_without_implemen
 
 // GRAPH-ROLE-1: exercise admission, including interfaces with no implementors.
 fn role_diagnostics(declarations: &[Option<bool>], edges: &[u16]) -> Vec<String> {
-    let interfaces: Vec<InterfaceDef> = declarations
+    let interfaces: Vec<_> = declarations
         .iter()
         .enumerate()
         .map(|(i, role)| {
-            let mut def: InterfaceDef =
-                serde_json::from_value(serde_json::json!({"name": format!("test.Node{i}")}))
-                    .expect("interface");
-            def.role = role.map(|happening| {
-                if happening {
-                    norn_ir::ConceptRole::Happening
-                } else {
-                    norn_ir::ConceptRole::Thing
-                }
+            let mut def = serde_json::json!({
+                "name": format!("test.Node{i}"),
+                "extends": (0..i).filter(|parent| edges[i] & (1 << parent) != 0)
+                    .map(|parent| format!("test.Node{parent}")).collect::<Vec<_>>()
             });
-            def.extends = (0..i)
-                .filter(|parent| edges[i] & (1 << parent) != 0)
-                .map(|parent| norn_ir::InterfaceName(format!("test.Node{parent}")))
-                .collect();
+            if let Some(happening) = role {
+                def["role"] = serde_json::json!(if *happening { "happening" } else { "thing" });
+            }
             def
         })
         .collect();
-    let model = EntityModel {
-        interfaces: &interfaces,
-        ..EntityModel::EMPTY
-    };
-    let registry = BTreeSet::new();
-    let context = EntityContext {
-        catalog: &[],
-        registry: &registry,
-        base: EntityModel::EMPTY,
-        tenant: None,
-    };
-    check_entity_model(&model, &context)
+    let model = serde_json::json!({"interfaces": interfaces});
+    findings(&model)
         .into_iter()
-        .map(|d| d.code.as_str().to_owned())
+        .map(|(code, pointer)| {
+            assert!(model.pointer(&pointer).is_some());
+            code
+        })
         .collect()
 }
 

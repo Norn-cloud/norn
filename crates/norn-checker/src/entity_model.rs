@@ -674,14 +674,14 @@ impl<'a> Checker<'a, '_> {
             );
         for (index, name, root) in definitions {
             if let Some(Err(conflict)) = roles.get(name) {
-                let code = match conflict {
-                    norn_ir::RoleConflict::Inherited => "core.graph.role_conflict",
-                    norn_ir::RoleConflict::Declared => "core.graph.role_mismatch",
+                let (code, field): (_, &[&str]) = match conflict {
+                    norn_ir::RoleConflict::Inherited => ("core.graph.role_conflict", &[]),
+                    norn_ir::RoleConflict::Declared => ("core.graph.role_mismatch", &["role"]),
                 };
                 self.out.push(error(
                     code,
                     format!("concept {name} has incompatible declared or inherited roles"),
-                    span_at(&pointer(root, &index.to_string()), &["role"]),
+                    span_at(&pointer(root, &index.to_string()), field),
                 ));
             }
         }
