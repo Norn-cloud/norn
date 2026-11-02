@@ -455,6 +455,41 @@ fn check_rate_site(
     }
 }
 
+fn check_decimal_members(base: &[&str], property_type: &PropertyType, out: &mut Vec<Diagnostic>) {
+    let PropertyType::Decimal { scale, unit, rounding, per_unit, currency_source } = property_type else { return; };
+            check_rate_site(
+                base,
+                scale.0,
+                unit.as_ref(),
+                per_unit.as_ref(),
+                currency_source.as_ref(),
+                out,
+            );
+            check_rounding_site(base, *rounding, out);
+            if scale.0 > MAX_DECIMAL_SCALE {
+                out.push(error(
+                    codes::SCALE_OUT_OF_RANGE,
+                    format!(
+                        "decimal scale {} exceeds the maximum of {MAX_DECIMAL_SCALE}",
+                        scale.0
+                    ),
+                    span_at(base, &["type", "scale"]),
+                ));
+            }
+            if let Some(unit) = unit
+                && (unit.code.is_empty() || unit.code.chars().any(char::is_whitespace))
+            {
+                out.push(error(
+                    codes::INVALID_UNIT,
+                    format!(
+                        "unit code {:?} must be non-blank without whitespace",
+                        unit.code
+                    ),
+                    span_at(base, &["type", "unit", "code"]),
+                ));
+            }
+ }
+
 /// Per-kind member checks of one type (`scale`, `unit`, enum `values`); `base`
 /// is the JSON-pointer prefix of the object holding `type`.
 pub(crate) fn check_type_members(
@@ -495,45 +530,7 @@ pub(crate) fn check_type_members(
                 check_type_members(&pointer, &member.property_type, out);
             }
         }
-        PropertyType::Decimal {
-            scale,
-            unit,
-            rounding,
-            per_unit,
-            currency_source,
-        } => {
-            check_rate_site(
-                base,
-                scale.0,
-                unit.as_ref(),
-                per_unit.as_ref(),
-                currency_source.as_ref(),
-                out,
-            );
-            check_rounding_site(base, *rounding, out);
-            if scale.0 > MAX_DECIMAL_SCALE {
-                out.push(error(
-                    codes::SCALE_OUT_OF_RANGE,
-                    format!(
-                        "decimal scale {} exceeds the maximum of {MAX_DECIMAL_SCALE}",
-                        scale.0
-                    ),
-                    span_at(base, &["type", "scale"]),
-                ));
-            }
-            if let Some(unit) = unit
-                && (unit.code.is_empty() || unit.code.chars().any(char::is_whitespace))
-            {
-                out.push(error(
-                    codes::INVALID_UNIT,
-                    format!(
-                        "unit code {:?} must be non-blank without whitespace",
-                        unit.code
-                    ),
-                    span_at(base, &["type", "unit", "code"]),
-                ));
-            }
-        }
+        PropertyType::Decimal { .. } => check_decimal_members(base, property_type, out),
         PropertyType::Enum { values } => {
             if values.is_empty() {
                 out.push(error(
