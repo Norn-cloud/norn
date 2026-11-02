@@ -20,7 +20,7 @@ class MigrationTests(unittest.TestCase):
 
     @patch.dict("os.environ", {"GIT_DIR": "/dev/null/repository", "GIT_WORK_TREE": "/dev/null", "GIT_INDEX_FILE": "/dev/null/index"})
     def test_real_approved_prs(self):
-        fixture = json.loads((Path(__file__).parent / "fixtures/registry-prs.json").read_text())
+        fixture = json.loads((Path(__file__).parent / "fixtures/registry-prs.json").read_text(encoding="utf-8"))
         self.assertEqual(fixture["base_sha"], "5e33eab0294012f8fb683fc2bf95c571c1bf4bcd")
         for case, reverse, native in [(case, r, n) for case in fixture["cases"] for r, n in ((False, False), (True, False), (False, True))]:
             with self.subTest(pr=case["pr"], reverse=reverse, native=native), tempfile.TemporaryDirectory() as temporary:
@@ -35,8 +35,8 @@ class MigrationTests(unittest.TestCase):
                 for name, content in fixture["base"].items():
                     path = root / name
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(content)
-                (root / migration.COVERAGE / "index.json").write_text("{}")
+                    path.write_bytes(content.encode("utf-8"))
+                (root / migration.COVERAGE / "index.json").write_bytes(b"{}")
                 base = commit()
                 migration.git(root, "apply", "-", input=case["patch"].encode())
                 head = commit()
@@ -44,7 +44,7 @@ class MigrationTests(unittest.TestCase):
                 document = {"subsystems": [{"id": p.stem, **coverage.read_entry(p)} for p in sorted((root / migration.COVERAGE / "subsystems").glob("*.json"))]}
                 document["subsystems"][0]["sourceFiles"].append("synthetic/main.rs")
                 coverage.write_entries(document, root / migration.COVERAGE)
-                old = json.loads((root / (migration.DIAGNOSTICS + ".json")).read_text())
+                old = json.loads((root / (migration.DIAGNOSTICS + ".json")).read_text(encoding="utf-8"))
                 target = root / migration.DIAGNOSTICS
                 extra = {**old["codes"][0], "code": "toy.validation.concurrent"}
                 if not native:
@@ -71,7 +71,7 @@ class MigrationTests(unittest.TestCase):
                     main_sources = next(s["sourceFiles"] for s in document["subsystems"] if s["id"] == actual["id"])
                     self.assertEqual(actual["sourceFiles"][:len(main_sources)], main_sources)
                 expected_codes = json.loads(git("show", head + ":" + migration.DIAGNOSTICS + ".json"))["codes"]
-                actual_codes = json.loads((root / (migration.DIAGNOSTICS + ".json")).read_text())["codes"] if native else [json.loads(p.read_text()) for p in target.glob("*.json")]
+                actual_codes = json.loads((root / (migration.DIAGNOSTICS + ".json")).read_text(encoding="utf-8"))["codes"] if native else [json.loads(p.read_text(encoding="utf-8")) for p in target.glob("*.json")]
                 self.assertEqual(sorted(actual_codes, key=lambda x: x["code"]), sorted(expected_codes + ([] if native else [extra]), key=lambda x: x["code"]))
                 before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file() and ".git" not in p.parts}
                 self.assertEqual(migration.migrate(root, base, head), [])
@@ -83,7 +83,7 @@ class MigrationTests(unittest.TestCase):
                 if native:
                     continue
                 path = target / (next(e["code"] for e in expected_codes if e not in old["codes"] and e != extra) + ".json")
-                path.write_bytes(migration.json_bytes({**json.loads(path.read_text()), "message": "concurrent edit"}))
+                path.write_bytes(migration.json_bytes({**json.loads(path.read_text(encoding="utf-8")), "message": "concurrent edit"}))
                 before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file() and ".git" not in p.parts}
                 with self.assertRaises(ValueError):
                     migration.migrate(root, base, head)
