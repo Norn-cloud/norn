@@ -17,13 +17,13 @@ Reuse `PropertyType`, `PropertyConstraints`, `DecimalLiteral`, `UnitRef`, `Runti
 
 Definition identity is exact artifact/version/digest plus stable member ID. Renaming a label changes presentation only. A same-version edit changes digest and invalidates admission/evidence; it cannot replace an immutable published release.
 
-The Decimal wire declaration accepts optional `rounding` using the shared `Rounding` modes (`refuse`, `toward_zero`, `half_even`, `half_away_from_zero`); omission means exact/refuse. The declared scale is the sole result-scale authority at a rounding site. The Norn-owned rescale adapter delegates to `ScaledArithmetic` at scales 0–18; the existing exact storage/transport range remains 0–28. Until expression/store binding is qualified, artifact admission refuses non-refuse declarations as `core.values.inexact`: wire decoding alone does not activate a rounding policy.
+The Decimal wire declaration accepts optional `rounding` using the shared `Rounding` modes (`refuse`, `toward_zero`, `half_even`, `half_away_from_zero`); omission means exact/refuse. The declared scale is the sole result-scale authority at a rounding site. The Norn-owned rescale adapter delegates to `ScaledArithmetic` at scales 0–18; the existing exact storage/transport range remains 0–28. The bounded exact-site binding activates these modes through the shared expression VM and effective-property store canonicalizer; unsupported arithmetic sites refuse as `core.values.inexact`.
 
 The declaration adapter is checked against generated signed-integer references. A production-core Kani harness covers all u32 scale derivations and fixed full-width coefficient/decimal overflow witnesses; this scope does not cover IR decoding, adapter parsing or the remaining expression/store binding.
 
 Within the single `ScaledArithmetic`, exact `+`/`−` derive the maximum operand scale, `×` derives their sum and comparisons align scales exactly, refusing a derived scale above 18 or coefficient overflow; division, rescale and `round` require an explicit result scale and rounding at a destination Decimal or `round(x, n, mode)` site.
 
-The explicit exact-expression runtime uses this same VM/core, retains intermediate scales and meters refusal paths; division requires a destination with its effective mode, and final Decimal quantization happens only at the destination. Plain Number and OrderedFold keep their existing execution paths. Expression admission, explicit round lowering and store activation remain separate cuts; unsupported operations refuse.
+The explicit exact-expression runtime uses this same VM/core, retains intermediate scales and meters refusal paths; division requires a destination with its effective mode, and final Decimal quantization happens only at the destination. Plain Number and OrderedFold keep their existing execution paths. Declared scalar and constructed record/list destinations lower to the same explicit rescale operation; unsupported operations refuse.
 
 A destination Decimal with omitted rounding supplies effective Refuse just like explicit Refuse: exact quotients are accepted, nonzero remainders refuse, and their type-environment fingerprints canonicalize omission to Refuse; predicates without a destination require explicit round(value, scale, mode) around division.
 
@@ -80,7 +80,7 @@ At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `ru
 4. Add temporal/calendar/content-reference pins and TIME-DST/BLOB-MISSING tests; align 06/08 temporal lookup.
 5. Add governed merge/split plans after 04/06 migration checks; prove old-reference preservation with ID-RENAME extensions.
 
-The shared type checker marks actual Decimal reads and declared destinations; typed consumer admission admits derived exact predicates and, within the exact profile, rejects destination-free division or unsupported inexact functions as `core.values.inexact`, and the typed consumer API binds that admission and the shared exact VM to the same environment and source. Structured Decimal destinations refuse until member-wise runtime binding is available. Kernel invariant binding follows in its own cut. Other consumer/store activation and explicit round lowering remain separate cuts.
+The shared type checker marks actual Decimal reads and declared destinations; typed consumer admission admits derived exact predicates and, within the exact profile, rejects destination-free division or unsupported inexact functions as `core.values.inexact`, and the typed consumer API binds that admission and the shared exact VM to the same environment and source. Constructed Decimal record/list destinations bind each numeric leaf separately; kernel invariants and action/owned-row expressions use the same typed binding, and all object/link/default/migration writers share effective-property materialization.
 
 VAL-ENV binds `currency_source` in new `norn.expr.env/2` admissions; retained receipts and pins select explicit historical `/1` recomputation, while relabelling `/1` hashes as `/2` refuses (migration: re-admit for `/2`, never rewrite an old pin).
 
@@ -90,6 +90,14 @@ VAL-RATE is a Decimal refinement with mandatory `currencySource` and `perUnit`, 
 
 VAL-ROUND explicit `round(value, scale, mode)` enters its declared site before evaluating the operand and lowers to the same ScaledArithmetic rescale; a two-argument round at an exact destination inherits its effective mode, while a predicate has no implicit mode, and nested sites do not authorize adjacent division.
 
-VAL-ROUND storage materializes explicit non-Refuse Decimal modes through the shared rescale adapter before effective bounds, including record members; the same effective-property canonicalizer serves object/link writes, defaults and migration adapters. Invalid observed source values remain evidence and fail strict value checking. Artifact activation remains closed pending the remaining typed consumer migrations.
+VAL-ROUND storage materializes explicit non-Refuse Decimal modes through the shared rescale adapter before effective bounds, including record members; the same effective-property canonicalizer serves object/link writes, defaults and migration adapters. Invalid observed source values remain evidence and fail strict value checking. Source evidence outside the strict value grammar remains unchanged and refuses authoritative promotion.
 
 VAL-EXACT-1 kernel object invariants bind the catalog-derived environment and Boolean destination to typed admission and evaluation before commit, so exact products are admitted and unqualified division refuses.
+
+
+VAL-EXACT-1 closed numeric schemas reuse exactly `{type: "number", nornType: <PropertyType::Decimal>}`; typed authoring emits the refinement, env `/2` pins its existing fields, unknown fields refuse, and a bare number retains legacy behavior while refusing as an operand of a declared exact site.
+
+VAL-RATE's initial graph binding admits one direct expression node between input/output; typed decision callbacks with exact schemas lower to that shape, while sub-decisions, table/loop transforms and other exact graph forms refuse until their bindings exist. Currency sources must resolve to a fixed singleton field; the runtime schema checks its actual value. Rate aggregation refuses until its denominator-aware contract is implemented.
+
+- **VAL-RATE-PRICE:** Given fixed USD, a 15 USD/g rate and 20 g, typed admission/evaluation produces USD 300 at the destination Money scale; a nonzero remainder under Refuse refuses.
+- **VAL-RATE-MISMATCH:** Given USD/g, combining mg, an EUR destination, Rate × Rate or an erased numeric operand refuses; quantity-versus-literal comparison records `core.values.literal_unit` naming g.

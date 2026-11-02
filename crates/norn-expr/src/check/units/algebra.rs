@@ -48,6 +48,7 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(op: Operation, a: &Operand<U, 
 pub(crate) fn join<U: Clone + Eq, C: Clone + Eq>(a: &Operand<U, C>, b: &Operand<U, C>) -> Option<Operand<U, C>> {
     if matches!(a, Operand::Unresolved) || matches!(b, Operand::Unresolved) { return None; }
     if a == b { return Some(a.clone()); }
+    if matches!((a,b),(Operand::Legacy,Operand::Literal | Operand::Dimensionless) | (Operand::Literal | Operand::Dimensionless,Operand::Legacy)) {return Some(Operand::Legacy); }
     matches!((a,b), (Operand::Literal | Operand::Dimensionless, Operand::Literal | Operand::Dimensionless)).then_some(Operand::Dimensionless)
 }
 pub(crate) fn destination<U: Clone + Eq, C: Clone + Eq>(found: &Operand<U, C>, expected: &Operand<U, C>) -> bool {

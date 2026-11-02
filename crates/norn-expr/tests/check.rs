@@ -1788,6 +1788,8 @@ fn val_round_explicit_site_scopes_division_and_rescale() {
         scale: 2,
         unit: None,
         rounding: norn_ir::Rounding::HalfAwayFromZero,
+        currency_source: None,
+        per_unit: None,
     };
     assert_eq!(
         run("round(1.005, 2)", &destination).unwrap(),

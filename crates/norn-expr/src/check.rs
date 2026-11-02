@@ -642,7 +642,7 @@ fn check_expression_with_sources_and_root_bounds(
         }]);
     }
     let quantizers = runtime_source.matches("round((").count().saturating_sub(source.matches("round((").count());
-    let cost = within_budget(cost.saturating_add((quantizers as u64).saturating_mul(8)), limits, span)?;
+    let cost = within_budget(cost.saturating_mul(if runtime_source.contains("== null ? null : round") {2} else {1}).saturating_add((quantizers as u64).saturating_mul(8)), limits, span)?;
     Ok((
         CheckedExpression {
             inferred,
@@ -1263,15 +1263,29 @@ impl<'a> Checker<'a> {
     }
 
     fn check_destination(&mut self, node: &Node<'_>, found: &T, expected: &T) {
+        self.check_destination_at(node,found,expected,0);
+    }
+
+    fn check_destination_at(&mut self, node: &Node<'_>, found: &T, expected: &T, depth: u32) {
+        if depth > 128 {self.report::<()>(node,codes::BOUND_DEPTH,"destination type nesting exceeds profile".into());return;}
         match (found,expected) {
             (T::Number(a),T::Number(b)) if !units::destination(a,b) => { self.report::<()>(node,codes::UNIT,format!("numeric destination {b:?} refuses {a:?}")); }
-            (T::List(a),T::List(b)) | (T::Optional(a),T::Optional(b)) => self.check_destination(node,a,b),
-            (a,T::Optional(b)) if !matches!(a,T::Null) => self.check_destination(node,a,b),
-            (T::Record(Rec::Literal(fields)),T::Record(Rec::Env { name,depth })) => {
+            (T::List(a),T::List(b)) | (T::Optional(a),T::Optional(b)) => self.check_destination_at(node,a,b,depth+1),
+            (a,T::Optional(b)) if !matches!(a,T::Null) => self.check_destination_at(node,a,b,depth+1),
+            (T::Record(Rec::Env {name,depth:links}),expected) => {
+                if let Some(record) = self.env.record(name) {
+                    let fields = record.fields.iter().filter_map(|(field_name,field)| {
+                        let next = if matches!(field.source,FieldSource::Link {..} | FieldSource::Inverse {..}) {links.checked_sub(1)?} else {*links};
+                        lower(&field.ty,next,self.env,Some(name)).map(|ty|(field_name.clone(),ty))
+                    }).collect();
+                    self.check_destination_at(node,&T::Record(Rec::Literal(fields)),expected,depth+1);
+                }
+            }
+            (T::Record(Rec::Literal(fields)),T::Record(Rec::Env { name,depth:links })) => {
                 if let Some(record) = self.env.record(name) {
                     for (field_name,found) in fields {
-                        if let Some(expected) = record.fields.get(field_name).and_then(|field| lower(&field.ty,*depth,self.env,Some(name))) {
-                            self.check_destination(node,found,&expected);
+                        if let Some(expected) = record.fields.get(field_name).and_then(|field| lower(&field.ty,*links,self.env,Some(name))) {
+                            self.check_destination_at(node,found,&expected,depth+1);
                         }
                     }
                 }
