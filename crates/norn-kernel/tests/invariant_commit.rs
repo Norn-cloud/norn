@@ -3074,7 +3074,7 @@ fn direct_amount_law() -> norn_ir::ArtifactEnvelope {
 fn invariant_amount_law() -> norn_ir::ArtifactEnvelope {
     let mut law = serde_json::to_value(direct_amount_law()).expect("law");
     law["payload"]["modality"] = json!({"kind":"always"});
-    law["payload"]["condition"] = Value::Null;
+    law["payload"].as_object_mut().unwrap().remove("condition");
     law["payload"]["response"] = json!({
         "kind":"invariant", "objectType":ITEM, "invariantId":"positive_amount"
     });
