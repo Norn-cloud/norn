@@ -36,6 +36,7 @@ pub mod export;
 mod export_journal;
 mod history;
 pub mod host;
+pub mod mapping_bundle;
 mod migration;
 mod observation_quality;
 pub use observation_quality::AuthoritativePage;

@@ -5536,3 +5536,172 @@ fn obs_evidence_legacy_candidates_do_not_block_a_verified_producer() {
             .is_some()
     );
 }
+
+fn mapping_bundle_store(path: &Path) -> CellStore {
+    let cell = purity_quality_host(path);
+    let previous = cell
+        .store()
+        .read()
+        .installed_definitions(None)
+        .expect("definitions")
+        .expect("installed");
+    let mut artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_str(&previous.canonical_set).expect("retained");
+    let mut entity = serde_json::to_value(&artifacts[0]).expect("entity");
+    entity["payload"]["objectType"]["implements"] = json!(["quality.Measured"]);
+    entity["dependencies"] = json!([{ "artifactId":"quality.Measured.interface", "kind":"entity", "version":"0.1.0", "required":true }]);
+    artifacts[0] = serde_json::from_value(entity.clone()).expect("entity");
+    entity["dependencies"] = json!([]);
+    let interface = json!({"name":"quality.Measured", "properties":[{"id":"purity", "type":{"kind":"decimal", "scale":6}}]});
+    entity["artifactId"] = json!("quality.Measured.interface");
+    entity["payload"] = json!({"entityVersion":"2.0", "interface":interface});
+    artifacts.push(serde_json::from_value(entity).expect("interface"));
+    let mut source: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/synthetic-contact.source_schema.json"
+    ))
+    .expect("source fixture");
+    source["artifactId"] = json!("quality.source");
+    source["payload"]["source"] = json!({"system":"synthetic-erpnext", "instance":"demo"});
+    source["payload"]["fields"] = json!([
+        {"dataset":"Rows", "name":"name", "ordinal":0, "nativeType":"text", "typeCandidate":{"type":"string", "origin":"declared"}, "required":true},
+        {"dataset":"Rows", "name":"purity", "ordinal":1, "nativeType":"decimal", "typeCandidate":{"type":"decimal", "origin":"declared"}, "required":true}
+    ]);
+    let source: norn_ir::ArtifactEnvelope = serde_json::from_value(source).expect("source");
+    let pin = norn_checker::ArtifactRef::of(&source).expect("source pin");
+    let mut mapping: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/synthetic-rows.mapping.json"
+    ))
+    .expect("mapping fixture");
+    mapping["artifactId"] = json!("quality.mapping");
+    mapping["dependencies"] = json!([
+        {"artifactId":"quality.source", "kind":"source_schema", "version":"1.0.0", "required":true},
+        {"artifactId":"quality.Measurement.entity", "kind":"entity", "version":"0.1.0", "required":true},
+        {"artifactId":"quality.Measured.interface", "kind":"entity", "version":"0.1.0", "required":true}
+    ]);
+    mapping["payload"]["source"] =
+        json!({"schemaId":"quality.source", "version":"1.0.0", "sha256":pin.sha256});
+    mapping["payload"]["interfaces"] = json!(["quality.Measured.interface"]);
+    mapping["payload"]["maps"] = json!([{"id":"measurement", "source":{"dataset":"Rows"}, "target":{"entity":"quality.Measurement.entity", "interface":"quality.Measured.interface"}, "subject":"input.name", "sourceRecord":"input.name", "properties":[{"property":"purity", "value":"input.purity"}]}]);
+    artifacts.push(source);
+    artifacts.push(serde_json::from_value(mapping).expect("mapping"));
+    let object =
+        serde_json::to_value(&artifacts[0]).expect("object")["payload"]["objectType"].clone();
+    let model = Model::from_definitions_with_interfaces(
+        &[serde_json::from_value(object).expect("object")],
+        &[],
+        &[serde_json::from_value(interface).expect("interface")],
+    )
+    .expect("model")
+    .with_governing_laws(&artifacts)
+    .expect("laws");
+    let findings = norn_checker::check_artifact_set(
+        &artifacts,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &std::collections::BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+    let old_model = cell.store().model().clone();
+    drop(cell);
+    let mut store = CellStore::open(path, old_model, StoreOptions::default()).expect("store");
+    let mut installation = install_input(
+        "bundle",
+        previous.installed_at.checked_add(1).expect("next epoch"),
+        &model,
+    );
+    installation.canonical_set =
+        String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical"))
+            .expect("UTF8");
+    store
+        .install_definitions(model, installation, Some(previous.version), "org_demo/dev")
+        .expect("admission");
+    store
+}
+
+fn bundle_input() -> norn_cell::mapping_bundle::MappingInput {
+    norn_cell::mapping_bundle::MappingInput {
+        mapping: "quality.mapping".into(),
+        dataset: "Rows".into(),
+        connector_instance: "demo".into(),
+        partition: "measurements".into(),
+        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-01T10:01:00Z".into()),
+    }
+}
+fn bundle_raw(name: &str, purity: &str) -> norn_kernel::Observed<Value> {
+    let payload = Value::from_json_text(format!(r#"{{"name":"{name}","purity":{purity}}}"#))
+        .expect("payload");
+    let hash = norn_ir::canonical::HashProfile::Norn1
+        .hash_json(serde_json::to_string(&payload).expect("JSON"))
+        .expect("digest");
+    norn_kernel::Observed {
+        id: norn_kernel::ObservationId("delivery".into()),
+        provenance: norn_kernel::Provenance {
+            source: "synthetic-erpnext".into(),
+            source_id: name.into(),
+            mapping_version: "pipeline/1".into(),
+            observed_at: norn_kernel::LogicalTime::from_millis(1_793_527_260_000),
+        },
+        input: norn_ir::runtime_object! {"contract"=>"norn.raw_observation/v1", "source"=>"synthetic-erpnext", "source_id"=>name, "event_id"=>"1", "source_version"=>"1", "pipeline_version"=>"pipeline/1", "kind"=>"upsert", "extracted_at"=>1_793_527_260_000u64, "payload"=>payload, "payload_digest"=>hash},
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn mapping_bundle_identity_pins_evidence_and_redelivery(name in "[A-Z]{1,12}", fraction in 1u16..1000, deliveries in 2usize..5) {
+        let dir = tempfile::tempdir().expect("directory");
+        let mut store = mapping_bundle_store(&dir.path().join("bundle.sqlite"));
+        let raw = bundle_raw(&name, &format!("1.{fraction:03}"));
+        let input = bundle_input();
+        let (id, inserted) = store.inject_mapping_bundle(&raw, &input).expect("capture");
+        norn_testkit::proptest::prop_assert!(inserted);
+        for delivery in 1..deliveries {
+            let mut redelivery = raw.clone();
+            redelivery.id.0 = format!("local-delivery-{delivery}");
+            redelivery.provenance.observed_at = norn_kernel::LogicalTime::from_millis(u64::try_from(delivery).expect("metadata"));
+            let (replayed, inserted) = store.inject_mapping_bundle(&redelivery, &input).expect("replay");
+            norn_testkit::proptest::prop_assert_eq!(&replayed, &id);
+            norn_testkit::proptest::prop_assert!(!inserted);
+        }
+        let pending = store.read().pending_observations().expect("inbox");
+        norn_testkit::proptest::prop_assert_eq!(pending.len(), 1);
+        let observed: norn_kernel::Observed<Value> = norn_ir::runtime::decode(&pending[0].observed).expect("envelope");
+        let bundle: norn_cell::mapping_bundle::MappingBundle = norn_ir::runtime::decode(&observed.input).expect("bundle");
+        norn_testkit::proptest::prop_assert_eq!(&bundle.raw, &raw.input);
+        norn_testkit::proptest::prop_assert_eq!(bundle.records.len(), 1);
+        store.read().recheck_mapping_bundle(&bundle).expect("cell recomputation");
+        let mut unknown_pin = bundle.clone(); unknown_pin.definitions_version = u64::MAX;
+        norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_bundle(&unknown_pin), Err(CellError::MappingBundleMismatch)), "unretained definition pin refuses stably");
+        let mut altered = bundle; altered.records.clear();
+        norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_bundle(&altered), Err(CellError::MappingBundleMismatch)), "derived output refuses");
+        let mut changed = input; changed.partition.push('x');
+        let (different, _) = store.inject_mapping_bundle(&raw, &changed).expect("other pins");
+        norn_testkit::proptest::prop_assert_ne!(different, id);
+    }
+}
+
+#[test]
+fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&dir.path().join("invalid.sqlite"));
+    let raw = bundle_raw("MEAS-1", "\"invalid decimal\"");
+    store
+        .inject_mapping_bundle(&raw, &bundle_input())
+        .expect("capture malformed source value");
+    let pending = store.read().pending_observations().expect("inbox");
+    let observed: norn_kernel::Observed<Value> =
+        norn_ir::runtime::decode(&pending[0].observed).expect("observed");
+    let bundle: norn_cell::mapping_bundle::MappingBundle =
+        norn_ir::runtime::decode(&observed.input).expect("bundle");
+    assert_eq!(bundle.raw, raw.input);
+    assert!(bundle.records.is_empty());
+    assert!(!bundle.diagnostics.is_empty());
+    assert!(bundle.diagnostics.iter().all(|d| d.get("code").is_some()
+        && d.get("span").is_some()
+        && d.get("severity").is_some()));
+    store
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect("same diagnostics at processing");
+}

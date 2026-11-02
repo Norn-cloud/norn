@@ -20,6 +20,9 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// OBS-EVIDENCE-1: retained evidence disagrees with cell-owned recomputation.
+    #[error("core.boundary.bundle_mismatch")]
+    MappingBundleMismatch,
     /// Observation quality evaluation could not complete.
     #[error("quality evaluation: {0}")]
     QualityEvaluation(String),
