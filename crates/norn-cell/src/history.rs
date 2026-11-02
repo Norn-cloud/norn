@@ -146,7 +146,8 @@ impl<S: SqlEngine> HistoryRead<'_, '_, S> {
         let Some(receipt) = self.receipt(to_u64(commit, "fact commit")?, budget)? else {
             return Ok(None);
         };
-        if snapshot.root_type != root || !fact_receipt_matches(&snapshot, &snapshot_sha256, receipt) {
+        if snapshot.root_type != root || !fact_receipt_matches(&snapshot, &snapshot_sha256, receipt)
+        {
             return Err(unproven_snapshot());
         }
         Ok(Some(FactVersionEvidence {
@@ -582,7 +583,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     &encoded,
                     &hash,
                 )?;
-                if snapshot.root_type != root || snapshot.object_type != row.object_type || !crate::receipt_commitment::receipt_digest_matches(row.snapshot_sha256.as_deref(), &hash) {
+                if snapshot.root_type != root
+                    || snapshot.object_type != row.object_type
+                    || !crate::receipt_commitment::receipt_digest_matches(
+                        row.snapshot_sha256.as_deref(),
+                        &hash,
+                    )
+                {
                     return Err(unproven_snapshot());
                 }
             }

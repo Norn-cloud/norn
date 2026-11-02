@@ -2002,8 +2002,12 @@ fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
         match read(20, &mut budget).expect("bounded historical read") {
             HistoricalEvidence::Exhausted => {
                 partial_refuses |= budget.remaining_rows() <= limits.max_scan.saturating_sub(7);
-            },
-            HistoricalEvidence::Found(proof) => assert_eq!(proof.snapshot().version, 2, "complete latest eligible answer"),
+            }
+            HistoricalEvidence::Found(proof) => assert_eq!(
+                proof.snapshot().version,
+                2,
+                "complete latest eligible answer"
+            ),
             HistoricalEvidence::Missing => panic!("retained eligible answer disappeared"),
         }
     }
@@ -2101,7 +2105,6 @@ proptest! {
         }
     }
 }
-
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(32))]
