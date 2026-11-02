@@ -179,8 +179,8 @@ mod host {
                 }
             }
         };
-        if !status.success() {
-            return Err("solver_crash_or_error");
+        if Instant::now() >= deadline || !status.success() {
+            return Err("solver_crash_error_or_timeout");
         }
         if !capture(&mut stderr, limit)?.is_empty() {
             return Err("solver_warning_or_unsupported");
