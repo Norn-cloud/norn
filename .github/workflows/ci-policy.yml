@@ -245,7 +245,7 @@ jobs:
     needs: [core, plan, test, phase]
     if: >-
       always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' &&
-      !(cancelled() && github.event_name == 'pull_request')
+      !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)
     runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
     timeout-minutes: 5
     steps:

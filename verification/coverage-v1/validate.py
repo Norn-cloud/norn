@@ -542,7 +542,7 @@ df -h /
     require(len(full.get("steps", [])) == 1 and not full.get("env"),
             "full: verdict must be the only step and cannot inherit shell or gate-input overrides")
     require(" ".join(full.get("if", "").split()) == "always() && " + candidate_condition
-            + " && !(cancelled() && github.event_name == 'pull_request')"
+            + " && !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)"
             and not full.get("continue-on-error"),
             "full: verdict must run and fail closed")
     verdict = '''set -euo pipefail

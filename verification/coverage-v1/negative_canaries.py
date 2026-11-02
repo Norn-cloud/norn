@@ -651,11 +651,13 @@ def workflow_context_canaries(source: str) -> None:
                         if bool(eval(candidate_expression, {"__builtins__": {}}, {})) != expected:
                             raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}")
         for event in ("pull_request", "merge_group", "push", "workflow_dispatch"):
-            expression = workflow["jobs"]["full"]["if"].replace("github.event_name", repr(event)).replace(
-                "always()", "True").replace("cancelled()", "True").replace("&&", " and ")
-            expression = re.sub(r"!(?!=)", " not ", expression)
-            if bool(eval(expression, {"__builtins__": {}}, {})) != (event != "pull_request"):
-                raise AssertionError(f"cancelled verdict scheduling drift: {event}")
+            for draft in (False, True):
+                expression = workflow["jobs"]["full"]["if"].replace("github.event_name", repr(event)).replace(
+                    "github.event.pull_request.draft", str(draft)).replace(
+                    "always()", "True").replace("cancelled()", "True").replace("&&", " and ")
+                expression = re.sub(r"!(?!=)", " not ", expression)
+                if bool(eval(expression, {"__builtins__": {}}, {})) != (event != "pull_request" or draft):
+                    raise AssertionError(f"cancelled verdict scheduling drift: {event}/{draft}")
         for trigger in workflow["on"]:
             document = copy.deepcopy(workflow)
             del document["on"][trigger]
@@ -780,7 +782,7 @@ def workflow_canaries() -> None:
         ("forged core verdict", "CORE: ${{ needs.core.result }}", "CORE: success"),
         ("missing full-plan assertion", '[ "$mode" = full ]', 'true'),
         ("planned skipped job accepted", '[ "$2" -eq 0 ]', 'true'),
-        ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request')", "!cancelled()"),
+        ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)", "!cancelled()"),
         ("floating action", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4"),
         ("floating Rust toolchain", "toolchain: 1.98.0", "toolchain: stable"),
         ("insufficient proof timeout", "timeout-minutes: 110", "timeout-minutes: 20"),
