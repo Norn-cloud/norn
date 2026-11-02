@@ -209,12 +209,9 @@ fn catalog_access(capabilities: &[&str]) -> (norn_authz::Pdp, norn_authz::Access
     };
     let types = norn_cell::catalog::resource_types().expect("virtual resources");
     let projection = norn_projections::project_cedar_schema(&types, &[], &[]);
-    let projected = format!(
-        "{}{}",
-        projection.schema,
-        norn_projections::project_host_access_schema(&types)
-    );
-    let schema = AuthzSchema::from_projected_cedarschema(&projected).expect("schema");
+    let host = norn_projections::project_host_access_schema(&types);
+    let schema = AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
+        .expect("schema");
     let access = serde_json::from_value(json!({"accessVersion":"0.1", "policyId":"test.catalog", "rules":
         (["Type", "Property"].iter().map(|name| json!({"ruleId":format!("read_{name}"),
             "actions":["norn.read"], "resourceType":format!("norn.catalog.{name}"), "scope":{"dimensions":["org"]}})).collect::<Vec<_>>())
