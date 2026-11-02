@@ -743,7 +743,19 @@ fn pack_law_substitution_follows_only_the_selected_instance_with_registry_and_fo
         .clone();
     foreign.scope.org_id = Some("another_org".into());
     plain.push(foreign);
-    let membership = norn_checker::verification::retained_law_membership(&law, &plain, norn_checker::verification::Budget { max_nodes: 4096, max_edges: 16384, max_steps: 65536 }).expect("other-org packs do not shadow visible identity");
-    assert!(membership.keys().any(|key| key.artifact_id == "demo.UsdTransfer.entity"));
-
+    let membership = norn_checker::verification::retained_law_membership(
+        &law,
+        &plain,
+        norn_checker::verification::Budget {
+            max_nodes: 4096,
+            max_edges: 16384,
+            max_steps: 65536,
+        },
+    )
+    .expect("other-org packs do not shadow visible identity");
+    assert!(
+        membership
+            .keys()
+            .any(|key| key.artifact_id == "demo.UsdTransfer.entity")
+    );
 }
