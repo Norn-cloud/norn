@@ -6287,6 +6287,7 @@ norn_testkit::proptest::proptest! {
             drop(cell);
             store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
         }
+        let expected = norn_kernel::FactVersion(store.read().version(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("read before dispute"));
         let (guard_id, inserted) = store.inject_mapping_bundle(&decomposed, &input).expect("capture spelling");
         norn_testkit::proptest::prop_assert!(inserted && guard_id.starts_with("mapping-identity:"));
         let (canonical_id, _) = store.inject_mapping_bundle(&canonical, &input).expect("candidate retained");
@@ -6299,6 +6300,9 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load(&cell, &key).is_err());
         norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load_bounded(&cell, &key, 4096).is_err());
         norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load_reference(&cell, &key, 4096).is_err());
+        let mut stale = norn_kernel::CellCommit::empty();
+        stale.reads.push(norn_kernel::FactExpectation { key, expected });
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, stale), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
         drop(cell);
         for delivery in 1..deliveries {
             store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");

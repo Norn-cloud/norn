@@ -1387,6 +1387,13 @@ where
             }
         }
         let guard = |reader: &StoreReader<'_, S>| {
+            if authorization.is_none() {
+                for read in &commit.reads { reader.refuse_disputed_subject(&read.key).map_err(CommitError::Host)?; }
+                for read in &commit.link_reads {
+                    reader.refuse_disputed_subject(&read.key.source).map_err(CommitError::Host)?;
+                    reader.refuse_disputed_subject(&read.key.target).map_err(CommitError::Host)?;
+                }
+            }
             let model = reader.model();
             let catalog = TypeCatalog::new(model.object_types())
                 .with_interfaces(model.interfaces())
