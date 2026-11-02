@@ -128,9 +128,8 @@ mod host {
         deadline: Instant,
         limit: usize,
     ) -> Result<String, &'static str> {
-        if Instant::now() >= deadline {
-            return Err("timeout");
-        }
+        if Instant::now() >= deadline { return Err("timeout"); }
+        if input.len() > limit { return Err("invalid_bound"); }
         let mut stdin = tempfile::tempfile().map_err(|_error| "io")?;
         stdin.write_all(input.as_bytes()).map_err(|_error| "io")?;
         stdin.seek(SeekFrom::Start(0)).map_err(|_error| "io")?;
@@ -159,7 +158,7 @@ mod host {
         if !status.success() {
             return Err("solver_crash_or_error");
         }
-        if !capture(&mut stderr, limit)?.trim().is_empty() {
+        if !capture(&mut stderr, limit)?.is_empty() {
             return Err("solver_warning_or_unsupported");
         }
         capture(&mut stdout, limit)
@@ -181,6 +180,8 @@ mod host {
         let deadline = Instant::now()
             .checked_add(bound.timeout)
             .ok_or("invalid_bound")?;
+        let canonical = binary.canonicalize().map_err(|_error| "missing_binary")?;
+        let binary = canonical.as_path();
         let file = File::open(binary).map_err(|_error| "missing_binary")?;
         let metadata = file.metadata().map_err(|_error| "io")?;
         if !metadata.is_file() || metadata.len() > 268_435_456 {
