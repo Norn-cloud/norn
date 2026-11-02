@@ -34,7 +34,9 @@ impl PortableReceipt {
     /// # Errors
     /// Canonical serialization failed.
     pub fn content_digest(&self) -> Result<Digest, CellError> {
-        norn_ir::cell_reference::portable_receipt_digest(self).map_err(CellError::from)
+        norn_ir::canonical::domain_hash_hex(b"norn.cell.receipt/v1\0", self)
+            .map(|hex| Digest::from_hex(&hex))
+            .map_err(CellError::from)
     }
 
     pub(crate) fn validates(&self, cell: &norn_ir::cell_id::CellId, receipt: &Receipt) -> bool {
@@ -50,6 +52,7 @@ pub(crate) enum ReceiptMode {
     LegacyReplay,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct JournalInput<'a> {
     pub submitted: Option<&'a norn_ir::RuntimeValue>,
     pub mode: ReceiptMode,
@@ -64,6 +67,7 @@ impl<'a> JournalInput<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct JournalReceipt<'a> {
     pub receipt: &'a Receipt,
     pub mode: ReceiptMode,

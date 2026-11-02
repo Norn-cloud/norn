@@ -40,7 +40,10 @@ fn command(value: RuntimeValue) -> EffectRow {
 fn same_local_commit_and_operation_have_distinct_portable_identities() {
     let mut a = store(1);
     let mut b = store(2);
+    a.bind("scope", "org_demo/dev").expect("scope");
+    b.bind("scope", "org_demo/dev").expect("scope");
     let batch = CommitBatch {
+        scope: "org_demo/dev".into(),
         effects: vec![command(RuntimeValue::Null)],
         ..CommitBatch::default()
     };
@@ -189,4 +192,24 @@ fn wrong_function_origin_refuses_before_any_effect() {
     target
         .export_command(1, "same-command")
         .expect("portable dispatch");
+}
+
+#[test]
+fn legacy_function_invocation_remains_local_only_even_in_a_new_commit() {
+    let mut target = store(1);
+    let invocation: FunctionInvocation = serde_json::from_str(include_str!(
+        "../../../fixtures/function/invocation.wasm.json"
+    ))
+    .expect("legacy");
+    let nested = RuntimeValue::Object(std::collections::BTreeMap::from([(
+        "invocation".into(),
+        norn_ir::runtime::encode(&invocation).expect("payload"),
+    )]));
+    target
+        .commit(&CommitBatch {
+            effects: vec![command(nested)],
+            ..CommitBatch::default()
+        })
+        .expect("local dispatch");
+    assert!(target.export_command(1, "same-command").is_err());
 }

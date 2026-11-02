@@ -134,12 +134,3 @@ impl CellReference {
         crate::boundary_context::same_origin(cell.as_str(), world, self.cell.as_str(), &self.world)
     }
 }
-
-/// Hash a versioned portable receipt envelope without changing its local receipt.
-///
-/// # Errors
-/// Canonical serialization failed.
-pub fn portable_receipt_digest<T: Serialize>(envelope: &T) -> Result<Digest, CanonicalJsonError> {
-    norn_canonical::domain_hash_hex(b"norn.cell.receipt/v1\0", envelope)
-        .map(|hex| Digest::from_hex(&hex))
-}

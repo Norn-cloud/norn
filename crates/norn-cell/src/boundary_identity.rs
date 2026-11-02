@@ -62,8 +62,12 @@ impl<E: SqlEngine> CellStore<E> {
             .effects
             .iter()
             .find_map(|effect| match effect {
-                EffectRow::Enqueue { command } if command.command_id == command_id => Some(command),
-                _ => None,
+                EffectRow::Enqueue { command } => {
+                    (command.command_id == command_id).then_some(command)
+                }
+                EffectRow::ClaimPerform { .. }
+                | EffectRow::Schedule { .. }
+                | EffectRow::CancelTimer { .. } => None,
             })
             .ok_or_else(|| CellError::Encoding("command not retained in commit".to_owned()))?;
         if let Some(invocation) = crate::portable_receipt::function_invocation(&command.command) {

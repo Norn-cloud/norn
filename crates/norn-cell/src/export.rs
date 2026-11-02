@@ -140,13 +140,6 @@ impl ExportRecord {
         {
             return Err(ExportError::IdentityMismatch);
         }
-        if let Some(portable) = &self.portable_receipt {
-            let cell = crate::cell_identity::from_bindings(&self.bindings)?
-                .ok_or(ExportError::IdentityMismatch)?;
-            if !portable.validates(&cell, &self.receipt) {
-                return Err(ExportError::IdentityMismatch);
-            }
-        }
         if self.ddl_hash != hash_json(&self.ddl_sql)? {
             return Err(invalid("DDL hash mismatch"));
         }
@@ -201,6 +194,13 @@ impl ExportRecord {
         }
         if hash != body.ledger_head {
             return Err(ExportError::ReceiptMismatch);
+        }
+        if let Some(portable) = &self.portable_receipt {
+            let cell = crate::cell_identity::from_bindings(&self.bindings)?
+                .ok_or(ExportError::IdentityMismatch)?;
+            if !portable.validates(&cell, &self.receipt) {
+                return Err(ExportError::IdentityMismatch);
+            }
         }
         self.manifest_at(seq)
     }
