@@ -64,10 +64,12 @@ class GuaranteesScenarios(unittest.TestCase):
     def test_guarantees_committed_inputs_are_immutable_during_workspace_edits(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            files = {"verification/coverage-v1/manifest/index.json": {},
-                     "verification/coverage-v1/manifest/subsystems/core.json": {"obligations": ["LAW"]},
-                     **{name: {"obligations": []} for name in matrix.REGISTRIES},
-                     "scripts/guarantees_matrix.py": {"snapshot": True}}
+            directory = root / "verification/coverage-v1/manifest"
+            expected = fixture()[0]
+            matrix.coverage_manifest.write(expected, directory)
+            files = {**{name: {"obligations": []} for name in matrix.REGISTRIES},
+                     "scripts/guarantees_matrix.py": {"snapshot": True},
+                     "scripts/coverage_manifest.py": {"snapshot": True}}
             for name, value in files.items():
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,7 +80,9 @@ class GuaranteesScenarios(unittest.TestCase):
             commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
             with patch.object(matrix, "ROOT", root), patch.object(matrix, "__file__", str(root / "scripts/guarantees_matrix.py")):
                 before = matrix.inputs(commit)
-                (root / "verification/coverage-v1/manifest/subsystems/core.json").write_text("forged")
+                self.assertEqual(before[0], expected)
+                self.assertIn("scripts/coverage_manifest.py", before[2])
+                (directory / "subsystems/core/index.json").write_text("forged")
                 self.assertEqual(before, matrix.inputs(commit))
 
     def test_guarantees_workspace_change_during_projection_discards_evidence(self):
