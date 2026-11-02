@@ -1,0 +1,121 @@
+{
+  "artifactId": "demo.shopify.identity.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic Shopify identity cross-references",
+  "namespace": "demo",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-feed-replay",
+      "version": "0.1.0"
+    },
+    "constraints": [
+      {
+        "dataset": "ProductVariant",
+        "fields": [
+          "id"
+        ],
+        "id": "variant_id",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Fulfillment",
+        "fields": [
+          "id"
+        ],
+        "id": "fulfillment_id",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "ProductVariant",
+        "kind": "document",
+        "nativeName": "Synthetic ProductVariant"
+      },
+      {
+        "id": "Fulfillment",
+        "kind": "document",
+        "nativeName": "Synthetic Fulfillment"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "ProductVariant",
+        "name": "id",
+        "nativeType": "ID",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "ProductVariant",
+        "name": "custom_catalog_ref",
+        "nativeType": "String",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "ProductVariant",
+        "name": "sku",
+        "nativeType": "String",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Fulfillment",
+        "name": "id",
+        "nativeType": "ID",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Fulfillment",
+        "name": "custom_shipment_ref",
+        "nativeType": "String",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-10-25T23:59:59Z",
+    "rawMetadata": {
+      "sha256": "cf43670ecea4c65bd77bc6860a5644d4858e878a0d80ff9db0508d71f6fcfd7d",
+      "uri": "evidence://demo-commerce/identity-v1"
+    },
+    "source": {
+      "instance": "demo",
+      "system": "synthetic-shopify",
+      "version": "custom-identity-v1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-commerce/artifacts/demo.shopify.identity.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
