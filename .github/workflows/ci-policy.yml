@@ -66,8 +66,7 @@ jobs:
       - run: bash scripts/ci/core.sh cheap
   # The full gate: `core.sh all` split into parallel jobs. The plan comes from
   # core.sh itself, so CI runs exactly its shards and phases (all but formal).
-  # Tests narrow on pull requests (the affected packages' tests), the full
-  # set in the merge queue and on main.
+  # Pull requests and merge groups use affected plans; main runs the full set.
   plan:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
@@ -81,9 +80,10 @@ jobs:
           fetch-depth: 0
       - id: plan
         env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
         run: |
-          if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE"); else plan=$(bash scripts/ci/core.sh plan); fi
+          if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
           echo "plan=$plan" >> "$GITHUB_OUTPUT"
           echo "$plan"
   test:
@@ -198,10 +198,10 @@ jobs:
           tool: nextest@0.9.150
       - run: bash scripts/ci/core.sh ${{ matrix.phase }}
   # The single required verdict: every planned job ran and passed, and outside
-  # pull requests the plan was the full one. A cancelled pull request run ends
+  # pull requests and merge groups the plan was the full one. A cancelled pull request run ends
   # without it, so the run that superseded it never waits behind a verdict job
   # in the runner queue. Every other cancelled run still writes failure, and
-  # the merge queue's own run must pass the full plan.
+  # the merge queue's own run must pass its combined affected plan.
   full:
     needs: [core, plan, test, phase]
     if: >-
@@ -223,7 +223,7 @@ jobs:
           ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
           [ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
           mode=$(jq -er .mode <<<"$PLAN")
-          [ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+          [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
           ran "$TEST" "$(jq -er '.shard | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
           ran "$PHASE" "$(jq -er '.phase | length' <<<"$PLAN")" || { echo "phase ended $PHASE"; exit 1; }
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"

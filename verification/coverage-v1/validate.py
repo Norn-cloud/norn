@@ -434,7 +434,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
                    for key in ("shell", "working-directory"))
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
-        "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE"); else plan=$(bash scripts/ci/core.sh plan); fi
+        "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
 echo "plan=$plan" >> "$GITHUB_OUTPUT"
 echo "$plan"''',
         "test": "bash scripts/ci/core.sh test ${{ matrix.shard }}",
@@ -507,8 +507,9 @@ df -h
             require(steps[0].get("id") == "plan" and job.get("outputs", {}).get("plan") == "${{ steps.plan.outputs.plan }}",
                     "plan: gate plan output must bind the producer step")
             require(steps[0].get("env") == {"BASE":
-                    "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}"},
-                    "plan: affected selection must bind the pull request base")
+                    "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
+                    "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}"},
+                    "plan: affected selection must bind the event base and head")
     for name, axis in (("test", "shard"), ("phase", "phase")):
         job = jobs[name]
         require(job.get("needs") == "plan" and job.get("strategy", {}).get("matrix") == {
@@ -527,7 +528,7 @@ df -h
 ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
 [ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
 mode=$(jq -er .mode <<<"$PLAN")
-[ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+[ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
 ran "$TEST" "$(jq -er '.shard | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
 ran "$PHASE" "$(jq -er '.phase | length' <<<"$PLAN")" || { echo "phase ended $PHASE"; exit 1; }
 echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"'''
