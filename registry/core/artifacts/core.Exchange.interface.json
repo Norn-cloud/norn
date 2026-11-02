@@ -1,0 +1,25 @@
+{
+  "artifactId": "core.Exchange.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Exchange",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "extends": [
+        "core.Process"
+      ],
+      "name": "core.Exchange",
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.Exchange.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

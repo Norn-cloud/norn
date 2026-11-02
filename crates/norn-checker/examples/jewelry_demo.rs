@@ -7,7 +7,11 @@ use std::{
 
 use norn_checker::obligations::{ApprovedContract, ChallengeError, DefinitionSource};
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};
-use norn_ir::deontic::{RequirementText, RequirementWording};
+use norn_ir::deontic::{
+    DeonticModality, DeonticRule, RequirementText, RequirementTiming, RequirementWording,
+    RuleSourceSpan, StructuredRequirement,
+};
+use norn_ir::requirement_display::{RequirementLocale, RequirementView};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawResponse, ZenExpression};
 use serde_json::json;
 
@@ -38,6 +42,27 @@ fn wording() -> RequirementWording {
             "Input equals output plus recorded loss",
             "المدخل يساوي المخرج مع الفاقد المسجل",
         ),
+    }
+}
+
+// TARGET #58: structured bilingual authoring still needs a Rust adapter to the compiled TS law.
+fn target_requirement(law: LawIR) -> StructuredRequirement {
+    StructuredRequirement {
+        norm: DeonticRule {
+            source: RuleSourceSpan {
+                artifact_id: format!("{}.law", law.id),
+                pointer: "/payload".into(),
+                bytes: None,
+            },
+            authority_id: law.owner.clone(),
+            authority_version: "0.1.0".into(),
+            law,
+            modality: DeonticModality::Obligation,
+            exceptions: vec![],
+            defeated_by: vec![],
+        },
+        timing: RequirementTiming::EveryCommittedState,
+        wording: wording(),
     }
 }
 
@@ -217,6 +242,7 @@ fn main() -> DemoResult<()> {
     let mut types: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
     for document in [
         include_str!("../../../registry/core/artifacts/core.Conversion.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.Process.interface.json"),
         include_str!("../../../registry/core/artifacts/std.value_types.entity.json"),
     ] {
         types.push(serde_json::from_str(document)?);
@@ -251,12 +277,17 @@ fn main() -> DemoResult<()> {
         "CURRENT: admitted Melt inherits the unchanged core conversion law (measurement scope)"
     )?;
     writeln!(stdout, "{}", serde_json::to_string_pretty(&artifacts)?)?;
-    writeln!(
-        stdout,
-        "EN/AR reviewed wording slots for {} (display data, not the pending renderer):",
-        law.id
-    )?;
-    writeln!(stdout, "{}", serde_json::to_string_pretty(&wording())?)?;
+    let requirement = target_requirement(law.clone());
+    for locale in [RequirementLocale::En, RequirementLocale::Ar] {
+        let view = RequirementView {
+            requirement: requirement.clone(),
+            locale,
+        };
+        writeln!(stdout, "{locale:?} direction={}", view.direction())?;
+        for slot in view.slots()? {
+            writeln!(stdout, "{} | {}: {}", slot.id, slot.label, slot.text)?;
+        }
+    }
     writeln!(
         stdout,
         "Checker-generated obligations {}; no handwritten theorem or proof:",

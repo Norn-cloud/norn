@@ -34,13 +34,25 @@ fn cell() -> Cell {
     properties.extend(["input_quantity", "output_quantity", "loss_quantity"].map(|id|
         json!({"id":id,"type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}})));
     let melt: ObjectTypeDef = serde_json::from_value(json!({
-        "name":"jewelry.Melt", "implements":["core.Conversion"],
+        "name":"jewelry.Melt", "role":"happening", "implements":["core.Conversion"],
         "properties": properties
     }))
     .expect("Melt declares required properties, never a conservation expression");
     MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone())
         .with_types(vec![melt])
-        .with_interfaces(vec![interface])
+        .with_interfaces(vec![
+            interface,
+            serde_json::from_str::<norn_ir::ArtifactEnvelope>(include_str!(
+                "../../../registry/core/artifacts/core.Process.interface.json"
+            ))
+            .and_then(|a| {
+                serde_json::from_value::<EntityInterfaceRootV2>(serde_json::to_value(
+                    a.payload.to_json_value(),
+                )?)
+            })
+            .expect("generated Process interface")
+            .interface,
+        ])
 }
 
 fn measurement(id: &str, input: &str, output: &str, loss: &str) -> FactWrite {

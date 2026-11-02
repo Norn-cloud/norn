@@ -22,7 +22,7 @@ printf 'Beat 5 — evidence (generated Guarantees matrix)\n'
 bun tools/norn-ts/src/cli.ts compile scripts/demo/jewelry.source.ts --org org_demo --env dev \
   | cargo run --locked --quiet -p norn-checker --example jewelry_demo -- --challenge-json \
   | python3 scripts/guarantees_matrix.py --challenge -
-printf 'not yet: #343 #322 (generated solver counterexample and EN/AR renderer); unchecked or stale evidence stays unknown.\n'
+printf 'not yet: #343 (generated solver counterexample); unchecked or stale evidence stays unknown.\n'
 printf 'Beat 6 — weekly gold scrap yield\n'
 for scenario in INGEST FRESH LINEAGE INCREMENTAL QUARANTINE ASOF RESTATEMENT-DELTA FORECAST PUBLISH-GUARD; do
   printf 'DATA-%s — not yet: #341 #345 #346 (integrated scrap-yield path)\n' "$scenario"

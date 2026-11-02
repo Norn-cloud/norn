@@ -1,0 +1,5 @@
+{
+  "contracts": "generated-openapi",
+  "scope": "authorized-definition-document-presentation",
+  "authority": "server"
+}

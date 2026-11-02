@@ -10,6 +10,9 @@
     "entityVersion": "2.0",
     "interface": {
       "description": "A measured conversion whose quantities share the implementor's explicit unit and scale. These are accepted measurements, not a certificate of associated stock or value effects.",
+      "extends": [
+        "core.Process"
+      ],
       "invariants": [
         {
           "expression": "(((self.input_quantity >= 0) and (self.output_quantity >= 0)) and (self.loss_quantity >= 0)) and (self.input_quantity == (self.output_quantity + self.loss_quantity))",
@@ -40,7 +43,8 @@
             "kind": "decimal-binding"
           }
         }
-      ]
+      ],
+      "role": "happening"
     }
   },
   "provenance": {
