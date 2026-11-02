@@ -275,6 +275,7 @@
     "crates/norn-metrics/tests/temporal.rs",
     "crates/norn-metrics/src/analysis.rs",
     "crates/norn-metrics/tests/analysis.rs",
-    "crates/norn-metrics/tests/ols.rs"
+    "crates/norn-metrics/tests/ols.rs",
+    "crates/norn-metrics/tests/forecast.rs"
   ]
 }
