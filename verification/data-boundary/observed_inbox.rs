@@ -541,13 +541,15 @@ fn signed_webhook_and_missed_delivery_sweep_replay_pack_law_quarantine_and_recov
     assert!(page.exhausted && page.next.is_some());
     assert_eq!(page.observations.len(), 1);
     let correction = &page.observations[0];
+    let mut correction_input = input.clone();
+    correction_input.recorded_at = norn_ir::provenance::UtcTimestamp("2026-11-01T10:03:00Z".into());
     let (fixed, inserted) = host
-        .observe_mapped_submission(&scope, &input, || checked_raw(correction))
+        .observe_mapped_submission(&scope, &correction_input, || checked_raw(correction))
         .expect("capture correction");
     assert!(inserted);
     assert_ne!(fixed, id);
     assert_eq!(
-        host.observe_mapped_submission(&scope, &input, || checked_raw(correction))
+        host.observe_mapped_submission(&scope, &correction_input, || checked_raw(correction))
             .expect("sweep replay"),
         (fixed.clone(), false)
     );
