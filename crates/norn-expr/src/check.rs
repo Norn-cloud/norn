@@ -758,7 +758,7 @@ fn assignable(found: &InferredType, expected: &Type, env: &ZenTypeEnv) -> bool {
                 (I::Bool, Type::Bool)
                     | (
                         I::Number,
-                        Type::Number | Type::Integer | Type::Decimal { .. }
+                        Type::Number | Type::Integer | Type::Decimal { .. } | Type::DecimalBinding { .. }
                     )
                     | (
                         I::String | I::Const(_) | I::Enum(_),
@@ -842,7 +842,9 @@ impl<'a> ZenEnv<'a> {
             Type::Text { .. } | Type::Timestamp { .. } | Type::Date | Type::Duration => {
                 VariableType::String
             }
-            Type::Integer | Type::Decimal { .. } | Type::Number => VariableType::Number,
+            Type::Integer | Type::Decimal { .. } | Type::DecimalBinding { .. } | Type::Number => {
+                VariableType::Number
+            }
             Type::Enum { values } => {
                 VariableType::Enum(None, values.iter().map(|v| Rc::from(v.as_str())).collect())
             }
@@ -993,7 +995,9 @@ fn lower(ty: &Type, depth: u32) -> Option<T> {
         Type::Text { .. } | Type::Duration => T::Str(None),
         Type::Timestamp { .. } => T::Timestamp,
         Type::Date => T::Date,
-        Type::Integer | Type::Decimal { .. } | Type::Number => T::Number,
+        Type::Integer | Type::Decimal { .. } | Type::DecimalBinding { .. } | Type::Number => {
+            T::Number
+        }
         Type::Enum { values } => T::Str(Some(values.iter().cloned().collect())),
         Type::Json => return None,
         Type::Record(name) => T::Record(Rec::Env {

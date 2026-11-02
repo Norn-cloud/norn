@@ -65,4 +65,6 @@ At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `ru
 4. Add temporal/calendar/content-reference pins and TIME-DST/BLOB-MISSING tests; align 06/08 temporal lookup.
 5. Add governed merge/split plans after 04/06 migration checks; prove old-reference preservation with ID-RENAME extensions.
 
+**VAL-DECIMAL-BIND-1:** An interface `decimal-binding` member obtains its exact unit and scale solely from the implementing type's concrete Decimal declaration, and same-group members require identical units/scales; missing bindings refuse `core.values.unit_binding_required`, mismatches refuse `core.values.unit_mismatch`, with no scalar or sibling-unit fallback.
+
 **VAL-DECIMAL-SCALE-1:** The shared commit integrity check applies the existing resolved Decimal runtime value validator, including declared scale and bounds, before any proposed writes/events/outbox effects become visible. Balanced values `100 = 99.1999 + 0.8001` refuse at scale 3; exact representable values and insignificant trailing zeros admit. Generated balanced decimal partitions check this boundary independently of conservation arithmetic.

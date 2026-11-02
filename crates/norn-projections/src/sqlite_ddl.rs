@@ -146,7 +146,7 @@ impl ValueEncoding {
             PropertyKind::Integer => Some(Self::Integer),
             PropertyKind::Boolean => Some(Self::Boolean),
             PropertyKind::Record | PropertyKind::JsonExt => Some(Self::Json),
-            PropertyKind::Ref => None,
+            PropertyKind::Ref | PropertyKind::DecimalBinding => None,
         }
     }
 

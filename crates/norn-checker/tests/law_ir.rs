@@ -1089,6 +1089,83 @@ fn composition_pack_member_kinds_follow_the_canonical_enum() {
     );
 }
 
+fn decimal_binding_findings(
+    units: [Option<&str>; 3],
+    scales: [u64; 3],
+) -> Vec<norn_checker::Diagnostic> {
+    let names = ["input", "output", "loss"];
+    let interface: norn_ir::InterfaceDef = serde_json::from_value(json!({
+        "name":"core.Conversion", "invariants":[{"id":"conserve","expression":"self.input == self.output + self.loss","message":"conserve"}], "properties": names.map(|id| json!({
+            "id":id, "type":{"kind":"decimal-binding","group":"conversion"}
+        }))
+    }))
+    .expect("bound contract");
+    let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name":"toy.Melt", "implements":["core.Conversion"],
+        "properties": names.into_iter().zip(scales).zip(units).map(|((id, scale), unit)| {
+            let mut kind = json!({"kind":"decimal", "scale":scale});
+            if let Some(unit) = unit { kind["unit"] = json!({"system":"ucum","code":unit}); }
+            json!({"id":id, "type":kind})
+        }).collect::<Vec<_>>()
+    }))
+    .expect("implementor");
+    norn_checker::check_entity_model(
+        &norn_checker::EntityModel {
+            interfaces: &[interface],
+            object_types: &[object],
+            ..norn_checker::EntityModel::EMPTY
+        },
+        &norn_checker::EntityContext {
+            catalog: &[],
+            registry: &BTreeSet::new(),
+            base: norn_checker::EntityModel::EMPTY,
+            tenant: None,
+        },
+    )
+}
+
+#[test]
+fn interface_decimal_binding_resolves_concrete_units_and_scales_without_defaults() {
+    for unit in ["g", "kg"] {
+        assert!(decimal_binding_findings([Some(unit); 3], [3; 3]).is_empty());
+    }
+    assert!(
+        decimal_binding_findings([None; 3], [3; 3])
+            .iter()
+            .any(|d| d.code.as_str() == "core.values.unit_binding_required")
+    );
+    assert!(
+        decimal_binding_findings([Some("g"); 3], [3, 2, 3])
+            .iter()
+            .any(|d| d.code.as_str() == "core.values.unit_mismatch")
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn interface_decimal_binding_generated_scales_are_identical_or_refused(a in 0_u64..9, b in 0_u64..9, c in 0_u64..9, same_unit in proptest::bool::ANY) {
+        let findings = decimal_binding_findings([Some("g"),Some("g"),Some(if same_unit {"g"} else {"kg"})], [a,b,c]);
+        proptest::prop_assert_eq!(findings.is_empty(), a == b && b == c && same_unit);
+    }
+}
+
+#[test]
+fn interface_decimal_binding_cannot_be_a_stored_value_type() {
+    let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name":"toy.Unbound", "properties":[{"id":"quantity", "type":{"kind":"decimal-binding","group":"mass"}}]
+    })).expect("syntax");
+    assert!(
+        norn_checker::check_object_type_local(&object)
+            .iter()
+            .any(|d| d.code.as_str() == "core.values.unit_binding_required")
+    );
+    assert!(
+        decimal_binding_findings([Some("g"), Some("kg"), Some("g")], [3; 3])
+            .iter()
+            .any(|d| d.code.as_str() == "core.values.unit_mismatch")
+    );
+}
+
 #[test]
 fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
     let law: ArtifactEnvelope = serde_json::from_str(include_str!(
@@ -1107,12 +1184,11 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
     melt.artifact_id = "jewelry.Melt.entity".into();
     melt.namespace = "jewelry".into();
     melt.name = "Melt".into();
-    let contract = serde_json::to_value(interface.payload.to_json_value()).expect("contract");
     melt.payload = ArtifactPayload::from_kind_json(
         &norn_ir::ArtifactKind::Entity,
         serde_json::from_value(json!({"entityVersion":"2.0", "objectType":{
             "name":"jewelry.Melt", "implements":["core.Conversion"],
-            "properties": contract["interface"]["properties"]
+            "properties": ["input_quantity", "output_quantity", "loss_quantity"].map(|id| json!({"id":id,"type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}}))
         }}))
         .expect("exact payload"),
     )
