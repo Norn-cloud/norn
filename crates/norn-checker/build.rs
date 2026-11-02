@@ -61,7 +61,7 @@ pub(crate) fn generate(directory: &Path) -> Result<String, String> {
                         .bytes()
                         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
             })
-            || file.file_name().to_str() != Some(format!("{}.json", code).as_str())
+            || file.file_name().to_str() != Some(format!("{code}.json").as_str())
         {
             return Err("diagnostic filename and stable dotted identity must match".to_owned());
         }
@@ -77,7 +77,7 @@ pub(crate) fn generate(directory: &Path) -> Result<String, String> {
             "info" => "Info",
             _ => return Err("invalid diagnostic severity".to_owned()),
         };
-        writeln!(result, "CodeEntry {{ code: {:?}, tier: Tier::{}, severity: DiagnosticSeverity::{severity}, message: {:?}, since: {:?} }},", code, tier, message, since).map_err(|e| e.to_string())?;
+        writeln!(result, "CodeEntry {{ code: {code:?}, tier: Tier::{tier}, severity: DiagnosticSeverity::{severity}, message: {message:?}, since: {since:?} }},").map_err(|e| e.to_string())?;
     }
     result.push_str("];\n");
     Ok(result)
