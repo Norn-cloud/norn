@@ -1,5 +1,9 @@
 //! OBS-EVIDENCE-1: retained mapping output is evidence, never write authority.
-use crate::{CellError, CellStore, StoreReader, engine::{SqlEngine, params}, system::INBOX};
+use crate::{
+    CellError, CellStore, StoreReader,
+    engine::{SqlEngine, params},
+    system::INBOX,
+};
 use norn_checker::mapping::{SourceDocument, compile_mapping_artifact};
 use norn_ir::{ArtifactEnvelope, RuntimeValue, mapping::MappedRecord, provenance::UtcTimestamp};
 use norn_kernel::Observed;
@@ -59,7 +63,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// # Errors
     /// Corrupt identity, missing historical pins, recomputation mismatch or storage failure.
-    pub fn source_event_mapping_bundles(&self, connector_instance: &str, partition: &str, source: &str, source_id: &str, event_id: &str) -> Result<Vec<MappingBundle>, CellError> {
+    pub fn source_event_mapping_bundles(
+        &self,
+        connector_instance: &str,
+        partition: &str,
+        source: &str,
+        source_id: &str,
+        event_id: &str,
+    ) -> Result<Vec<MappingBundle>, CellError> {
         let rows = self.conn.query(
             &format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND json_extract(observed, '$.input.input.connectorInstance') = ?1 AND json_extract(observed, '$.input.input.partition') = ?2 AND json_extract(observed, '$.input.raw.source') = ?3 AND json_extract(observed, '$.input.raw.source_id') = ?4 AND json_extract(observed, '$.input.raw.event_id') = ?5 ORDER BY position"),
             params![connector_instance, partition, source, source_id, event_id],
@@ -70,14 +81,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let stored_id: String = row.get(0)?;
             let captured: String = row.get(1)?;
             let observed: Observed<RuntimeValue> = serde_json::from_str(&captured)?;
-            let bundle: MappingBundle = norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+            let bundle: MappingBundle =
+                norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
             self.recheck_mapping_bundle(&bundle)?;
-            if observed.id.0 != stored_id || stored_id != format!("mapping-bundle:{}", bundle.digest) { return Err(CellError::MappingBundleMismatch); }
+            if observed.id.0 != stored_id
+                || stored_id != format!("mapping-bundle:{}", bundle.digest)
+            {
+                return Err(CellError::MappingBundleMismatch);
+            }
             bundles.push(bundle);
         }
         Ok(bundles)
     }
-
 
     fn mapping_bundle(
         &self,

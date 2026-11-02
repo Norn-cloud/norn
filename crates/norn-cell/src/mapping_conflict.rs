@@ -46,8 +46,17 @@ fn content(bundle: &MappingBundle) -> Result<String, CellError> {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
-    fn source_event_bundles(&self, incoming: &MappingBundle) -> Result<Vec<MappingBundle>, CellError> {
-        self.source_event_mapping_bundles(&incoming.input.connector_instance, &incoming.input.partition, field(incoming,"source")?, field(incoming,"source_id")?, field(incoming,"event_id")?)
+    fn source_event_bundles(
+        &self,
+        incoming: &MappingBundle,
+    ) -> Result<Vec<MappingBundle>, CellError> {
+        self.source_event_mapping_bundles(
+            &incoming.input.connector_instance,
+            &incoming.input.partition,
+            field(incoming, "source")?,
+            field(incoming, "source_id")?,
+            field(incoming, "event_id")?,
+        )
     }
 
     /// Find a conflict against the first captured source event, including consumed captures.
@@ -56,7 +65,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         incoming: &MappingBundle,
     ) -> Result<Option<MappingConflict>, CellError> {
         let new = content(incoming)?;
-        let Some(accepted) = self.source_event_bundles(incoming)?.into_iter().next() else { return Ok(None); };
+        let Some(accepted) = self.source_event_bundles(incoming)?.into_iter().next() else {
+            return Ok(None);
+        };
         let accepted_id = format!("mapping-bundle:{}", accepted.digest);
         let old = content(&accepted)?;
         if old == new {
@@ -80,7 +91,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .chain(&incoming.records)
             .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key))
             .collect();
-        let observation_ids = vec![accepted_id.clone(), format!("mapping-bundle:{}", incoming.digest)];
+        let observation_ids = vec![
+            accepted_id.clone(),
+            format!("mapping-bundle:{}", incoming.digest),
+        ];
         let finding = DataQualityFinding::v2(
             DataQualityRuleRef::Builtin {
                 id: "core.boundary.import_finding".into(),
@@ -132,13 +146,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let root = self.root_type(object_type)?;
             let mut affected = false;
             let related = self.source_event_bundles(&conflict.incoming)?;
-            for subject in related.iter().flat_map(|b| &b.records).chain(&conflict.incoming.records) {
+            for subject in related
+                .iter()
+                .flat_map(|b| &b.records)
+                .chain(&conflict.incoming.records)
+            {
                 if subject.key == key && self.root_type(subject.object_type.as_str())? == root {
                     affected = true;
                 }
             }
-            if affected
-            {
+            if affected {
                 findings.push(conflict.finding);
             }
         }
