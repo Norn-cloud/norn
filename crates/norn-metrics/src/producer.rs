@@ -262,7 +262,7 @@ pub fn prepare_forecast(
     clippy::arithmetic_side_effects,
     reason = "bounded report-unit property"
 )]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use proptest::prelude::*;
     #[test]
@@ -271,8 +271,7 @@ mod tests {
             assert!(nanos(value).is_err());
         }
     }
-    #[test]
-    fn actual_report_and_late_evidence_assessment_are_distinct() {
+    pub(crate) fn fixture() -> (TemporalPlan, Vec<TemporalRow>) {
         use crate::temporal::{TemporalRow, TemporalValue};
         let root = std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR").expect("typed fixtures");
         let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_slice(
@@ -303,6 +302,11 @@ mod tests {
                 }
             })
             .collect();
+        (plan, rows)
+    }
+    #[test]
+    fn actual_report_and_late_evidence_assessment_are_distinct() {
+        let (plan, rows) = fixture();
         let digest = crate::host::implementation_digest().expect("source");
         let mut export = ForecastExport {
             tenant: "unit",

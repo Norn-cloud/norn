@@ -1696,6 +1696,7 @@ dependencies = [
 name = "norn-metrics"
 version = "0.1.0"
 dependencies = [
+ "nix",
  "norn-checker",
  "norn-ir",
  "proptest",
