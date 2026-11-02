@@ -2132,12 +2132,12 @@ impl<E: SqlEngine> CellStore<E> {
                             .to_owned(),
                     });
                 }
-                let record = self.export_record(version.commit_seq)?.ok_or_else(|| {
-                    CellError::LedgerCorrupt {
+                let record = self
+                    .local_export_record(version.commit_seq)?
+                    .ok_or_else(|| CellError::LedgerCorrupt {
                         seq: version.commit_seq,
                         reason: "installed definitions have no typed export record".to_owned(),
-                    }
-                })?;
+                    })?;
                 let installation =
                     record
                         .definition_install
@@ -2783,7 +2783,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let head = head.ok_or_else(|| CellError::Encoding("pending result command disappeared".to_owned()))?;
             crate::payload_storage::remember_command(&self.conn, command_id, generation, head.commit_seq)?;
-            let outcome = match self.export_record(head.commit_seq)? {
+            let outcome = match self.local_export_record(head.commit_seq)? {
                 Some(record) => crate::payload_storage::encode_result(&self.conn, &record.batch.scope, &record.batch.world, outcome)?,
                 None => canonical_json(outcome)?,
             };

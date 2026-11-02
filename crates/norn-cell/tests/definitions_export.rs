@@ -752,3 +752,28 @@ async fn typed_install_tampering_version_jumps_and_untyped_schema_changes_fail_i
     ));
     assert!(!target.exists());
 }
+
+#[test]
+fn unqualified_definition_history_reopens_locally_without_portable_export() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("legacy.sqlite");
+    let (model, canonical) = definitions(false);
+    drop(CellStore::open(&path, model.clone(), StoreOptions::default()).expect("empty store"));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+    engine
+        .execute("DELETE FROM _norn_meta WHERE key = 'binding:cell_id'", &[])
+        .expect("legacy fixture");
+    let mut store = CellStore::from_engine(engine, model.clone()).expect("legacy open");
+    store
+        .install_definitions(model.clone(), input(canonical, 1), Some(0), SCOPE)
+        .expect("legacy definitions");
+    let receipt = store.read().receipt_at(1).expect("receipt");
+    drop(store);
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen definitions");
+    assert_eq!(store.read().receipt_at(1).expect("receipt"), receipt);
+    assert_eq!(store.cell_id().expect("legacy identity"), None);
+    assert!(matches!(
+        store.export_record(1),
+        Err(norn_cell::CellError::BindingMismatch { .. })
+    ));
+}

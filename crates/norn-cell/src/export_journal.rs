@@ -261,21 +261,32 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// Engine errors, invalid JSON, or an export record whose content hash does not verify.
     pub fn export_record(&self, commit_seq: u64) -> Result<Option<ExportRecord>, CellError> {
-        let Some(record) = read_record(&self.conn, commit_seq)? else {
+        let Some(record) = self.local_export_record(commit_seq)? else {
             return Ok(None);
         };
-        if record
+        let Some(record_cell_id) = record
             .bindings
             .get(crate::cell_identity::KEY)
             .and_then(|value| norn_ir::cell_id::CellId::try_from(value.clone()).ok())
-            .is_none()
-        {
+        else {
             return Err(CellError::BindingMismatch {
                 key: crate::cell_identity::KEY.to_owned(),
                 expected: "a qualified cell export".to_owned(),
                 found: String::new(),
             });
-        }
+        };
+        self.require_cell_id(&record_cell_id)?;
+        Ok(Some(record))
+    }
+
+    /// Verified local history remains usable without portable cell provenance.
+    pub(crate) fn local_export_record(
+        &self,
+        commit_seq: u64,
+    ) -> Result<Option<ExportRecord>, CellError> {
+        let Some(record) = read_record(&self.conn, commit_seq)? else {
+            return Ok(None);
+        };
         for entry in &record.entries {
             self.read()
                 .verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;

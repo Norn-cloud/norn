@@ -178,3 +178,72 @@ fn legacy_history_stays_local_and_cannot_adopt_an_identity() {
         Err(CellError::BindingMismatch { .. })
     ));
 }
+
+#[test]
+fn export_refuses_identity_changed_under_an_open_handle() {
+    use norn_cell::engine::SqlEngine as _;
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let mut store =
+        CellStore::open_bound(&path, model(), StoreOptions::default(), &a()).expect("source");
+    store.commit(&CommitBatch::default()).expect("commit");
+    NativeEngine::open(&path, StoreOptions::default())
+        .expect("engine")
+        .execute(
+            "UPDATE _norn_meta SET value = ?1 WHERE key = 'binding:cell_id'",
+            &[b().as_str().into()],
+        )
+        .expect("foreign identity fixture");
+    assert!(matches!(
+        store.export_record(1),
+        Err(CellError::BindingMismatch { .. })
+    ));
+}
+
+#[test]
+fn unqualified_local_history_can_record_external_results() {
+    use norn_cell::engine::SqlEngine as _;
+    use norn_cell::{EffectRow, OutboxCommand};
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("legacy.sqlite");
+    drop(CellStore::open(&path, model(), StoreOptions::default()).expect("empty store"));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+    engine
+        .execute("DELETE FROM _norn_meta WHERE key = 'binding:cell_id'", &[])
+        .expect("legacy fixture");
+    let mut store = CellStore::from_engine(engine, model()).expect("legacy open");
+    store
+        .commit(&CommitBatch {
+            effects: vec![EffectRow::Enqueue {
+                command: OutboxCommand {
+                    command_id: "legacy-command".into(),
+                    generation: 0,
+                    idempotency_key: "legacy-operation".into(),
+                    deadline: None,
+                    command: norn_ir::RuntimeValue::Null,
+                },
+            }],
+            ..CommitBatch::default()
+        })
+        .expect("legacy enqueue");
+    assert!(
+        store
+            .record_performed("legacy-command", 0, &norn_ir::RuntimeValue::Bool(true))
+            .expect("local result")
+    );
+    assert!(matches!(
+        store.export_record(1),
+        Err(CellError::BindingMismatch { .. })
+    ));
+    drop(store);
+    let store = CellStore::open(&path, model(), StoreOptions::default()).expect("legacy reopen");
+    assert_eq!(
+        store
+            .read()
+            .head_command()
+            .expect("command")
+            .expect("pending")
+            .result,
+        Some(norn_ir::RuntimeValue::Bool(true))
+    );
+}
