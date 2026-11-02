@@ -6827,6 +6827,7 @@ fn path_index(path: &str, array_prefix: &str) -> Option<usize> {
 
 fn property_type(property: &EffectiveProperty) -> Option<Type> {
     let ty = match &property.kind {
+        EffectiveKind::Base(PropertyType::DecimalBinding { .. }) => return None,
         EffectiveKind::Base(PropertyType::Text { format }) => Type::Text { format: *format },
         EffectiveKind::Base(PropertyType::Integer {}) => Type::Integer,
         EffectiveKind::Base(PropertyType::Decimal { scale, unit, .. }) => Type::Decimal {

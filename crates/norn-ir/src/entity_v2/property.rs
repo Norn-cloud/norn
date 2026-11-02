@@ -157,7 +157,7 @@ pub enum PropertyType {
         #[schemars(with = "crate::metric::DimensionPath")]
         currency_source: Option<crate::metric::DimensionPath>,
     },
-    /// Interface-only exact Decimal: this group shares the implementor's explicit unit and scale.
+    /// VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.
     DecimalBinding {
         /// Same-name members in one interface bind identically.
         group: String,
