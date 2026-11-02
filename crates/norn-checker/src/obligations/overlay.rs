@@ -32,7 +32,7 @@ fn refuse(reason: &'static str) -> OverlayRefusal {
     OverlayRefusal { reason }
 }
 
-type OverlayGuardGoal = (norn_ir::InterpretationEndpoint, Vec<LinearGuard>);
+type OverlayGuardGoal = (norn_ir::mapping::InterpretationEndpoint, Vec<LinearGuard>);
 /// Generated goals and unchanged B2 law instances; grants no admission or proof.
 #[derive(Debug)]
 pub struct OverlayPlan {
@@ -56,7 +56,7 @@ impl OverlayPlan {
     #[must_use]
     pub fn goals(
         &self,
-    ) -> impl Iterator<Item = (&norn_ir::InterpretationEndpoint, &[LinearGuard])> {
+    ) -> impl Iterator<Item = (&norn_ir::mapping::InterpretationEndpoint, &[LinearGuard])> {
         self.goals
             .iter()
             .map(|(pin, guards)| (pin, guards.as_slice()))
@@ -135,7 +135,7 @@ pub fn overlay_obligations(
             pin.sha256.clone(),
         );
         let goal = goals.entry(key).or_insert((
-            norn_ir::InterpretationEndpoint {
+            norn_ir::mapping::InterpretationEndpoint {
                 artifact_id: pin.artifact_id,
                 version: pin.version,
                 sha256: pin.sha256,
