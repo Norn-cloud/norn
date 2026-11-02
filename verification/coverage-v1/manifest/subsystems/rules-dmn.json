@@ -85,6 +85,8 @@
     "crates/norn-expr/src/check.rs",
     "crates/norn-expr/src/check/bounds.rs",
     "crates/norn-expr/src/check/cost.rs",
+    "crates/norn-expr/src/check/units.rs",
+    "crates/norn-expr/src/check/units/algebra.rs",
     "crates/norn-expr/src/convert.rs",
     "crates/norn-expr/src/env.rs",
     "crates/norn-expr/src/env/version.rs",
@@ -270,6 +272,7 @@
     "vendor/zen/core/types/src/variable_type/util.rs",
     "verification/ordered-fold-v1/meter_kani.rs",
     "verification/ordered-fold-v1/scaled_kani.rs",
-    "verification/values-v1/env_version_kani.rs"
+    "verification/values-v1/env_version_kani.rs",
+    "verification/values-v1/rate_kani.rs"
   ]
 }
