@@ -735,7 +735,13 @@ fn check_expression_with_sources_and_root_bounds(
     ))
 }
 
-fn lowered_cost(source: &str, runtime_source: &str, cost: u64, limits: &ResourceLimitProfile, span: (u32,u32)) -> Result<u64,Vec<Diagnostic>> {
+fn lowered_cost(
+    source: &str,
+    runtime_source: &str,
+    cost: u64,
+    limits: &ResourceLimitProfile,
+    span: (u32, u32),
+) -> Result<u64, Vec<Diagnostic>> {
     let quantizers = runtime_source
         .matches("round((")
         .count()
@@ -2831,7 +2837,8 @@ pub(crate) fn exact_admission<'n>(
         } else if matches!(node, Node::FunctionCall { kind, .. } if !(matches!(kind, FunctionKind::Internal(InternalFunction::Len)) || round && site))
         {
             Some("function requires an explicit supported exact site")
-        } else if matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.get(1).is_some_and(|value| matches!(value, Node::Number(scale) if scale.to_string().parse::<u32>().is_ok_and(|scale| scale > 18)))) {
+        } else if matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.get(1).is_some_and(|value| matches!(value, Node::Number(scale) if scale.to_string().parse::<u32>().is_ok_and(|scale| scale > 18))))
+        {
             Some("round exceeds the exact arithmetic scale bound")
         } else if !destination && matches!(node, Node::Number(value) if value.scale() > 18) {
             Some("numeric literal exceeds the exact arithmetic scale bound")
