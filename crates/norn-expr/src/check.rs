@@ -1148,9 +1148,17 @@ impl<'a> Checker<'a> {
 
     fn admit_exact(&mut self, node: &Node<'_>, expected: &Type) {
         if expected_exact_type(expected, self.env) && decimal_destination(expected).is_none() {
-            self.report::<()>(node, "core.values.inexact", "structured Decimal destinations require member-wise store binding".to_owned());
+            self.report::<()>(
+                node,
+                "core.values.inexact",
+                "structured Decimal destinations require member-wise store binding".to_owned(),
+            );
         }
-        self.diagnostics.extend(exact_admission(node, self.metadata, decimal_destination(expected).is_some()));
+        self.diagnostics.extend(exact_admission(
+            node,
+            self.metadata,
+            decimal_destination(expected).is_some(),
+        ));
     }
 
     fn span(&self, node: &Node<'_>) -> (u32, u32) {
