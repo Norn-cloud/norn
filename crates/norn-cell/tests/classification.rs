@@ -304,7 +304,7 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
             .expect("properties")
             .items
             .len(),
-        2
+        3
     );
     let (denied, _) = catalog_access(&[]);
     assert!(
