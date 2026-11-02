@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.plural_type_name",
+  "message": "{kind} {name} has a plural local name; name the concept for one instance",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T3"
+}

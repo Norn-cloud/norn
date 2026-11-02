@@ -1,0 +1,7 @@
+{
+  "code": "ledger.runtime.duplicate_parameter",
+  "message": "duplicate runtime parameter `{parameterId}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

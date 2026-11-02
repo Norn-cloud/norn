@@ -1,0 +1,7 @@
+{
+  "code": "ledger.template.residual_overflow",
+  "message": "constant residual overflowed i128 while combining legs",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

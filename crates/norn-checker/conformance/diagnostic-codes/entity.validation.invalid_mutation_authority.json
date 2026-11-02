@@ -1,0 +1,7 @@
+{
+  "code": "entity.validation.invalid_mutation_authority",
+  "message": "payload.mutationAuthority is invalid: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

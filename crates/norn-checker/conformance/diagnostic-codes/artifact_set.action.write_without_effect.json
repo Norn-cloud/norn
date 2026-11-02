@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.write_without_effect",
+  "message": "the write set declares {entityKind} ({change}), which the effect program never writes",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

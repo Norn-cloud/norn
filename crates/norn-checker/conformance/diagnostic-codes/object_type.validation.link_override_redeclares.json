@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.link_override_redeclares",
+  "message": "link {link} overrides the one {owner} declares and redeclares its {member}, which the override inherits; omit it",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

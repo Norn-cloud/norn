@@ -1,0 +1,7 @@
+{
+  "code": "ledger.template.too_few_legs",
+  "message": "a conserved transaction template requires at least two legs",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

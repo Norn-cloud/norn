@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.unknown_supertype",
+  "message": "extends {type}, which names no object type",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

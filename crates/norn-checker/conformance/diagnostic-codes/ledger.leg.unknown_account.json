@@ -1,0 +1,7 @@
+{
+  "code": "ledger.leg.unknown_account",
+  "message": "unknown account `{accountId}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
