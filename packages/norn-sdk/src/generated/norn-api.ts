@@ -2332,10 +2332,15 @@ export interface components {
         NornIrInvariantId: string;
         /**
          * @description The only IR `0.1` version literal of the connector, widget, customization,
-         *     policy, derived, and setting roots and of ontology business packs.
+         *     policy and derived roots and of ontology business packs.
          * @enum {string}
          */
         NornIrIrVersion01: "0.1";
+        /**
+         * @description Exact-decimal setting wire profile; older profiles require explicit migration.
+         * @enum {string}
+         */
+        NornIrIrVersion02: "0.2";
         /** @description Custom-node content (`CustomNodeContent`). Decodable only for rejection. */
         NornIrJdmCustomNodeContent: {
             config: components["schemas"]["NornIrJsonValue"];
@@ -2809,7 +2814,7 @@ export interface components {
         };
         /**
          * @description The only IR `0.1` version literal of the connector, widget, customization,
-         *     policy, derived, and setting roots and of ontology business packs.
+         *     policy and derived roots and of ontology business packs.
          * @enum {string}
          */
         NornIrLayoutIrVersion01: "0.1";
@@ -4440,7 +4445,7 @@ export interface components {
             /** @description Scope dimensions the caller must supply (fail closed). */
             scopeRequired: string[];
             settingKey: string;
-            settingVersion: components["schemas"]["NornIrIrVersion01"];
+            settingVersion: components["schemas"]["NornIrIrVersion02"];
             /** @description The setting version this one replaces. */
             supersedes?: components["schemas"]["NornIrSettingSupersedes"];
             /**
