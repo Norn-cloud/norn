@@ -5,7 +5,9 @@
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "verification/parameters/tax/Cargo.toml"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",
