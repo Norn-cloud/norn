@@ -305,7 +305,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         history.known_at(world,object_type,key,known_as_of,budget)
     }
 
-    pub(crate) fn history_read(&self)->HistoryRead<'_, '_, S> {
+    pub(crate) fn history_read(&self)->HistoryRead<'_, '_, E> {
         HistoryRead {reader:self,receipts:BTreeMap::new()}
     }
 
