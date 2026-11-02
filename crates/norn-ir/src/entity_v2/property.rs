@@ -211,7 +211,16 @@ impl PropertyType {
                 Self::Record { members } => {
                     pending.extend(members.iter().map(|m| &m.property_type))
                 }
-                _ => {}
+                Self::Text { .. }
+                | Self::Integer { .. }
+                | Self::Decimal { .. }
+                | Self::Boolean { .. }
+                | Self::Timestamp { .. }
+                | Self::Date { .. }
+                | Self::Duration { .. }
+                | Self::Enum { .. }
+                | Self::JsonExt { .. }
+                | Self::Ref { .. } => {}
             }
         }
         false
