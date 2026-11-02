@@ -1425,6 +1425,19 @@ fn check_qualified_receipt_fence(first: u128) {
         receipt: &case.receipt,
     };
     assert!(bind_receipt::<ClassificationSummary, _>(&store, &reference).is_ok());
+    let mut changed_commit = acceptance.clone();
+    changed_commit
+        .record
+        .origin
+        .as_mut()
+        .expect("origin")
+        .commit += 1;
+    store.acceptance = &changed_commit;
+    assert!(matches!(
+        bind_receipt::<ClassificationSummary, _>(&store, &reference),
+        Err(ReceiptBindingError::Mismatch)
+    ));
+    store.acceptance = &acceptance;
     store.cell = &b;
     assert!(matches!(
         bind_receipt::<ClassificationSummary, _>(&store, &reference),
