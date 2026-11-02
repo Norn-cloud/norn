@@ -14,11 +14,11 @@ use norn_checker::{
 };
 use norn_ir::{ArtifactEnvelope, RuntimeValue, provenance::UtcTimestamp};
 
-fn measurement_artifacts() -> Vec<ArtifactEnvelope> {
+fn compiled() -> CompiledMapping {
     compile("demo-erpnext", "demo.erpnext.measurements.mapping")
 }
 
-fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
+fn pack_artifacts(pack: &str) -> Vec<ArtifactEnvelope> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut artifacts: Vec<ArtifactEnvelope> = [
         root.join("registry/core/artifacts"),
@@ -50,16 +50,13 @@ fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
             ]
             .contains(&a.artifact_id.as_str())
     });
-    let mapping = artifacts
-        .iter()
-        .find(|a| a.artifact_id == mapping_id)
-        .expect("mapping");
-    let value = serde_json::to_value(mapping).expect("JSON");
     artifacts
 }
 
-fn compiled() -> CompiledMapping {
-    let artifacts = measurement_artifacts();
+fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
+    let artifacts = pack_artifacts(pack);
+    let mapping = artifacts.iter().find(|a| a.artifact_id == mapping_id).expect("mapping");
+    let value = serde_json::to_value(mapping).expect("JSON");
     let source = artifacts
         .iter()
         .find(|a| Some(a.artifact_id.as_str()) == value["payload"]["source"]["schemaId"].as_str())
@@ -354,7 +351,7 @@ fn data_quality_pack_wordings_bind_and_conversion_retains_its_core_origin() {
     use norn_checker::law_wording::{LawWordingArtifact, WordingBinding, admit_wording};
     use norn_ir::requirement_display::RequirementLocale;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let artifacts = measurement_artifacts();
+    let artifacts = pack_artifacts("demo-erpnext");
     let context = norn_checker::EntityArtifactSetContext {
         registry: &std::collections::BTreeSet::new(),
         base: &[],
