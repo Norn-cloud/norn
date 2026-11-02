@@ -246,7 +246,7 @@ fn classifier(wire: serde_json::Value) -> norn_checker::classification::Classifi
 fn row(id: &str, amount: i64) -> (String, norn_ir::RuntimeValue) {
     (
         id.into(),
-        norn_ir::RuntimeValue::from_json_text(&format!("{{\"amount\":{amount}}}")).expect("row"),
+        norn_ir::RuntimeValue::from_json_text(format!("{{\"amount\":{amount}}}")).expect("row"),
     )
 }
 #[test]
@@ -276,7 +276,7 @@ fn graph_classify_refuses_partial_missing_duplicate_and_exhausted_inputs() {
             .classify(
                 &[(
                     "unknown".into(),
-                    norn_ir::RuntimeValue::Object(Default::default())
+                    norn_ir::RuntimeValue::Object(std::collections::BTreeMap::new())
                 )],
                 true
             )
