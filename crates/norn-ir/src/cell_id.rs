@@ -64,9 +64,11 @@ mod tests {
         }
 
         #[test]
-        fn noncanonical_identity_refuses(value in ".*") {
-            let expected = value.len() == 32 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-            prop_assert_eq!(CellId::try_from(value).is_ok(), expected);
+        fn noncanonical_identity_refuses(value in prop_oneof![
+            "[A-Zg-z][0-9a-f]{31}", "[0-9a-f]{0,31}", "[0-9a-f]{33,64}"
+        ]) {
+            prop_assert!(CellId::try_from(value.clone()).is_err());
+            prop_assert!(serde_json::from_value::<CellId>(serde_json::json!(value)).is_err());
         }
     }
 }
