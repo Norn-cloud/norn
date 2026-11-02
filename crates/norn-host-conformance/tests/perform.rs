@@ -193,6 +193,10 @@ fn fixture() -> (TemporalPlan, Vec<TemporalRow>) {
 
 /// A previous process peak conservatively refuses a later, small invocation.
 #[test]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "test capability: launch only this RSS scenario in its own process"
+)]
 fn prior_process_rss_peak_refuses_small_forecast() {
     const CHILD: &str = "NORN_RSS_REFUSAL_CHILD";
     if std::env::var_os(CHILD).is_none() {
