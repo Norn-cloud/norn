@@ -482,7 +482,11 @@ impl Model {
 
     pub(crate) fn check_governing_laws(&self, canonical_set: &str) -> Result<(), CellError> {
         let artifacts = serde_json::from_str::<Vec<ArtifactEnvelope>>(canonical_set)?;
-        if self.law_artifacts != canonical_law_artifacts(&artifacts)? {
+        let expected = canonical_law_artifacts(&artifacts)?;
+        if self.law_artifacts.is_empty() && !expected.is_empty() {
+            return Err(CellError::LegacyLawSnapshot);
+        }
+        if self.law_artifacts != expected {
             return Err(CellError::DefinitionReceiptInvalid(
                 "retained governing laws differ from the installed artifact set".to_owned(),
             ));

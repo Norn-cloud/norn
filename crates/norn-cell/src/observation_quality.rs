@@ -117,9 +117,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .as_ref()
                 != Some(record)
         {
-            return Err(CellError::QualityEvaluation(
-                "unproven correction values".into(),
-            ));
+            return Err(CellError::UnprovenCorrection);
         }
         let mut seen = BTreeSet::new();
         let mut findings = Vec::new();
@@ -162,7 +160,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                                 &record.values,
                                 &finding,
                             )
-                            .map_err(|error| CellError::QualityEvaluation(error.to_string()))?
+                            .map_err(|error| CellError::QualityEvaluation(Box::new(error)))?
                         {
                             finding.status = if class
                                 == norn_kernel::DataQualityRuleClassification::Unverified
@@ -188,12 +186,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         else {
             return Ok(None);
         };
-        let Some(event) = self.verified_history_event(&entry)? else {
-            return Ok(None);
-        };
         let receipt = self
             .receipt_at(entry.commit_seq)?
             .ok_or(CellError::OutOfRange("finding receipt"))?;
+        if receipt.body.definitions_version == 0 {
+            return Err(CellError::UnpinnedFinding);
+        }
+        let Some(event) = self.verified_history_event(&entry)? else {
+            return Ok(None);
+        };
         Ok(Some((event, receipt.body.definitions_version)))
     }
 }

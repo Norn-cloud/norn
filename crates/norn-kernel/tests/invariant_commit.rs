@@ -3064,7 +3064,7 @@ norn_testkit::proptest::proptest! {
             let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
             let key = FactKey::new(ITEM, "bounded");
             let values = object(json!({"item_id":"bounded", "amount":amount, "status":"draft"}));
-            for ty in ["norn.ActionCall", "norn.OwnedRows", "norn.ObservedTombstone", "norn.ObservedSource", "norn.PendingLinks"] {
+            for ty in ["norn.ActionCall", "norn.OwnedRows", "norn.ObservedTombstone", "norn.ObservedSource", norn_kernel::naming_series::NAMING_SERIES_COUNTER_TYPE, "norn.PendingLinks"] {
                 prop_assert!(catalog.governing_laws(&ObjectTypeName(ty.into())).expect("kernel-owned record").is_empty());
             }
             prop_assert!(catalog.governing_laws(&ObjectTypeName("unknown.Application".into())).is_err());

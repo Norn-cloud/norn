@@ -32,9 +32,18 @@ pub enum CellError {
     /// OBS-EVIDENCE-1: retained evidence disagrees with cell-owned recomputation.
     #[error("core.boundary.bundle_mismatch")]
     MappingBundleMismatch,
+    /// Law-bearing definitions predate authenticated law retention.
+    #[error("core.boundary.legacy_law_snapshot: legacy stores must be recreated; migration is out of scope")]
+    LegacyLawSnapshot,
+    /// A finding has no admitted definition version to authenticate its rules.
+    #[error("core.boundary.unpinned_finding: legacy stores must be recreated; migration is out of scope")]
+    UnpinnedFinding,
     /// Observation quality evaluation could not complete.
     #[error("quality evaluation: {0}")]
-    QualityEvaluation(String),
+    QualityEvaluation(Box<norn_kernel::snapshot_observe::ObservationRefusal>),
+    /// Correction values disagree with their immutable proof.
+    #[error("quality evaluation: unproven correction values")]
+    UnprovenCorrection,
     /// CP2 cannot resolve an applicable inherited/effective law without B2.
     #[error("core.laws.unsupported_semantics: law {law_id} scope unsupported until B2")]
     UnsupportedLawScope {

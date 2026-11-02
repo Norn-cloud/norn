@@ -50,6 +50,13 @@ Pointwise recovery checks the violated rule under an authenticated retained
 catalog without requiring old outcome values to remain identical. Lifecycle
 out-of-band findings require state-aware recovery and refuse pointwise revalidation.
 
+OBS-LEGACY-1: law-bearing snapshots without retained laws refuse with
+`core.boundary.legacy_law_snapshot`; findings pinned to definition version 0
+refuse with `core.boundary.unpinned_finding`, without effects or substitution
+from the current model/catalog: legacy stores must be recreated; migration is out of scope. Authenticated migration is tracked in [#505](https://github.com/Norn-cloud/norn/issues/505) for post-Nov 5.
+Kernel-owned naming counters remain outside the tenant action catalog and do
+not acquire unrelated tenant laws; unknown application subjects still refuse.
+
 ## Ingestion versus governed action
 
 [Owner] Imported events already happened. Validate their framing/provenance; durably capture representable source observations and advance the cursor atomically with capture. Mapping/law violations produce **findings + quarantine**, not a refused source fact. Quarantined rows retain raw evidence and stay out of authoritative aggregates unless an explicit observed-data question includes them with quality labels. Invalid transport/authentication is still a boundary failure; it is not a business-law refusal of an external occurrence.
@@ -105,6 +112,8 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 - **OBS-BAD:** Given imported purity 1100‰, when evaluated, then capture a quarantined finding; identical native write refuses without business changes.
 - **OBS-RECOVERY-UPGRADE:** After a definition install, an old finding stays open while its pinned rule fails; only a correction satisfying that retained rule resolves it. New definitions never supersede the old finding implicitly.
 - **OBS-RECOVERY-LIFECYCLE-REFUSE:** An unchanged out-of-band lifecycle finding cannot resolve through pointwise evaluation; unsupported state-aware recovery refuses.
+- **OBS-LEGACY-LAW-REFUSE:** A legacy snapshot omitting admitted laws refuses with `core.boundary.legacy_law_snapshot` and leaves receipts, definitions and facts unchanged.
+- **OBS-LEGACY-V0-REFUSE:** A version-0 finding refuses quality/recovery reads with `core.boundary.unpinned_finding`; the current model cannot supply its missing authority and no receipt or fact changes.
 - **EFFECT-UNCERTAIN:** Given provider success followed by lost reply, when retried, then dedup/lookup resolves once or outcome remains unknown; never issue a new payment ID.
 - **EFFECT-COMPENSATE:** Given confirmed payment 25, when cancellation wins after dispatch, then a separate refund 25 records its own outcome; failed refund remains outstanding.
 - **FUNCTION-ML:** Given a pinned training table and model Function, when it returns a forecast, then record output/input digests; stale or leaked-future input cannot pass publication guards.

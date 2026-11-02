@@ -75,6 +75,7 @@ impl TypeCatalog<'_> {
                     | crate::action_commit::OWNED_ROWS_TYPE
                     | crate::snapshot_observe::OBSERVED_TOMBSTONE_TYPE
                     | crate::snapshot_observe::SOURCE_OWNERSHIP_TYPE
+                    | crate::naming_series::NAMING_SERIES_COUNTER_TYPE
                     | "norn.PendingLinks"
             ) {
                 return Ok(Vec::new());

@@ -128,6 +128,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         definitions_version: u64,
     ) -> Result<Model, CellError> {
+        if definitions_version == 0 {
+            return Err(CellError::UnpinnedFinding);
+        }
         let installed = self
             .installed_definitions(Some(definitions_version))?
             .ok_or_else(unproven_event)?;
@@ -1485,13 +1488,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let receipt = self
             .receipt_at(entry.commit_seq)?
             .ok_or_else(unproven_event)?;
-        let historical;
-        let model = if receipt.body.definitions_version == 0 {
-            self.model()
-        } else {
-            historical = self.retained_definition_model(receipt.body.definitions_version)?;
-            &historical
-        };
+        let model = self.retained_definition_model(receipt.body.definitions_version)?;
         if candidates.next().is_some() || snapshot.model_hash != model.model_hash() {
             return Ok(None);
         }

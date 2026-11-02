@@ -411,7 +411,6 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> MemoryCell<E, C, I> {
         let (CommitVersions { written, linked }, fact_keys, link_keys) = {
             let catalog = TypeCatalog::new(&self.types)
                 .with_governing_laws(&self.law_artifacts)
-                .with_governing_laws(&self.law_artifacts)
                 .with_interfaces(&self.interfaces)
                 .with_property_types(&self.property_types);
             for write in &mut commit.writes {
