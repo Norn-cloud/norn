@@ -32,6 +32,15 @@ pub fn project(
 ) -> Result<DefinitionCatalog, CatalogError> {
     let all: Vec<&ArtifactEnvelope> = artifacts.iter().chain(base).collect();
     let mut layer = Layer::default();
+    for (index, artifact) in base.iter().chain(artifacts).enumerate() {
+        if let Decoded::Root(root) = decode_v2(artifact) {
+            layer.push(index, *root);
+        }
+    }
+    let mut rows = Rows {
+        property_types: layer.catalog.into_iter().map(|(_, def)| def).collect(),
+        ..Rows::default()
+    };
     for artifact in &all {
         let mut layer = crate::entity_artifacts::Layer::default();
         let context = std::iter::once(*artifact).chain(
@@ -52,15 +61,6 @@ pub fn project(
                 .collect(),
         );
     }
-    for (index, artifact) in base.iter().chain(artifacts).enumerate() {
-        if let Decoded::Root(root) = decode_v2(artifact) {
-            layer.push(index, *root);
-        }
-    }
-    let mut rows = Rows {
-        property_types: layer.catalog.into_iter().map(|(_, def)| def).collect(),
-        ..Rows::default()
-    };
     for (index, artifact) in all.iter().enumerate() {
         let reference = ArtifactRef::of(artifact)?;
         rows.artifacts.insert(CatalogArtifact {
