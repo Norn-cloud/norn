@@ -217,14 +217,14 @@ known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal"}}
 # Warm nextest runtimes and phase seconds: Boat run 41541177097;
-# heavy-3: run 41481733800; integration: hosted run 41519803350.
+# heavy-3 and integration: repaired Boat run 41542781995.
 weights = {
-    "test/heavy-1": 30, "test/heavy-2": 122, "test/heavy-3": 84,
+    "test/heavy-1": 30, "test/heavy-2": 122, "test/heavy-3": 89,
     "test/heavy-4": 43, "test/heavy-5": 27, "test/heavy-6": 29,
     "test/rest-1": 143, "test/rest-2": 59, "test/rest-3": 62,
     "phase/doctest": 6, "phase/features": 239, "phase/wasm": 97,
     "phase/clippy": 75, "phase/doc": 60, "phase/guards": 369,
-    "phase/integration": 400, "phase/provenance": 17, "phase/test-shards": 5,
+    "phase/integration": 827, "phase/provenance": 17, "phase/test-shards": 5,
 }
 # Cold test tasks spent 163–193 seconds compiling, before nextest's runtime.
 # Charge that once per bundle; later shards reuse the same test binaries.
@@ -249,15 +249,20 @@ if len(tasks) != len(set(tasks)) or set(tasks) - known:
 if plan["mode"] == "full" and set(tasks) != known:
     raise SystemExit("full bundle plan omitted a registered task")
 target_seconds = 11 * 60
-count = min(6, len(tasks), (sum(cold_cost(task) for task in tasks) + target_seconds - 1) // target_seconds)
-bins, costs, compiled = [[] for _ in range(count)], [0] * count, [False] * count
-for task in sorted(tasks, key=lambda task: (-cold_cost(task), task)):
-    def added_cost(index):
-        return weights[task] + (compile_seconds if compiles_tests(task) and not compiled[index] else 0)
-    index = min(range(count), key=lambda index: (costs[index] + added_cost(index), index))
-    costs[index] += added_cost(index)
-    bins[index].append(task)
-    compiled[index] |= compiles_tests(task)
+# Use the fewest jobs that meet the service target. If an indivisible task
+# exceeds it, minimize the critical path before allocating additional VMs.
+candidates = []
+for count in range(1, min(6, len(tasks)) + 1):
+    bins, costs, compiled = [[] for _ in range(count)], [0] * count, [False] * count
+    for task in sorted(tasks, key=lambda task: (-cold_cost(task), task)):
+        def added_cost(index):
+            return weights[task] + (compile_seconds if compiles_tests(task) and not compiled[index] else 0)
+        index = min(range(count), key=lambda index: (costs[index] + added_cost(index), index))
+        costs[index] += added_cost(index)
+        bins[index].append(task)
+        compiled[index] |= compiles_tests(task)
+    candidates.append((max(max(costs), target_seconds), count, bins))
+bins = min(candidates, default=(0, 0, []))[2]
 bundles = [{"id": f"b{index}", "tasks": tasks} for index, tasks in enumerate(bins) if tasks]
 if sorted(task for bundle in bundles for task in bundle["tasks"]) != sorted(tasks):
     raise SystemExit("bundle inventory dropped a planned task")

@@ -248,7 +248,8 @@ class AffectedPlanTests(unittest.TestCase):
         expected = ["test/" + value for value in self.full["shard"]]
         expected += ["phase/" + value for value in self.full["phase"]]
         self.assertEqual(sorted(task for bundle in self.full["bundle"] for task in bundle["tasks"]), sorted(expected))
-        self.assertEqual(len(self.full["bundle"]), 6)
+        self.assertGreaterEqual(len(self.full["bundle"]), 4)
+        self.assertLessEqual(len(self.full["bundle"]), 6)
         reordered = copy.deepcopy(self.full)
         reordered["shard"].reverse()
         reordered["phase"].reverse()
