@@ -506,6 +506,8 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
     }
 }
 fn corrupted(mut all: Vec<ArtifactEnvelope>, case: u8) -> Vec<ArtifactEnvelope> {
+    let fine: norn_ir::EntityRootV2 = payload(all.iter().find(|a| a.artifact_id == "demo.FineTransfer.entity").expect("quantity"));
+    let account = all.iter().find(|a| a.artifact_id == "demo.FineAccount.entity").expect("gram account").clone();
     let owner = all
         .iter_mut()
         .find(|a| a.artifact_id == "demo.ledgers.app")
@@ -541,6 +543,13 @@ fn corrupted(mut all: Vec<ArtifactEnvelope>, case: u8) -> Vec<ArtifactEnvelope> 
                 .expect("slot")
                 .type_name = norn_ir::ObjectTypeName("demo.FineTransfer".into());
         }
+        5 => {
+            usd.type_unit_bindings.get_mut("Ledger").expect("slot").decimals.insert("credit".into(), fine.object_type.properties.into_iter().find(|p| p.id.as_str() == "credit").expect("grams").property_type);
+        }
+        6 => {
+            let binding = usd.type_unit_bindings.get_mut("Account").expect("slot");
+            binding.target = pin(&account); binding.type_name = norn_ir::ObjectTypeName("demo.FineAccount".into());
+        }
         _ => {
             usd.type_unit_bindings
                 .get_mut("Ledger")
@@ -555,12 +564,12 @@ fn corrupted(mut all: Vec<ArtifactEnvelope>, case: u8) -> Vec<ArtifactEnvelope> 
 #[test]
 fn incomplete_stale_or_mixed_instance_bindings_refuse_before_install() {
     let source = artifacts();
-    for case in 0..5 {
+    for case in 0..7 {
         let findings =
             norn_checker::check_artifact_set(&corrupted(source.clone(), case), &context());
         let expected = match case {
             1 => "core.composition.unresolved_pin",
-            4 => "core.values.unit_mismatch",
+            4 | 5 => "core.values.unit_mismatch",
             _ => "core.composition.mapping_gap",
         };
         assert!(
