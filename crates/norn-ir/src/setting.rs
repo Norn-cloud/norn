@@ -131,8 +131,8 @@ struct SettingRootWire {
     setting_version: IrVersion01,
     setting_key: String,
     value_type: SettingValueType,
-    /// The value, whose JSON type agrees with `valueType`. A `json` setting
-    /// may be `null`.
+    /// Numbers use exact `DecimalLiteral` strings; other branches retain their
+    /// JSON type. A `json` setting may be `null`.
     value: JsonValue,
     effective_from: String,
     /// Must sort after `effectiveFrom` (checker rule).

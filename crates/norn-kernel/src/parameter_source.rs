@@ -10,7 +10,6 @@ use norn_ir::{
 };
 
 type Record = (FactKey, FactState);
-
 fn text(values: &RuntimeObject, field: &str) -> Result<Option<String>, ParameterError> {
     match values.get(field) {
         Some(RuntimeValue::Null) => Ok(None),
