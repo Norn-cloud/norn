@@ -64,6 +64,8 @@ mod effect;
 mod envelope;
 pub mod limits;
 pub mod naming_series;
+mod partition_slice;
+pub use partition_slice::{PartitionSlice, load_partition_slice};
 mod synchronous_rule;
 pub use norn_decisions::DecisionBinding;
 pub use synchronous_rule::{SynchronousRule, SynchronousRuleError};
