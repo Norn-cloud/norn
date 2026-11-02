@@ -165,7 +165,6 @@ eval "$("$opam_binary" env --set-root --set-switch --shell=sh)"
   odoc.3.2.1 \
   ppx_deriving_yojson.3.10.0
 
-
 (
   cd "$source_root/hax"
   ./setup.sh -j "$OPAMJOBS" --no-cleanup
@@ -174,7 +173,6 @@ ln -sfn "$CARGO_HOME/bin/cargo-hax" "$bin_root/cargo-hax"
 ln -sfn "$CARGO_HOME/bin/driver-hax-frontend-exporter" "$bin_root/driver-hax-frontend-exporter"
 hax_engine="$(command -v hax-engine)"
 ln -sfn "$hax_engine" "$bin_root/hax-engine"
-
 
 if [[ ! -x "$source_root/aeneas/charon/bin/charon" ]]; then
   env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR make -C "$source_root/aeneas" setup-charon
