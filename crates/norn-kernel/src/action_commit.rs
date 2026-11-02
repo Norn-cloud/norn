@@ -1140,7 +1140,7 @@ fn receipt_changes<H: CellHost + ?Sized>(
         .map_err(|_invalid_reference| invalid())?;
     let binding = host
         .resolve_accepted_receipt(&reference, &declaration.manifest_digest)
-        .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from(error)))?
+        .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from_commit(error)))?
         .ok_or_else(invalid)?;
     let (digest, result, acceptance) = binding.into_parts();
     if acceptance
@@ -4135,6 +4135,7 @@ fn precondition_read_refusal<X>(
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::ReceiptRefused { .. }
         | CommitError::Host(_) => None,
     };
     let stale_link = match error {
@@ -4166,6 +4167,7 @@ fn precondition_read_refusal<X>(
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::ReceiptRefused { .. }
         | CommitError::Host(_) => None,
     };
     if let Some(key) = stale_fact {
@@ -4283,6 +4285,7 @@ where
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::ReceiptRefused { .. }
         | CommitError::Host(_)) => return DecisionRefusal::from_commit(error),
     };
     let refusal = DecisionRefusal::InvariantViolation {
