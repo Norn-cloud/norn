@@ -1518,11 +1518,11 @@ dependencies = [
 name = "norn-api"
 version = "0.1.0"
 dependencies = [
+ "http",
  "norn-cell",
  "norn-checker",
- "norn-kernel",
- "http",
  "norn-ir",
+ "norn-kernel",
  "serde",
  "serde_json",
  "utoipa",
