@@ -77,6 +77,7 @@ pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
 /// property defaults along `extends`.
 #[derive(Debug, Clone, Default)]
 pub struct TypeCatalog<'a> {
+    pub(crate) law_artifacts: Vec<&'a norn_ir::ArtifactEnvelope>,
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
     extensions: Vec<&'a ObjectTypeExtension>,
@@ -113,11 +114,19 @@ impl<'a> TypeCatalog<'a> {
                 .into_iter()
                 .map(|object_type| (object_type.name.as_str(), object_type))
                 .collect(),
+            law_artifacts: Vec::new(),
             interfaces: BTreeMap::new(),
             extensions: Vec::new(),
             property_types: None,
             effective_model: OnceLock::new(),
         }
+    }
+
+    /// OBS-EVIDENCE-1: bind the retained law artifacts of this definition snapshot.
+    #[must_use]
+    pub fn with_governing_laws(mut self, artifacts: &'a [norn_ir::ArtifactEnvelope]) -> Self {
+        self.law_artifacts = artifacts.iter().collect();
+        self
     }
 
     /// The same catalog with the admitted interfaces implemented by its
@@ -655,7 +664,7 @@ impl<'a> TypeCatalog<'a> {
         rule_ref: &DataQualityRuleRef,
     ) -> Result<DataQualityRuleClassification, norn_ir::canonical::CanonicalJsonError> {
         match rule_ref {
-            DataQualityRuleRef::Law { .. } => Ok(DataQualityRuleClassification::Unverified),
+            DataQualityRuleRef::Law { .. } => Ok(crate::governing_laws::classify(self, rule_ref)),
             DataQualityRuleRef::Builtin { id, version } => Ok(
                 if (id == PROPERTY_DOMAIN_RULE_ID && self.has_property_domain_rule(rule_ref)?)
                     || is_supported_builtin_rule(id, version)
@@ -1640,6 +1649,14 @@ pub enum DecisionRefusal<X> {
         /// The accounting invariant that failed.
         reason: norn_ir::posting::AccountingError,
     },
+    /// A retained governing law refused the commit.
+    #[error("{key}: {reason}")]
+    Law {
+        /// Subject of the refused write.
+        key: FactKey,
+        /// Stable law diagnostic.
+        reason: crate::governing_laws::LawEvaluationError,
+    },
     /// The resolved final value failed a declared invariant.
     #[error("{key}: invariant {} refused the change: {message}", id.as_str())]
     InvariantViolation {
@@ -1710,6 +1727,7 @@ impl<X> DecisionRefusal<X> {
             Self::Stale { .. } => "decision.stale_state",
             Self::NotPending { .. } => "decision.not_pending",
             Self::AccountingPosting { reason, .. } => reason.code(),
+            Self::Law { reason, .. } => reason.code(),
             Self::InvariantViolation { .. } => "decision.invariant_violation",
             Self::InvariantBudgetExceeded { .. } => "decision.invariant_budget_exceeded",
             Self::TraversalLimitExceeded { .. } => "commit.traversal_limit_exceeded",
@@ -1724,7 +1742,8 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub fn diagnostic_subject(&self) -> Option<&FactKey> {
         match self {
-            Self::NotInSlice { key }
+            Self::Law { key, .. }
+            | Self::NotInSlice { key }
             | Self::SourceOwnedTarget { key }
             | Self::ObjectMissing { key }
             | Self::ObjectExists { key }
@@ -1759,6 +1778,7 @@ impl<X> DecisionRefusal<X> {
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
+            CommitError::Law { key, reason } => Self::Law { key, reason },
             CommitError::DuplicateKey { key } => Self::InvalidOutput {
                 reason: format!("{key} appears twice in one commit"),
             },

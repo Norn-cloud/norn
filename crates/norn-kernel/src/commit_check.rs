@@ -483,6 +483,27 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
         },
         InvariantAdmissionError::ObservationAuthorization => CommitError::ObservationAuthorization,
     })?;
+    let mut remaining = EvaluationBudget::default().units();
+    for write in &commit.writes {
+        let FactMutation::Put { values } = &write.mutation else {
+            continue;
+        };
+        let failures =
+            crate::governing_laws::evaluate(model.catalog, &write.key, values, &mut remaining)
+                .map_err(|reason| CommitError::Law {
+                    key: write.key.clone(),
+                    reason,
+                })?;
+        if authorization.is_some_and(|authority| authority.authorizes_write(write)) {
+            continue;
+        }
+        if let Some(failure) = failures.into_iter().find(|failure| failure.refuses_native) {
+            return Err(CommitError::Law {
+                key: write.key.clone(),
+                reason: crate::governing_laws::LawEvaluationError::Violated(failure.message),
+            });
+        }
+    }
     next_versions(commit)
 }
 

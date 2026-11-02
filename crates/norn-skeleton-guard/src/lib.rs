@@ -166,10 +166,16 @@ pub const CRATES: &[CrateRule] = &[
         &["norn-kernel", "norn-checker", "norn-projections", "norn-ir"],
     ),
     rule("norn-dataplane", Ring::One, &["norn-ir"]),
-    r0(
+    rule(
         "norn-api",
-        &["norn-ir"],
-        &["http", "serde", "serde_json", "utoipa"],
+        Ring::One,
+        &["norn-ir", "norn-cell", "norn-checker", "norn-kernel"],
+=======
+    rule(
+        "norn-api",
+        Ring::One,
+        &["norn-ir", "norn-cell", "norn-checker", "norn-kernel"],
+>>>>>>> 3f12384a9b755cf74681d99435edb0fd3ae8c5e1
     ),
     rule(
         "norn-cli",
