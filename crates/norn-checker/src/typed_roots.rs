@@ -2817,6 +2817,80 @@ mod tests {
         }
     }
 
+    fn action_with_nested_input_field(field: &str, arrays: &[bool]) -> (Value, String) {
+        let mut schema = json!({"type":"object","additionalProperties":false,
+            "properties":{(field):{"type":"string"}},"required":[field]});
+        let mut path = format!(".properties.{field}");
+        for array in arrays {
+            if *array {
+                schema = json!({"type":"array","items":schema});
+                path = format!(".items{path}");
+            } else {
+                schema = json!({"type":"object","additionalProperties":false,
+                    "properties":{"node":schema},"required":["node"]});
+                path = format!(".properties.node{path}");
+            }
+        }
+        let mut action = fixture(ACTION_FIXTURE);
+        action["payload"]["preconditions"] = json!([]);
+        action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"details":schema},"required":["details"]});
+        (
+            action,
+            format!("payload.inputSchema.properties.details{path}"),
+        )
+    }
+
+    #[test]
+    fn action_actor_reserved_input_schemas_refuse_at_nested_object_and_array_paths() {
+        for arrays in [vec![], vec![false], vec![true], vec![true, false, true]] {
+            for field in ["actor", "approved", "subjectId", "recorded_by"] {
+                let (action, path) = action_with_nested_input_field(field, &arrays);
+                let found = findings(action);
+                if matches!(field, "actor" | "approved") {
+                    assert_eq!(
+                        found,
+                        [("action.validation.invalid_schema".to_owned(), path)]
+                    );
+                } else {
+                    assert!(found.is_empty(), "{found:?}");
+                }
+            }
+        }
+        for field in ["actor", "approved"] {
+            let mut action = fixture(ACTION_FIXTURE);
+            action["payload"]["preconditions"] = json!([]);
+            action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+                "properties":{(field):{"type":"string"}},"required":[field]});
+            action["payload"]["derive"] = json!([
+                {"field":field,"expression":"actor.subjectId","inputRequired":false}
+            ]);
+            assert!(has(
+                &findings(action),
+                "action.validation.invalid_schema",
+                &format!("payload.inputSchema.properties.{field}")
+            ));
+        }
+        let (mut action, _) = action_with_nested_input_field("recorded_by", &[]);
+        action["payload"]["outputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"actor":{"type":"string"},"approved":{"type":"boolean"}}});
+        assert!(findings(action).is_empty());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn action_actor_reserved_schema_names_refuse_under_generated_containers(
+            field in proptest::sample::select(vec!["actor", "approved", "subjectId", "recorded_by"]),
+            arrays in proptest::collection::vec(proptest::bool::ANY, 0..12),
+        ) {
+            let (action, path) = action_with_nested_input_field(field, &arrays);
+            let expected = if matches!(field, "actor" | "approved") {
+                vec![("action.validation.invalid_schema".to_owned(), path)]
+            } else { vec![] };
+            proptest::prop_assert_eq!(findings(action), expected);
+        }
+    }
+
     #[test]
     fn action_derivations_are_ordered_typed_and_require_consistent_input_flags() {
         let mut action = fixture(ACTION_FIXTURE);
