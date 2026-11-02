@@ -1,0 +1,7 @@
+{
+  "code": "ledger.commit.idempotency_mismatch",
+  "message": "idempotency lookup returned a record from another scope or key",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

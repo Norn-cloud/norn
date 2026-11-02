@@ -147,7 +147,13 @@ pub(crate) fn put(key: &str, input: i64, recovered: i64, at: &str, metal: &str) 
             ),
             (
                 "loss".into(),
-                V::from(Decimal::parse(&format!("{}e-3", input - recovered)).expect("exact loss")),
+                V::from(
+                    Decimal::parse(&format!(
+                        "{}e-3",
+                        input.checked_sub(recovered).expect("bounded loss")
+                    ))
+                    .expect("exact loss"),
+                ),
             ),
             ("occurred_at".into(), V::from(at)),
             ("metal".into(), V::from(metal)),

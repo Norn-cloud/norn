@@ -227,7 +227,7 @@ fn governed_on(store: CellStore, model: &Model, transition: &str, key: &str, all
     let action = action(transition);
     let defs: Vec<_> = model.object_types().collect();
     let catalog = TypeCatalog::new(defs).with_interfaces(model.interfaces());
-    let call = ActionCall {
+    let invocation = ActionCall {
         action: &action,
         action_artifact_id: &format!("core.analytics.restatement.{transition}.action"),
         action_version: "0.1.0",
@@ -246,11 +246,7 @@ fn governed_on(store: CellStore, model: &Model, transition: &str, key: &str, all
             consumes: None,
         },
     };
-    let result = commit_action(&mut cell, &catalog, &call, &Authority(allow));
-    if allow && result.is_err() {
-        eprintln!("governed {transition}: {result:?}");
-    }
-    result.is_ok()
+    commit_action(&mut cell, &catalog, &invocation, &Authority(allow)).is_ok()
 }
 fn activate(path: &Path, model: &Model, key: &str) {
     assert!(governed(
@@ -390,7 +386,17 @@ fn governed_activation_switches_all_slices_and_preserves_old_answers() {
     drop(interrupted);
     activate(&path, &model, "K2");
     let store = open(&path, &model);
-    let current = view(&store, &context);
+    assert_activated_showcase(&store, &context, &old, old_version, k2, &old_bytes);
+}
+fn assert_activated_showcase(
+    store: &CellStore,
+    context: &QueryContext,
+    old: &RestatementView,
+    old_version: u64,
+    k2: KnowledgeCutoff,
+    old_bytes: &[u8],
+) {
+    let current = view(store, context);
     assert!(!current.stale);
     assert_ne!(current.generation, old.generation);
     for (id, output) in &current.outputs {
@@ -409,14 +415,17 @@ fn governed_activation_switches_all_slices_and_preserves_old_answers() {
         "292.5"
     );
     let original = store
-        .read_restatement_at_version(ID, old_version, &context)
+        .read_restatement_at_version(ID, old_version, context)
         .expect("reproducible original");
     assert_eq!(serde_json::to_vec(&original).expect("original"), old_bytes);
     let delta = &current.deltas["loss"];
     assert_eq!(delta.retract["\"2026-10-19\""].totals[0].canonical(), "6");
     assert_eq!(delta.replace["\"2026-10-19\""].totals[0].canonical(), "7.5");
     let mut revoked = context.clone();
-    revoked.authorization_epoch += 1;
+    revoked.authorization_epoch = revoked
+        .authorization_epoch
+        .checked_add(1)
+        .expect("bounded epoch");
     assert!(store.read_restatement(ID, &revoked).is_err());
 }
 #[test]
@@ -508,9 +517,7 @@ fn missing_incomplete_and_stale_candidates_never_replace_the_complete_output() {
     assert_eq!(view(&store, &context).generation, old);
     assert!(view(&store, &context).stale);
 }
-fn generated_restatement_sequence(
-    changes: Vec<(i64, u8, bool, bool, bool)>,
-) -> proptest::test_runner::TestCaseResult {
+fn generated_restatement_sequence(changes: Vec<(i64, u8, bool, bool, bool)>) {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
     let (mut store, plan, mut context, model) = setup(&path);
@@ -525,7 +532,11 @@ fn generated_restatement_sequence(
         .expect("version");
     let original = serde_json::to_vec(&view(&store, &context)).expect("original");
     for (index, (recovered, day, deleted, redeliver, restart)) in changes.into_iter().enumerate() {
-        let at = CLOCK + u64::try_from(index + 1).expect("bounded");
+        let at = CLOCK
+            .checked_add(
+                u64::try_from(index.checked_add(1).expect("bounded index")).expect("bounded"),
+            )
+            .expect("bounded clock");
         let batch = CommitBatch {
             world: MAIN_WORLD.into(),
             scope: SCOPE.into(),
@@ -551,7 +562,7 @@ fn generated_restatement_sequence(
         let head = store.verified_head().expect("head");
         if redeliver {
             store.commit(&batch).expect("redelivery");
-            proptest::prop_assert_eq!(store.verified_head().expect("head"), head.clone());
+            assert_eq!(store.verified_head().expect("head"), head.clone());
         }
         progress(&mut context, at, head.commits);
         let point = cutoff(&store, &context);
@@ -573,7 +584,7 @@ fn generated_restatement_sequence(
             drop(build);
             drop(store);
             store = open(&path, &model);
-            proptest::prop_assert_eq!(view(&store, &context).generation, old.clone());
+            assert_eq!(view(&store, &context).generation, old.clone());
         }
         let build = store
             .resume_restatement(ID, context.clone())
@@ -582,7 +593,7 @@ fn generated_restatement_sequence(
             .prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true))
             .expect("generated IVM equals recompute");
         store.stage_restatement(prepared).expect("stage");
-        proptest::prop_assert_eq!(view(&store, &context).generation, old);
+        assert_eq!(view(&store, &context).generation, old);
         drop(store);
         activate(&path, &model, &format!("generation/{index}"));
         store = open(&path, &model);
@@ -598,9 +609,9 @@ fn generated_restatement_sequence(
                     .evaluate_question_known_at(&loss_plan(), context.clone(), point, |_| Ok(true))
                     .expect("loss recompute")
             };
-            proptest::prop_assert_eq!(&answer.result, &expected.result);
+            assert_eq!(&answer.result, &expected.result);
         }
-        proptest::prop_assert_eq!(
+        assert_eq!(
             serde_json::to_vec(
                 &store
                     .read_restatement_at_version(ID, original_version, &context)
@@ -610,13 +621,12 @@ fn generated_restatement_sequence(
             original.clone()
         );
     }
-    Ok(())
 }
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
     fn activated_deltas_equal_full_recompute_through_redelivery_and_restart(changes in proptest::collection::vec((0i64..75_000,14u8..28,proptest::bool::ANY,proptest::bool::ANY,proptest::bool::ANY),1..5)) {
-        generated_restatement_sequence(changes)?;
+        generated_restatement_sequence(changes);
     }
 }
 

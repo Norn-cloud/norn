@@ -229,15 +229,25 @@ impl<E: SqlEngine> CellStore<E> {
             values.insert("active".into(), RuntimeValue::from(encoded));
             values.insert("active_digest".into(), RuntimeValue::from(digest));
         }
-        self.write_restatement(id, &context, expected_version, values.clone(), &mut |_| {
-            Ok(())
-        })?;
+        let mut write = values.clone();
+        let transition = if expected_version == 0 {
+            None
+        } else {
+            write.insert("status".into(), RuntimeValue::from("active"));
+            Some("rebuild")
+        };
+        let version = self.write_restatement(
+            id,
+            &context,
+            expected_version,
+            write,
+            transition,
+            &mut |_| Ok(()),
+        )?;
         Ok(RestatementBuild {
             id: id.into(),
             context,
-            version: expected_version
-                .checked_add(1)
-                .ok_or_else(|| refused(INVALID))?,
+            version,
             values,
         })
     }
@@ -423,8 +433,16 @@ impl<E: SqlEngine> CellStore<E> {
         let mut values = build.values;
         values.insert("candidate".into(), RuntimeValue::from(encoded));
         values.insert("candidate_digest".into(), RuntimeValue::from(digest));
-        values.insert("status".into(), RuntimeValue::from("ready"));
-        self.write_restatement(&build.id, &build.context, build.version, values, probe)
+        values.insert("status".into(), RuntimeValue::from("building"));
+        self.write_restatement(
+            &build.id,
+            &build.context,
+            build.version,
+            values,
+            Some("stage"),
+            probe,
+        )
+        .map(|_version| ())
     }
     fn write_restatement(
         &mut self,
@@ -432,8 +450,9 @@ impl<E: SqlEngine> CellStore<E> {
         context: &QueryContext,
         expected: u64,
         values: BTreeMap<String, RuntimeValue>,
+        transition: Option<&str>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
-    ) -> Result<(), CellError> {
+    ) -> Result<u64, CellError> {
         let bound = ResourceLimitProfile::norn_limits_v1()
             .slice
             .max_canonical_bytes
@@ -452,22 +471,39 @@ impl<E: SqlEngine> CellStore<E> {
                 key: id.into(),
                 values,
             }],
+            facts: transition
+                .map(|transition| norn_ir::FactChange::Transition {
+                    object_type: RESTATEMENT_TYPE.into(),
+                    key: id.into(),
+                    lifecycle: "status".into(),
+                    transition: transition.into(),
+                })
+                .into_iter()
+                .collect(),
             ..CommitBatch::default()
         };
-        self.commit_guarded(
-            &batch,
-            |reader| {
-                if reader.version(&context.world, RESTATEMENT_TYPE, id)? != expected {
-                    return Err(refused(INVALID));
-                }
-                Ok(())
-            },
-            probe,
-        )
-        .map_err(|e| match e {
-            GuardedError::Guard(e) | GuardedError::Store(e) => e,
-        })?;
-        Ok(())
+        let (_, outcome) = self
+            .commit_guarded(
+                &batch,
+                |reader| {
+                    if reader.version(&context.world, RESTATEMENT_TYPE, id)? != expected {
+                        return Err(refused(INVALID));
+                    }
+                    Ok(())
+                },
+                probe,
+            )
+            .map_err(|e| match e {
+                GuardedError::Guard(e) | GuardedError::Store(e) => e,
+            })?;
+        outcome
+            .receipt
+            .body
+            .written
+            .iter()
+            .rfind(|row| row.object_type == RESTATEMENT_TYPE && row.key == id)
+            .map(|row| row.version)
+            .ok_or_else(|| refused(INVALID))
     }
     /// OUTPUT-ATOMIC: authenticate one slot incarnation, then select all outputs.
     /// Current authorization is required even when reading a retained generation.

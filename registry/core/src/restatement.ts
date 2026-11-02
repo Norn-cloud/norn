@@ -24,7 +24,9 @@ export const Restatement = Norn.type({
   name: "core.analytics.Restatement", title: "Analytical restatement", version: "0.1.0",
   properties: Slot, implements: [RestatementEvidence], identity: [{ name: "primary", properties: ["id"] }],
   defaults: { status: "building", active: "", active_digest: "", candidate: "", candidate_digest: "" },
-  lifecycles: [{ property: "status", initial: ["building"], terminal: ["active"], transitions: [
+  lifecycles: [{ property: "status", initial: ["building"], terminal: [], transitions: [
+    { id: "stage", from: ["building"], to: "ready", guards: [Norn.expression(Slot, self => self.candidate !== "" && self.candidate_digest !== "")] },
+    { id: "rebuild", from: ["active"], to: "building" },
     { id: "approve", from: ["ready"], to: "approved",
       guards: [Norn.expression(Slot, self => self.reason !== "" && self.slice_ids !== "" && self.candidate !== "" && self.candidate_digest !== "")] },
     { id: "activate", from: ["approved"], to: "active",
