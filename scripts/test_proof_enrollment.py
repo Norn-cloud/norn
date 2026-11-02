@@ -7,6 +7,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -174,7 +175,8 @@ class AffectedPlanTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        for manifest in [ROOT / "Cargo.toml", *ROOT.glob("crates/*/Cargo.toml")]:
+        members = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["members"]
+        for manifest in [ROOT / "Cargo.toml", *(ROOT / m / "Cargo.toml" for m in members)]:
             target = self.root / manifest.relative_to(ROOT)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(manifest, target)

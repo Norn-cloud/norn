@@ -237,9 +237,12 @@ for path in changed:
     if (path in gates or path.startswith((".github/workflows/", "crates/norn-skeleton-guard/"))
             or Path(path).name in {"Cargo.lock", "Cargo.toml", "rust-toolchain", "rust-toolchain.toml", "lean-toolchain"}):
         full(f"gate, dependency or toolchain changed: {path}")
-workspace = tomllib.loads((root / "Cargo.toml").read_text())
-shared = workspace["workspace"].get("dependencies", {})
-members = {m.rstrip("/"): tomllib.loads((root / m / "Cargo.toml").read_text()) for m in workspace["workspace"]["members"]}
+try:
+    workspace = tomllib.loads((root / "Cargo.toml").read_text())
+    shared = workspace["workspace"].get("dependencies", {})
+    members = {m.rstrip("/"): tomllib.loads((root / m / "Cargo.toml").read_text()) for m in workspace["workspace"]["members"]}
+except (OSError, ValueError, KeyError):
+    full("workspace dependency graph is unplannable")
 names = {path: manifest["package"]["name"] for path, manifest in members.items()}
 known = set(names.values())
 def target(key, spec):
