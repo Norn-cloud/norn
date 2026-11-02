@@ -1,6 +1,8 @@
 //! CELL-QUALIFY-1: portable receipt use is fenced by authenticated local origin.
 
-use crate::result_reconciliation::ResultRecord;
+use crate::result_reconciliation::{
+    Classification, DispatchedCommand, ReconcileContext, RefusalReason, ResultRecord,
+};
 use norn_ir::{
     cell_id::CellId,
     cell_reference::{QualifiedCommit, ReferenceNamespace},
@@ -44,4 +46,42 @@ pub(crate) fn local_origin(record: &ResultRecord, context: Option<(&CellId, &str
         None => true,
         Some(origin) => context.is_some_and(|(cell, world)| origin.belongs_to(cell, world)),
     }
+}
+
+pub(crate) fn check_origin(
+    context: &ReconcileContext<'_>,
+    dispatched: &DispatchedCommand,
+) -> Option<(Classification, RefusalReason)> {
+    let invocation = &dispatched.invocation;
+    let Some(origin) = invocation.provenance_commit.qualified() else {
+        return context.cell.map(|_| {
+            (
+                Classification::Rejected,
+                RefusalReason::OutOfScope {
+                    detail: "legacy Function completion is local-only".to_owned(),
+                },
+            )
+        });
+    };
+    if invocation.content_digest().ok().as_ref() != Some(&dispatched.dispatch) {
+        return Some((
+            Classification::Rejected,
+            RefusalReason::BindingMismatch {
+                member: "qualified dispatch".to_owned(),
+            },
+        ));
+    }
+    if origin.world != invocation.world
+        || context
+            .cell
+            .is_none_or(|cell| !origin.belongs_to(cell, context.world))
+    {
+        return Some((
+            Classification::Rejected,
+            RefusalReason::OutOfScope {
+                detail: "cell-qualified provenance".to_owned(),
+            },
+        ));
+    }
+    None
 }

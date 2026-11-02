@@ -805,31 +805,8 @@ fn check_dispatch<R: ReceiptValidator + ?Sized>(
             },
         ));
     }
-    if context.cell.is_some() && invocation.provenance_commit.qualified().is_none() {
-        return Some((
-            Classification::Rejected,
-            RefusalReason::OutOfScope {
-                detail: "legacy Function completion is local-only".to_owned(),
-            },
-        ));
-    }
-    if invocation.provenance_commit.qualified().is_some()
-        && invocation.content_digest().ok().as_ref() != Some(&dispatched.dispatch)
-    {
-        return Some(mismatch("qualified dispatch"));
-    }
-    if let Some(origin) = invocation.provenance_commit.qualified()
-        && (origin.world != invocation.world
-            || context
-                .cell
-                .is_none_or(|cell| !origin.belongs_to(cell, context.world)))
-    {
-        return Some((
-            Classification::Rejected,
-            RefusalReason::OutOfScope {
-                detail: "cell-qualified provenance".to_owned(),
-            },
-        ));
+    if let Some(refusal) = crate::cell_provenance::check_origin(context, dispatched) {
+        return Some(refusal);
     }
     if receipt.command_id != invocation.command_id || receipt.run.id != invocation.run.id {
         return Some((Classification::Rejected, RefusalReason::NotOwned));
