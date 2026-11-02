@@ -101,8 +101,10 @@ identity are bound to one definition epoch. Scope and authenticated actor are
 transport metadata. Stale revisions refuse before mutation.
 
 SURFACE-DENY-1/2: host, action and declared-read policies default to deny.
-Refusals preserve kernel code, category and readable message; failed calls
-leave the complete committed dump unchanged, including call records.
+Refusals preserve kernel code, category and readable message. Policy and guard
+refusals leave the complete committed dump unchanged, including call records.
+Law refusals preserve business state and retain the kernel audit receipt, as
+specified by SURFACE-DEMO-3 below.
 
 SURFACE-RETRY-IDENTITY: conflicting MCP argument and metadata identities refuse.
 SURFACE-CLOCK-PIN: turns use the persisted host clock floor.

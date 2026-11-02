@@ -201,6 +201,31 @@ async fn equivalent_governed_surfaces() {
             .expect("admitted fresh tenant")
             .with_authorizer(Demo),
         );
+        let definitions = crate::routes::get_defs(
+            &host,
+            &crate::routes::DefinitionsQuery {
+                org_id: Some("org_surfaces".into()),
+                environment_id: Some("dev".into()),
+                version: None,
+            },
+            Some("demo"),
+        )
+        .expect("authorized retained document");
+        let law = definitions
+            .artifacts
+            .iter()
+            .map(|artifact| serde_json::from_str::<Value>(artifact.get()).expect("artifact"))
+            .find(|artifact| artifact["artifactId"] == "demo.fine_mass_conservation.law")
+            .expect("retained governing law");
+        assert_eq!(law["payload"]["response"]["kind"], "invariant");
+        assert_eq!(
+            law["payload"]["response"]["objectType"],
+            "demo.MeltMeasurement"
+        );
+        assert_eq!(
+            law["payload"]["response"]["invariantId"],
+            "fine_mass_conservation"
+        );
         let app = router(Arc::clone(&host));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -310,6 +335,15 @@ async fn equivalent_governed_surfaces() {
         assert_eq!(
             event.get("id").and_then(norn_ir::RuntimeValue::as_str),
             Some("fine_mass_conservation")
+        );
+        let owner = event.get("owner").expect("inherited invariant owner");
+        assert_eq!(
+            owner.get("kind").and_then(norn_ir::RuntimeValue::as_str),
+            Some("interface")
+        );
+        assert_eq!(
+            owner.get("name").and_then(norn_ir::RuntimeValue::as_str),
+            Some("demo.ConservedFineMass")
         );
         results.push((accepted, denied, law));
         states.push(dump(&host));
