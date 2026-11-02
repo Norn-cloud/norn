@@ -1295,7 +1295,7 @@ fn law_normative_context_binds_every_host_selection_and_refuses_stale_instances(
     let mut stale = enacting.clone();
     stale.pack.sha256 = "0".repeat(64);
     assert!(Context::select(&retained, &stale, "board", "1", 7, 0).is_err());
-    stale = enacting.clone();
+    stale = enacting;
     stale.instance_id = "missing".into();
     assert!(Context::select(&retained, &stale, "board", "1", 7, 0).is_err());
     let source = retained_candidate(&[], &retained);
