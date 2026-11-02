@@ -197,7 +197,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let receipt = self
             .receipt_at(to_u64(commit_seq, "fact commit seq")?)?
             .ok_or_else(unproven_snapshot)?;
-        if hash_json(&receipt.body)? != receipt.hash
+        if snapshot.root_type != root || hash_json(&receipt.body)? != receipt.hash
             || receipt.body.world != world
             || !receipt.body.written.iter().any(|row| {
                 row.object_type == snapshot.object_type && row.key == key && row.version == version

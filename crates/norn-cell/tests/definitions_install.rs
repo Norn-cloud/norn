@@ -5014,7 +5014,8 @@ norn_testkit::proptest::proptest! {
         };
         let (old_root,new_root)=if first_a {("defs.A","defs.B")} else {("defs.B","defs.A")};
         let original=model_for(Some(old_root));
-        let mut store=CellStore::open_in_memory(original.clone()).expect("store");
+        let directory=tempfile::tempdir().expect("directory");let path=directory.path().join("cell.sqlite");
+        let mut store=CellStore::open(&path,original.clone(),StoreOptions::default()).expect("store");
         store.install_definitions(original.clone(),install_input("identity-v1",1,&original),Some(0),"org_demo/dev").expect("seed");
         let write=|kind:&str|FactWriteRow::Put{object_type:kind.into(),key:"same".into(),values:[("name".into(),Value::from("retained"))].into()};
         for version in 1..=unrelated_versions {store.commit(&batch(write(new_root),version.checked_add(1).expect("bounded"))).expect("independent same key");}
@@ -5031,5 +5032,9 @@ norn_testkit::proptest::proptest! {
                 assert_eq!(proof.snapshot().root_type,old_root);assert_eq!(proof.snapshot().version,1);
             }
         }
+        let connection=rusqlite::Connection::open(path).expect("locator corruption");
+        connection.execute("UPDATE _norn_fact_values SET root_type='defs.Child' WHERE object_type='defs.Child' AND version=1",[]).expect("retag retained root");
+        let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        assert!(store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"defs.Child","same",cutoff,&mut DecodeBudget::new(&limits)).is_err());
     }
 }
