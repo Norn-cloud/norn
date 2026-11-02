@@ -510,6 +510,16 @@ fn wording_admission_refuses_missing_templates_and_malformed_pins() {
     use norn_checker::law_wording::{WordingError, admit_wording};
     use norn_ir::requirement_display::RequirementLocale;
     let (law, mut wording) = wording_fixture(0);
+    wording.law_sha256 = "0".repeat(64);
+    assert_eq!(
+        admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En)
+            .expect("valid stale display")
+            .binding,
+        norn_checker::law_wording::WordingBinding::Unverified
+    );
+    wording.law_sha256 = norn_checker::ArtifactRef::of(&law)
+        .expect("current digest")
+        .sha256;
     wording.requirement.wording.response.ar.clear();
     assert!(matches!(
         admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En),

@@ -10,7 +10,14 @@ const Wordings = Schema.Record(Schema.String, Schema.Struct({
   lawDigest: Schema.String,
   slots: Schema.Struct({ scope: TextSlot, activation: TextSlot, component: TextSlot, response: TextSlot }),
 }))
-export const decodeLawWordings = (value: unknown) => Schema.decodeUnknownSync(Wordings)(value, { onExcessProperty: "error" })
+export function decodeLawWordings(value: unknown) {
+  const wordings = Schema.decodeUnknownSync(Wordings)(value, { onExcessProperty: "error" })
+  for (const template of Object.values(wordings)) {
+    if (!/^[0-9a-f]{64}$/.test(template.lawDigest)) throw new Error("wording requires a lowercase SHA-256 law digest")
+    if (Object.values(template.slots).some(slot => !slot.en.trim() || !slot.ar.trim())) throw new Error("wording requires nonempty EN/AR slots")
+  }
+  return wordings
+}
 
 export type LawModality = { readonly kind: "always" | "never" | "eventually" } | { readonly kind: "until"; readonly predicate: string }
 export type LawTiming = { readonly kind: "within"; readonly millis: string } | { readonly kind: "before_deadline"; readonly property: string }
@@ -62,6 +69,9 @@ export function law(meta: Omit<LawDef, "_tag">): LawDef {
   if (meta.wordings) {
     decodeLawWordings(meta.wordings)
     if (Object.keys(meta.wordings).some(id => id !== meta.law.id)) throw new Error("wording key must equal its law ID")
+    if (Object.keys(meta.wordings).length > 0 && (meta.law.timing !== undefined
+      || !["always", "never"].includes(meta.law.modality.kind)
+      || !["predicate", "invariant"].includes(meta.law.response.kind))) throw new Error("wording supports only untimed pointwise predicate/invariant requirements")
   }
   return { _tag: "Law", ...meta }
 }
