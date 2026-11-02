@@ -19,6 +19,7 @@ pub struct IncrementalQuestion {
     result: QueryResult,
     rebuilt: bool,
     receipt_pin: Option<String>,
+    knowledge: Option<crate::KnowledgeCutoff>,
 }
 impl IncrementalQuestion {
     /// Rebuild all bounded inputs before publishing a complete generation.
@@ -30,7 +31,16 @@ impl IncrementalQuestion {
         context: QueryContext,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
-        let snapshot = store.question_snapshot(plan, context, &mut visible)?;
+        Self::rebuild_at(store,plan,context,None,&mut visible)
+    }
+    /// RESTATE-HISTORY-1: rebuild a private generation at an authenticated history slice.
+    /// # Errors
+    /// The same scope, interpretation and budget refusals as historical evaluation.
+    pub fn rebuild_known_at<E:SqlEngine>(store:&CellStore<E>,plan:&QuestionPlan,context:QueryContext,cutoff:crate::KnowledgeCutoff,mut visible:impl FnMut(&ObjectRecord)->Result<bool,CellError>)->Result<Self,CellError> {
+        Self::rebuild_at(store,plan,context,Some(cutoff),&mut visible)
+    }
+    fn rebuild_at<E:SqlEngine>(store:&CellStore<E>,plan:&QuestionPlan,context:QueryContext,knowledge:Option<crate::KnowledgeCutoff>,visible:&mut impl FnMut(&ObjectRecord)->Result<bool,CellError>)->Result<Self,CellError> {
+        let snapshot=store.question_snapshot_at(plan,context,knowledge,visible)?;
         let mut totals = Totals::default();
         for (_, value) in snapshot.contributions.values() {
             totals.adjust(value, false)?;
@@ -49,6 +59,7 @@ impl IncrementalQuestion {
             result,
             rebuilt: true,
             receipt_pin,
+            knowledge,
         })
     }
     /// Last atomically published generation.
@@ -73,12 +84,25 @@ impl IncrementalQuestion {
         context: QueryContext,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<&QueryResult, CellError> {
+        if self.knowledge.is_some() {return Err(refused("core.world.invalid_restatement"))}
         let mut staged = self.clone();
         store
             .conn
             .transaction(|| staged.apply(store, context, &mut visible))?;
         *self = staged;
         Ok(&self.result)
+    }
+
+    /// RESTATE-HISTORY-1: retract/replace only receipt-changed members at the next slice.
+    /// This maintains a private cache; governed activation and durable outputs are separate.
+    /// # Errors
+    /// Backward/skipped frontiers, changed authority/interpretation or any source refusal.
+    pub fn advance_known_at<E:SqlEngine>(&mut self,store:&CellStore<E>,context:QueryContext,cutoff:crate::KnowledgeCutoff,mut visible:impl FnMut(&ObjectRecord)->Result<bool,CellError>)->Result<&QueryResult,CellError> {
+        let prior=self.knowledge.ok_or_else(||refused("core.world.invalid_restatement"))?;
+        if cutoff.frontier<prior.frontier || cutoff.recorded_at<prior.recorded_at {return Err(refused("core.world.invalid_restatement"))}
+        let mut staged=self.clone();staged.knowledge=Some(cutoff);
+        store.conn.transaction(||staged.apply(store,context,&mut visible))?;
+        *self=staged;Ok(&self.result)
     }
 
     fn check_binding<E: SqlEngine>(
@@ -132,7 +156,10 @@ impl IncrementalQuestion {
         let old = &self.result.context;
         let stale = || refused("core.compute.stale_input");
         let reader = store.read();
-        let head = store.verified_head()?;
+        let verified=store.verified_head()?;
+        let limits=ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
+        let mut budget=DecodeBudget::new(&limits);
+        let head=if let Some(cutoff)=self.knowledge {super::historical::frame(&reader,cutoff,context.now_ms,&mut budget)?.0} else {verified};
         let mut changed = BTreeSet::new();
         if head != self.result.revision {
             let next = self
@@ -167,18 +194,15 @@ impl IncrementalQuestion {
                 .filter(|id| old.exclusions.get(*id) != context.exclusions.get(*id))
                 .cloned(),
         );
-        let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
-        let mut budget = DecodeBudget::new(&limits);
+        let mut history=reader.history_read();
         for id in changed {
             if let Some((_, previous)) = self.contributions.remove(&id) {
                 self.totals.adjust(&previous, true)?;
             }
-            match reader.object_with_budget(
-                &context.world,
-                self.plan.grain().as_str(),
-                &id,
-                &mut budget,
-            )? {
+            let record=if let Some(cutoff)=self.knowledge {
+                super::historical::historical_record(&mut history,&context.world,self.plan.grain().as_str(),&id,cutoff,store.model().model_hash(),&mut budget)?
+            } else {reader.object_with_budget(&context.world,self.plan.grain().as_str(),&id,&mut budget)?};
+            match record {
                 BudgetedRead::Found(record) => {
                     if record.scope != context.scope {
                         return Err(stale());
@@ -205,7 +229,7 @@ impl IncrementalQuestion {
             &self.plan,
             context,
             head,
-            self.result.query_pin.clone(),
+            super::historical::query_pin(store.model().model_hash(),&self.plan,&definition_pin,self.knowledge)?,
             definition_pin,
             &self.contributions,
             &self.totals,
