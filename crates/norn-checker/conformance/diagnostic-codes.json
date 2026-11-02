@@ -457,6 +457,41 @@
       "tier": "T3"
     },
     {
+      "code": "core.composition.duplicate_instance",
+      "message": "instance ID must be unique in the retained scoped graph",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.composition.instance_cycle",
+      "message": "instance imports and containment must be acyclic",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.composition.unresolved_pin",
+      "message": "instance reference must resolve to an exact scoped pack pin",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.compute.ambiguous_grain",
+      "message": "Query requires an explicit unambiguous identity grain.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.compute.unsupported_engine",
+      "message": "Query semantics are unsupported by the selected compute profile.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
       "code": "core.values.unit_mismatch",
       "message": "VAL-UNIT-1: unit requires a visible, exact core unit catalog pin and an admitted UCUM code; conversion must be explicit",
       "severity": "error",
@@ -3142,6 +3177,20 @@
       "message": "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",
       "severity": "error",
       "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.ordered_fold_invalid",
+      "message": "ordered-fold declaration violates the typed, ordered, bounded structural contract",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.ordered_fold_unsupported",
+      "message": "ordered-fold execution is unavailable in this semantics profile",
+      "severity": "error",
+      "since": "0.2.0",
       "tier": "T2"
     },
     {
