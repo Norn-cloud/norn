@@ -67,12 +67,12 @@ impl<E: SqlEngine> CellStore<E> {
                 | EffectRow::CancelTimer { .. } => None,
             })
             .ok_or_else(|| CellError::Encoding("command not retained in commit".to_owned()))?;
-        if let Some(invocation) = crate::portable_receipt::function_invocation(&command.command) {
-            if invocation.provenance_commit.qualified().is_none() {
-                return Err(CellError::Encoding(
-                    "Function invocation is local-only".to_owned(),
-                ));
-            }
+        if let Some(invocation) = crate::portable_receipt::function_invocation(&command.command)
+            && invocation.provenance_commit.qualified().is_none()
+        {
+            return Err(CellError::Encoding(
+                "Function invocation is local-only".to_owned(),
+            ));
         }
         Ok(ExportedCommand {
             identity: self.export_reference(

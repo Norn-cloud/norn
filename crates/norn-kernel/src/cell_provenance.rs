@@ -7,22 +7,24 @@ use norn_ir::{
     function::Digest,
 };
 
-/// Boundary lookup identity; local receipt storage/consumption keys do not change.
+/// Portable lookup identity, absent for local-only legacy evidence.
+/// Local receipt storage/consumption keys do not change.
 ///
 /// # Errors
 /// Canonical serialization failed.
 pub fn receipt_reference(
     record: &ResultRecord,
-) -> Result<Digest, norn_ir::canonical::CanonicalJsonError> {
+) -> Result<Option<Digest>, norn_ir::canonical::CanonicalJsonError> {
     match &record.origin {
-        None => Ok(record.receipt.clone()),
+        None => Ok(None),
         Some(origin) => CellReference::new(
             origin.cell.clone(),
             origin.world.clone(),
             ReferenceNamespace::FunctionReceipt,
             record.receipt.0.clone(),
         )
-        .content_digest(),
+        .content_digest()
+        .map(Some),
     }
 }
 

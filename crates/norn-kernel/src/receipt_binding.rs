@@ -159,7 +159,9 @@ pub fn bind_receipt<T: DeserializeOwned, S: AcceptedReceiptStore>(
     }
     let digest = receipt.content_digest()?;
     let result_identity = receipt.result_identity()?;
-    if crate::cell_provenance::receipt_reference(record)? != reference.0
+    let lookup = crate::cell_provenance::receipt_reference(record)?
+        .unwrap_or_else(|| record.receipt.clone());
+    if lookup != reference.0
         || digest != record.receipt
         || result_identity != record.result_identity
         || record.command.0 != receipt.command_id

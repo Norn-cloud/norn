@@ -1415,7 +1415,8 @@ fn check_qualified_receipt_fence(first: u128) {
         }
     }
     let reference_digest = norn_kernel::cell_provenance::receipt_reference(&acceptance.record)
-        .expect("qualified reference");
+        .expect("qualified reference")
+        .expect("portable evidence");
     let reference =
         ReceiptReference::parse(&RuntimeValue::String(reference_digest.0)).expect("reference");
     let mut store = ScopedStore {
@@ -1448,4 +1449,20 @@ norn_testkit::proptest::proptest! {
     fn arbitrary_wrong_cell_cannot_satisfy_local_acceptance(cell in norn_testkit::proptest::prelude::any::<u128>()) {
         check_qualified_receipt_fence(cell);
     }
+}
+
+#[test]
+fn legacy_acceptance_cannot_produce_a_portable_receipt_reference() {
+    let case = case("wasm");
+    let acceptance = accepted(run_with(
+        &case,
+        &case.receipt,
+        &context(ReconcilePolicy::DEFAULT),
+        &ALLOW,
+    ));
+    assert!(
+        norn_kernel::cell_provenance::receipt_reference(&acceptance.record)
+            .expect("local reference")
+            .is_none()
+    );
 }

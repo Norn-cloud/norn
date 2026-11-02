@@ -202,9 +202,6 @@ pub(crate) fn validate_dispatches(
 pub(crate) fn function_invocation(
     value: &norn_ir::RuntimeValue,
 ) -> Option<norn_ir::function::FunctionInvocation> {
-    let payload = match value {
-        norn_ir::RuntimeValue::Object(fields) => fields.get("invocation").unwrap_or(value),
-        value => value,
-    };
+    let payload = value.get("invocation").unwrap_or(value);
     norn_ir::runtime::decode(payload).ok()
 }
