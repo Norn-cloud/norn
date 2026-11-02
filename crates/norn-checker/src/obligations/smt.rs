@@ -31,6 +31,8 @@ pub struct SmtEvidence {
     pub z3_sha256: Option<String>,
     /// SHA-256 of the original SMT-LIB2 bytes.
     pub obligation_sha256: String,
+    /// The declared resource budget.
+    pub bound: SmtBound,
     /// Closed solver result.
     pub result: SmtResult,
 }
@@ -49,13 +51,12 @@ fn answer(output: &str, marker: &str) -> Result<SmtResult, &'static str> {
     if body == "sat\n" {
         return Ok(SmtResult::Sat(String::new()));
     }
-    if let Some(model) = body.strip_prefix("sat\n") {
-        if model.trim().starts_with('(')
-            && model.trim().ends_with(')')
-            && !model.contains("(error ")
-        {
-            return Ok(SmtResult::Sat(model.into()));
-        }
+    if let Some(model) = body.strip_prefix("sat\n")
+        && model.trim().starts_with('(')
+        && model.trim().ends_with(')')
+        && !model.contains("(error ")
+    {
+        return Ok(SmtResult::Sat(model.into()));
     }
     Err("solver_unknown_or_unsupported")
 }
@@ -70,6 +71,7 @@ pub fn dispatch_smt(
     expected_sha256: &str,
 ) -> SmtEvidence {
     let evidence = SmtEvidence {
+        bound,
         z3_version: None,
         z3_sha256: None,
         obligation_sha256: digest(text.as_bytes()),
@@ -92,7 +94,7 @@ pub fn dispatch_smt(
 }
 #[cfg(not(target_family = "wasm"))]
 mod host {
-    use super::*;
+    use super::{Digest, Duration, Path, Sha256, SmtBound, SmtEvidence, SmtResult, Z3_VERSION, answer};
     use std::{
         fs::File,
         io::{Read, Seek, SeekFrom, Write},
@@ -101,19 +103,19 @@ mod host {
     };
     use wait_timeout::ChildExt;
     fn capture(file: &mut File, limit: usize) -> Result<String, &'static str> {
-        file.rewind().map_err(|_| "io")?;
+        file.rewind().map_err(|_error| "io")?;
         let mut bytes = Vec::new();
         file.take(
             u64::try_from(limit)
-                .map_err(|_| "invalid_bound")?
+                .map_err(|_error| "invalid_bound")?
                 .saturating_add(1),
         )
         .read_to_end(&mut bytes)
-        .map_err(|_| "io")?;
+        .map_err(|_error| "io")?;
         if bytes.len() > limit {
             return Err("output_bound");
         }
-        String::from_utf8(bytes).map_err(|_| "invalid_output")
+        String::from_utf8(bytes).map_err(|_error| "invalid_output")
     }
     #[allow(
         clippy::disallowed_methods,
@@ -129,18 +131,18 @@ mod host {
         if Instant::now() >= deadline {
             return Err("timeout");
         }
-        let mut stdin = tempfile::tempfile().map_err(|_| "io")?;
-        stdin.write_all(input.as_bytes()).map_err(|_| "io")?;
-        stdin.seek(SeekFrom::Start(0)).map_err(|_| "io")?;
-        let mut stdout = tempfile::tempfile().map_err(|_| "io")?;
-        let mut stderr = tempfile::tempfile().map_err(|_| "io")?;
+        let mut stdin = tempfile::tempfile().map_err(|_error| "io")?;
+        stdin.write_all(input.as_bytes()).map_err(|_error| "io")?;
+        stdin.seek(SeekFrom::Start(0)).map_err(|_error| "io")?;
+        let mut stdout = tempfile::tempfile().map_err(|_error| "io")?;
+        let mut stderr = tempfile::tempfile().map_err(|_error| "io")?;
         let mut child = Command::new(binary)
             .args(args)
             .stdin(Stdio::from(stdin))
-            .stdout(Stdio::from(stdout.try_clone().map_err(|_| "io")?))
-            .stderr(Stdio::from(stderr.try_clone().map_err(|_| "io")?))
+            .stdout(Stdio::from(stdout.try_clone().map_err(|_error| "io")?))
+            .stderr(Stdio::from(stderr.try_clone().map_err(|_error| "io")?))
             .spawn()
-            .map_err(|_| "missing_or_unexecutable_binary")?;
+            .map_err(|_error| "missing_or_unexecutable_binary")?;
         let status = child.wait_timeout(deadline.saturating_duration_since(Instant::now()));
         let status = match status {
             Ok(Some(status)) => status,
@@ -179,13 +181,13 @@ mod host {
         let deadline = Instant::now()
             .checked_add(bound.timeout)
             .ok_or("invalid_bound")?;
-        let file = File::open(binary).map_err(|_| "missing_binary")?;
-        let metadata = file.metadata().map_err(|_| "io")?;
+        let file = File::open(binary).map_err(|_error| "missing_binary")?;
+        let metadata = file.metadata().map_err(|_error| "io")?;
         if !metadata.is_file() || metadata.len() > 268_435_456 {
             return Err("invalid_binary");
         }
         let mut hash = Sha256::new();
-        std::io::copy(&mut file.take(268_435_457), &mut hash).map_err(|_| "io")?;
+        std::io::copy(&mut file.take(268_435_457), &mut hash).map_err(|_error| "io")?;
         let hash = format!("{:x}", hash.finalize());
         evidence.z3_sha256 = Some(hash.clone());
         if hash != expected {
@@ -193,10 +195,7 @@ mod host {
         }
         let version = run(binary, &["--version"], "", deadline, bound.bytes)?;
         evidence.z3_version = Some(version.trim().into());
-        if !version
-            .split_whitespace()
-            .nth(2)
-            .is_some_and(|v| v == Z3_VERSION)
+        if version.split_whitespace().nth(2) != Some(Z3_VERSION)
         {
             return Err("unsupported_version");
         }
@@ -229,7 +228,7 @@ mod host {
                 &marker,
             )? {
                 SmtResult::Sat(model) if !model.is_empty() => Ok(SmtResult::Sat(model)),
-                _ => Err("model_unavailable"),
+                SmtResult::Sat(_) | SmtResult::Unsat | SmtResult::Unknown(_) => Err("model_unavailable"),
             },
             SmtResult::Unsat => Ok(SmtResult::Unsat),
             SmtResult::Unknown(_) => Err("solver_unknown"),

@@ -34,12 +34,8 @@ fn smt_sat_retains_model_and_exact_tool_obligation_identity() {
     let evidence = dispatch_smt(query, bound, &path, &hash);
     assert!(matches!(evidence.result, SmtResult::Sat(ref model) if model.contains('7')));
     assert_eq!(evidence.z3_sha256.as_ref(), Some(&hash));
-    assert!(
-        evidence
-            .z3_version
-            .expect("observed version")
-            .contains("5.1.0")
-    );
+    let version = evidence.z3_version.expect("observed version");
+    assert!(version.contains("5.1.0"));
     assert_eq!(
         evidence.obligation_sha256,
         format!("{:x}", Sha256::digest(query.as_bytes()))
