@@ -10,15 +10,20 @@ const Slot = Schema.Struct({
   candidate: Schema.String, candidate_digest: Schema.String,
 })
 
+export const RestatementEvidence = Norn.interfaceType({
+  name: "core.analytics.RestatementEvidence", title: "Complete analytical restatement evidence", version: "0.1.0",
+  properties: Slot,
+  invariants: [{ id: "complete_candidate", message: "Approval requires a complete staged analytical generation.",
+    expression: Norn.expression(Slot, self => self.status === "building" || (self.reason !== "" && self.slice_ids !== "" && self.candidate !== "" && self.candidate_digest !== "")),
+  }],
+})
+
 /** RESTATE-HISTORY-1 / OUTPUT-ATOMIC: the host stages one complete bundle;
  * declared actions approve and atomically select it. */
 export const Restatement = Norn.type({
   name: "core.analytics.Restatement", title: "Analytical restatement", version: "0.1.0",
-  properties: Slot, identity: [{ name: "primary", properties: ["id"] }],
+  properties: Slot, implements: [RestatementEvidence], identity: [{ name: "primary", properties: ["id"] }],
   defaults: { status: "building", active: "", active_digest: "", candidate: "", candidate_digest: "" },
-  invariants: [{ id: "complete_candidate", message: "Approval requires a complete staged analytical generation.",
-    expression: Norn.expression(Slot, self => self.status === "building" || (self.reason !== "" && self.slice_ids !== "" && self.candidate !== "" && self.candidate_digest !== "")),
-  }],
   lifecycles: [{ property: "status", initial: ["building"], terminal: ["active"], transitions: [
     { id: "approve", from: ["ready"], to: "approved",
       guards: [Norn.expression(Slot, self => self.reason !== "" && self.slice_ids !== "" && self.candidate !== "" && self.candidate_digest !== "")] },

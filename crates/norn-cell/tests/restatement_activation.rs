@@ -95,11 +95,15 @@ fn setup(path: &Path) -> (CellStore, QuestionPlan, QueryContext, Model) {
         serde_json::from_value(json!({"name":ACTION_CALL_TYPE,"properties":properties}))
             .expect("action receipt schema"),
     );
-    let model = Model::new(&norn_projections::SqliteDdlInput {
-        object_types: &types,
-        property_types: &[],
-    })
-    .expect("native model");
+    let interface: Value = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.analytics.RestatementEvidence.interface.json"
+    ))
+    .expect("generated interface");
+    let interface: norn_ir::InterfaceDef =
+        serde_json::from_value(interface["payload"]["interface"].clone())
+            .expect("policy interface");
+    let model =
+        Model::from_definitions_with_interfaces(&types, &[], &[interface]).expect("native model");
     let mut store =
         CellStore::open(path, model.clone(), StoreOptions::default()).expect("durable store");
     let writes = include_str!("../../../fixtures/demo/scrap-yield-k1.csv")
@@ -219,7 +223,7 @@ fn governed(path: &Path, model: &Model, transition: &str, key: &str, allow: bool
         .expect("native host");
     let action = action(transition);
     let defs: Vec<_> = model.object_types().collect();
-    let catalog = TypeCatalog::new(defs);
+    let catalog = TypeCatalog::new(defs).with_interfaces(model.interfaces());
     let call = ActionCall {
         action: &action,
         action_artifact_id: &format!("core.analytics.restatement.{transition}.action"),

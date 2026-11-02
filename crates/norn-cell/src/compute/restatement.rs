@@ -96,7 +96,11 @@ fn decode(encoded: &str, digest: &str) -> Result<Option<Generation>, CellError> 
         return Ok(None);
     }
     let generation: Generation = serde_json::from_str(encoded).map_err(|_| refused(INVALID))?;
-    if crate::codec::hash_json(&generation)? != digest || generation.outputs.is_empty() {
+    if crate::codec::hash_json(&generation)? != digest
+        || generation.outputs.is_empty()
+        || generation.outputs.values().any(|a| !a.result.complete)
+        || generation.outputs.keys().ne(generation.deltas.keys())
+    {
         return Err(refused(INVALID));
     }
     Ok(Some(generation))
@@ -417,6 +421,14 @@ impl<E: SqlEngine> CellStore<E> {
         values: BTreeMap<String, RuntimeValue>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(), CellError> {
+        let bound = ResourceLimitProfile::norn_limits_v1()
+            .slice
+            .max_canonical_bytes
+            .saturating_sub(8192);
+        if u64::try_from(serde_json::to_vec(&values)?.len()).map_err(|_| refused(INVALID))? > bound
+        {
+            return Err(refused("core.compute.bound_exceeded"));
+        }
         let batch = CommitBatch {
             world: context.world.clone(),
             scope: context.scope.clone(),
