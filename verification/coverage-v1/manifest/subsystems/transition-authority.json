@@ -501,6 +501,7 @@
     "crates/norn-cell/tests/temporal_source_world.rs",
     "crates/norn-api/src/refusal.rs",
     "crates/norn-api/src/scope.rs",
-    "crates/norn-api/tests/host_perimeter.rs"
+    "crates/norn-api/tests/host_perimeter.rs",
+    "crates/norn-ir/src/requirement_display.rs"
   ]
 }
