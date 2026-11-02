@@ -37,12 +37,7 @@ pub(crate) fn sha(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 pub(crate) fn artifacts() -> Vec<ArtifactEnvelope> {
-    let root =
-        std::path::PathBuf::from(std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR").expect("fixtures"));
-    serde_json::from_slice(
-        &std::fs::read(root.join("scrap-publication.json")).expect("compiled typed declaration"),
-    )
-    .expect("artifacts")
+    super::fixture::artifacts()
 }
 pub(crate) fn model(artifacts: &[ArtifactEnvelope]) -> Model {
     let mut objects = Vec::new();

@@ -225,6 +225,7 @@
     "crates/norn-host-conformance/tests/publication.rs",
     "crates/norn-host-conformance/tests/scrap.source.ts",
     "crates/norn-host-conformance/tests/scrap_world.rs",
+    "crates/norn-host-conformance/tests/support/artifacts.rs",
     "crates/norn-host-conformance/tests/support/publication_host.rs",
     "crates/norn-host-conformance/tests/support/publication_policy.rs",
     "crates/norn-host-conformance/tests/support/scrap_world.rs",

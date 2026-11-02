@@ -7,6 +7,8 @@
     missing_docs,
     reason = "synthetic publication acceptance"
 )]
+#[path = "support/artifacts.rs"]
+mod fixture;
 #[path = "support/publication_host.rs"]
 mod host;
 #[path = "support/publication_policy.rs"]

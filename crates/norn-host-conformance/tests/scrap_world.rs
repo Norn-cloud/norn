@@ -6,6 +6,8 @@
     missing_docs,
     reason = "synthetic acceptance scenario"
 )]
+#[path = "support/artifacts.rs"]
+mod fixture;
 #[path = "support/scrap_world.rs"]
 mod source;
 use norn_ir::function::Digest;
