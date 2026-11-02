@@ -306,6 +306,7 @@ fn run_deviation(target: &str, transitions: &Value, reason: SnapshotDeviationRea
                         && state == target
                         && *actual_reason == reason
                 )
+                && matches!(norn_kernel::snapshot_observe::finding_rule_is_violated(&catalog, &key, &values, fact), Err(norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { .. }))
                 && fact.provenance == vec![DataQualityLineage::new(
                     provenance.clone(),
                     vec!["observe-1".to_owned()],
@@ -1221,4 +1222,50 @@ fn empty_authority_cannot_request_an_unbounded_snapshot_envelope() {
             .is_err()
     );
     assert!(cell.observe().unwrap().is_some());
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn pointwise_recovery_tracks_rule_failure_not_original_outcome(amount in -1000i64..-1) {
+        let mut object_type = model(&json!([]));
+        object_type.invariants = serde_json::from_value(json!([{
+            "id": "nonnegative", "expression": "self.amount >= 0",
+            "message": "nonnegative amount"
+        }])).unwrap();
+        let catalog = TypeCatalog::new([&object_type]);
+        let key = FactKey::new("test.SnapshotOrder", "SO-1");
+        let values: JsonObject = serde_json::from_value(json!({"amount": -1})).unwrap();
+        let provenance = provenance("amount");
+        let mut cell = cell().with_types(vec![object_type.clone()]);
+        let delivery = next_delivery(&mut cell, "original");
+        let slice = load_slice(&cell, [key.clone()]).unwrap();
+        commit_observed_snapshot(
+            &mut cell, &catalog, &slice, &turn("original", delivery.consumed()),
+            ObservedSnapshot { key: &key, values: &values, lifecycles: &[], provenance: &provenance },
+        ).unwrap();
+        let finding = cell.ledger()[0].events.iter().find_map(|event| match event {
+            ObservationEvent::DataQualityFinding { fact } => Some(fact),
+            ObservationEvent::ObservedFact { .. }
+            | ObservationEvent::ObservedTransition { .. }
+            | ObservationEvent::ObservedDeleted { .. }
+            | ObservationEvent::ObservedRecreated { .. } => None,
+        }).unwrap();
+        let changed: JsonObject = serde_json::from_value(json!({"amount": amount})).unwrap();
+        norn_testkit::proptest::prop_assert!(
+            norn_kernel::snapshot_observe::finding_rule_is_violated(
+                &catalog, &key, &changed, finding,
+            ).unwrap()
+        );
+        norn_testkit::proptest::prop_assert!(
+            !norn_kernel::snapshot_observe::verify_finding_values(
+                &catalog, &key, &changed, finding,
+            ).unwrap()
+        );
+        let corrected: JsonObject = serde_json::from_value(json!({"amount": 0})).unwrap();
+        norn_testkit::proptest::prop_assert!(
+            !norn_kernel::snapshot_observe::finding_rule_is_violated(
+                &catalog, &key, &corrected, finding,
+            ).unwrap()
+        );
+    }
 }

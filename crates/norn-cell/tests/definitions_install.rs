@@ -5264,7 +5264,7 @@ norn_testkit::proptest::proptest! {
             cell = norn_cell::SqliteCell::open(&path, model, StoreOptions::default(), "org_demo/dev", |_| BTreeMap::new()).expect("restart");
             let reader = cell.store().read();
             let raw = reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").expect("captured");
-            norn_testkit::proptest::prop_assert!(reader.observation_is_quarantined(&raw).expect("quarantine"));
+            norn_testkit::proptest::prop_assert!(reader.observation_is_quarantined(MAIN_WORLD, &raw).expect("quarantine"));
             norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
             let page = reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("authoritative projection");
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
@@ -5284,6 +5284,51 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_eq!(persisted[0].event.get("fact").and_then(|fact| fact.get("status")).and_then(Value::as_str), Some("open"));
         }
     }
+}
+
+norn_testkit::proptest::proptest! {
+#[test]
+fn obs_recovery_upgrade_uses_each_findings_retained_model(fraction in 501u16..1000) {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("upgrade.sqlite");
+    let mut cell = purity_quality_host(&path);
+    capture_purity(&mut cell, "original", "1.20");
+    let original = cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings")[0].clone();
+    let previous = cell.store().read().installed_definitions(None).expect("definitions").expect("installed");
+    let mut artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(&previous.canonical_set).expect("artifacts");
+    let mut snapshot = cell.store().model().definitions_snapshot();
+    let mut law = serde_json::to_value(&artifacts[1]).expect("law");
+    law["version"] = json!("0.2.0");
+    law["payload"]["response"]["expression"] = json!("self.purity >= 0 and self.purity <= 0.5");
+    artifacts[1] = serde_json::from_value(law).expect("tightened law");
+    snapshot.law_artifacts = vec![artifacts[1].clone()];
+    let model = Model::from_snapshot(&snapshot).expect("retained candidate");
+    let mut input = install_input("tightened", previous.installed_at.checked_add(1).expect("next epoch"), &model);
+    input.canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set")).expect("UTF8");
+    let old_model = cell.store().model().clone();
+    drop(cell);
+    let mut store = CellStore::open(&path, old_model, StoreOptions::default()).expect("store");
+    store.install_definitions(model, input, Some(previous.version), "org_demo/dev").expect("upgrade");
+    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    let review = |cell: &norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject>| cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("version-bound review");
+    assert_eq!(review(&cell)[0].status, norn_ir::DataQualityFindingStatus::Open);
+    capture_purity(&mut cell, "still-invalid", "1.30");
+    assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Open));
+    capture_purity(&mut cell, "passes-old-law", &format!("0.{fraction:03}"));
+    let findings = review(&cell);
+    assert_eq!(findings.iter().find(|f| f.id == original.id).expect("original retained").status, norn_ir::DataQualityFindingStatus::Resolved);
+    assert!(findings.iter().any(|f| f.status == norn_ir::DataQualityFindingStatus::Open));
+    assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("still quarantined").is_none());
+    capture_purity(&mut cell, "passes-both-laws", "0.40");
+    assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Resolved));
+    assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("recovered").is_some());
+    let original_event = cell.store().read().ledger_page(0, 100).expect("history").into_iter().find(|e| e.event.get("fact").and_then(|f| f.get("id")).and_then(Value::as_str) == Some(original.id.as_str())).expect("original event");
+    assert_eq!(original_event.event.get("fact").and_then(|f| f.get("status")).and_then(Value::as_str), Some("open"));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("cache connection");
+    engine.execute(&format!("UPDATE {} SET {} = {} + 1", quote_identifier("o:quality.Measurement"), quote_identifier(VERSION_COLUMN), quote_identifier(VERSION_COLUMN)), &[]).expect("unproven mutable version");
+    assert!(cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").is_err(), "unproven correction refuses");
+}
+
 }
 
 #[test]
