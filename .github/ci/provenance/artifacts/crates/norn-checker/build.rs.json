@@ -1,7 +1,17 @@
 {
+<<<<<<< HEAD:.github/ci/provenance/artifacts/crates/norn-checker/build.rs.json
   "sha256": "02d9449e38f365df7569f2e7a4cbe4695a3e691de8c1d4153d05d34d245943fd",
   "origin": "authored",
   "category": "code",
+||||||| e20e621a6:.github/ci/provenance/artifacts/crates/norn-checker/conformance/diagnostic-codes.json.json
+  "sha256": "307cd3a409abde085a527ed8981ba36bf35355bde8c6d3de0cb55dccf5ba2932",
+  "origin": "derived",
+  "category": "generated",
+=======
+  "sha256": "1eaace0846e7eee5f021eccd0a6333f6cefa9c7c01bd0a7fbb3f22be6d01ac2e",
+  "origin": "derived",
+  "category": "generated",
+>>>>>>> ci/coverage-entry-layout:.github/ci/provenance/artifacts/crates/norn-checker/conformance/diagnostic-codes.json.json
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
