@@ -214,6 +214,7 @@ pub(crate) struct Writer<'a, E: SqlEngine> {
     world: &'a str,
     commit_seq: u64,
     batch_output_facts: Option<BTreeSet<(String, String, String, u64)>>,
+    pending_snapshot_scopes: BTreeMap<(String, String, u64), String>,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -230,6 +231,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             world: &batch.world,
             commit_seq,
             batch_output_facts: None,
+            pending_snapshot_scopes: BTreeMap::new(),
         }
     }
 
@@ -461,12 +463,10 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     if version == 0 {
                         None
                     } else {
-                        Some(self.reader().retained_fact_scope(
-                            self.world,
+                        Some(self.retained_fact_scope(
                             self.reader().root_type(object_type)?,
                             key,
                             version,
-                            self.commit_seq,
                         )?)
                     }
                 };
@@ -614,7 +614,6 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                             self.conn,
                             self.batch,
                             request,
-                            self.commit_seq,
                             plan,
                         )
                     })
@@ -2082,7 +2081,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
     /// markings. Action calls inherit target labels at enqueue; command tasks
     /// inherit the attributed call's immutable snapshot. Unscoped rule and
     /// observation detail is unknown.
-    fn capture_value_commitment(&self, row: &WrittenRow) -> Result<String, CellError> {
+    fn capture_value_commitment(&mut self, row: &WrittenRow) -> Result<String, CellError> {
         let root = self.reader().root_type(&row.object_type)?.to_owned();
         let record = self
             .reader()
@@ -2097,12 +2096,10 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             scope: match &record {
                 Some(record) => record.scope.clone(),
                 None if row.version == 1 => self.batch.scope.clone(),
-                None => self.reader().retained_fact_scope(
-                    self.world,
+                None => self.retained_fact_scope(
                     &root,
                     &row.key,
                     row.version.saturating_sub(1),
-                    self.commit_seq,
                 )?,
             },
             version: row.version,
@@ -2110,7 +2107,15 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         };
         let hash = hash_json(&snapshot)?;
         self.conn.execute(&format!("INSERT INTO \"{}\" (\"world\", \"root_type\", \"object_type\", \"id\", \"version\", \"commit_seq\", \"snapshot\", \"hash\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", crate::system::FACT_VALUES), params![self.world, root, row.object_type, row.key, to_i64(row.version, "fact version")?, self.commit_seq_sql()?, canonical_json(&snapshot)?, hash])?;
+        self.pending_snapshot_scopes.insert((root, row.key.clone(), row.version), snapshot.scope);
         Ok(hash)
+    }
+
+    fn retained_fact_scope(&self, root: &str, key: &str, version: u64) -> Result<String, CellError> {
+        if let Some(scope) = self.pending_snapshot_scopes.get(&(root.to_owned(), key.to_owned(), version)) {
+            return Ok(scope.clone());
+        }
+        self.reader().retained_fact_scope(self.world, root, key, version)
     }
 
     #[allow(

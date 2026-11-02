@@ -124,14 +124,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         version: u64,
     ) -> Result<FactSnapshot, CellError> {
-        self.snapshot_for_commit(world, object_type, key, version, None)
-    }
-
-    // Only the private writer may read its own pre-receipt incarnation.
-    fn snapshot_for_commit(
-        &self, world: &str, object_type: &str, key: &str, version: u64,
-        pending_commit: Option<u64>,
-    ) -> Result<FactSnapshot, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
         let row: Option<(String, String, i64, String)> = self.conn.query_optional(
             &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\", \"root_type\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"),
@@ -142,11 +134,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let snapshot = decode_snapshot(world, object_type, key, version, &encoded, &hash)?;
         if snapshot.root_type != stored_root { return Err(unproven_snapshot()); }
         let commit = to_u64(commit, "snapshot commit")?;
-        if pending_commit != Some(commit) {
-            let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
-            if hash_json(&receipt.body)? != receipt.hash || !fact_receipt_matches(&snapshot, &hash, &receipt) {
-                return Err(unproven_snapshot());
-            }
+        let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
+        if hash_json(&receipt.body)? != receipt.hash || !fact_receipt_matches(&snapshot, &hash, &receipt) {
+            return Err(unproven_snapshot());
         }
         Ok(snapshot)
     }
@@ -259,10 +249,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
         version: u64,
-        pending_commit: u64,
     ) -> Result<String, CellError> {
         Ok(self
-            .snapshot_for_commit(world, object_type, key, version, Some(pending_commit))?
+            .proven_snapshot(world, object_type, key, version)?
             .scope)
     }
 
