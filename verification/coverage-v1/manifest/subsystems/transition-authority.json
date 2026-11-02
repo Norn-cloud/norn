@@ -349,6 +349,7 @@
     "crates/norn-kernel/src/limits.rs",
     "crates/norn-kernel/src/naming_series.rs",
     "crates/norn-kernel/src/observations.rs",
+    "crates/norn-kernel/src/parameter_source.rs",
     "crates/norn-kernel/src/receipt_binding.rs",
     "crates/norn-kernel/src/refusal.rs",
     "crates/norn-kernel/src/result_reconciliation.rs",
