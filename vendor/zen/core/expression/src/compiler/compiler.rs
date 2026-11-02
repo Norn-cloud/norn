@@ -460,7 +460,7 @@ impl<'arena, 'bytecode_ref> CompilerInner<'arena, 'bytecode_ref> {
                 }
                 self.emit(Opcode::ExactSite { scale, rounding });
                 self.compile_argument(
-                    &FunctionKind::Internal(InternalFunction::Round),
+                    FunctionKind::Internal(InternalFunction::Round),
                     arguments,
                     0,
                 )?;
