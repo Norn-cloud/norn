@@ -202,6 +202,7 @@
     "Quantity conservation, escrow non-negativity and commitment completion are specified but not yet modelled or proved for the core pack."
   ],
   "sourceFiles": [
+    "crates/norn-kernel/tests/conversion_conservation.rs",
     "verification/core-physics-v1/models/core-value-ledger.qnt",
     "verification/core-physics-v1/proofs/CoreValueLedger.lean"
   ]
