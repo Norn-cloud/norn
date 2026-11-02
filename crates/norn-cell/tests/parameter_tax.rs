@@ -40,7 +40,10 @@ impl ActionAuthorizer for Policy {
     }
 }
 type Definitions = (Vec<ObjectTypeDef>, Vec<ActionRoot>, Vec<InterfaceDef>);
-#[allow(clippy::disallowed_methods, reason = "test invokes the typed fixture compiler")]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "test invokes the typed fixture compiler"
+)]
 fn definitions() -> Definitions {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let compiled = Command::new("bun")
