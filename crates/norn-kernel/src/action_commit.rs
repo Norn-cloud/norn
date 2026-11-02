@@ -1752,7 +1752,6 @@ fn derive_row_values<X>(
     collection: &OwnedChildCollection,
     config: &OwnedCollectionAction,
     input: &JsonObject,
-    _current: Option<&JsonObject>,
     mut proposed: JsonObject,
     remaining_fuel: &mut u64,
 ) -> Result<JsonObject, ActionRefusal<X>> {
@@ -1821,7 +1820,6 @@ fn check_row_preconditions<X>(
     child_type: &ObjectTypeName,
     config: &OwnedCollectionAction,
     input: &JsonObject,
-    _current: Option<&JsonObject>,
     proposed: &JsonObject,
     remaining_fuel: &mut u64,
 ) -> Result<(), ActionRefusal<X>> {
@@ -4706,6 +4704,13 @@ fn prepare_action_input_inner<'a, X>(
     })
 }
 
+fn action_derivation_destination(action: &ActionRoot, derivation: &norn_ir::ActionInputDerivation, env: &norn_expr::ZenTypeEnv) -> norn_expr::Type {
+    let explicit_nullable = action.input_schema.get("properties").and_then(norn_ir::JsonValue::as_object).and_then(|fields| fields.get(&derivation.field)).and_then(|schema| norn_expr::schema::Schema::parse(schema,"target").ok()).is_some_and(|schema| matches!(schema,norn_expr::schema::Schema::Nullable(_)));
+    let declared = env.record(norn_expr::env::INPUT_RECORD).and_then(|record| record.fields.get(&derivation.field)).map_or(norn_expr::Type::Json,|field| field.ty.clone());
+    if !explicit_nullable && let norn_expr::Type::Optional(inner) = declared { return *inner; }
+    declared
+}
+
 fn prepare_action_derivation<X>(
     action: &ActionRoot,
     completed: usize,
@@ -4736,23 +4741,7 @@ fn prepare_action_derivation<X>(
             reason,
         }
     })?;
-    let expected_schema = action
-        .input_schema
-        .get("properties")
-        .and_then(norn_ir::JsonValue::as_object)
-        .and_then(|fields| fields.get(&derivation.field));
-    let declared = env
-        .record(norn_expr::env::INPUT_RECORD)
-        .and_then(|record| record.fields.get(&derivation.field))
-        .map(|field| field.ty.clone())
-        .unwrap_or(norn_expr::Type::Json);
-    let explicit_nullable = expected_schema
-        .and_then(|schema| norn_expr::schema::Schema::parse(schema, "target").ok())
-        .is_some_and(|schema| matches!(schema, norn_expr::schema::Schema::Nullable(_)));
-    let expected = match declared {
-        norn_expr::Type::Optional(inner) if !explicit_nullable => *inner,
-        ty => ty,
-    };
+    let expected = action_derivation_destination(action, derivation, &env);
     let attempt = expression.evaluate_typed_metered(
         &context,
         EvaluationBudget::new(*remaining_fuel),
