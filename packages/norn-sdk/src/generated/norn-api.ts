@@ -1562,6 +1562,26 @@ export interface components {
         NornIrDefaultValueAnyOf4: {
             [key: string]: unknown;
         };
+        /**
+         * @description The normative grade is separate from the temporal wrapper in `law`.
+         * @enum {string}
+         */
+        NornIrDeonticModality: "obligation" | "permission" | "prohibition";
+        /**
+         * @description A law template with explicit authority, exceptions and preferences.
+         *     `law.condition`, `law.timing` and `law.response` supply typed slots;
+         *     `law.modality` must agree with the normative grade before law lowering.
+         */
+        NornIrDeonticRule: {
+            authorityId: string;
+            authorityVersion: string;
+            /** @description Explicit rule identities preferred to this rule; not numeric authority ranking. */
+            defeatedBy?: string[];
+            exceptions?: components["schemas"]["NornIrRuleException"][];
+            law: components["schemas"]["NornIrLawIR"];
+            modality: components["schemas"]["NornIrDeonticModality"];
+            source: components["schemas"]["NornIrRuleSourceSpan"];
+        };
         NornIrDerivedPayload: {
             calc: components["schemas"]["NornIrCalcExpr"];
             extensions?: components["schemas"]["NornIrDerivedPayloadPropertyExtensions"];
@@ -2664,6 +2684,39 @@ export interface components {
              */
             rule?: components["schemas"]["NornIrIdentityRule"];
         };
+        /** @description One protected law; its predicates use the subject's `self` environment. */
+        NornIrLawIR: {
+            /** @description Optional pointwise activation predicate (not an edge trigger). */
+            condition?: string;
+            /** @description Stable identity, preserved by all authoring faces. */
+            id: string;
+            /**
+             * @description Wire format version.
+             * @enum {string}
+             */
+            lawVersion: "0.1";
+            /** @description Admitted temporal wrapper. */
+            modality: components["schemas"]["NornIrLawModality"];
+            /** @description Principal or registry owner of changes to this law. */
+            owner: string;
+            /** @description Source and interpretation provenance. */
+            provenance: components["schemas"]["NornIrLawProvenance"];
+            /** @description Reviewed explanation. */
+            rationale: string;
+            /** @description Predicate or exact ontology-bound behavior/invariant identity. */
+            response: components["schemas"]["NornIrLawResponse"];
+            /** @description Applicability, independent of the artifact's authorization scope. */
+            scope: components["schemas"]["NornIrLawScope"];
+            /**
+             * @description Reporting severity, independent of proof status.
+             * @enum {string}
+             */
+            severity: "error" | "warning";
+            /** @description Exact ontology object type whose record is bound as `self`. */
+            subject: string;
+            /** @description Optional progress bound. */
+            timing?: components["schemas"]["NornIrLawTiming"];
+        };
         /** @description Typed interpretation contract. Admission refuses until conformance exists. */
         NornIrLawInterpretationIr: {
             /**
@@ -2710,39 +2763,8 @@ export interface components {
             /** @description Ordinary ZEN stop predicate. */
             predicate: string;
         };
-        /** @description The payload of a `law` artifact, strictly projected from LawIR. */
-        NornIrLawPayload: {
-            /** @description Optional pointwise activation predicate (not an edge trigger). */
-            condition?: string;
-            /** @description Stable identity, preserved by all authoring faces. */
-            id: string;
-            /**
-             * @description Wire format version.
-             * @enum {string}
-             */
-            lawVersion: "0.1";
-            /** @description Admitted temporal wrapper. */
-            modality: components["schemas"]["NornIrLawModality"];
-            /** @description Principal or registry owner of changes to this law. */
-            owner: string;
-            /** @description Source and interpretation provenance. */
-            provenance: components["schemas"]["NornIrLawProvenance"];
-            /** @description Reviewed explanation. */
-            rationale: string;
-            /** @description Predicate or exact ontology-bound behavior/invariant identity. */
-            response: components["schemas"]["NornIrLawResponse"];
-            /** @description Applicability, independent of the artifact's authorization scope. */
-            scope: components["schemas"]["NornIrLawScope"];
-            /**
-             * @description Reporting severity, independent of proof status.
-             * @enum {string}
-             */
-            severity: "error" | "warning";
-            /** @description Exact ontology object type whose record is bound as `self`. */
-            subject: string;
-            /** @description Optional progress bound. */
-            timing?: components["schemas"]["NornIrLawTiming"];
-        };
+        /** @description The existing safety or structured normative form of a `law` artifact. */
+        NornIrLawPayload: components["schemas"]["NornIrLawIR"] | components["schemas"]["NornIrStructuredLaw"];
         /** @description Reviewed law provenance; optional members are absent rather than synthesized nulls. */
         NornIrLawProvenance: {
             /** @description Reviewing/authoring principal. */
@@ -4323,6 +4345,23 @@ export interface components {
         NornIrRelationPayloadPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /** @description Reviewed English and Arabic display, never executable free prose. */
+        NornIrRequirementText: {
+            ar: string;
+            en: string;
+        };
+        /**
+         * @description Closed safety fragment. No event activation, clocks, fairness or progress.
+         * @enum {string}
+         */
+        NornIrRequirementTiming: "every_committed_state" | "same_commit";
+        /** @description Reviewed bilingual templates; identifiers and expressions remain in `norm`. */
+        NornIrRequirementWording: {
+            activation: components["schemas"]["NornIrRequirementText"];
+            component: components["schemas"]["NornIrRequirementText"];
+            response: components["schemas"]["NornIrRequirementText"];
+            scope: components["schemas"]["NornIrRequirementText"];
+        };
         /**
          * @description Why a source term has no correspondence (norn-platform#2986; lead
          *     ruling 2026-10-31 for `non_conforming`).
@@ -4419,6 +4458,12 @@ export interface components {
         NornIrRoleCondition: {
             anyOf: string[];
         };
+        NornIrRuleByteRange: {
+            /** Format: uint32 */
+            end: number;
+            /** Format: uint32 */
+            start: number;
+        };
         /**
          * @description RuleIR v1 closed-operator condition, mirroring the conditions the
          *     `norn-engine` closed evaluator runs (`RuleCondition`).
@@ -4507,6 +4552,12 @@ export interface components {
         NornIrRuleDecisionV1OneOf1PropertyDefaultOutput: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /** @description A reviewed conditional exception. No implicit necessity or legal judgement. */
+        NornIrRuleException: {
+            condition: components["schemas"]["NornIrZenExpression"];
+            id: string;
+            source: components["schemas"]["NornIrRuleSourceSpan"];
+        };
         /**
          * @description RuleIR v1 hit policy.
          * @enum {string}
@@ -4590,6 +4641,12 @@ export interface components {
         /** @description Source fields whose values are derived from the decide input. */
         NornIrRuleSourceCommandPropertyFields: {
             [key: string]: components["schemas"]["NornIrZenExpression"];
+        };
+        /** @description Source JSON pointer plus an optional half-open UTF-8 byte range. */
+        NornIrRuleSourceSpan: {
+            artifactId: string;
+            bytes?: components["schemas"]["NornIrRuleByteRange"] | null;
+            pointer: string;
         };
         /** @description A committed ledger event that triggers a `decide` rule (T3-DEC-3, #2671). */
         NornIrRuleTrigger: components["schemas"]["NornIrRuleTriggerOneOf0"] | components["schemas"]["NornIrRuleTriggerOneOf1"] | components["schemas"]["NornIrRuleTriggerOneOf2"] | components["schemas"]["NornIrRuleTriggerOneOf3"] | components["schemas"]["NornIrRuleTriggerOneOf4"];
@@ -5054,6 +5111,19 @@ export interface components {
         /** @description Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected. */
         NornIrSourceSchemaPayloadPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /**
+         * @description Structured form of a `law` payload. Authority rank and enactment are absent:
+         *     only the trusted retained enacting instance/layer may supply those inputs.
+         */
+        NornIrStructuredLaw: {
+            requirement: components["schemas"]["NornIrStructuredRequirement"];
+        };
+        /** @description Structured authoring over the existing law and normative source model. */
+        NornIrStructuredRequirement: {
+            norm: components["schemas"]["NornIrDeonticRule"];
+            timing: components["schemas"]["NornIrRequirementTiming"];
+            wording: components["schemas"]["NornIrRequirementWording"];
         };
         /** @description Optional time-dimension declaration for a Derived view. */
         NornIrTemporalScope: {
