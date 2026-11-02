@@ -92,6 +92,24 @@ impl Expression {
         crate::check::check_typed_expression(self, env, expected)
     }
 
+    /// VAL-EXACT-1: execute an admitted consumer while retaining legacy non-exact behavior.
+    /// Admission owns static type/cost checks; every runtime path retains the same meter.
+    /// Exact reads, destinations and explicit round sites still use the strict typed binding.
+    #[must_use]
+    pub fn evaluate_admitted_metered(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> EvaluationAttempt {
+        if crate::check::requires_exact_profile(self, env, expected) {
+            self.evaluate_typed_metered(context, budget, env, expected)
+        } else {
+            self.evaluate_metered(context, budget)
+        }
+    }
+
     /// VAL-EXACT-1 / VAL-ROUND: bind admission and execution to the same source
     /// and declared environment; plain Number retains its existing evaluator.
     #[must_use]

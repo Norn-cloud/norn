@@ -1877,7 +1877,7 @@ fn evaluate_row_expression<X>(
     invalid: impl Fn(String) -> ActionRefusal<X>,
 ) -> Result<ExprValue, ActionRefusal<X>> {
     let expression = Expression::compile(source).map_err(|error| invalid(error.to_string()))?;
-    let attempt = expression.evaluate_typed_metered(
+    let attempt = expression.evaluate_admitted_metered(
         context,
         EvaluationBudget::new(*remaining_fuel),
         env,
@@ -3026,7 +3026,7 @@ where
     )?;
     // Do not expose a row guard's outcome until every proposed write has
     // passed authorization. Removed rows use their authorized current state.
-    for ((collection_id, row_id), values) in &guarded_rows {
+    for ((collection_id, _), values) in &guarded_rows {
         let child_type = &declared
             .get(collection_id)
             .ok_or_else(|| {
@@ -4521,7 +4521,7 @@ fn evaluate_action_expression(
     remaining_fuel: &mut u64,
 ) -> Result<RuntimeValue, String> {
     let expression = Expression::compile(source).map_err(|error| error.to_string())?;
-    let attempt = expression.evaluate_typed_metered(
+    let attempt = expression.evaluate_admitted_metered(
         &context.value,
         EvaluationBudget::new(*remaining_fuel),
         &context.environment,
@@ -4752,7 +4752,7 @@ fn prepare_action_derivation<X>(
         }
     })?;
     let expected = action_derivation_destination(action, derivation, &env);
-    let attempt = expression.evaluate_typed_metered(
+    let attempt = expression.evaluate_admitted_metered(
         &context,
         EvaluationBudget::new(*remaining_fuel),
         &env,
@@ -5668,7 +5668,7 @@ fn check_action_preconditions<X>(
         };
         let expression =
             Expression::compile(source).map_err(|error| refusal(Some(error.to_string())))?;
-        let attempt = expression.evaluate_typed_metered(
+        let attempt = expression.evaluate_admitted_metered(
             &context,
             EvaluationBudget::new(*remaining_fuel),
             &env,

@@ -1947,3 +1947,34 @@ fn val_rate_refuses_mismatched_units_compounds_erased_scalars_and_wrong_destinat
             .is_err()
     );
 }
+
+#[test]
+fn val_exact_admitted_legacy_inputs_keep_generated_presence_and_actual_fuel() {
+    let env = ZenTypeEnv::input_only(
+        fields([("name", Type::text().optional())]),
+        EnvOptions::default(),
+    )
+    .unwrap();
+    let context = Value::object([(
+        "input",
+        Value::object([("name", Value::String("a".repeat(30_000)))]),
+    )]);
+    let expression = Expression::compile("len(lower(upper(input.name))) > 0").unwrap();
+    assert!(expression.check_typed(&env, &Type::Bool).is_err());
+    let attempt = expression.evaluate_admitted_metered(
+        &context,
+        EvaluationBudget::default(),
+        &env,
+        &Type::Bool,
+    );
+    assert_eq!(attempt.result.unwrap().into_value(), Value::Bool(true));
+    assert!(attempt.units_used > 0);
+    let (env, money) = rate_environment("USD", "g");
+    let invalid = Expression::compile("input.scalar * input.grams").unwrap();
+    assert!(
+        invalid
+            .evaluate_admitted_metered(&Value::Null, EvaluationBudget::default(), &env, &money)
+            .result
+            .is_err()
+    );
+}

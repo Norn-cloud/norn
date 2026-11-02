@@ -819,7 +819,7 @@ fn evaluate_invariants_for_class(
             }
         };
         let attempt = match &environment {
-            Ok(env) => expression.evaluate_typed_metered(
+            Ok(env) => expression.evaluate_admitted_metered(
                 &context,
                 EvaluationBudget::new(*remaining),
                 env,

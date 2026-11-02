@@ -1631,7 +1631,11 @@ pub fn validate_rule_ir_v2_payload(
                 for note in bindings.into_iter().flat_map(|binding| binding.notes) {
                     let mut diagnostic =
                         invalid_diagnostic(note.code, note.message, "payload.graph", artifact_id);
-                    diagnostic.severity = norn_ir::DiagnosticSeverity::Info;
+                    diagnostic.severity = if note.code == "core.values.literal_unit" {
+                        norn_ir::DiagnosticSeverity::Info
+                    } else {
+                        norn_ir::DiagnosticSeverity::Error
+                    };
                     diagnostics.push(diagnostic);
                 }
             }

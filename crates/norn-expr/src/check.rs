@@ -537,6 +537,47 @@ pub(crate) fn check_typed_expression(
     .map(|(checked, _)| checked)
 }
 
+/// VAL-EXACT-1: select the exact runtime only for declared reads/results or an explicit site.
+pub(crate) fn requires_exact_profile(expr: &Expression, env: &ZenTypeEnv, expected: &Type) -> bool {
+    if expected_exact_type(expected, env) {
+        return true;
+    }
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    IntelliSense::new().with_ast(expr.source(), false, |ast, metadata| {
+        let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
+        if !bounds::structure(ast, expr.source(), &StructuralLimits::NORN_EXPR_4, limits.slice.max_relation_depth, span).is_empty() { return true; }
+        let mut pending = vec![ast];
+        while let Some(node) = pending.pop() {
+            if matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() == 3) { return true; }
+            if let Some(path) = crate::reads::literal_path(node) {
+                if let Some((root, members)) = path.split_first() && let Some(ty) = env.variables().get(root) && read_requires_exact(ty, members, env) { return true; }
+            } else {
+                bounds::children(node, &mut pending);
+            }
+        }
+        false
+    }).unwrap_or(true)
+}
+
+fn read_requires_exact<'a>(mut ty: &'a Type, members: &[String], env: &'a ZenTypeEnv) -> bool {
+    for member in members {
+        while let Type::Optional(inner) | Type::List(inner) = ty {
+            ty = inner;
+        }
+        let Type::Record(name) = ty else {
+            return exact_type(ty);
+        };
+        let Some(field) = env
+            .record(name)
+            .and_then(|record| record.fields.get(member))
+        else {
+            return expected_exact_type(ty, env);
+        };
+        ty = &field.ty;
+    }
+    expected_exact_type(ty, env)
+}
+
 struct AnalysisContext<'a> {
     source: &'a str,
     env: &'a ZenTypeEnv,
