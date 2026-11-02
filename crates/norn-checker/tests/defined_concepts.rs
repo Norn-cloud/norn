@@ -288,8 +288,8 @@ fn graph_classify_refuses_partial_missing_duplicate_and_exhausted_inputs() {
             .is_err()
     );
     for (pointer, cap) in [
-        ("/payload/bounds/slice/maxRecords", 1),
-        ("/payload/bounds/slice/maxCanonicalBytes", 1),
+        ("/payload/bounds/slice/max_records", 1),
+        ("/payload/bounds/slice/max_canonical_bytes", 1),
     ] {
         let mut bounded = wire.clone();
         *bounded.pointer_mut(pointer).expect("cap") = json!(cap);
@@ -302,7 +302,7 @@ fn graph_classify_refuses_partial_missing_duplicate_and_exhausted_inputs() {
     }
     // Admission estimates per evaluation; one runtime budget covers every row.
     let mut bounded = wire;
-    bounded["payload"]["bounds"]["decide"]["fuelUnits"] = json!(1000);
+    bounded["payload"]["bounds"]["decide"]["fuel_units"] = json!(1000);
     let class = classifier(bounded);
     let rows: Vec<_> = (0..1000).map(|i| row(&i.to_string(), 101)).collect();
     assert!(class.classify(&rows, true).is_err());
