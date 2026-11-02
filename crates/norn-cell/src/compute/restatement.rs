@@ -215,11 +215,13 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let (encoded, digest) = selected(&old)?;
             let prior = decode(encoded, digest)?.ok_or_else(|| refused(INVALID))?;
-            if prior.outputs.keys().cloned().collect::<BTreeSet<_>>() != slice_ids
-                || prior
-                    .outputs
-                    .values()
-                    .any(|answer| !authorized(&context, &answer.result))
+            if prior.outputs.keys().cloned().collect::<BTreeSet<_>>() != slice_ids {
+                return Err(refused(INVALID));
+            }
+            if prior
+                .outputs
+                .values()
+                .any(|answer| !authorized(&context, &answer.result))
             {
                 return Err(refused("core.compute.stale_input"));
             }
