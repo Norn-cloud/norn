@@ -1864,3 +1864,126 @@ proptest::proptest! {
         proptest::prop_assert_eq!(pin(first,first_array) == pin(second,second_array), first == second && first_array == second_array);
     }
 }
+
+proptest::proptest! {
+    /// FOLD-AUTHORING-LINEAGE: generated typed folds preserve nested array elements.
+    #[test]
+    fn typed_authoring_ordered_fold_executes_the_declared_helper(
+        amounts in proptest::collection::vec(-1000_i64..=1000, 0..=32),
+    ) {
+        let rules = support::generated_rules("crates/norn-decisions/tests/fixtures/typed-ordered-fold.json");
+        let declared = rules["example.fold.total.rule"].clone();
+        let helpers = BTreeMap::from([("example.fold.step.rule".into(), rules["example.fold.step.rule"].clone())]);
+        let admitted = AdmittedDecision::admit(&declared, &helpers, binding()).unwrap();
+        let ids: Vec<_> = (0..amounts.len()).map(|n| format!("id{n:02}")).collect();
+        let items: Vec<_> = ids.iter().zip(&amounts).rev().map(|(id, n)| json!({"id":id,"amount":n})).collect();
+        let result = run(&admitted, value(&json!({"items":items,"initial":{"total":0,"count":0,"ids":[],"segments":[]}})), event(), EvaluationBudget::new(2_000_000)).unwrap();
+        let expected = value(&json!({"actionId":"total","state":{"total":amounts.iter().sum::<i64>(),"count":amounts.len(),"ids":ids,"segments":amounts.iter().map(|n| vec![n]).collect::<Vec<_>>()}}));
+        proptest::prop_assert_eq!(norn_ir::RuntimeValue::Object(result.output.commands[0].clone()), norn_decisions::value_to_runtime(&expected).unwrap());
+    }
+}
+
+#[test]
+fn cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations() {
+    let rules = support::generated_rules("crates/norn-decisions/tests/fixtures/jewelry-folds.json");
+    let helpers = rules
+        .iter()
+        .filter(|(_, r)| r.contract == Some(norn_ir::RuleContractV2::SubDecision))
+        .map(|(id, r)| (id.clone(), r.clone()))
+        .collect();
+    let admitted =
+        AdmittedDecision::admit(&rules["jewelry.fold.plan.rule"], &helpers, binding()).unwrap();
+    let input = json!({
+        "opening":{"resource_code":"a","quantity":100,"unit":"g","currency":null,"valuation_method":"fifo","gross_quantity":100,"purity":1000,"valuation_currency":"USD","book_value":1000},
+        "scrap":{"resource_code":"b","gross":25,"purity":800,"value":180,"unit":"g","currency":"USD"},
+        "sell_quantity":20,"sale_price":300,"threshold":0.005,
+        "products":[
+            {"resource_code":"a-output","gross":99.2,"purity":1000,"kind":"output","unit":"g","currency":"USD"},
+            {"resource_code":"b-loss","gross":0.8,"purity":1000,"kind":"loss","unit":"g","currency":"USD"},
+            {"resource_code":"c-byproduct","gross":5,"purity":0,"kind":"byproduct","unit":"g","currency":"USD"}
+        ]
+    });
+    let evaluate = |input: &Json| {
+        run(
+            &admitted,
+            value(input),
+            event(),
+            EvaluationBudget::new(2_000_000),
+        )
+    };
+    let result = evaluate(&input).unwrap();
+    assert!(result.output.facts.is_empty() && result.output.timers.is_empty());
+    let plan = norn_ir::RuntimeValue::Object(result.output.commands[0].clone());
+    for (path, expected) in [
+        ("/complete", "true"),
+        ("/needs_approval", "true"),
+        ("/sale_price", "300"),
+        ("/sale/fine", "20"),
+        ("/sale/value", "200"),
+        ("/sale/residual", "80"),
+        ("/sale/residual_value", "800"),
+        ("/receipt/fine", "20"),
+        ("/receipt/gross", "25"),
+        ("/receipt/value", "180"),
+        ("/funding/fine", "100"),
+        ("/funding/gross", "105"),
+        ("/funding/value", "980"),
+        ("/funding/residual", "0"),
+        ("/funding/residual_value", "0"),
+        ("/melt/remaining_fine", "0"),
+        ("/melt/remaining_gross", "0"),
+        ("/melt/remaining_value", "0"),
+        ("/melt/allocations/0/value", "972.16"),
+        ("/melt/allocations/1/value", "7.84"),
+        ("/melt/allocations/2/value", "0"),
+        ("/melt/loss", "0.8"),
+    ] {
+        assert_eq!(
+            plan.pointer(path),
+            Some(&norn_ir::RuntimeValue::from_json_text(expected).unwrap()),
+            "{path}"
+        );
+    }
+    let mut reordered = input.clone();
+    reordered["products"].as_array_mut().unwrap().reverse();
+    assert_eq!(evaluate(&reordered).unwrap().output, result.output);
+    let mut boundary = input.clone();
+    boundary["products"][0]["gross"] = json!(99.5);
+    boundary["products"][1]["gross"] = json!(0.5);
+    let command = &evaluate(&boundary).unwrap().output.commands[0];
+    assert_eq!(command["needs_approval"].as_bool(), Some(false));
+    assert_eq!(command["complete"].as_bool(), Some(true));
+    let mut missing_loss = input.clone();
+    missing_loss["products"].as_array_mut().unwrap().remove(1);
+    assert_eq!(
+        evaluate(&missing_loss).unwrap().output.commands[0]["complete"].as_bool(),
+        Some(false)
+    );
+    let mut bad_unit = input.clone();
+    bad_unit["opening"]["unit"] = json!("kg");
+    assert!(evaluate(&bad_unit).is_err());
+    let mut bad_opening = input.clone();
+    bad_opening["opening"]["purity"] = json!(1100);
+    assert_eq!(
+        evaluate(&bad_opening).unwrap().output.commands[0]["complete"].as_bool(),
+        Some(false)
+    );
+    let mut inexact_ratio = input.clone();
+    inexact_ratio["opening"]["quantity"] = json!(2);
+    inexact_ratio["opening"]["gross_quantity"] = json!(2);
+    inexact_ratio["opening"]["book_value"] = json!(2);
+    inexact_ratio["sell_quantity"] = json!(1);
+    inexact_ratio["scrap"]["gross"] = json!(2);
+    inexact_ratio["scrap"]["purity"] = json!(1000);
+    inexact_ratio["scrap"]["value"] = json!(2);
+    inexact_ratio["products"] = json!([
+        {"resource_code":"a-output","gross":2,"purity":1000,"kind":"output","unit":"g","currency":"USD"},
+        {"resource_code":"b-loss","gross":1,"purity":1000,"kind":"loss","unit":"g","currency":"USD"}
+    ]);
+    assert!(evaluate(&inexact_ratio).is_err());
+    let mut bad_purity = input;
+    bad_purity["scrap"]["purity"] = json!(1100);
+    if let Ok(result) = evaluate(&bad_purity) {
+        assert_eq!(result.output.commands[0]["complete"].as_bool(), Some(false));
+    }
+}
