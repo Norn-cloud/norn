@@ -1,0 +1,7 @@
+{
+  "code": "core.graph.incomplete_classification",
+  "message": "classification requires complete supported semantic admission and evaluation",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}
