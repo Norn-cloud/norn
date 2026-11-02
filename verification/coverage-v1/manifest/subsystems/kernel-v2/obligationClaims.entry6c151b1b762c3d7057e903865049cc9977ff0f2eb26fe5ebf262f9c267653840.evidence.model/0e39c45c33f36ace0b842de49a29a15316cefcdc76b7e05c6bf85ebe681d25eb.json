@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/kernel-v2/models/commit-admission.qnt",
+    "command": "quint verify verification/kernel-v2/models/commit-admission.qnt --backend apalache --invariants invariant --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entry6c151b1b762c3d7057e903865049cc9977ff0f2eb26fe5ebf262f9c267653840.evidence.model.entry0e39c45c33f36ace0b842de49a29a15316cefcdc76b7e05c6bf85ebe681d25eb.selectors"
+    }
+  }
+}

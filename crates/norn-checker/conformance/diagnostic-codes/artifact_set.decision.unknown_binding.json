@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.decision.unknown_binding",
+  "message": "{detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -1,0 +1,21 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-ONT-OPEN-CLOSED-SEPARATION",
+    "runtime": "partial",
+    "model": "partial",
+    "proof": "partial",
+    "residual": "The closed Rust EntityIR validator and the production commit checker reject every unknown payload/schema keyword; the admitted field language is type/required plus exact finite string enums. The finite reasoner/SHACL corpus is checked, and versioned authoritative object/relation commits require exact Active ontology artifacts and revalidate that same bounded field language before publishing effects. Lean proves the declared evidence-type separation, but no implementation correspondence or end-to-end inferred-triple negative test exists; no general OWL soundness/completeness theorem is claimed.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry23616aa875a6ec1c33f8b18143600c4430a57653ec42e2e73ee7bd74a93b4f80.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry23616aa875a6ec1c33f8b18143600c4430a57653ec42e2e73ee7bd74a93b4f80.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry23616aa875a6ec1c33f8b18143600c4430a57653ec42e2e73ee7bd74a93b4f80.evidence.proof"
+      }
+    }
+  }
+}

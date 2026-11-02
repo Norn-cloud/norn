@@ -1,0 +1,7 @@
+{
+  "code": "function.invocation.fork_perform",
+  "message": "world {world} is a fork; only main performs, and a fork never dispatches a Function",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

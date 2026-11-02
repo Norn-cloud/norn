@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.ordered_fold_unsupported",
+  "message": "ordered-fold execution is unavailable in this semantics profile",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

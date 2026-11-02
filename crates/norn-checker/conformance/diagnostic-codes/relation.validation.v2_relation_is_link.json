@@ -1,0 +1,7 @@
+{
+  "code": "relation.validation.v2_relation_is_link",
+  "message": "RelationIR has no v2 form: declare an EntityIR v2 relation as a link in the source entity's payload.objectType.links",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

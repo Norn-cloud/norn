@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.mixed_currency",
+  "message": "Summing multiple currencies requires an explicit conversion.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
