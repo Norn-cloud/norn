@@ -1,17 +1,13 @@
 /**
- * `norn deploy` to the norn dev host (T7-TS-4, #2692).
+ * Replace a local definition directory with an admitted artifact set.
  *
- * norn dev admits its `--defs` directory at startup, so deploying to it makes
- * that directory hold exactly the admitted
- * set: one canonical `<artifactId>.json` per artifact, with every other
- * artifact file removed (a file declaring an artifact of the set under
- * another name included, so nothing is installed twice). Non-artifact files
- * (`principals.json`) are left alone. The native host uses this set only to
- * seed a cell with no installed definitions. Existing cells keep their
- * installed set; update those with `norn deploy --to-cell <url>`.
+ * Writes one canonical `<artifactId>.json` per artifact and removes obsolete
+ * artifact files, including duplicates under other names. Non-artifact files
+ * such as `principals.json` are preserved.
  *
- * Runtime cell installs use `PUT /v1/defs` in `src/remote.ts`; this module
- * owns only the local directory target.
+ * This module provides the directory operation; the public CLI exposes
+ * check, compile and profile. Remote definition installs are provided by
+ * `src/remote.ts` through `PUT /v1/defs`.
  */
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -28,7 +24,7 @@ export interface DirDeployResult {
 
 /** Artifact ids may contain only these characters to become file names. */
 const FILE_SAFE = /^[A-Za-z0-9_.-]+$/
-/** Non-IR files norn dev reads from its defs directory; an artifact may not take their name. */
+/** Reserved non-artifact files; an artifact may not take their name. */
 const RESERVED = new Set(["principals.json"])
 
 /** The directory cannot be brought to the admitted set safely; nothing was changed. */
