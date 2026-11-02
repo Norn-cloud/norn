@@ -1,9 +1,9 @@
 # Throwaway Boat CI pilot (never merged): measures starts per job, warm reuse
 # across shards inside one job, wall time and cost on `runs-on: boat`.
-name: Boat pilot
+name: CI cut exact-head validation
 on:
   push:
-    branches: ['boat-pilot/**']
+    branches: ['boat-pilot/ci-cut-validation']
 permissions:
   contents: read
 jobs:
@@ -13,10 +13,13 @@ jobs:
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
+      NORN_INTEROP_CACHE: ~/.cache/norn-interop
+      NORN_CI_BASE: 2859d63d435a89ce82dc3902d24924c0882e95a8
     steps:
       - run: nproc; free -g; df -h /; uname -a; cat /etc/os-release | head -3
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 86db02a0a9c850f5df8ac3bc3bab3680de24c5c9
           persist-credentials: false
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
@@ -33,17 +36,20 @@ jobs:
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest@0.9.150
-      - name: heavy-2 (cold)
-        run: time bash scripts/ci/core.sh test heavy-2
-      - name: heavy-3 (same VM, warm target)
-        run: time bash scripts/ci/core.sh test heavy-3
-      - name: rest-1 (same VM, warm target)
-        run: time bash scripts/ci/core.sh test rest-1
-      - name: clippy (same VM)
-        run: time bash scripts/ci/core.sh clippy
-      - run: sccache --show-stats || true; df -h /
-  probe:
-    runs-on: boat
-    timeout-minutes: 10
-    steps:
-      - run: nproc; free -g; df -h /; hostname
+      - name: Qualify the exact six-hour cut head
+        run: |
+          set -euo pipefail
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+          test "$(git rev-parse HEAD)" = 86db02a0a9c850f5df8ac3bc3bab3680de24c5c9
+          timed() { start=$SECONDS; bash scripts/ci/core.sh "$@"; echo "::notice::task=$* seconds=$((SECONDS-start))"; }
+          timed cheap
+          plan=$(bash scripts/ci/core.sh plan --affected "$NORN_CI_BASE" HEAD)
+          echo "$plan"
+          test "$(jq -r .mode <<<"$plan")" = full
+          export NORN_CI_PACKAGES="$(jq -r .packages <<<"$plan")"
+          export NORN_CI_REST_SHARDS="$(jq -r .rest_shards <<<"$plan")"
+          while read -r shard; do timed test "$shard"; done < <(jq -r '.shard[]' <<<"$plan")
+          while read -r phase; do timed "$phase"; done < <(jq -r '.phase[]' <<<"$plan")
+          git rev-parse HEAD
+          git status --short
+          sccache --show-stats || true
