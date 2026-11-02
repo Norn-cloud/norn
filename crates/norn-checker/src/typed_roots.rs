@@ -372,15 +372,15 @@ fn validate_action_slice(
             ));
         }
         let source_depth = match &entry.key {
-            SliceKey::Parameter { .. } => {
-                diagnostics.push(invalid_diagnostic(
-                    ACTION_CODE,
-                    "parameter slice execution is not qualified in this cut",
-                    format!("{path}.key"),
-                    artifact_id,
-                ));
-                0
-            }
+            SliceKey::Parameter { .. } => parameter_slice_depth(
+                &slice,
+                index,
+                payload,
+                entry,
+                &link_depths,
+                diagnostics,
+                artifact_id,
+            ),
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
@@ -436,6 +436,41 @@ fn validate_action_slice(
             ));
         }
     }
+}
+
+fn parameter_slice_depth(
+    slice: &[SliceDeclaration],
+    index: usize,
+    payload: &BTreeMap<String, JsonValue>,
+    entry: &SliceDeclaration,
+    link_depths: &BTreeMap<String, u32>,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) -> u32 {
+    let SliceKey::Parameter {
+        from,
+        effective_at,
+        default_from,
+        ..
+    } = &entry.key
+    else {
+        return 0;
+    };
+    let path = format!("payload.slice[{index}]");
+    let earlier = slice.iter().take(index).find(|prior| prior.name == *from);
+    let source_ok =
+        earlier.is_some_and(|prior| prior.is_list() && prior.object_type == entry.object_type);
+    let default_ok = default_from.as_ref().is_none_or(|name| {
+        slice.iter().take(index).any(|prior| {
+            prior.name == *name && !prior.is_list() && prior.object_type == entry.object_type
+        })
+    });
+    let time_ok = action_input_field_type(payload.get("inputSchema"), effective_at.as_str())
+        .is_some_and(|ty| is_string_key_type(&ty));
+    if !source_ok || !default_ok || !time_ok {
+        diagnostics.push(invalid_diagnostic(ACTION_CODE, "parameter requires an earlier same-type list, a string effective instant and an optional earlier same-type default", format!("{path}.key"), artifact_id));
+    }
+    *link_depths.get(from).unwrap_or(&0)
 }
 
 fn action_prior_slice_depth(

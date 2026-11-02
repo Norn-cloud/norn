@@ -39,9 +39,9 @@ This cut checks structure only. Generic type/unit substitution, B2 law instantia
 
 ### Parameter slice contract
 
-`SliceKey::Parameter {from, settingKey, effectiveAt, precedence: Vec<ScopeRef>, defaultFrom?}` projects one numeric setting from an earlier complete authorized link-list slice. `effectiveAt` names the action's input timestamp; `defaultFrom`, when present, names an earlier single-object setting slice. Scope ordering is explicit and closed; no aliases or globals are inferred. Candidate data and link membership stay in the transaction read set.
+`SliceKey::Parameter {from, settingKey, effectiveAt, precedence: Vec<ScopeRef>, defaultFrom?}` projects one numeric setting from an earlier complete authorized link-list slice. `effectiveAt` names the action's input timestamp; `defaultFrom`, when present, names an earlier single-object setting slice. An omitted optional entry supplies no default; without an active candidate, refuse `core.composition.parameter_missing`. Scope ordering is explicit and closed; no aliases or globals are inferred. Candidate data and link membership stay in the transaction read set.
 
-The initial native numeric-setting fact profile uses `setting_key`, exact numeric `value`, `effective_from`, nullable `effective_to`, `review_state`, and five present nullable scope fields (`org_id`, `tenant_id`, `workspace_id`, `environment_id`, `business_unit_id`) projected to `ScopeRef`. It projects to the existing `SettingRoot`; source facts are changed only by ordinary governed actions. The binding contract alone refuses execution until the runtime projection and receipt pin are qualified; rule bindings remain unsupported.
+The initial native numeric-setting fact profile uses `setting_key`, exact numeric `value`, `effective_from`, nullable `effective_to`, `review_state`, and five present nullable scope fields (`org_id`, `tenant_id`, `workspace_id`, `environment_id`, `business_unit_id`) projected to `ScopeRef`. It projects to the existing `SettingRoot`; source facts are changed only by ordinary governed actions. PARAM-PIN-1: every candidate fact and source membership is fenced by the ordinary action transaction. The selected fact identity and revision are retained as `parameterReads` on the immutable action receipt. Exact replay returns that original pin; rule bindings remain unsupported.
 
 ### Initial overlay analysis profile
 
@@ -85,5 +85,7 @@ Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, 
 3. Add stable generic instance/type-unit binding admission, then explicit import/export/alias conformance.
 4. Upgrade governed parameter exact typing and scope/interval resolution, then PARAM-TAX commit history tests with 01/04.
 5. Add migration plan coverage for states/timers/commands, then atomic activation, then MIGRATE-FLIGHT and rollback/restatement tests with 08.
+
+PARAM-TAX-EXACT-1: exact checked decimal multiplication and addition produce tax and gross without a binary float conversion. The bounded component proof covers net 100 and every integer percentage from 0 through 100; PARAM-TAX commit/reopen supplies evaluator correspondence for 10% and 12%.
 
 `PARAM-WIRE-2`: `settingVersion: "0.2"` carries exact decimal-string numeric values for new admission. Verified retained sets decode `0.1` under its tagged binary64 value profile, without entering exact-decimal execution or reinterpreting bytes. Retained `0.1` bytes, artifact versions and receipt pins keep their original meaning. Migration requires explicit re-authoring from the intended decimal value into a new artifact version, with `supersedes` naming its predecessor; never reinterpret or silently convert an old JSON number. In-flight work retains its old generation until an explicit supported migration.
