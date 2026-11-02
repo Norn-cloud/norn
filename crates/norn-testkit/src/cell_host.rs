@@ -737,6 +737,7 @@ pub fn law_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, links: Vec<Link>| ObjectTypeDef {
+        role: None,
         name: ObjectTypeName(name.to_owned()),
         description: None,
         status: ResourceStatus::default(),
@@ -1969,12 +1970,14 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
         CommitError::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
         } => CommitError::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
@@ -2131,6 +2134,7 @@ pub fn override_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, link: Link| ObjectTypeDef {
+        role: None,
         name: ObjectTypeName(name.to_owned()),
         description: None,
         status: ResourceStatus::default(),

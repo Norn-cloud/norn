@@ -24,6 +24,14 @@ impl PartitionSlice {
         &self.facts
     }
 
+    /// FENCE-COMPLETE: exact captured populations, including empty partitions.
+    /// Targets identify members; source and extra point facts are not members.
+    /// Evaluate these targets from `facts()`, then use this slice's `prepare`.
+    #[must_use]
+    pub fn partition_reads(&self) -> &[LinkReadExpectation] {
+        &self.partitions
+    }
+
     /// Resolve ordinary `RuleIR` outputs, retaining every captured membership
     /// expectation in the same commit as its facts and effects.
     ///

@@ -68,6 +68,8 @@ Both destinations exclude objectIdField and every effective identity-key compone
 Only the cell host resolves authenticated, scoped evidence; unsupported hosts refuse.
 Execution stays closed until consumption and effects commit atomically, with no partial persistence on refusal.
 
+The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
+
 
 ## Bounded synchronous action profile
 
@@ -143,3 +145,4 @@ host-side cardinality failure and denied secondary authority, with complete
 SQLite dumps unchanged before and after reopening. No provider executes.
 This is runtime-enforced correspondence plus sampled generated identities and
 writer footprints, not a proof of application conservation or approval policy.
+
