@@ -1698,15 +1698,19 @@ dependencies = [
 name = "norn-metrics"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "nix",
+ "norn-authz",
  "norn-cell",
  "norn-checker",
  "norn-ir",
  "norn-kernel",
+ "norn-projections",
  "proptest",
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "sha2",
  "statrs",
  "thiserror 2.0.20",
 ]

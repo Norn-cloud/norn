@@ -238,6 +238,8 @@
     "crates/norn-metrics/tests/publication.rs",
     "crates/norn-metrics/tests/scrap.source.ts",
     "crates/norn-metrics/tests/scrap_world.rs",
+    "crates/norn-metrics/tests/support/publication_host.rs",
+    "crates/norn-metrics/tests/support/publication_policy.rs",
     "crates/norn-metrics/tests/support/scrap_world.rs",
     "crates/norn-metrics/tests/temporal.rs",
     "fixtures/ir/metrics/customers-by-region-week.question.json",
