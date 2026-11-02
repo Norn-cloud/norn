@@ -18,6 +18,7 @@ class MigrationTests(unittest.TestCase):
 
     def test_real_approved_prs(self):
         fixture = json.loads((Path(__file__).parent / "fixtures/registry-prs.json").read_text())
+        self.assertEqual(fixture["base_sha"], "5e33eab0294012f8fb683fc2bf95c571c1bf4bcd")
         for case, reverse, native in [(case, r, n) for case in fixture["cases"] for r, n in ((False, False), (True, False), (False, True))]:
             with self.subTest(pr=case["pr"], reverse=reverse, native=native), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
