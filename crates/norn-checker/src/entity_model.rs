@@ -1826,8 +1826,14 @@ impl<'a> Checker<'a, '_> {
                             scale,
                             unit,
                             currency_source,
+                            per_unit: None,
                             ..
-                        }) if unit.is_some() != currency_source.is_some() => {
+                        }) if unit.is_some() != currency_source.is_some()
+                            && currency_source.as_ref().is_none_or(|currency| {
+                                currency.links.is_empty() && table.get(&currency.property).is_some_and(|field| {
+                                    !field.nullable() && matches!(field.base(), Some(PropertyType::Enum { values }) if values.len() == 1)
+                                })
+                            }) => {
                             Some((scale.0, unit.clone(), currency_source.clone()))
                         }
                         TypeResolution::Base(_)
@@ -1837,7 +1843,7 @@ impl<'a> Checker<'a, '_> {
             let Some(binding) = binding else {
                 self.out.push(error(
                     crate::property_types::codes::UNIT_BINDING_REQUIRED,
-                    "interface Decimal requires an explicit unit or currencySource and scale"
+                    "interface Decimal requires a quantity unit or fixed singleton currencySource, no perUnit, and scale"
                         .to_owned(),
                     at,
                 ));
@@ -2289,11 +2295,13 @@ fn base_narrows(narrow: &PropertyType, wide: &PropertyType) -> bool {
             PropertyType::Decimal {
                 unit: Some(_),
                 currency_source: None,
+                per_unit: None,
                 ..
             }
             | PropertyType::Decimal {
                 unit: None,
                 currency_source: Some(_),
+                per_unit: None,
                 ..
             }
             | PropertyType::DecimalBinding { .. },

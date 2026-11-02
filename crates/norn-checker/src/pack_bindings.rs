@@ -103,12 +103,13 @@ pub(crate) fn targets(
             let PropertyType::Decimal {
                 unit,
                 currency_source,
+                per_unit,
                 ..
             } = contract
             else {
                 return Err("core.values.unit_mismatch");
             };
-            if unit.is_some() == currency_source.is_some()
+            if per_unit.is_some() || unit.is_some() == currency_source.is_some()
                 || !effective.properties.iter().any(|p| {
                     p.id.as_str() == id
                         && matches!(&p.kind, EffectiveKind::Base(actual) if actual == contract)
