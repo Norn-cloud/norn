@@ -5,6 +5,7 @@
     reason = "native lineage conformance"
 )]
 mod query_support;
+use norn_cell::compute::lineage::LineageDisclosure;
 use norn_cell::{CellError, CommitBatch};
 use query_support::*;
 const WEEK: &str = "\"2026-10-19\"";
@@ -23,11 +24,17 @@ fn data_lineage_reconciles_294_over_300_with_exact_fact_versions_and_restricted_
             &result.lineage_ref,
             WEEK,
             |_| Ok(true),
-            |row| Ok(row.id != "SYN-MELT-15-1"),
+            LineageDisclosure {
+                values: &mut |row| Ok(row.id != "SYN-MELT-15-1"),
+                source: &mut |_| Ok(true),
+            },
         )
         .expect("trace");
     assert_eq!(trace.result, result);
-    assert_eq!(trace.source_edge_gap, "source edge: not yet (#401)");
+    assert!(trace.contributions.iter().all(|c| matches!(
+        c.source,
+        norn_cell::compute::lineage::ContributionSource::Unavailable
+    )));
     assert_eq!(trace.contributions.len(), 4);
     assert_eq!(trace.result.rows[WEEK].totals[0].canonical(), "294");
     assert_eq!(trace.result.rows[WEEK].totals[1].canonical(), "300");
@@ -60,7 +67,10 @@ fn data_lineage_reconciles_294_over_300_with_exact_fact_versions_and_restricted_
             &result.lineage_ref,
             WEEK,
             |row| Ok(row.id != "SYN-MELT-15-1"),
-            |_| Ok(true)
+            LineageDisclosure {
+                values: &mut |_| Ok(true),
+                source: &mut |_| Ok(true)
+            }
         ),
         Err(CellError::ComputeRefused(
             "core.projection.lineage_incomplete"
@@ -98,7 +108,7 @@ fn changed_generation_frontier_epoch_and_nonexact_inputs_refuse_without_revealin
         };
         assert!(
             matches!(store.trace_question(&plan, changed, &result.lineage_ref, WEEK,
-            |_| Ok(true), |_| panic!("no disclosure before pin/freshness checks")),
+            |_| Ok(true), LineageDisclosure { values: &mut |_| panic!("no disclosure before pin/freshness checks"), source: &mut |_| panic!("no source disclosure before pin/freshness checks") }),
             Err(CellError::ComputeRefused(code)) if code == expected)
         );
     }
@@ -124,7 +134,10 @@ fn changed_generation_frontier_epoch_and_nonexact_inputs_refuse_without_revealin
             &result.lineage_ref,
             WEEK,
             |_| Ok(true),
-            |_| panic!("no changed-generation disclosure")
+            LineageDisclosure {
+                values: &mut |_| panic!("no changed-generation disclosure"),
+                source: &mut |_| panic!("no changed-generation source disclosure")
+            }
         ),
         Err(CellError::ComputeRefused(
             "core.projection.lineage_incomplete"
@@ -136,13 +149,13 @@ proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
     fn generated_members_reconcile_and_disclosure_never_changes_numeric_evidence(
-        amounts in proptest::collection::vec((1i64..100_000,0i64..100_000),1..8), hide in proptest::bool::ANY
+        amounts in proptest::collection::vec((1i64..100_000,0i64..100_000),1..8), hide in proptest::bool::ANY, hide_source in proptest::bool::ANY
     ) {
         let (mut store, plan, context) = fixture();
         let writes = amounts.iter().enumerate().map(|(i,(input,recovered))| put(&format!("row-{i}"),*input,*recovered,"2026-10-23T00:00:00Z","gold")).collect();
         store.commit(&CommitBatch {world:WORLD.into(),scope:"synthetic".into(),logical_time:CLOCK,writes,..CommitBatch::default()}).expect("commit");
         let result = store.evaluate_question(&plan,context.clone(),|_|Ok(true)).expect("result");
-        let trace = store.trace_question(&plan,context,&result.lineage_ref,WEEK,|_|Ok(true),|_|Ok(!hide)).expect("trace");
+        let trace = store.trace_question(&plan,context,&result.lineage_ref,WEEK,|_|Ok(true), LineageDisclosure { values: &mut |_|Ok(!hide), source: &mut |_| Ok(!hide_source) }).expect("trace");
         proptest::prop_assert_eq!(&trace.result,&result);
         proptest::prop_assert_eq!(trace.contributions.len(),amounts.len());
         let recovered: i64 = amounts.iter().map(|(_,value)|value).sum();
@@ -153,7 +166,9 @@ proptest::proptest! {
         for member in trace.contributions {
             proptest::prop_assert_eq!(&member.amounts,&result.rows[WEEK].members[&member.fact.key].amounts);
             proptest::prop_assert_eq!(member.values.is_none(),hide);
+            proptest::prop_assert_eq!(member.fact_digest.is_none(),hide);
             proptest::prop_assert_eq!(member.restricted,hide);
+            proptest::prop_assert_eq!(matches!(member.source,norn_cell::compute::lineage::ContributionSource::Restricted),hide_source);
         }
     }
 }

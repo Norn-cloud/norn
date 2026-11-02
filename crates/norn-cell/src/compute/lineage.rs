@@ -1,9 +1,35 @@
 //! LINEAGE-SUM-1: native contribution drill-through, pinned to one exact result.
 use super::{Freshness, QueryContext, QueryResult, Totals, decimal, refused};
-use crate::{CellError, CellStore, ObjectRecord, engine::SqlEngine, reactive::BudgetedRead};
+use crate::{
+    CellError, CellStore, ObjectRecord, engine::SqlEngine,
+    source_provenance::InstanceSourceProvenance,
+};
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{Decimal, FactRef, RuntimeObject};
 use serde::Serialize;
+
+/// Independent current host grants; numeric visibility grants neither disclosure.
+pub struct LineageDisclosure<'a> {
+    /// Permission to reveal all committed canonical property values.
+    pub values: &'a mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    /// Permission to resolve source row/document provenance through Core 07.
+    pub source: &'a mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+}
+
+/// Authorized source edge; numeric completeness does not imply source disclosure.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ContributionSource {
+    /// The cell authenticated and recomputed the exact producing input bundle.
+    Resolved {
+        /// Source row/document identities, digests, mapping pin and field provenance.
+        provenance: Box<InstanceSourceProvenance>,
+    },
+    /// The current host policy withheld source provenance.
+    Restricted,
+    /// The canonical fact has no retained mapping bundle.
+    Unavailable,
+}
 
 /// One numeric contribution and its canonical fact incarnation.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -15,6 +41,10 @@ pub struct NumericContribution {
     pub amounts: Vec<Option<Decimal>>,
     /// Emitting receipt identity; a reference, not an independently verifiable proof.
     pub receipt_hash: String,
+    /// Full-incarnation digest, disclosed only with the canonical property values.
+    pub fact_digest: Option<String>,
+    /// Authorized source lineage, separate from numeric amounts and catalog enrichment.
+    pub source: ContributionSource,
     /// Cell commit position of the writer.
     pub commit_seq: u64,
     /// Knowledge time authenticated by the emitting receipt.
@@ -30,8 +60,6 @@ pub struct NumericContribution {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NumericTrace {
-    /// Source resolution stays closed until Core 07 supplies its authority-checked edge.
-    pub source_edge_gap: &'static str,
     /// Revalidated exact cell result and definition/time/scope/frontier pins.
     pub result: QueryResult,
     /// Canonical selected grouping key.
@@ -44,7 +72,8 @@ impl<E: SqlEngine> CellStore<E> {
     /// LINEAGE-SUM-1 / DATA-LINEAGE: resolve exact numeric membership in one transaction.
     /// The host supplies current population visibility and permission to reveal *all*
     /// canonical properties of each member. Otherwise values are visibly restricted.
-    /// Source documents and catalog enrichment require their own authorized resolution.
+    /// Source provenance uses Core 07 authority and a separate current disclosure grant.
+    /// Catalog enrichment never adds numeric contributions; document content grants are separate.
     /// A changed result pin requires a fresh result, never a mixture of generations.
     /// # Errors
     /// Refuses nonexact/incomplete results, changed pins, missing evidence or budgets.
@@ -55,8 +84,9 @@ impl<E: SqlEngine> CellStore<E> {
         expected_lineage: &str,
         bucket: &str,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
-        mut reveal_values: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        disclosure: LineageDisclosure<'_>,
     ) -> Result<NumericTrace, CellError> {
+        let LineageDisclosure { values, source } = disclosure;
         let incomplete = || refused("core.projection.lineage_incomplete");
         self.question_snapshot_with(plan, context, &mut visible, |snapshot, budget| {
             let result = snapshot.result;
@@ -73,35 +103,54 @@ impl<E: SqlEngine> CellStore<E> {
             for (id, member) in &row.members {
                 let (_, value) = snapshot.contributions.get(id).ok_or_else(incomplete)?;
                 totals.adjust(value, false)?;
-                let BudgetedRead::Found(record) = reader.object_at_version_with_budget(
-                    &result.context.world,
-                    result.grain.as_str(),
-                    id,
-                    member.version,
-                    budget,
-                )?
-                else {
-                    return Err(incomplete());
-                };
-                let receipt = reader
-                    .receipt_for_fact_version_with_budget(
+                let evidence = reader
+                    .fact_version_evidence_with_budget(
                         &result.context.world,
-                        &record.object_type,
+                        result.grain.as_str(),
                         id,
                         member.version,
                         budget,
                     )?
                     .ok_or_else(incomplete)?;
+                let snapshot = evidence.snapshot();
+                let record = ObjectRecord {
+                    object_type: snapshot.object_type.clone(),
+                    id: snapshot.key.clone(),
+                    scope: snapshot.scope.clone(),
+                    version: snapshot.version,
+                    values: snapshot.values.clone().ok_or_else(incomplete)?,
+                };
+                let receipt = evidence.receipt();
                 if record.scope != result.context.scope
                     || receipt.body.commit_seq > result.revision.commits
                 {
                     return Err(incomplete());
                 }
-                let allowed = reveal_values(&record)?;
+                let allowed = values(&record)?;
+                let fact = FactRef::new(&record.object_type, id, member.version);
+                let mut source_allowed = false;
+                let source = reader.instance_source_provenance(
+                    &result.context.world,
+                    &fact,
+                    budget,
+                    |source_record| {
+                        source_allowed = source(source_record)?;
+                        Ok(source_allowed)
+                    },
+                )?;
+                let source = match source {
+                    Some(provenance) => ContributionSource::Resolved {
+                        provenance: Box::new(provenance),
+                    },
+                    None if source_allowed => ContributionSource::Unavailable,
+                    None => ContributionSource::Restricted,
+                };
                 contributions.push(NumericContribution {
-                    fact: FactRef::new(&record.object_type, id, member.version),
+                    fact,
+                    fact_digest: allowed.then(|| evidence.snapshot_sha256().to_owned()),
+                    source,
                     amounts: member.amounts.clone(),
-                    receipt_hash: receipt.hash,
+                    receipt_hash: receipt.hash.clone(),
                     commit_seq: receipt.body.commit_seq,
                     recorded_at_ms: receipt.body.logical_time,
                     restricted: !allowed,
@@ -119,7 +168,6 @@ impl<E: SqlEngine> CellStore<E> {
                 return Err(incomplete());
             }
             Ok(NumericTrace {
-                source_edge_gap: "source edge: not yet (#401)",
                 result,
                 bucket: bucket.to_owned(),
                 contributions,
