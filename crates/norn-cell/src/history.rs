@@ -49,6 +49,15 @@ pub struct FactVersionEvidence {
     receipt: Receipt,
 }
 
+/// Immutable knowledge coordinate; the frontier disambiguates equal logical clocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnowledgeCutoff {
+    /// Inclusive authenticated recorded-time bound.
+    pub recorded_at: norn_kernel::LogicalTime,
+    /// Inclusive immutable source commit frontier (zero is the empty history).
+    pub frontier: u64,
+}
+
 /// A bounded historical lookup distinguishes absence from exhausted evidence.
 #[derive(Debug)]
 pub enum HistoricalEvidence {
@@ -254,15 +263,26 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         object_type: &str,
         key: &str,
-        known_as_of: norn_kernel::LogicalTime,
+        known_as_of: KnowledgeCutoff,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<HistoricalEvidence, CellError> {
+        if known_as_of.frontier > 0 {
+            let bytes: Option<i64> = self.conn.query_optional(
+                &format!("SELECT octet_length(\"receipt\") + octet_length(\"receipt_hash\") + COALESCE(octet_length(\"world\"),0) + COALESCE(octet_length(\"idempotency_key\"),0) + COALESCE(octet_length(\"request_hash\"),0) FROM \"{RECEIPT}\" WHERE \"commit_seq\"=?1"),
+                params![to_i64(known_as_of.frontier,"knowledge frontier")?], |row| row.get(0),
+            )?;
+            let bytes=to_u64(bytes.ok_or_else(unproven_snapshot)?,"frontier receipt bytes")?;
+            if !budget.charge_rows(1) || !budget.charge(bytes.saturating_add(64)) {
+                return Ok(HistoricalEvidence::Exhausted);
+            }
+            self.receipt_at(known_as_of.frontier)?.ok_or_else(unproven_snapshot)?;
+        }
         let root = self.root_type(object_type).unwrap_or(object_type);
         let capacity = budget.remaining_rows() / 2;
         let limit = capacity.saturating_add(1);
         let rows = self.conn.query(
-            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 ORDER BY \"version\" LIMIT ?4"),
-            params![world, root, key, to_i64(u64::try_from(limit).map_err(|_bound| unproven_snapshot())?, "historical limit")?],
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 AND \"commit_seq\"<=?4 ORDER BY \"version\" LIMIT ?5"),
+            params![world, root, key, to_i64(known_as_of.frontier, "knowledge frontier")?, to_i64(u64::try_from(limit).map_err(|_bound| unproven_snapshot())?, "historical limit")?],
         )?;
         let versions = rows.into_iter().map(|row| to_u64(SqlRow(row).get(0)?, "fact version")).collect::<Result<Vec<_>, CellError>>()?;
         if versions.len() > capacity { return Ok(HistoricalEvidence::Exhausted); }
@@ -272,7 +292,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let Some(candidate) = self.fact_version_evidence_with_budget(world,object_type,key,version,budget)? else {
                 return Ok(HistoricalEvidence::Exhausted);
             };
-            let next = crate::history_selection::select_known_version(known_as_of.as_millis(),selected,version,candidate.receipt().body.logical_time);
+            let next = crate::history_selection::select_known_version(known_as_of.recorded_at.as_millis(),selected,version,candidate.receipt().body.logical_time);
             if next != selected { evidence=Some(candidate); selected=next; }
         }
         Ok(evidence.map_or(HistoricalEvidence::Missing, |proof| HistoricalEvidence::Found(Box::new(proof))))
