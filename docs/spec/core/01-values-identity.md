@@ -71,3 +71,5 @@ At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `ru
 5. Add governed merge/split plans after 04/06 migration checks; prove old-reference preservation with ID-RENAME extensions.
 
 The shared type checker marks actual Decimal reads and declared destinations; typed consumer admission admits derived exact predicates and rejects destination-free division or unsupported inexact functions as `core.values.inexact`, and the typed consumer API binds that admission and the shared exact VM to the same environment and source. Kernel invariant binding follows in its own cut. Other consumer/store activation and explicit round lowering remain separate cuts.
+
+VAL-ROUND storage materializes explicit non-Refuse Decimal modes through the shared rescale adapter before effective bounds, including record members; the same effective-property canonicalizer serves object/link writes, defaults and migration adapters. Invalid observed source values remain evidence and fail strict value checking. Artifact activation remains closed pending the remaining typed consumer migrations.
