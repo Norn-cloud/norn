@@ -1293,7 +1293,7 @@ fn graph_state_posted_observation(object_type: &ObjectTypeDef, posted: &str, rep
         "posted state and version cannot reopen"
     );
     assert!(receipt.written.is_empty());
-    assert_eq!(cell.ledger().len(), ledger_len + 1);
+    assert_eq!(cell.ledger().len().checked_sub(ledger_len), Some(1));
     assert!(cell.outbox().is_empty());
     assert!(cell.timers().is_empty());
     let events = &cell.ledger().last().unwrap().events;
@@ -1322,12 +1322,11 @@ fn graph_state_posted_immutable_assignment_refuses_and_import_remains_evidence()
 proptest! {
     #[test]
     fn graph_state_terminal_observations_never_reopen_canonical_state(
-        steps in 1usize..13,
-        previous in 0usize..13,
+        (steps, previous) in (1usize..13).prop_flat_map(|steps| (Just(steps), 0usize..steps)),
     ) {
         let (mut object_type, posted) = lifecycle_chain(steps);
         object_type.lifecycles[0].immutable = vec![posted.clone()];
-        let reported = format!("state_{}", previous % steps);
+        let reported = format!("state_{previous}");
         graph_state_posted_observation(&object_type, &posted, &reported);
     }
 }
