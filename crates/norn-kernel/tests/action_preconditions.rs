@@ -963,16 +963,13 @@ fn parameter_projection_pins_selected_revision_and_replays_original_evidence() {
             expected: cell.load(&setting).expect("version").version
         }]
     );
+    let receipt_key = format!("{}/{}", action.action_id, invocation.idempotency_key);
     let stored = cell
-        .load(&FactKey::new(
-            ACTION_CALL_TYPE,
-            format!("{}/{}", action.action_id, invocation.idempotency_key),
-        ))
-        .expect("stored receipt")
-        .values
-        .expect("receipt values");
+        .load(&FactKey::new(ACTION_CALL_TYPE, receipt_key))
+        .expect("stored receipt");
+    let values = stored.values.as_ref().expect("receipt values");
     assert_eq!(
-        norn_kernel::ActionCallRecord::from_values(&stored),
+        norn_kernel::ActionCallRecord::from_values(values),
         Some(record.clone())
     );
     let mut later = source;
