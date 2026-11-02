@@ -31,6 +31,7 @@ fn synchronous_rule_pin_is_closed_and_canonical() {
     let root: ActionRoot = assert_typed_roundtrip("synchronous rule", &payload);
     assert_eq!(root.synchronous_rule.unwrap().version, "1.0.0");
     for invalid in [
+        serde_json::json!(["demo.effects.rule", "1.0.0"]),
         serde_json::json!(null),
         serde_json::json!({"artifactId":"r"}),
         serde_json::json!({"artifactId":"r","version":"1","extra":true}),
@@ -38,6 +39,7 @@ fn synchronous_rule_pin_is_closed_and_canonical() {
         payload["synchronousRule"] = invalid;
         assert!(serde_json::from_value::<ActionRoot>(payload.clone()).is_err());
     }
+    assert!(serde_json::from_str::<norn_ir::ActionRuleRef>(r#"{"artifactId":"r","artifactId":"duplicate","version":"1"}"#).is_err());
 }
 const RULE_V2_FIXTURE: &str = include_str!("../../../fixtures/ir/retail-reorder-routing.rule.json");
 const RULE_V1_CONFORMANCE: &str =
