@@ -71,7 +71,7 @@ Evidence: structural identity/admission, runtime activation/parameter pins, gene
 - **LAYERS-CHAIN/FORGED/EXACT:** Given three separately admitted layers, when retained authority verifies, then extensions resolve; tampered/reordered predecessors or same-version source changes refuse.
 - **WRITER-NEW/EDGE-NEW/EDGE-OMIT/EDGE-NOPROOF:** Given a law challenge, when a writer/mapping changes, then regenerate goals; removed/substituted goals refuse; review evidence alone leaves proof unknown.
 - **PARAM-TAX:** Given USD 100 net, 10% before July 1 and 12% thereafter, when posting June 30 and July 1, then tax is 10 and 12 with distinct pinned versions; later setting edits leave both receipts unchanged.
-- **PARAM-NO-MATCH:** Given no candidate at the declared scope/effective date/recorded snapshot, when resolving, then select only an explicit default and persist its version; without one refuse `core.composition.parameter_missing` with no writes.
+- **PARAM-NO-MATCH:** Given no active candidate in any applicable precedence scope at the declared effective date/recorded snapshot, when resolving, then select only an explicit default and persist its version; without one refuse `core.composition.parameter_missing` with no writes.
 - **MIGRATE-FLIGHT:** Given a process started under v1, when v2 activates, then it continues under v1; an explicit supported migration changes its pin atomically or refuses without changes.
 
 ## Main and gaps
