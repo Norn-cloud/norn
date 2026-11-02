@@ -574,6 +574,7 @@ pub const SYSTEM_DDL: &[&str] = &[
   PRIMARY KEY ("world", "root_type", "id", "version")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/commit" ON "_norn_fact_values" ("world", "commit_seq", "root_type", "id", "version")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/key_frontier" ON "_norn_fact_values" ("world", "id", "commit_seq", "root_type", "version")"#,
     MARKING_SUBJECT_DDL,
     MARKING_SUBJECT_INDEX_DDL,
     MARKING_CURRENT_DDL,

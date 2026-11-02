@@ -5001,3 +5001,32 @@ fn adding_an_interface_parent_scans_existing_rows_before_activating_its_invarian
         }
     }
 }
+
+#[test]
+fn historical_identity_survives_removed_and_reparented_types() {
+    use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
+    let model_for = |parent: Option<&str>| {
+        let mut definitions = vec![json!({"name":"defs.A","properties":[{"id":"name","type":{"kind":"text"}}]}), json!({"name":"defs.B","properties":[{"id":"name","type":{"kind":"text"}}]})];
+        if let Some(parent)=parent {definitions.push(json!({"name":"defs.Child","extends":parent}));}
+        model_from_json(definitions)
+    };
+    let original=model_for(Some("defs.A"));
+    let mut store=CellStore::open_in_memory(original.clone()).expect("store");
+    store.install_definitions(original.clone(),install_input("identity-v1",1,&original),Some(0),"org_demo/dev").expect("seed");
+    let write=|kind:&str|FactWriteRow::Put{object_type:kind.into(),key:"same".into(),values:[("name".into(),Value::from("retained"))].into()};
+    store.commit(&batch(write("defs.Child"),2)).expect("child");
+    let cutoff=KnowledgeCutoff{recorded_at:norn_kernel::LogicalTime::from_millis(2),frontier:2};
+    store.commit(&batch(FactWriteRow::Delete{object_type:"defs.Child".into(),key:"same".into()},3)).expect("delete");
+    for (index,parent) in [None,Some("defs.B")].into_iter().enumerate() {
+        let candidate=model_for(parent);let clock=u64::try_from(index).expect("index")+4;
+        store.install_definitions(candidate.clone(),install_input("identity-next",clock,&candidate),Some(clock-3),"org_demo/dev").expect("migration");
+        let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        for kind in ["defs.Child","defs.A"] {
+            let HistoricalEvidence::Found(proof)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,kind,"same",cutoff,&mut DecodeBudget::new(&limits)).expect("retained identity") else {panic!("history disappeared")};
+            assert_eq!(proof.snapshot().root_type,"defs.A");assert_eq!(proof.snapshot().version,1);
+        }
+    }
+    store.commit(&batch(write("defs.B"),6)).expect("independent same key");
+    let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    assert!(matches!(store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"defs.Child","same",cutoff,&mut DecodeBudget::new(&limits)).expect("unrelated root"),HistoricalEvidence::Found(_)));
+}

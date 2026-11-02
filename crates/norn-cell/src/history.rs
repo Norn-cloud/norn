@@ -173,13 +173,19 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
     ) -> Result<FactVersionEvidence, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
+        self.fact_version_evidence_at_root(world, root, key, version)
+    }
+
+    fn fact_version_evidence_at_root(
+        &self, world: &str, root: &str, key: &str, version: u64,
+    ) -> Result<FactVersionEvidence, CellError> {
         let row: Option<(String, String, i64)> = self.conn.query_optional(
             &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND \"version\" = ?4"),
             params![world, root, key, to_i64(version, "fact version")?],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         let (encoded, hash, commit_seq) = row.ok_or_else(unproven_snapshot)?;
-        let snapshot = decode_snapshot(world, object_type, key, version, &encoded, &hash)?;
+        let snapshot = decode_snapshot(world, root, key, version, &encoded, &hash)?;
         if snapshot.root_type != root {
             return Err(unproven_snapshot());
         }
@@ -235,6 +241,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<FactVersionEvidence>, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
+        self.fact_version_evidence_at_root_with_budget(world, root, key, version, budget)
+    }
+
+    fn fact_version_evidence_at_root_with_budget(
+        &self, world: &str, root: &str, key: &str, version: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<FactVersionEvidence>, CellError> {
         let bytes: Option<i64> = self.conn.query_optional(
             &format!("SELECT octet_length(f.\"snapshot\") + octet_length(f.\"hash\") + COALESCE(octet_length(r.\"world\"), 0) + COALESCE(octet_length(r.\"idempotency_key\"), 0) + COALESCE(octet_length(r.\"request_hash\"), 0) + octet_length(r.\"receipt\") + octet_length(r.\"receipt_hash\") FROM \"{FACT_VALUES}\" f JOIN \"{RECEIPT}\" r ON r.\"commit_seq\" = f.\"commit_seq\" WHERE f.\"world\" = ?1 AND f.\"root_type\" = ?2 AND f.\"id\" = ?3 AND f.\"version\" = ?4"),
             params![world, root, key, to_i64(version, "fact version")?],
@@ -248,7 +261,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if !budget.charge_rows(2) || !budget.charge(bytes) {
             return Ok(None);
         }
-        self.fact_version_evidence(world, object_type, key, version)
+        self.fact_version_evidence_at_root(world, root, key, version)
             .map(Some)
     }
 
@@ -285,72 +298,30 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 return Err(unproven_snapshot());
             }
         }
-        let root = self.root_type(object_type).unwrap_or(object_type);
-        let capacity = budget.remaining_rows() / 2;
-        let limit = capacity.saturating_add(1);
-        let rows = self.conn.query(
-            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 AND \"commit_seq\"<=?4 ORDER BY \"version\" LIMIT ?5"),
-            params![world, root, key, to_i64(known_as_of.frontier, "knowledge frontier")?, to_i64(u64::try_from(limit).map_err(|_bound| unproven_snapshot())?, "historical limit")?],
-        )?;
-        let versions = rows
-            .into_iter()
-            .map(|row| to_u64(SqlRow(row).get(0)?, "fact version"))
-            .collect::<Result<Vec<_>, CellError>>()?;
-        if versions.len() > capacity {
-            return Ok(HistoricalEvidence::Exhausted);
+        let capacity = budget.remaining_rows() / 3;
+        let limit = to_i64(u64::try_from(capacity.saturating_add(1)).map_err(|_bound| unproven_snapshot())?, "historical limit")?;
+        let frontier = to_i64(known_as_of.frontier, "knowledge frontier")?;
+        let suffix = format!("FROM \"{FACT_VALUES}\" INDEXED BY \"_norn_fact_values/key_frontier\" WHERE world=?1 AND id=?2 AND commit_seq<=?3 ORDER BY commit_seq,root_type,version LIMIT ?4");
+        let bindings = params![world, key, frontier, limit];
+        let lengths = self.conn.query(&format!("SELECT octet_length(root_type)+64 {suffix}"), bindings)?;
+        if lengths.len() > capacity { return Ok(HistoricalEvidence::Exhausted); }
+        for row in lengths {
+            if !budget.charge_rows(1) || !budget.charge(to_u64(SqlRow(row).get(0)?, "root locator")?) { return Ok(HistoricalEvidence::Exhausted); }
         }
-        let mut selected = None;
-        let mut evidence = None;
-        for version in versions {
-            let Some(candidate) =
-                self.fact_version_evidence_with_budget(world, root, key, version, budget)?
-            else {
-                return Ok(HistoricalEvidence::Exhausted);
-            };
-            let next = crate::history_selection::select_known_version(
-                known_as_of.recorded_at.as_millis(),
-                selected,
-                version,
-                candidate.receipt().body.logical_time,
-            );
-            if next != selected {
-                evidence = Some(candidate);
-                selected = next;
-            }
+        let rows = self.conn.query(&format!("SELECT root_type,version {suffix}"), bindings)?;
+        let mut roots = BTreeMap::<String, FactVersionEvidence>::new();
+        for row in rows {
+            let row = SqlRow(row);
+            let root:String = row.get(0)?;
+            let version = to_u64(row.get(1)?, "fact version")?;
+            let Some(candidate) = self.fact_version_evidence_at_root_with_budget(world, &root, key, version, budget)? else {return Ok(HistoricalEvidence::Exhausted)};
+            let selected = roots.get(&root).map(|proof|proof.snapshot().version);
+            let next = crate::history_selection::select_known_version(known_as_of.recorded_at.as_millis(),selected,version,candidate.receipt().body.logical_time);
+            if next != selected {roots.insert(root,candidate);}
         }
-        Ok(evidence
-            .filter(|proof| {
-                proof
-                    .snapshot()
-                    .lineage
-                    .iter()
-                    .any(|name| name == object_type)
-            })
-            .map_or(HistoricalEvidence::Missing, |proof| {
-                HistoricalEvidence::Found(Box::new(proof))
-            }))
-    }
-
-    pub(crate) fn retained_fact_scope(
-        &self,
-        world: &str,
-        object_type: &str,
-        key: &str,
-        version: u64,
-    ) -> Result<String, CellError> {
-        Ok(self
-            .proven_snapshot(world, object_type, key, version)?
-            .scope)
-    }
-
-    pub(crate) fn verify_value_history(&self) -> Result<(), CellError> {
-        for receipt in self.receipt_stream() {
-            let receipt = receipt?;
-            for row in receipt.body.written {
-                self.proven_snapshot(&receipt.body.world, &row.object_type, &row.key, row.version)?;
-            }
-        }
-        Ok(())
+        Ok(roots.into_values().filter(|proof|proof.snapshot().lineage.iter().any(|name|name==object_type))
+            .max_by_key(|proof|(proof.receipt().body.commit_seq,proof.snapshot().version))
+            .map_or(HistoricalEvidence::Missing, |proof|HistoricalEvidence::Found(Box::new(proof))))
     }
 
     /// Read one exact historical version only after verifying its immutable proof.
