@@ -183,13 +183,20 @@ fn knowledge_cutoff_budgets_proofs_before_decoding_and_rejects_corrupt_receipts(
                 ..limits
             }),
         );
+        let selected = store.read().fact_evidence_known_at_with_budget(
+            MAIN_WORLD,"proof.Item","item",
+            norn_cell::KnowledgeCutoff { recorded_at:LogicalTime::from_millis(200), frontier:1 },
+            &mut DecodeBudget::new(&ReactiveLimits { max_candidate_bytes_per_commit:byte_limit,..limits }),
+        );
         if byte_limit == 0 {
+            assert!(matches!(selected,Ok(norn_cell::HistoricalEvidence::Exhausted)));
             assert!(matches!(result, Ok(BudgetedRead::Exhausted)));
         } else {
             assert!(
                 result.is_err(),
                 "corrupt receipt cannot supply an earlier timestamp"
             );
+            assert!(selected.is_err(),"selection cannot authenticate a corrupt frontier");
         }
     }
 }
