@@ -392,7 +392,7 @@ pub fn fixed_currency_schema(value: &JsonValue) -> bool {
         .and_then(JsonValue::as_array)
         .is_some_and(|values| {
             values.len() == 1
-                && values[0].as_string().is_some_and(|code| {
+                && values.first().and_then(JsonValue::as_string).is_some_and(|code| {
                     code.len() == 3 && code.bytes().all(|c| c.is_ascii_uppercase())
                 })
         })
@@ -521,7 +521,7 @@ impl Schema {
             Self::Decimal(_) => true,
             Self::Object { properties, .. } => properties.values().any(Self::has_exact),
             Self::Array(item) | Self::Nullable(item) => item.has_exact(),
-            _ => false,
+            Self::String(_) | Self::Integer | Self::Number | Self::Boolean | Self::Null | Self::Json => false,
         }
     }
 }

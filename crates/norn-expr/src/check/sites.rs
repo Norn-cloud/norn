@@ -1,4 +1,5 @@
 //! VAL-ROUND: lower declared result sites into the one shared rescale opcode.
+use std::fmt::Write as _;
 use super::{AstMetadata, Node, Type, ZenTypeEnv, address};
 
 pub(super) fn lower(
@@ -14,8 +15,8 @@ pub(super) fn lower(
     let mut output = String::new();
     let mut cursor = 0;
     for (start, end, scale, mode, nullable) in edits {
-        let start = start as usize;
-        let end = end as usize;
+        let start = usize::try_from(start).map_err(|_| "exact site offset overflow")?;
+        let end = usize::try_from(end).map_err(|_| "exact site offset overflow")?;
         if start < cursor || end > source.len() || start >= end {
             return Err("exact site has no faithful source span".into());
         }
@@ -27,7 +28,7 @@ pub(super) fn lower(
         }
         output.push_str("round((");
         output.push_str(source.get(start..end).ok_or("invalid site span")?);
-        output.push_str(&format!("), {scale}, '{mode}')"));
+        write!(output,"), {scale}, '{mode}')").map_err(|error|error.to_string())?;
         if nullable {
             output.push(')');
         }
@@ -53,7 +54,7 @@ fn visit(
                 visit(on_true, expected, env, metadata, edits)?;
                 return visit(on_false, expected, env, metadata, edits);
             }
-            _ => {}
+            Node::Bool(_) | Node::Number(_) | Node::String(_) | Node::TemplateString(_) | Node::Pointer | Node::Array(_) | Node::Object(_) | Node::Assignments {..} | Node::Identifier(_) | Node::Closure {..} | Node::Root | Node::Member {..} | Node::Slice {..} | Node::Interval {..} | Node::Unary {..} | Node::Binary {..} | Node::FunctionCall {..} | Node::MethodCall {..} | Node::Error {..} => {}
         }
         if let Type::Decimal {
             scale, rounding, ..
@@ -113,7 +114,7 @@ fn visit(
                 return Ok(());
             };
             let record = env.record(name).ok_or("unknown destination record")?;
-            for (key, value) in fields.iter() {
+            for (key, value) in *fields {
                 let Node::String(key) = key else {
                     return Err("exact destination needs literal fields".into());
                 };
@@ -125,12 +126,12 @@ fn visit(
         }
         Node::Array(items) => {
             if let Type::List(item) = expected {
-                for value in items.iter() {
+                for value in *items {
                     visit(value, item, env, metadata, edits)?;
                 }
             }
             Ok(())
         }
-        _ => Ok(()),
+        Node::Null | Node::Bool(_) | Node::Number(_) | Node::String(_) | Node::TemplateString(_) | Node::Pointer | Node::Assignments {..} | Node::Identifier(_) | Node::Closure {..} | Node::Root | Node::Member {..} | Node::Slice {..} | Node::Interval {..} | Node::Unary {..} | Node::Binary {..} | Node::FunctionCall {..} | Node::MethodCall {..} | Node::Error {..} => Ok(()),
     }
 }

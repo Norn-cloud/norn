@@ -56,9 +56,9 @@ pub fn bind(root: &RuleRoot) -> Result<Vec<BoundAssignment>, String> {
                     && !content.pass_through.unwrap_or(false)
                     && !matches!(content.execution_mode, Some(JdmExecutionMode::Loop)) =>
             {
-                assignment = Some((id, content))
+                assignment = Some((id, content));
             }
-            _ => return Err("unsupported node or transform in exact schema graph".into()),
+            JdmNode::ExpressionNode {..} | JdmNode::DecisionTableNode {..} | JdmNode::SwitchNode {..} | JdmNode::DecisionNode {..} | JdmNode::FunctionNode {..} | JdmNode::CustomNode {..} => return Err("unsupported node or transform in exact schema graph".into()),
         }
     }
     let (id, content) = assignment.ok_or("missing exact expression node")?;

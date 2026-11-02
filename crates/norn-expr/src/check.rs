@@ -537,21 +537,17 @@ pub(crate) fn check_typed_expression(
     .map(|(checked, _)| checked)
 }
 
-fn check_expression_with_sources_and_root_bounds(
-    expr: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-    limits: &ResourceLimitProfile,
-    root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
-    exact_enabled: bool,
-) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
-    let source = expr.source();
+struct AnalysisContext<'a> {
+    source: &'a str, env: &'a ZenTypeEnv, expected: &'a Type, limits: &'a ResourceLimitProfile,
+    root_bounds: Option<&'a BTreeMap<String, RootCostBounds>>, exact_enabled: bool,
+}
+struct Analysis {
+    inferred: Option<InferredType>, diagnostics: Vec<Diagnostic>, span:(u32,u32), cost:Option<u64>,
+    construction:Option<ConstructionSource>, exact:bool, notes:Vec<Diagnostic>,runtime_source:Result<String,String>,
+}
+fn analyze_expression(ast:&Node<'_>,metadata:&AstMetadata,context:&AnalysisContext<'_>) -> Analysis {
+    let AnalysisContext {source,env,expected,limits,root_bounds,exact_enabled} = *context;
     let structural = StructuralLimits::NORN_EXPR_4;
-    if let Some(found) = bounds::lexical(source, &structural, false) {
-        return Err(vec![found]);
-    }
-    let mut intellisense = IntelliSense::new().with_strict(true);
-    let outcome = intellisense.with_ast(source, false, |ast, metadata| {
         let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
         let whole = span(ast);
         let found = bounds::structure(
@@ -562,16 +558,7 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         );
         if !found.is_empty() {
-            return (
-                None,
-                found,
-                whole,
-                None,
-                None,
-                false,
-                Vec::new(),
-                Ok(source.to_owned()),
-            );
+            return Analysis {inferred:None,diagnostics:found,span:whole,cost:None,construction:None,exact:false,notes:Vec::new(),runtime_source:Ok(source.to_owned())};
         }
         let mut checker = Checker::new(env, metadata, None);
         checker.exact_math = exact_enabled;
@@ -605,18 +592,27 @@ fn check_expression_with_sources_and_root_bounds(
             Ok(source.to_owned())
         };
 
-        (
-            inferred,
-            checker.diagnostics,
-            whole,
-            cost,
-            construction,
-            exact,
-            checker.notes,
-            runtime_source,
-        )
-    });
-    let Some((inferred, mut diagnostics, span, cost, construction, exact, notes, runtime_source)) =
+        Analysis {inferred,diagnostics:checker.diagnostics,span:whole,cost,construction,exact,notes:checker.notes,runtime_source}
+
+}
+
+fn check_expression_with_sources_and_root_bounds(
+    expr: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+    limits: &ResourceLimitProfile,
+    root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
+    exact_enabled: bool,
+) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
+    let source = expr.source();
+    let structural = StructuralLimits::NORN_EXPR_4;
+    if let Some(found) = bounds::lexical(source, &structural, false) {
+        return Err(vec![found]);
+    }
+    let mut intellisense = IntelliSense::new().with_strict(true);
+    let context = AnalysisContext {source,env,expected,limits,root_bounds,exact_enabled};
+    let outcome = intellisense.with_ast(source,false,|ast,metadata| analyze_expression(ast,metadata,&context));
+    let Some(Analysis {inferred, mut diagnostics, span, cost, construction, exact, notes, runtime_source}) =
         outcome
     else {
         return Err(vec![Diagnostic {
@@ -694,7 +690,7 @@ fn check_expression_with_sources_and_root_bounds(
         } else {
             1
         })
-        .saturating_add((quantizers as u64).saturating_mul(8)),
+        .saturating_add(u64::try_from(quantizers).unwrap_or(u64::MAX).saturating_mul(8)),
         limits,
         span,
     )?;
@@ -1308,7 +1304,7 @@ impl<'a> Checker<'a> {
     fn numeric(&mut self, node: &Node<'_>) -> Option<Operand> {
         match self.value(node, None)? {
             T::Number(operand) => Some(operand),
-            ty => self.report(
+            ty @ (T::Null | T::Bool | T::Str(_) | T::Date | T::Timestamp | T::ParsedDate | T::ParsedTimestamp | T::List(_) | T::Record(_) | T::Optional(_)) => self.report(
                 node,
                 codes::TYPE_ERROR,
                 format!("expected a number, found `{ty}`"),
@@ -1371,10 +1367,10 @@ impl<'a> Checker<'a> {
                 );
             }
             (T::List(a), T::List(b)) | (T::Optional(a), T::Optional(b)) => {
-                self.check_destination_at(node, a, b, depth + 1)
+                self.check_destination_at(node, a, b, depth.saturating_add(1));
             }
             (a, T::Optional(b)) if !matches!(a, T::Null) => {
-                self.check_destination_at(node, a, b, depth + 1)
+                self.check_destination_at(node, a, b, depth.saturating_add(1));
             }
             (T::Record(Rec::Env { name, depth: links }), expected) => {
                 if let Some(record) = self.env.record(name) {
@@ -1398,7 +1394,7 @@ impl<'a> Checker<'a> {
                         node,
                         &T::Record(Rec::Literal(fields)),
                         expected,
-                        depth + 1,
+                        depth.saturating_add(1),
                     );
                 }
             }
@@ -1410,7 +1406,7 @@ impl<'a> Checker<'a> {
                             .get(field_name)
                             .and_then(|field| lower(&field.ty, *links, self.env, Some(name)))
                         {
-                            self.check_destination_at(node, found, &expected, depth + 1);
+                            self.check_destination_at(node, found, &expected, depth.saturating_add(1));
                         }
                     }
                 }
@@ -2069,7 +2065,7 @@ impl<'a> Checker<'a> {
                 "nothing is an element of the empty list".to_owned(),
             ),
             (T::Number(a), T::Number(b)) => self
-                .numeric_operation(node, Operation::Compare, &a, &b)
+                .numeric_operation(node, Operation::Compare, a, b)
                 .map(|_| T::Bool),
             (T::Bool, T::Bool) | (T::Str(_), T::Str(_)) => Some(T::Bool),
             _ => self.report(
@@ -2462,7 +2458,7 @@ impl<'a> Checker<'a> {
                 }
                 let operand = self.numeric(first?)?;
                 match arguments.get(1) {
-                    None => Some(T::Number(operand.clone())),
+                    None => Some(T::Number(operand)),
                     Some(Node::Number(places))
                         if places.to_string().parse::<u8>().is_ok_and(|p| p <= 28) =>
                     {

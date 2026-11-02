@@ -21,30 +21,30 @@ pub(crate) enum Operation {
 /// VAL-RATE: only matching currency and denominator identities cancel.
 pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
     op: Operation,
-    a: &Operand<U, C>,
-    b: &Operand<U, C>,
+    left: &Operand<U, C>,
+    right: &Operand<U, C>,
 ) -> Option<(Operand<U, C>, Option<U>)> {
     use Operand::{Dimensionless, Legacy, Literal, Money, Quantity, Rate, Unresolved};
-    if matches!(a, Unresolved) || matches!(b, Unresolved) {
+    if matches!(left, Unresolved) || matches!(right, Unresolved) {
         return None;
     }
     let mut inferred = None;
     let result = match op {
         _ if matches!(
-            (a, b),
+            (left, right),
             (Legacy, Legacy | Literal | Dimensionless) | (Literal | Dimensionless, Legacy)
         ) =>
         {
             Legacy
         }
         Operation::Add | Operation::Subtract | Operation::Compare => {
-            let value = match (a, b) {
-                (Quantity(u), Literal) | (Literal, Quantity(u)) => {
-                    inferred = Some(u.clone());
-                    Quantity(u.clone())
+            let value = match (left, right) {
+                (Quantity(unit), Literal) | (Literal, Quantity(unit)) => {
+                    inferred = Some(unit.clone());
+                    Quantity(unit.clone())
                 }
                 (Literal | Dimensionless, Literal | Dimensionless) => Dimensionless,
-                _ if a == b => a.clone(),
+                _ if left == right => left.clone(),
                 _ => return None,
             };
             if op == Operation::Compare {
@@ -53,17 +53,17 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
                 value
             }
         }
-        Operation::Multiply => match (a, b) {
-            (Rate(c, u), Quantity(v)) | (Quantity(v), Rate(c, u)) if u == v => Money(c.clone()),
-            (Quantity(u), Literal | Dimensionless) | (Literal | Dimensionless, Quantity(u)) => {
-                Quantity(u.clone())
+        Operation::Multiply => match (left, right) {
+            (Rate(currency, unit), Quantity(other_unit)) | (Quantity(other_unit), Rate(currency, unit)) if unit == other_unit => Money(currency.clone()),
+            (Quantity(unit), Literal | Dimensionless) | (Literal | Dimensionless, Quantity(unit)) => {
+                Quantity(unit.clone())
             }
             (Literal | Dimensionless, Literal | Dimensionless) => Dimensionless,
             _ => return None,
         },
-        Operation::Divide => match (a, b) {
-            (Money(c), Quantity(u)) => Rate(c.clone(), u.clone()),
-            (Quantity(u), Quantity(v)) if u == v => Dimensionless,
+        Operation::Divide => match (left, right) {
+            (Money(currency), Quantity(unit)) => Rate(currency.clone(), unit.clone()),
+            (Quantity(unit), Quantity(other_unit)) if unit == other_unit => Dimensionless,
             (Literal | Dimensionless, Literal | Dimensionless) => Dimensionless,
             _ => return None,
         },
@@ -71,24 +71,24 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
     Some((result, inferred))
 }
 pub(crate) fn join<U: Clone + Eq, C: Clone + Eq>(
-    a: &Operand<U, C>,
-    b: &Operand<U, C>,
+    left: &Operand<U, C>,
+    right: &Operand<U, C>,
 ) -> Option<Operand<U, C>> {
-    if matches!(a, Operand::Unresolved) || matches!(b, Operand::Unresolved) {
+    if matches!(left, Operand::Unresolved) || matches!(right, Operand::Unresolved) {
         return None;
     }
-    if a == b {
-        return Some(a.clone());
+    if left == right {
+        return Some(left.clone());
     }
     if matches!(
-        (a, b),
+        (left, right),
         (Operand::Legacy, Operand::Literal | Operand::Dimensionless)
             | (Operand::Literal | Operand::Dimensionless, Operand::Legacy)
     ) {
         return Some(Operand::Legacy);
     }
     matches!(
-        (a, b),
+        (left, right),
         (
             Operand::Literal | Operand::Dimensionless,
             Operand::Literal | Operand::Dimensionless
