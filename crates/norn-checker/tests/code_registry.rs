@@ -124,6 +124,11 @@ fn dotted_source_literals() -> BTreeMap<String, BTreeSet<String>> {
         String::from_utf8_lossy(&output.stderr)
     );
     let codes: Vec<String> = serde_json::from_slice(&output.stdout).expect("CLI emissions JSON");
+    add_tool_emissions(&mut found, codes);
+    found
+}
+
+fn add_tool_emissions(found: &mut BTreeMap<String, BTreeSet<String>>, codes: Vec<String>) {
     for code in codes {
         if code.starts_with("cli.") {
             found
@@ -132,7 +137,13 @@ fn dotted_source_literals() -> BTreeMap<String, BTreeSet<String>> {
                 .insert("tools/norn-ts".to_owned());
         }
     }
-    found
+}
+
+#[test]
+fn checker_code_only_mentioned_in_typescript_is_not_emitted() {
+    let mut found = BTreeMap::new();
+    add_tool_emissions(&mut found, vec!["entity.validation.only_in_ts".to_owned()]);
+    assert!(!found.contains_key("entity.validation.only_in_ts"));
 }
 
 #[test]

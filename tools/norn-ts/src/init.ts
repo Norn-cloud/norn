@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
 import { TOOL_ROOT } from "./profile.ts"
-import { ProjectError, type Project } from "./project.ts"
+import { ProjectError, parseProject, type Project } from "./project.ts"
 
 export function projectDependencies(mode: "repository" | "published" = "repository") {
   if (mode === "published") throw new ProjectError("cli.setup.unpublished", "Published distribution is unavailable; run init from the repository.", 3)
@@ -9,6 +9,14 @@ export function projectDependencies(mode: "repository" | "published" = "reposito
 }
 
 export async function init(args: readonly string[]): Promise<void> {
+  try { await initProject(args) }
+  catch (error) {
+    if (error instanceof ProjectError) throw error
+    throw new ProjectError("cli.project.io", `Cannot create project; check paths and permissions. ${String(error)}`, 3)
+  }
+}
+
+async function initProject(args: readonly string[]): Promise<void> {
   const [directory, ...flags] = args
   if (!directory || directory.startsWith("-")) throw new ProjectError("cli.project.usage", "Usage: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty] [--no-install] [--json]", 2)
   const options = new Map<string, string>()
@@ -28,6 +36,7 @@ export async function init(args: readonly string[]): Promise<void> {
   if (template !== "starter" && template !== "empty") throw new ProjectError("cli.project.usage", "Use --template starter or --template empty.", 2)
   if (existsSync(target) && (!statSync(target).isDirectory() || readdirSync(target).length !== 0)) throw new ProjectError("cli.project.exists", "Target is not an empty directory; choose a new directory.")
   const manifest: Project = { format: "norn-project/1", name, sources: ["src"], scope: { orgId: options.get("--org") ?? "local", environmentId: options.get("--env") ?? "dev" }, dev: { port: 4174, actor: "local:developer" }, cell: ".norn/cell.sqlite" }
+  parseProject(manifest)
   const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
   const files: Record<string, string> = {
     "norn.json": json(manifest),
