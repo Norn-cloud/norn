@@ -213,7 +213,10 @@ fn governed(path: &Path, model: &Model, transition: &str, key: &str, allow: bool
     let store =
         CellStore::open(path, model.clone(), StoreOptions::default()).expect("action store");
     let mut cell: SqliteCell<FactEvent, JsonObject, JsonObject> =
-        SqliteCell::new(store, SCOPE, |c| c.payload.clone()).expect("native host");
+        SqliteCell::new(store, SCOPE, |c: &norn_kernel::Command<JsonObject>| {
+            c.payload.clone()
+        })
+        .expect("native host");
     let action = action(transition);
     let defs: Vec<_> = model.object_types().collect();
     let catalog = TypeCatalog::new(defs);
@@ -379,6 +382,95 @@ fn governed_activation_switches_all_slices_and_preserves_old_answers() {
     let mut revoked = context.clone();
     revoked.authorization_epoch += 1;
     assert!(store.read_restatement(ID, &revoked).is_err());
+}
+#[test]
+fn missing_incomplete_and_stale_candidates_never_replace_the_complete_output() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (mut store, plan, context, model) = setup(&path);
+    let point = cutoff(&store, &context);
+    stage(&mut store, &plan, &context, point);
+    drop(store);
+    activate(&path, &model, "initial");
+    let mut store = open(&path, &model);
+    let old = view(&store, &context).generation;
+    let version = store
+        .read()
+        .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("version");
+    assert!(
+        store
+            .begin_restatement(
+                ID,
+                context.clone(),
+                version,
+                "",
+                BTreeSet::from(["week".into(), "loss".into()])
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .begin_restatement(
+                ID,
+                context.clone(),
+                version,
+                "changed output membership",
+                BTreeSet::from(["week".into()])
+            )
+            .is_err()
+    );
+    let build = store
+        .begin_restatement(
+            ID,
+            context.clone(),
+            version,
+            "review replacement",
+            BTreeSet::from(["week".into(), "loss".into()]),
+        )
+        .expect("build");
+    let mut missing = requests(&plan, &context, point);
+    missing.pop();
+    assert!(
+        store
+            .prepare_restatement(build, missing, |_| Ok(true))
+            .is_err()
+    );
+    let build = store
+        .resume_restatement(ID, context.clone())
+        .expect("resume");
+    let mut incomplete = requests(&plan, &context, point);
+    incomplete[0]
+        .context
+        .exclusions
+        .insert("SYN-MELT-15-1".into(), "quarantine".into());
+    assert!(
+        store
+            .prepare_restatement(build, incomplete, |_| Ok(true))
+            .is_err()
+    );
+    let first = store
+        .prepare_restatement(
+            store
+                .resume_restatement(ID, context.clone())
+                .expect("resume"),
+            requests(&plan, &context, point),
+            |_| Ok(true),
+        )
+        .expect("complete first");
+    let late = store
+        .prepare_restatement(
+            store
+                .resume_restatement(ID, context.clone())
+                .expect("same incarnation"),
+            requests(&plan, &context, point),
+            |_| Ok(true),
+        )
+        .expect("complete late");
+    store.stage_restatement(first).expect("stage first");
+    assert!(store.stage_restatement(late).is_err());
+    assert_eq!(view(&store, &context).generation, old);
+    assert!(view(&store, &context).stale);
 }
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
