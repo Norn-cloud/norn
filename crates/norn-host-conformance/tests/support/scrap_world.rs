@@ -101,21 +101,7 @@ pub(crate) fn world(
     .expect("ontology units");
     let mut store = CellStore::open_in_memory(model(&artifacts)).expect("cell");
     preregister(&mut store, &plan, proposal);
-    if bulk {
-        let writes = source_events(true).into_iter().map(|(_, key, values)| FactWriteRow::Put {
-            object_type: "demo.Measurement".into(), key, values,
-        }).collect();
-        store.commit(&CommitBatch { world: "main".into(), scope: SCOPE.into(),
-            logical_time: millis(BULK_AT), writes, ..CommitBatch::default()
-        }).expect("record the bulk population at one authenticated knowledge time");
-    } else {
-        for (logical_time, key, values) in source_events(false) {
-            store.commit(&CommitBatch { world: "main".into(), scope: SCOPE.into(), logical_time,
-                writes: vec![FactWriteRow::Put { object_type: "demo.Measurement".into(), key, values }],
-                ..CommitBatch::default()
-            }).expect("record timed source incarnation");
-        }
-    }
+    record_sources(&mut store, bulk);
     let limits = ReactiveLimits {
         max_candidate_bytes_per_commit: 16_000_000,
         ..ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1())
@@ -177,6 +163,24 @@ pub(crate) fn world(
         evidence,
         head,
         plan,
+    }
+}
+
+fn record_sources(store: &mut CellStore, bulk: bool) {
+    if bulk {
+        let writes = source_events(true).into_iter().map(|(_, key, values)| FactWriteRow::Put {
+            object_type: "demo.Measurement".into(), key, values,
+        }).collect();
+        store.commit(&CommitBatch { world: "main".into(), scope: SCOPE.into(),
+            logical_time: millis(BULK_AT), writes, ..CommitBatch::default()
+        }).expect("record the bulk population at one authenticated knowledge time");
+    } else {
+        for (logical_time, key, values) in source_events(false) {
+            store.commit(&CommitBatch { world: "main".into(), scope: SCOPE.into(), logical_time,
+                writes: vec![FactWriteRow::Put { object_type: "demo.Measurement".into(), key, values }],
+                ..CommitBatch::default()
+            }).expect("record timed source incarnation");
+        }
     }
 }
 
