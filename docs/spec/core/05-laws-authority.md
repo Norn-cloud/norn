@@ -66,12 +66,25 @@ Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-che
 5. Attenuation/revocation chain contract and commit/dispatch enforcement in separate cuts; AUTH-REVOKE and independent-person approvals.
 6. Bind law evaluation to observed finding/quarantine mode under 07, then analytical publication guards under 08; preserve governing law identity in both modes.
 
-**PROOF-BIND-1 Guarantees projection:** `python3 scripts/guarantees_matrix.py [--result RESULT.json] [--challenge CHALLENGE.json]` reads the existing obligation registries and coverage from one immutable Git commit tree. Positive levels require the existing full result validator to accept current source, tools, proof/test logs, selectors and digests. No result, failed validation or changed inputs yields unknown. The matrix binds source and result digests, retains assumptions/residuals, and separates a checked reference proof from production correspondence: only an implementation proof can label the overall obligation proved. Named passing scenarios/proptests label tested, never proved. A generated challenge inventory (including transition-frame assessments) remains unknown pending exact checked solver-result binding. This view grants no admission, proof or deployment authority.
 
-Scenarios: **GUARANTEES-CHECKED** retains checked reference/implementation scope; **GUARANTEES-MISSING** never promotes declared coverage alone; **PROOF-STALE** discards stale evidence; **GUARANTEES-FRAME** leaves echoed/generated conditional goals unknown; removing evidence cannot increase assurance. The view labels validated evidence `checked_snapshot`, bound to the captured commit and result; workspace changes during projection discard evidence, and every exported matrix describes that immutable snapshot rather than claiming continuing freshness.
 
-**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures reference `norn.values.property_validity` plus the canonical digest of the exact retained property-domain declaration closure (including inherited, referenced-type and interface constraints), with stale/forged pins Unverified and no attribution to an unrelated conservation law.
+## Shared refusal diagnostics (#517)
 
-**LAW-CONVERSION-OVERLAY:** Given retained core law and concrete Melt bindings, adding a loss bound retains the same effective law digest and generates pending guard goals; replacing its inherited invariant with `true` refuses through the shared Core 06 validator as `core.composition.overlay_conflict` / `weakens_inherited`, with no new approval authority.
+**DIAG-REASON-1:** commit and action invariant refusals retain the owning
+object/interface, invariant identity and canonical owner-definition digest in
+`RefusalReason.pin`. Lifecycle reasons pin their built-in semantics version.
+Typed operands share the existing `RuntimeValue` model. Evaluator failure text
+and non-boolean values are represented by outcome categories, not raw values.
 
-**GUARANTEES-PACK-1:** The main-gated demo projects checker-admitted pack LawIR inventories and the existing evidence matrix; absent data-beat declarations remain "declaration missing → unknown", and scenario names never supply law IDs or checked evidence.
+**DIAG-REDACT-1:** API `norn/refusal@2` projections require proven disclosure
+authority to expose a reason. Without it, the entire pin, subject and operands
+are absent, and the explanation is fixed. Visibility/internal details remain
+hidden even with a disclosure grant. Retryability defaults to false; only
+engine-defined stale preparation and concurrency paths set it true.
+
+**DIAG-HISTORY-1:** stored receipt formats, diagnostics and content hashes are
+unchanged by transport projection versions. Historical receipts still verify.
+
+Named scenarios: invariant refusal retains a declaration pin through the API;
+unauthorized projections are independent of arbitrary secret operands;
+a pre-change checker receipt verifies against its original hash.
