@@ -905,12 +905,6 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
-    // TXN-CLOSED-1: the fixed link closure is bounded before any host access.
-    if action.create_links.len() > 16 {
-        return Err(crate::synchronous_rule::refused(
-            "createLinks exceeds the admitted bound of sixteen",
-        ));
-    }
     // TXN-RULE-1: a declared closure never degrades to its primary effect.
     crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
     if (action.quantity_effect.is_some() || !action.create_links.is_empty())

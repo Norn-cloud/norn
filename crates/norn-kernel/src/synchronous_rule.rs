@@ -152,6 +152,10 @@ pub(crate) fn resolve<'a, X>(
     catalog: &TypeCatalog<'a>,
     call: &ActionCall<'_>,
 ) -> Result<Option<&'a SynchronousRule>, ActionRefusal<X>> {
+    // TXN-CLOSED-1: bound the fixed link closure before any host access.
+    if call.action.create_links.len() > 16 {
+        return Err(refused("createLinks exceeds the admitted bound of sixteen"));
+    }
     let Some(pin) = &call.action.synchronous_rule else {
         return Ok(None);
     };
