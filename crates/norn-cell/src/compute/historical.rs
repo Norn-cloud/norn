@@ -4,10 +4,10 @@ use crate::engine::{SqlEngine, SqlRow, params};
 use crate::reactive::{BudgetedRead, DecodeBudget};
 use crate::{CellError, CellStore, HistoricalEvidence, KnowledgeCutoff, ObjectRecord, StoreReader};
 use norn_checker::metric::compute::{QuestionPlan, UNSUPPORTED_ENGINE};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Read-only historical world with both the effective window and knowledge clock.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoricalQuestionResult {
     /// Historical commit authority; source world/scope remain in the result context.

@@ -511,6 +511,8 @@
     "crates/norn-cell/src/history_selection.rs",
     "crates/norn-cell/tests/historical_delta.rs",
     "crates/norn-cell/tests/historical_question.rs",
-    "verification/kernel-l1/history_selection_kani.rs"
+    "verification/kernel-l1/history_selection_kani.rs",
+    "crates/norn-cell/src/compute/restatement.rs",
+    "registry/core/src/restatement.ts"
   ]
 }

@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
+/// Governed native restatement generations.
+pub mod restatement;
 pub use historical::HistoricalQuestionResult;
 
 use crate::{
@@ -100,7 +102,7 @@ pub struct QueryRow {
     pub members: BTreeMap<String, Member>,
 }
 /// Result envelope for QUERY-ENGINE-1; construction alone grants no authority.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryResult {
     /// Content identity of model, declarations, bounds and arithmetic profile.

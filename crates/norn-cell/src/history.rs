@@ -39,10 +39,16 @@ pub struct FactSnapshot {
 }
 
 fn fact_receipt_matches(snapshot: &FactSnapshot, hash: &str, receipt: &Receipt) -> bool {
-    receipt.body.world == snapshot.world && receipt.body.written.iter().any(|row| {
-        row.object_type == snapshot.object_type && row.key == snapshot.key && row.version == snapshot.version
-            && crate::receipt_commitment::receipt_digest_matches(row.snapshot_sha256.as_deref(), hash)
-    })
+    receipt.body.world == snapshot.world
+        && receipt.body.written.iter().any(|row| {
+            row.object_type == snapshot.object_type
+                && row.key == snapshot.key
+                && row.version == snapshot.version
+                && crate::receipt_commitment::receipt_digest_matches(
+                    row.snapshot_sha256.as_deref(),
+                    hash,
+                )
+        })
 }
 
 /// Store-authenticated source evidence for a single historical incarnation.
@@ -140,7 +146,8 @@ impl<S: SqlEngine> HistoryRead<'_, '_, S> {
         let Some(receipt) = self.receipt(to_u64(commit, "fact commit")?, budget)? else {
             return Ok(None);
         };
-        if snapshot.root_type != root || !fact_receipt_matches(&snapshot, &snapshot_sha256, receipt) {
+        if snapshot.root_type != root || !fact_receipt_matches(&snapshot, &snapshot_sha256, receipt)
+        {
             return Err(unproven_snapshot());
         }
         Ok(Some(FactVersionEvidence {
@@ -224,7 +231,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
     // Only the private writer may read its own pre-receipt incarnation.
     fn snapshot_for_commit(
-        &self, world: &str, object_type: &str, key: &str, version: u64,
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        version: u64,
         pending_commit: Option<u64>,
     ) -> Result<FactSnapshot, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
@@ -235,11 +246,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )?;
         let (encoded, hash, commit, stored_root) = row.ok_or_else(unproven_snapshot)?;
         let snapshot = decode_snapshot(world, object_type, key, version, &encoded, &hash)?;
-        if snapshot.root_type != stored_root { return Err(unproven_snapshot()); }
+        if snapshot.root_type != stored_root {
+            return Err(unproven_snapshot());
+        }
         let commit = to_u64(commit, "snapshot commit")?;
         if pending_commit != Some(commit) {
             let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
-            if hash_json(&receipt.body)? != receipt.hash || !fact_receipt_matches(&snapshot, &hash, &receipt) {
+            if hash_json(&receipt.body)? != receipt.hash
+                || !fact_receipt_matches(&snapshot, &hash, &receipt)
+            {
                 return Err(unproven_snapshot());
             }
         }

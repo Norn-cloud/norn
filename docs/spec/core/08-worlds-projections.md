@@ -75,3 +75,29 @@ RESTATE-HISTORY-1 native private-cache maintenance consumes the next authenticat
 ## Receipt-bound incarnation evidence
 
 **SNAPSHOT-RECEIPT-1:** every new `WrittenRow` commits its complete canonical incarnation snapshot digest before the producing receipt is hashed, including tombstones and intermediate versions in one atomic batch. Historical reads verify that digest against the authenticated emitting receipt; changing both the snapshot and its co-located hash cannot replace it. Legacy/unbound entries refuse as unproven; no migration derives a trusted commitment from their current mutable contents. Only a private writer can inspect its own not-yet-receipted incarnation inside the atomic commit; it cannot export it as evidence. Named scenarios cover joint snapshot/hash tampering, unbound commitments, receipt substitution, restart and repeated writes/tombstones.
+
+## Native restatement activation
+
+**RESTATE-HISTORY-1 / OUTPUT-ATOMIC:** `core.analytics.Restatement` retains the
+previous complete bundle while its host rebuilds every declared question slice.
+The host stages a content-addressed candidate with reason, old/new question and
+mapping pins, effective windows, knowledge frontiers and exact retraction and
+replacement contributions. Missing, duplicate, incomplete or unauthorized slices
+refuse with `core.world.invalid_restatement`; same-interpretation deltas must
+match a full exact recompute before staging. Changed interpretations are explicit
+complete rebuilds over retained authenticated inputs; unsupported historical
+model changes still refuse.
+
+The declared `approve` and `activate` actions use the existing kernel authorizer,
+lifecycle checks and commit read guards. Approval is not a host boolean. Activation
+changes a single receipt-bound slot incarnation selecting the entire bundle.
+Readers authenticate that incarnation and return either all old outputs or all
+new outputs. A building/ready/approved slot exposes the old complete generation
+labelled stale, including after interruption and restart. Prior active versions
+remain reproducible under current population authorization. The view label is
+`restated`; no posted events or books are rewritten.
+
+Named runtime scenarios cover the scrap-yield K1/K2 correction, exact loss and
+ratio deltas, multi-slice selection, denied/premature approval and activation,
+interrupted staging, stale tokens, current authorization and reproducible old
+answers. Generated change sequences include source redelivery and restart.
