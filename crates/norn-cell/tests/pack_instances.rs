@@ -166,7 +166,7 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
             }
         })
         .collect();
-    let mut app = generic.clone();
+    let mut app = generic;
     app.artifact_id = "demo.ledgers.app".into();
     app.dependencies.clear();
     set_pack(
@@ -242,9 +242,17 @@ fn values(text: &str) -> JsonObject {
         .expect("object")
         .clone()
 }
-fn call<'a>(a: &'a ActionRoot, all: &'a [ArtifactEnvelope], id: &str, input: JsonObject) -> ActionCall<'a> {
-    let source = all.iter().filter(|item| item.kind() == ArtifactKind::Action)
-        .find(|item| payload::<ActionRoot>(item).action_id == a.action_id).expect("exact action source");
+fn call<'a>(
+    a: &'a ActionRoot,
+    all: &'a [ArtifactEnvelope],
+    id: &str,
+    input: JsonObject,
+) -> ActionCall<'a> {
+    let source = all
+        .iter()
+        .filter(|item| item.kind() == ArtifactKind::Action)
+        .find(|item| payload::<ActionRoot>(item).action_id == a.action_id)
+        .expect("exact action source");
     ActionCall {
         action: a,
         action_artifact_id: &source.artifact_id,
@@ -416,13 +424,10 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
             .find(|a| a.action_id == action_id)
             .expect("governed action");
         let exact_call = call(action, &all, id, values(input));
-        let ActionOutcome::Committed { receipt, record } = commit_action(
-            &mut cell,
-            &catalog,
-            &exact_call,
-            &Policy,
-        )
-        .expect("ordinary evaluator and atomic commit") else {
+        let ActionOutcome::Committed { receipt, record } =
+            commit_action(&mut cell, &catalog, &exact_call, &Policy)
+                .expect("ordinary evaluator and atomic commit")
+        else {
             panic!("new transfer")
         };
         let durable = cell
@@ -432,8 +437,14 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
             .expect("receipt lookup")
             .expect("durable receipt");
         assert_eq!(durable.body.definitions_version, installed.version);
-        assert_eq!(record.action_artifact_id.as_deref(), Some(exact_call.action_artifact_id));
-        assert_eq!(record.action_version.as_deref(), Some(exact_call.action_version));
+        assert_eq!(
+            record.action_artifact_id.as_deref(),
+            Some(exact_call.action_artifact_id)
+        );
+        assert_eq!(
+            record.action_version.as_deref(),
+            Some(exact_call.action_version)
+        );
         let posted = cell
             .load(&record.object)
             .expect("posted")
@@ -462,18 +473,39 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
     ] {
         let mut before = cell.store().read().dump().expect("before");
         assert!(
-            commit_action(&mut cell, &catalog, &call(usd, &all, key, values(input)), &Policy).is_err(), "{key} must refuse"
+            commit_action(
+                &mut cell,
+                &catalog,
+                &call(usd, &all, key, values(input)),
+                &Policy
+            )
+            .is_err(),
+            "{key} must refuse"
         );
         let mut after = cell.store().read().dump().expect("atomic refusal");
-        for event in after["_norn_ledger"].iter().skip(before["_norn_ledger"].len()) {
+        for event in after["_norn_ledger"]
+            .iter()
+            .skip(before["_norn_ledger"].len())
+        {
             let row: Vec<serde_json::Value> = serde_json::from_str(event).expect("ledger row");
-            let event: serde_json::Value = serde_json::from_str(row[3].as_str().expect("event text")).expect("audit event");
+            let event: serde_json::Value =
+                serde_json::from_str(row[3].as_str().expect("event text")).expect("audit event");
             assert_eq!(event["op"], "invariant_refused");
         }
-        for audit in ["_norn_clock", "_norn_ledger", "_norn_receipt", "_norn_export_journal", "_norn_export_payload"] {
-            before.remove(audit); after.remove(audit);
+        for audit in [
+            "_norn_clock",
+            "_norn_ledger",
+            "_norn_receipt",
+            "_norn_export_journal",
+            "_norn_export_payload",
+        ] {
+            before.remove(audit);
+            after.remove(audit);
         }
-        assert!(before == after, "refused {key} changed business state or effects");
+        assert!(
+            before == after,
+            "refused {key} changed business state or effects"
+        );
     }
     drop(cell);
     let mut cell: Cell = SqliteCell::new(
@@ -509,8 +541,16 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
     }
 }
 fn corrupted(mut all: Vec<ArtifactEnvelope>, case: u8) -> Vec<ArtifactEnvelope> {
-    let fine: norn_ir::EntityRootV2 = payload(all.iter().find(|a| a.artifact_id == "demo.FineTransfer.entity").expect("quantity"));
-    let account = all.iter().find(|a| a.artifact_id == "demo.FineAccount.entity").expect("gram account").clone();
+    let fine: norn_ir::EntityRootV2 = payload(
+        all.iter()
+            .find(|a| a.artifact_id == "demo.FineTransfer.entity")
+            .expect("quantity"),
+    );
+    let account = all
+        .iter()
+        .find(|a| a.artifact_id == "demo.FineAccount.entity")
+        .expect("gram account")
+        .clone();
     let owner = all
         .iter_mut()
         .find(|a| a.artifact_id == "demo.ledgers.app")
@@ -547,11 +587,24 @@ fn corrupted(mut all: Vec<ArtifactEnvelope>, case: u8) -> Vec<ArtifactEnvelope> 
                 .type_name = norn_ir::ObjectTypeName("demo.FineTransfer".into());
         }
         5 => {
-            usd.type_unit_bindings.get_mut("Ledger").expect("slot").decimals.insert("credit".into(), fine.object_type.properties.into_iter().find(|p| p.id.as_str() == "credit").expect("grams").property_type);
+            usd.type_unit_bindings
+                .get_mut("Ledger")
+                .expect("slot")
+                .decimals
+                .insert(
+                    "credit".into(),
+                    fine.object_type
+                        .properties
+                        .into_iter()
+                        .find(|p| p.id.as_str() == "credit")
+                        .expect("grams")
+                        .property_type,
+                );
         }
         6 => {
             let binding = usd.type_unit_bindings.get_mut("Account").expect("slot");
-            binding.target = pin(&account); binding.type_name = norn_ir::ObjectTypeName("demo.FineAccount".into());
+            binding.target = pin(&account);
+            binding.type_name = norn_ir::ObjectTypeName("demo.FineAccount".into());
         }
         _ => {
             usd.type_unit_bindings

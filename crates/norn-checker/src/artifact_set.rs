@@ -647,11 +647,18 @@ pub(crate) const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
 }
 
 fn check_pack_parameters(pool: &[&ArtifactEnvelope]) -> Vec<Diagnostic> {
-    pool.iter().filter_map(|owner| {
-        let root = crate::pack_bindings::composition(owner)?;
-        let code = crate::pack_bindings::parameters(&root, &owner.scope, pool).err()?;
-        Some(finding(code, "generic pack type slots must name exact declared interfaces".into(), owner, "/payload/typeParameters"))
-    }).collect()
+    pool.iter()
+        .filter_map(|owner| {
+            let root = crate::pack_bindings::composition(owner)?;
+            let code = crate::pack_bindings::parameters(&root, &owner.scope, pool).err()?;
+            Some(finding(
+                code,
+                "generic pack type slots must name exact declared interfaces".into(),
+                owner,
+                "/payload/typeParameters",
+            ))
+        })
+        .collect()
 }
 
 /// PACK-PIN-1: unique scoped IDs, exact endpoints and an acyclic instance graph.

@@ -299,7 +299,12 @@ fn optional_members_may_be_omitted_but_not_null() {
             "reason",
             decodes::<SettingRoot>,
         ),
-        (COMPOSITION_FIXTURE, &[], "typeParameters", decodes::<CompositionPackRoot>),
+        (
+            COMPOSITION_FIXTURE,
+            &[],
+            "typeParameters",
+            decodes::<CompositionPackRoot>,
+        ),
         (
             COMPOSITION_FIXTURE,
             &[],

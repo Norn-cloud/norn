@@ -8,8 +8,14 @@ use norn_ir::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) fn catalog(pool: &[&ArtifactEnvelope], registry: &BTreeSet<norn_ir::PropertyTypeName>) -> EffectiveCatalog {
-    EffectiveCatalog::from_artifacts_with_registry(&pool.iter().map(|a| (*a).clone()).collect::<Vec<_>>(), registry)
+pub(crate) fn catalog(
+    pool: &[&ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
+) -> EffectiveCatalog {
+    EffectiveCatalog::from_artifacts_with_registry(
+        &pool.iter().map(|a| (*a).clone()).collect::<Vec<_>>(),
+        registry,
+    )
 }
 
 pub(crate) fn composition(artifact: &ArtifactEnvelope) -> Option<CompositionPackRoot> {
@@ -95,8 +101,8 @@ pub(crate) fn targets(
                 && !concrete_links
                     .iter()
                     .any(|link| link.id == id && link.target.as_str() == expected.as_str())
-                {
-                    return Err("core.composition.mapping_gap");
+            {
+                return Err("core.composition.mapping_gap");
             }
         }
         if !required.fields.iter().eq(binding.decimals.keys()) {
@@ -112,7 +118,8 @@ pub(crate) fn targets(
             else {
                 return Err("core.values.unit_mismatch");
             };
-            if per_unit.is_some() || unit.is_some() == currency_source.is_some()
+            if per_unit.is_some()
+                || unit.is_some() == currency_source.is_some()
                 || !effective.properties.iter().any(|p| {
                     p.id.as_str() == id
                         && matches!(&p.kind, EffectiveKind::Base(actual) if actual == contract)
@@ -120,7 +127,6 @@ pub(crate) fn targets(
             {
                 return Err("core.values.unit_mismatch");
             }
-
         }
         out.push(ArtifactKey {
             artifact_id: target.artifact_id.clone(),

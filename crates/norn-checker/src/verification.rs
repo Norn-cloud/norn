@@ -346,7 +346,9 @@ fn instance_members(
     catalog: Option<&EffectiveCatalog>,
 ) -> Option<Vec<norn_ir::PackArtifactRef>> {
     let mut members = pack.artifacts.clone();
-    for binding in crate::pack_bindings::targets(instance, &base.iter().collect::<Vec<_>>(), catalog).ok()? {
+    for binding in
+        crate::pack_bindings::targets(instance, &base.iter().collect::<Vec<_>>(), catalog).ok()?
+    {
         members.push(norn_ir::PackArtifactRef {
             artifact_id: binding.artifact_id,
             version: binding.version,
