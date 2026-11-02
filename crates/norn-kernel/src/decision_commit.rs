@@ -216,6 +216,40 @@ impl<'a> TypeCatalog<'a> {
         Ok(values)
     }
 
+    /// VAL-EXACT-1: derive invariant operand types from the same catalog as values.
+    pub(crate) fn expression_environment(
+        &self,
+        object_type: &ObjectTypeName,
+    ) -> Result<norn_expr::ZenTypeEnv, String> {
+        self.base_expression_environment()?
+            .bind_self(object_type)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn base_expression_environment(&self) -> Result<norn_expr::ZenTypeEnv, String> {
+        let objects: Vec<_> = self.types.values().map(|d| (*d).clone()).collect();
+        let interfaces: Vec<_> = self.interfaces.values().map(|d| (*d).clone()).collect();
+        let extensions: Vec<_> = self.extensions.iter().map(|d| (*d).clone()).collect();
+        let definitions = norn_expr::EntityDefinitions {
+            property_types: self.property_types.unwrap_or_default(),
+            object_types: &objects,
+            interfaces: &interfaces,
+            extensions: &extensions,
+        };
+        norn_expr::ZenTypeEnv::from_artifact_set_for_checking(
+            &definitions,
+            &BTreeSet::new(),
+            norn_expr::EnvOptions::default(),
+        )
+        .map_err(|errors| {
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+    }
+
     /// Materialize declared defaults without filling other absent properties
     /// with `null` or validating caller values. Owned-row expressions run
     /// before final object validation, so a required property produced by a

@@ -15,6 +15,16 @@ export interface EnvelopeOptions {
   readonly registryPackagePath?: string
 }
 
+/** Exact entity/rule dependency pins supported by the typed definition profile. */
+export interface DependencyPin {
+  readonly artifactId: string
+  readonly version: string
+  readonly kind?: "entity" | "rule"
+}
+export function pinnedDependencies(pins: ReadonlyArray<DependencyPin> | undefined, kind: "entity" | "rule"): ReadonlyArray<Json> {
+  return (pins ?? []).map(pin => ({artifactId:pin.artifactId,version:pin.version,kind:pin.kind ?? kind,required:true}))
+}
+
 export interface EnvelopeMeta {
   readonly kind: "entity" | "rule" | "action" | "policy" | "mapping" | "law" | "connector" | "source_schema" | "business_pack"
   readonly artifactId: string

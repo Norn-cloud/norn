@@ -4223,6 +4223,13 @@ export interface components {
             currencySource?: components["schemas"]["NornIrDimensionPath"];
             /** @enum {string} */
             kind: "decimal";
+            /** @description VAL-RATE: currency per this unit, distinct from a quantity's `unit`. */
+            perUnit?: components["schemas"]["NornIrUnitRef"];
+            /**
+             * @description VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.
+             * @enum {string}
+             */
+            rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
             /**
              * Format: uint64
              * @description Fraction digits every value is held at (`2` for cents). At most 28,

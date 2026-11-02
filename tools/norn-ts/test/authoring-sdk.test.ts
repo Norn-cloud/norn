@@ -195,7 +195,7 @@ test("CP3 allocation goldens come from core-aligned typed declarations", () => {
   const authored = pack.artifacts.filter(a => a !== null && typeof a === "object" && "namespace" in a && a.namespace === "jewelry")
   expect(authored).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-decisions/tests/fixtures/jewelry-folds.json"), "utf8")))
   if (checker) {
-    const checked = checkPack(checker, pack.artifacts, readArtifacts(join(root, "registry/core/artifacts")).map(entry => entry.artifact).filter(artifact => /^core\.(Agent|AgentRole|Resource|Commitment|Hold|EconomicEvent|LedgerEffect|Claim)\.interface$/.test(artifactId(artifact)) || ["core.value_types.entity", "std.value_types.entity"].includes(artifactId(artifact))))
+    const checked = checkPack(checker, pack.artifacts, readArtifacts(join(root, "registry/core/artifacts")).map(entry => entry.artifact).filter(artifact => /^core\.(Agent|AgentRole|Resource|Commitment|Hold|EconomicEvent|LedgerEffect|Claim)\.interface$/.test(artifactId(artifact)) || ["core.units", "core.value_types.entity", "std.value_types.entity"].includes(artifactId(artifact))))
     expect(checked.diagnostics.diagnostics.filter(d => d.severity === "error")).toEqual([])
     expect(checked.admitted).toBe(true)
   }

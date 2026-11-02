@@ -25,6 +25,7 @@ export const Invoice = Norn.type({
   title: "Invoice",
   version: "0.1.0",
   description: "An invoice for an exact amount.",
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   implements: [Billable],
   properties: Schema.Struct({
     number: InvoiceNumber,
