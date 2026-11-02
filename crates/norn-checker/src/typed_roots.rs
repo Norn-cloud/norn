@@ -2800,6 +2800,7 @@ mod tests {
     #[test]
     fn action_actor_binding_is_typed_and_unsupported_principal_claims_refuse() {
         let mut action = fixture(ACTION_FIXTURE);
+        action["payload"]["preconditions"] = json!([]);
         action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
             "properties":{"code":{"type":"string"}},"required":["code"]});
         action["payload"]["derive"] = json!([

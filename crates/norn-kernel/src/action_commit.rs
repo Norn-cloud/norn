@@ -4541,7 +4541,6 @@ fn prepare_action_input_inner<'a, X>(
     }
     let max_receipt_bytes =
         usize::try_from(profile.envelope.max_output_bytes).unwrap_or(usize::MAX);
-    check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
     let raw_bytes = canonical_object_bytes::<X>(raw_input)?;
     if raw_bytes > max_receipt_bytes {
         return Err(ActionRefusal::InputBoundExceeded {

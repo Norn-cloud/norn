@@ -162,7 +162,7 @@ impl norn_kernel::ActionAuthorizer for PrincipalOnly<'_> {
 
 proptest::proptest! {
     #[test]
-    fn action_actor_is_identical_in_derivation_pdp_and_retained_receipt(principal in "person:[a-z0-9]{1,24}") {
+    fn action_actor_is_identical_in_derivation_pdp_and_retained_receipt(principal in "person:[a-z0-9é\u{301}]{1,24}") {
         let mut action = action();
         action.derive = vec![norn_ir::ActionInputDerivation {field:"code".into(),expression:ZenExpression("actor.subjectId".into()),input_required:false}];
         let mut invocation = call(&action,JsonObject::new(),"1.0.0"); invocation.actor = principal.clone();
