@@ -378,6 +378,9 @@ pub struct ActionCallRecord {
     /// written before effect attribution and interpreted as `fire_transition`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_kind: Option<String>,
+    /// TXN-RULE-1: exact writer closure, action, scope and world identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_binding: Option<String>,
     /// The target object.
     pub object: FactKey,
     /// The call's input.
@@ -419,6 +422,7 @@ impl ActionCallRecord {
             action_artifact_id: Some(call.action_artifact_id.to_owned()),
             action_version: Some(call.action_version.to_owned()),
             effect_kind: Some("fire_transition".to_owned()),
+            rule_binding: None,
             object: target.clone(),
             input: call.input.clone(),
             effective_input: (!action.derive.is_empty())
@@ -439,6 +443,7 @@ impl ActionCallRecord {
             && self.object == other.object
             && self.input == other.input
             && self.actor == other.actor
+            && self.rule_binding == other.rule_binding
     }
 
     fn binds_same_generated_call(
@@ -522,6 +527,9 @@ impl ActionCallRecord {
         if let Some(action_version) = &self.action_version {
             values.insert("actionVersion".to_owned(), string(action_version));
         }
+        if let Some(binding) = &self.rule_binding {
+            values.insert("ruleBinding".to_owned(), string(binding));
+        }
         if let Some(effect_kind) = &self.effect_kind {
             values.insert("effectKind".to_owned(), string(effect_kind));
         }
@@ -584,6 +592,11 @@ impl ActionCallRecord {
             action_artifact_id,
             action_version,
             effect_kind,
+            rule_binding: match values.get("ruleBinding") {
+                Some(JsonValue::String(value)) => Some(value.clone()),
+                None | Some(JsonValue::Null) => None,
+                _ => return None,
+            },
             object: FactKey::new(object_type.clone(), key.clone()),
             input: input.clone(),
             effective_input,
@@ -633,6 +646,12 @@ pub enum ActionRefusal<X> {
     UnsupportedEffect {
         /// The action.
         action_id: String,
+    },
+    /// A synchronous writer escaped its closed declared effect set.
+    #[error("synchronous action writer refused: {reason}")]
+    UncheckedWriter {
+        /// The refused writer contract.
+        reason: String,
     },
     /// The input does not name the target.
     #[error("the input does not satisfy the declared schema at {field:?}")]
@@ -742,6 +761,7 @@ impl<X> ActionRefusal<X> {
             Self::Command(rejection) => rejection.code(),
             Self::MissingScope { .. } => "action.missing_scope",
             Self::UnsupportedEffect { .. } => "action.unsupported_effect",
+            Self::UncheckedWriter { .. } => "core.txn.unchecked_writer",
             Self::InvalidInput { .. } => "action.invalid_input",
             Self::DerivationFailed { .. } => "action.derivation_failed",
             Self::InputBoundExceeded { .. } => "action.input_bound_exceeded",
@@ -887,9 +907,10 @@ where
     let action = call.action;
     // TXN-RULE-1: never silently execute only part of a declared closure.
     if action.synchronous_rule.is_some() {
-        return Err(ActionRefusal::UnsupportedEffect {
-            action_id: action.action_id.clone(),
-        });
+        crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
+        if !matches!(action.effect_program, Some(ActionEffectProgram::FireTransition { .. })) {
+            return Err(crate::synchronous_rule::refused("only transition actions admit a synchronous writer"));
+        }
     }
     if (action.quantity_effect.is_some() || !action.create_links.is_empty())
         && matches!(
@@ -1040,12 +1061,14 @@ where
         ACTION_CALL_TYPE,
         format!("{}/{}", action.action_id, call.idempotency_key),
     );
-    let record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
+    let rule = crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
+    let mut record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
+    record.rule_binding = rule.map(|rule| rule.binding(call)).transpose()?;
     let recorded = host.load(&record_key).map_err(host_failure)?;
     if let Some(outcome) = replay(&recorded, &record, &call.idempotency_key)? {
         return Ok(outcome);
     }
-    let slice = load_action_slice(
+    let mut slice = load_action_slice(
         &ActionSliceContext {
             host,
             catalog,
@@ -1070,18 +1093,42 @@ where
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
+    let mut changes = if let Some(rule) = rule {
+        let output = rule.evaluate(call, &preparation.effective_input, &slice.values, &mut preparation.remaining_fuel)?;
+        check_action_envelope::<H::Error>(limits, output.facts.len().saturating_add(1), action.commands.len())?;
+        for change in &output.facts {
+            let (key, operation) = crate::synchronous_rule::writer_target(change)?;
+            if key.object_type.as_str().starts_with("norn.")
+                || !action.writes.iter().any(|write| write.entity_kind == key.object_type.as_str() && write.change == operation)
+                || (key == target && matches!(change, FactChange::Transition { .. }))
+            {
+                return Err(crate::synchronous_rule::refused("the rule wrote outside the declared writer contract"));
+            }
+            if operation == norn_ir::WriteChange::Created {
+                if !slice.facts.contains_key(&key) {
+                    let state = authorize_upsert_target(host, call, &preparation.effective_input, authorizer, &key)?;
+                    slice.facts.insert(key, state);
+                }
+            } else {
+                let state = slice.facts.get(&key).ok_or_else(|| crate::synchronous_rule::refused("a modified object is outside the captured slice"))?;
+                authorize_current_target(call, &preparation.effective_input, authorizer, &key, state)?;
+            }
+        }
+        output.facts
+    } else { Vec::new() };
     let change = FactChange::Transition {
         object_type,
         key: object_id.clone(),
         lifecycle: lifecycle.clone(),
         transition: transition.clone(),
     };
+    changes.push(change);
     commit_effect(
         host,
         catalog,
         call,
         authorizer,
-        vec![change],
+        changes,
         Pending {
             effective_input: preparation.effective_input.clone(),
             remaining_fuel: preparation.remaining_fuel,
@@ -1229,6 +1276,7 @@ where
         action_artifact_id: Some(call.action_artifact_id.to_owned()),
         action_version: Some(call.action_version.to_owned()),
         effect_kind: Some("upsert_input_object".to_owned()),
+        rule_binding: None,
         object: target.clone(),
         input: call.input.clone(),
         effective_input: (!action.derive.is_empty()).then(|| preparation.effective_input.clone()),
@@ -2337,6 +2385,7 @@ where
         action_artifact_id: Some(call.action_artifact_id.to_owned()),
         action_version: Some(call.action_version.to_owned()),
         effect_kind: Some(ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS.to_owned()),
+        rule_binding: None,
         object: target.clone(),
         input: call.input.clone(),
         effective_input: (!call.action.derive.is_empty())
@@ -3221,6 +3270,7 @@ where
             action_artifact_id: Some(call.action_artifact_id.to_owned()),
             action_version: Some(call.action_version.to_owned()),
             effect_kind: Some("upsert_input_object".to_owned()),
+            rule_binding: None,
             row_operations: Vec::new(),
             object: target.clone(),
             input: call.input.clone(),
@@ -3571,14 +3621,12 @@ where
         });
     }
 
-    authorize_proposed_target(
-        catalog,
-        call,
-        &effective_input,
-        authorizer,
-        &target,
-        &mut prepared.writes,
-    )?;
+    let authorized_targets: Vec<_> = if record.rule_binding.is_some() {
+        prepared.writes.iter().map(|write| write.key.clone()).collect()
+    } else { vec![target.clone()] };
+    for target in authorized_targets {
+        authorize_proposed_target(catalog, call, &effective_input, authorizer, &target, &mut prepared.writes)?;
+    }
     let record = action_record_with_transition(record, &prepared.events);
     // Transition metadata is added after the earlier precondition/evidence
     // checks, so include the finalized receipt in the aggregate output bound.
@@ -3910,12 +3958,13 @@ fn action_record_with_transition(
     events
         .iter()
         .find_map(|event| match event {
-            FactEvent::Transitioned { from, to, .. } => Some(ActionCallRecord {
+            FactEvent::Transitioned { key, from, to, .. } if *key == record.object => Some(ActionCallRecord {
                 from: from.clone(),
                 to: to.clone(),
                 ..record.clone()
             }),
-            FactEvent::CommandEnqueued { .. }
+            FactEvent::Transitioned { .. }
+            | FactEvent::CommandEnqueued { .. }
             | FactEvent::NamingSeriesAllocated { .. }
             | FactEvent::NamingSeriesCounterSeeded { .. }
             | FactEvent::Created { .. }

@@ -65,6 +65,8 @@ mod envelope;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;
+mod synchronous_rule;
+pub use synchronous_rule::{SynchronousRule, SynchronousRuleError};
 pub use partition_slice::{PartitionSlice, load_partition_slice};
 mod observations;
 pub mod quantity;

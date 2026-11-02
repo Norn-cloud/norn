@@ -354,6 +354,7 @@
     "crates/norn-kernel/src/refusal.rs",
     "crates/norn-kernel/src/result_reconciliation.rs",
     "crates/norn-kernel/src/snapshot_observe.rs",
+    "crates/norn-kernel/src/synchronous_rule.rs",
     "crates/norn-kernel/src/version_check.rs",
     "crates/norn-skeleton-guard/Cargo.toml",
     "crates/norn-testkit/Cargo.toml",
