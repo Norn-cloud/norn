@@ -582,11 +582,12 @@ impl<'a> TypeCatalog<'a> {
         }
         let declarations = (
             PROPERTY_DOMAIN_RULE_ID,
+            1_u16,
             object_type,
             property,
             self.ancestry(object_type),
             self.interfaces.values().collect::<Vec<_>>(),
-            &self.property_types,
+            self.property_types.unwrap_or(&[]),
             &self.extensions,
         );
         let bytes = norn_ir::canonical::canonical_json_of(&declarations)?;
