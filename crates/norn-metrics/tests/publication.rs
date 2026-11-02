@@ -18,7 +18,7 @@ fn proposal() -> RuntimeObject {
     for field in ["id","status","table_version","table_digest","source_digest","model_digest","parameters_digest","assumptions_digest","remedy_digest","mode","receipt_digest","result_table_version","result_table_digest","result_source_digest","result_model_digest","result_parameters_digest","result_assumptions_digest","result_remedy_digest","error_unit","result_error_unit"] { values.insert(field.into(),Value::from("")); }
     for field in ["split_at_ms","result_split_at_ms","quarantined_count","frontier_age_ms","max_frontier_age_ms","late_feature_count","latest_training_label_ms","training_count","holdout_count","non_forward_outcome_count"] { values.insert(field.into(),Value::from(0)); }
     for field in ["complete","temporal_leakage","diagnostics_passed"] { values.insert(field.into(),Value::from(false)); }
-    values.extend(norn_ir::runtime_object! {"id"=>"forecast","status"=>"proposed","mode"=>"descriptive","holdout_error_nanos"=>Value::Null,"holdout_error_limit_nanos"=>1_000_000_000i64,"error_unit"=>"g","assumptions_digest"=>docs().0.clone(),"remedy_digest"=>docs().0}.as_object().expect("policy").clone());
+    values.extend(norn_ir::runtime_object! {"id"=>"forecast","status"=>"proposed","mode"=>"descriptive","holdout_error_nanos"=>Value::Null,"holdout_error_limit_nanos"=>1_000_000_000i64,"error_unit"=>"g","source_digest"=>format!("sha256:{}",source::TABLE_SHA),"model_digest"=>norn_metrics::host::implementation_digest().expect("configured method before observing holdout").0,"split_at_ms"=>i64::try_from(source::millis(source::SPLIT)).expect("split"),"assumptions_digest"=>docs().0.clone(),"remedy_digest"=>docs().0}.as_object().expect("policy").clone());
     values
 }
 fn payload(id: &str) -> serde_json::Value {
@@ -27,7 +27,8 @@ fn payload(id: &str) -> serde_json::Value {
 }
 fn reviewer(action: &norn_ir::ActionRoot, model: &norn_cell::Model, authorized: bool) -> impl ActionAuthorizer {
     let types:Vec<_> = model.object_types().cloned().collect(); let interfaces:Vec<_> = model.interfaces().cloned().collect();
-    let projection = norn_projections::project_cedar_schema(&types,&interfaces,std::slice::from_ref(action));
+    let refuse:norn_ir::ActionRoot=serde_json::from_value(payload("core.analytics.refuse.action")).expect("declared REFUSE");
+    let projection = norn_projections::project_cedar_schema(&types,&interfaces,&[action.clone(),refuse]);
     let schema = AuthzSchema::from_projected_cedarschema(&projection.schema).expect("projected schema");
     let access:norn_authz::access::AccessIr = serde_json::from_value(payload("core.analytics.publication.access.policy")).expect("declared AccessIR");
     let policy = norn_authz::compile(&schema,&access).expect("admitted reviewer policy");
