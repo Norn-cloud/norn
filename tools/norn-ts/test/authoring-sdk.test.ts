@@ -1,3 +1,5 @@
+import * as E from "../src/builder/expr.ts"
+import * as S from "../src/builder/schema.ts"
 import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -146,4 +148,38 @@ test("explicitly generic authored packs do not assert vendor parity", () => {
   const result = compile(sparseMappingProgram({kind:"generic"}))
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts).toContainEqual(expect.objectContaining({kind:"mapping",payload:expect.objectContaining({extensions:{"norn.mapping.generic/1.0.0":{parity:"unqualified"}}})}))
+})
+test("TXN-RULE-1 authoring emits a required exact synchronous writer pin", () => {
+  const fixture = readFileSync(join(TOOL_ROOT, "fixtures/definitions/create-linked.source.ts"), "utf8")
+  const source = fixture.replace('  writes: [{ type: Order', '  synchronousRule: { artifactId: "demo.effects.rule", version: "1.0.0" },\n  writes: [{ type: Order')
+  const result = compile(source)
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.artifacts).toContainEqual(expect.objectContaining({kind: "action", dependencies: [{artifactId: "demo.effects.rule", version: "1.0.0", kind: "rule", required: true}], payload: expect.objectContaining({synchronousRule: {artifactId: "demo.effects.rule", version: "1.0.0"}})}))
+})
+
+
+test("TXN-RULE-1 execution fixture is generated from typed authoring", () => {
+  const fixture = join(TOOL_ROOT, "fixtures/decisions/action-writer.source.ts")
+  const pack = compilePack(fixture, { scope, root, modules: [fixture] })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  expect(pack.artifacts).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-kernel/tests/fixtures/action-writer.json"), "utf8")))
+})
+
+
+test("TXN-ATOMIC-1 authoring retains explicit proposal link sources", () => {
+  const fixture = readFileSync(join(TOOL_ROOT, "fixtures/definitions/create-linked.source.ts"), "utf8")
+  const result = compile(fixture.replace('link: "customer",', 'source: { objectType: Order, idField: "number" }, link: "customer",'))
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.artifacts).toContainEqual(expect.objectContaining({kind: "action", payload: expect.objectContaining({createLinks: [expect.objectContaining({source: {objectType: "demo.Order", idField: "number"}})]})}))
+})
+
+
+test("declared array element paths retain item typing and reject malformed indexes", () => {
+  const scope = new Map([["input", {zen: "", schema: S.record({rows: S.array(S.record({value: S.number}))})}]])
+  for (let index = 0; index < 32; index++) {
+    const expression = E.ref("input", "rows", String(index), "value")
+    expect(E.render(expression, scope)).toBe(`rows[${index}].value`)
+    expect(E.typeOf(expression, scope)).toEqual(S.number)
+  }
+  for (const index of ["-1", "01", "1.5", "9007199254740992", "length"]) expect(() => E.render(E.ref("input", "rows", index, "value"), scope)).toThrow()
 })

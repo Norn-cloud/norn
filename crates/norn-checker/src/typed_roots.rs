@@ -172,6 +172,22 @@ fn validate_action_transaction_members(
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
+    if let Some(pin) = decode_member!(
+        norn_ir::ActionRuleRef,
+        payload,
+        "synchronousRule",
+        ACTION_CODE,
+        diagnostics,
+        artifact_id
+    ) && (pin.artifact_id.trim().is_empty() || pin.version.trim().is_empty())
+    {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            "synchronousRule needs a nonempty artifactId and exact version",
+            "payload.synchronousRule",
+            artifact_id,
+        ));
+    }
     if payload.contains_key("createLinks") {
         let _ = decode_member!(
             Vec<norn_ir::ActionCreateLink>,

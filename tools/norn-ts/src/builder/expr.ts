@@ -124,21 +124,24 @@ export function zenJson(value: Json): string {
   return `{${Object.entries(value).map(([k, v]) => `${zenKey(k)}: ${zenJson(v as Json)}`).join(", ")}}`
 }
 
-/** The ZEN text and schema of `name.path` in `scope`. */
+/** FOLD-STEP-TYPE: declared record paths and constant array indexes retain their item schema. */
 function resolve(scope: Scope, name: string, path: ReadonlyArray<string>): { readonly zen: string; readonly schema: ValueSchema } {
   const binding = scope.get(name)
   if (!binding) {
     throw new ExprError("NORN-FLOW-SLICE", `\`${name}\` is not bound here (bindings: ${[...scope.keys()].join(", ") || "none"})`)
   }
   let schema = binding.schema
+  let zenPath = "zen" in binding ? binding.zen : ""
   for (const segment of path) {
-    const member = schema.type === "object" ? schema.properties[segment] : undefined
+    const arrayIndex = schema.type === "array" && /^(0|[1-9][0-9]*)$/.test(segment) && Number.isSafeInteger(Number(segment))
+    const member = schema.type === "array" && arrayIndex ? schema.items : schema.type === "object" ? schema.properties[segment] : undefined
     if (!member) {
       throw new ExprError("NORN-FLOW-SLICE", `expected a declared field, got ${segment} on ${name}; did you mean ${schema.type === "object" ? Object.keys(schema.properties).join(", ") : "a record field"}?`)
     }
+    zenPath += arrayIndex ? `[${segment}]` : `${zenPath ? "." : ""}${zenKey(segment)}`
     schema = member
   }
-  if ("zen" in binding) return { zen: [binding.zen, ...path.map(zenKey)].filter(Boolean).join("."), schema }
+  if ("zen" in binding) return { zen: zenPath, schema }
   // An inline record: follow the path through its fields at build time.
   let expr = binding.inline
   for (const [index, segment] of path.entries()) {
@@ -146,6 +149,10 @@ function resolve(scope: Scope, name: string, path: ReadonlyArray<string>): { rea
       const field = expr.fields.find(([key]) => key === segment)
       if (!field) throw new ExprError("NORN-FLOW-SLICE", `\`${[name, ...path].join(".")}\` reads ${segment}, which is not set`)
       expr = field[1]
+    } else if (expr._tag === "List" && /^(0|[1-9][0-9]*)$/.test(segment)) {
+      const item = expr.items[Number(segment)]
+      if (!item) throw new ExprError("NORN-FLOW-SLICE", `list index ${segment} is not set`)
+      expr = item
     } else if (expr._tag === "Ref") {
       expr = { _tag: "Ref", name: expr.name, path: [...expr.path, ...path.slice(index)] }
       break

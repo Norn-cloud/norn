@@ -74,6 +74,7 @@ use crate::observations::{LogicalTime, World};
 /// property defaults along `extends`.
 #[derive(Debug, Clone, Default)]
 pub struct TypeCatalog<'a> {
+    pub(crate) action_rules: &'a [crate::SynchronousRule],
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
     extensions: Vec<&'a ObjectTypeExtension>,
@@ -106,6 +107,7 @@ impl<'a> TypeCatalog<'a> {
     #[must_use]
     pub fn new(types: impl IntoIterator<Item = &'a ObjectTypeDef>) -> Self {
         Self {
+            action_rules: &[],
             types: types
                 .into_iter()
                 .map(|object_type| (object_type.name.as_str(), object_type))
@@ -115,6 +117,13 @@ impl<'a> TypeCatalog<'a> {
             property_types: None,
             effective_model: OnceLock::new(),
         }
+    }
+
+    /// Admitted, immutable synchronous writers available to governed actions.
+    #[must_use]
+    pub fn with_action_rules(mut self, rules: &'a [crate::SynchronousRule]) -> Self {
+        self.action_rules = rules;
+        self
     }
 
     /// The same catalog with the admitted interfaces implemented by its
@@ -2264,7 +2273,7 @@ pub(crate) fn widen_effect<C: From<JsonObject>, T: From<JsonObject>>(
     }
 }
 
-fn fact_key(change: &FactChange) -> FactKey {
+pub(crate) fn fact_key(change: &FactChange) -> FactKey {
     let (object_type, key) = match change {
         FactChange::Create {
             object_type, key, ..

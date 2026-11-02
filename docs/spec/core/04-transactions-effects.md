@@ -67,3 +67,64 @@ Admission rejects unknown, computed, reserved and lifecycle binding targets.
 Both destinations exclude objectIdField and every effective identity-key component; a result destination cannot equal digestProperty. The exact writer closure remains required; catalogs preserve the declaration.
 Only the cell host resolves authenticated, scoped evidence; unsupported hosts refuse.
 Execution stays closed until consumption and effects commit atomically, with no partial persistence on refusal.
+
+
+## Bounded synchronous action profile
+
+TXN-RULE-1 / TXN-CLOSED-1: an action may name one exact `synchronousRule`
+artifactId/version and must declare the same required Rule dependency. Initial
+admission accepts this contract only on transition actions and requires one
+matching `decide` artifact whose required scope is covered by the action.
+Missing, ambiguous, wrong-version, wrong-contract or uncovered-scope bindings
+refuse. Unknown pin members and null pins refuse strict decoding.
+
+This contract cut does not enable execution. The existing action boundary must
+refuse a present synchronous writer before reading or writing the host, rather
+than executing only the primary transition. Named round-trip/refusal scenarios,
+generated version-pin cases and authoring dependency correspondence bind this
+contract to the code. Pin resolution traverses heap-backed artifact catalogs;
+the existing Kani profiles cannot call that catalog/serde admission path. No
+new bounded arithmetic primitive or handwritten application proof is introduced.
+
+The following execution cut must evaluate the pinned pure graph over the same
+authorized slice/input, reject uncovered writers, authorize every current and
+proposed object, retain absence/membership fences, and atomically finalize its
+facts plus the primary transition and ActionCall receipt. Rule output is
+facts-only in this profile; existing action command declarations enqueue payment
+intent in that same commit. Dispatch and payment success remain external.
+
+
+### Atomic proposal links (TXN-ATOMIC-1, TXN-CLOSED-1)
+
+The synchronous writer's closed fact schema has finite nonempty `objectType`
+and supported `op` enums. Admission conservatively takes their Cartesian product
+and unions it with the primary effect; this must equal the action's write set.
+Open targets and unsupported operations refuse admission. Preparation still
+checks every actual effect against that set.
+
+A create-link binding optionally names a concrete source type and required
+string input key. Without it the primary object remains the source. Explicit
+sources require the transition/synchronous-rule profile. Every source must be
+written in the same checked proposal; each target is the captured primary, a
+required slice object, or an object created in that proposal. The link must be declared with the exact
+target type. All proposed facts are authorized before commit. Duplicate concrete
+links and dangling endpoints refuse. Link versions and all fact/absence/slice
+fences join the existing single cell commit; no link is persisted earlier.
+These rules are domain-neutral. The correspondence scenarios cover bidirectional
+links to a newly created secondary fact, exact replay, and refusal before writes.
+
+The link closure is bounded at sixteen bindings, checked before host access.
+The source is an object-only closed binding; explicit nulls, sequence aliases,
+unknown members and duplicate members refuse. Constant array indexes in authored
+expressions retain the array item schema; malformed indexes refuse compilation,
+and an out-of-range read still has to satisfy the decision's runtime typing.
+
+`atomic_action_links_outbox_and_receipt_survive_reopen_and_exact_retry` executes
+the typed fixture after full artifact-set admission. Both directions of the link,
+the secondary fact, primary transition, receipt and one pending payment intent
+survive reopening; exact retry changes no table and changed principal refuses.
+`late_link_failure_and_secondary_denial_persist_no_partial_proposal` covers a
+host-side cardinality failure and denied secondary authority, with complete
+SQLite dumps unchanged before and after reopening. No provider executes.
+This is runtime-enforced correspondence plus sampled generated identities and
+writer footprints, not a proof of application conservation or approval policy.
