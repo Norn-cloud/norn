@@ -1,0 +1,44 @@
+name: Boat routing admission pilot
+on:
+  push:
+    branches: [boat-pilot/ci-routing]
+  merge_group:
+    types: [checks_requested]
+permissions:
+  contents: read
+jobs:
+  actor-filter:
+    runs-on: boat
+    timeout-minutes: 3
+    steps:
+      - name: Record the actual event admitted by Boat
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          HEAD: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time
+          print(json.dumps({key: os.environ[key] for key in ("EVENT", "ACTOR", "HEAD")} | {"started_ns": time.time_ns()}))
+          PY
+  concurrency:
+    needs: actor-filter
+    if: github.event_name == 'merge_group'
+    runs-on: boat
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        probe: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - name: Measure an overlap window without a matrix concurrency limit
+        env:
+          PROBE: ${{ matrix.probe }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time
+          started = time.time_ns()
+          print(json.dumps({"probe": os.environ["PROBE"], "started_ns": started}), flush=True)
+          time.sleep(20)
+          print(json.dumps({"probe": os.environ["PROBE"], "finished_ns": time.time_ns()}), flush=True)
+          PY
