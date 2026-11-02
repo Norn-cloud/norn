@@ -109,7 +109,7 @@ fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
     let law = retained
         .artifacts()
         .iter()
-        .find(|artifact| artifact.artifact_id == "core.law.conversion_conservation")
+        .find(|artifact| artifact.artifact_id == "core.law.conversion_conservation.law")
         .ok_or("missing retained core law")?;
     let law_pin = norn_checker::ArtifactRef::of(law)?;
     let mut envelope: ArtifactEnvelope = serde_json::from_str(include_str!(
