@@ -11,7 +11,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tarfile
+import tempfile
 
+import coverage_manifest
 from verification_attestation import canonical_command, collect_git_identity
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,10 +37,17 @@ def inputs(commit: str) -> tuple[dict, dict, dict]:
                          cwd=ROOT, check=True, capture_output=True).stdout
     with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
         blobs = {item.name: archive.extractfile(item).read() for item in archive if item.isfile()}
-    coverage = json.loads(blobs[f"{directory}/index.json"])
-    coverage["subsystems"] = [{"id": Path(name).stem, **json.loads(value)}
-                              for name, value in sorted(blobs.items())
-                              if name.startswith(f"{directory}/subsystems/")]
+    with tempfile.TemporaryDirectory(prefix="norn-coverage-") as temporary:
+        manifest = Path(temporary) / "manifest"
+        for name, value in blobs.items():
+            if name.startswith(f"{directory}/"):
+                relative = Path(name).relative_to(directory)
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError("invalid coverage archive path")
+                target = manifest / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(value)
+        coverage = coverage_manifest.load(manifest)
     statements = {}
     for name in REGISTRIES:
         for item in json.loads(blobs[name])["obligations"]:
