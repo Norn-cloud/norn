@@ -184,7 +184,7 @@ impl<E: SqlEngine> CellStore<E> {
         self.conn.transaction(|| {
             let version = self.read().installed_definitions(None)?.ok_or_else(mismatch)?.version;
             let bundle = self.read().mapping_bundle(&raw.input, input, version)?;
-            crate::mapping_conflict::capture(self, raw, bundle)
+            crate::mapping_conflict::capture(self, raw, &bundle)
         })
     }
 }

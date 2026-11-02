@@ -91,10 +91,9 @@ connector/partition plus source/record/event identity, matching the ingress orac
 Receipt time, cursor and pipeline metadata do not change source-event content.
 In one capture transaction, preserve the first bundle and retain conflicting raw
 input, pins, diagnostics and a replay-stable `core.boundary.import_finding` in the
-Observed inbox. The conflicting candidate stays quarantined and cannot be applied;
-the accepted canonical object is never overwritten by it. Rechecking recomputes
+Observed inbox. The conflicting candidate cannot be applied and every affected mapped subject, including the preserved first canonical object, is quarantined from authoritative/governed reads and aggregates (with visible counts), may appear only as `disputed` in label-permitted analytical reads, and is released only by an explicit governed accept-first, accept-second-as-correction or reject review action recorded with its own receipt. Rechecking recomputes
 both admitted bundles; stored finding claims confer no authority. Redelivery and
-restart add no second conflict finding. Resolution requires explicit review.
+restart add no second conflict finding; ordinary corrections do not resolve it.
 Full cursor convergence and conflict capture for ordinary unmapped submissions
 remain follow-up cuts for this CP2 bundle bridge.
 

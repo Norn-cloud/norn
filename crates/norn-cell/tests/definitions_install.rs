@@ -6147,7 +6147,12 @@ norn_testkit::proptest::proptest! {
             if attempt + 1 == deliveries {
                 norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&bypass), Err(CellError::UnsupportedMappingProfile)));
             }
-            norn_testkit::proptest::prop_assert_eq!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection"), Some(before.clone()));
+            norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
+            norn_testkit::proptest::prop_assert_eq!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("first bytes"), Some(before.clone()));
+            let page = cell.store().read().authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("aggregate population");
+            norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
+            norn_testkit::proptest::prop_assert!(page.records.is_empty());
+            norn_testkit::proptest::prop_assert_eq!(cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("review").len(), 1);
             drop(cell);
             store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
         }
