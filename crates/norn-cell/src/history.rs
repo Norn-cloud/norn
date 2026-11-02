@@ -38,6 +38,13 @@ pub struct FactSnapshot {
     pub values: Option<BTreeMap<String, Value>>,
 }
 
+fn fact_receipt_matches(snapshot: &FactSnapshot, hash: &str, receipt: &Receipt) -> bool {
+    receipt.body.world == snapshot.world && receipt.body.written.iter().any(|row| {
+        row.object_type == snapshot.object_type && row.key == snapshot.key && row.version == snapshot.version
+            && crate::receipt_commitment::receipt_digest_matches(row.snapshot_sha256.as_deref(), hash)
+    })
+}
+
 /// Store-authenticated source evidence for a single historical incarnation.
 /// Exporting this record preserves knowledge time in the hashed receipt. It is
 /// not authorization or publication authority; importing hosts must revalidate.
@@ -73,14 +80,6 @@ pub enum HistoricalEvidence {
 pub(crate) struct HistoryRead<'r, 'c, S: SqlEngine> {
     reader: &'r StoreReader<'c, S>,
     receipts: BTreeMap<u64, Receipt>,
-}
-fn fact_receipt_matches(snapshot: &FactSnapshot, receipt: &Receipt) -> bool {
-    receipt.body.world == snapshot.world
-        && receipt.body.written.iter().any(|row| {
-            row.object_type == snapshot.object_type
-                && row.key == snapshot.key
-                && row.version == snapshot.version
-        })
 }
 impl<S: SqlEngine> HistoryRead<'_, '_, S> {
     fn receipt(
@@ -141,7 +140,7 @@ impl<S: SqlEngine> HistoryRead<'_, '_, S> {
         let Some(receipt) = self.receipt(to_u64(commit, "fact commit")?, budget)? else {
             return Ok(None);
         };
-        if snapshot.root_type != root || !fact_receipt_matches(&snapshot, receipt) {
+        if snapshot.root_type != root || !fact_receipt_matches(&snapshot, &snapshot_sha256, receipt) {
             return Err(unproven_snapshot());
         }
         Ok(Some(FactVersionEvidence {
@@ -220,14 +219,31 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         version: u64,
     ) -> Result<FactSnapshot, CellError> {
+        self.snapshot_for_commit(world, object_type, key, version, None)
+    }
+
+    // Only the private writer may read its own pre-receipt incarnation.
+    fn snapshot_for_commit(
+        &self, world: &str, object_type: &str, key: &str, version: u64,
+        pending_commit: Option<u64>,
+    ) -> Result<FactSnapshot, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
-        let row: Option<(String, String)> = self.conn.query_optional(
-            &format!("SELECT \"snapshot\", \"hash\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"),
+        let row: Option<(String, String, i64, String)> = self.conn.query_optional(
+            &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\", \"root_type\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"),
             params![world, root, key, to_i64(version, "fact version")?],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
-        let (encoded, hash) = row.ok_or_else(unproven_snapshot)?;
-        decode_snapshot(world, object_type, key, version, &encoded, &hash)
+        let (encoded, hash, commit, stored_root) = row.ok_or_else(unproven_snapshot)?;
+        let snapshot = decode_snapshot(world, object_type, key, version, &encoded, &hash)?;
+        if snapshot.root_type != stored_root { return Err(unproven_snapshot()); }
+        let commit = to_u64(commit, "snapshot commit")?;
+        if pending_commit != Some(commit) {
+            let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
+            if hash_json(&receipt.body)? != receipt.hash || !fact_receipt_matches(&snapshot, &hash, &receipt) {
+                return Err(unproven_snapshot());
+            }
+        }
+        Ok(snapshot)
     }
 
     /// Authenticate the receipt that emitted one exact committed fact version.
@@ -281,10 +297,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .receipt_at(to_u64(commit_seq, "fact commit seq")?)?
             .ok_or_else(unproven_snapshot)?;
         if hash_json(&receipt.body)? != receipt.hash
-            || receipt.body.world != world
-            || !receipt.body.written.iter().any(|row| {
-                row.object_type == snapshot.object_type && row.key == key && row.version == version
-            })
+            || !fact_receipt_matches(&snapshot, &hash, &receipt)
         {
             return Err(unproven_snapshot());
         }
@@ -528,9 +541,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
         version: u64,
+        pending_commit: u64,
     ) -> Result<String, CellError> {
         Ok(self
-            .proven_snapshot(world, object_type, key, version)?
+            .snapshot_for_commit(world, object_type, key, version, Some(pending_commit))?
             .scope)
     }
 
@@ -596,9 +610,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<crate::reactive::BudgetedRead, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
-        let length: Option<i64> = self.conn.query_optional(&format!("SELECT octet_length(\"snapshot\") + octet_length(\"hash\") FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"), params![world, root, key, to_i64(version, "fact version")?], |row| row.get(0))?;
+        let length: Option<i64> = self.conn.query_optional(&format!("SELECT octet_length(f.snapshot)+octet_length(f.hash)+octet_length(r.receipt)+octet_length(r.receipt_hash)+128 FROM \"{FACT_VALUES}\" f JOIN \"{RECEIPT}\" r ON r.commit_seq=f.commit_seq WHERE f.world=?1 AND (f.root_type=?2 OR f.object_type=?2) AND f.id=?3 AND f.version=?4"), params![world, root, key, to_i64(version, "fact version")?], |row| row.get(0))?;
         let length = length.ok_or_else(unproven_event)?;
-        if !budget.charge_rows(1) || !budget.charge(to_u64(length, "historical snapshot bytes")?) {
+        if !budget.charge_rows(2) || !budget.charge(to_u64(length, "historical snapshot bytes")?) {
             return Ok(crate::reactive::BudgetedRead::Exhausted);
         }
         Ok(

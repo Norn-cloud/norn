@@ -37,6 +37,7 @@ pub mod export;
 mod export_journal;
 mod history;
 mod history_selection;
+mod receipt_commitment;
 pub mod host;
 mod migration;
 pub mod model;

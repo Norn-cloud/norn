@@ -1516,6 +1516,10 @@ pub struct WrittenRow {
     pub key: String,
     /// The new version.
     pub version: u64,
+    /// SNAPSHOT-RECEIPT-1: producing receipt commits to this incarnation.
+    /// Missing legacy commitments deserialize but never prove historical values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_sha256: Option<String>,
 }
 
 /// Ordered atomic intents/results. A singleton retains its canonical scalar encoding.
