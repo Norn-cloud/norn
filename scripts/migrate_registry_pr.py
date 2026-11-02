@@ -85,6 +85,7 @@ def rust_projection(root, revision, raw, manifest, expected_helpers):
     row = re.compile(r'\s*(?://[^\n]*\n\s*)*(entry|introduced|warning|warning_introduced)\(\s*('
                      + literal + r'|[A-Za-z_][\w:]*)\s*,\s*Tier::(T[0-7])\s*,\s*('
                      + literal + r')\s*(?:,\s*(' + literal + r')\s*)?,?\s*\),')
+    default_since = json.loads(re.search(r'const INITIAL_SINCE: &str = ("[^"\\]*");', text)[1])
     entries, position = [], 0
     while rows[position:].strip():
         match = row.match(rows, position)
@@ -104,7 +105,7 @@ def rust_projection(root, revision, raw, manifest, expected_helpers):
         if (since is not None) != (kind in ("introduced", "warning_introduced")):
             raise ValueError("invalid Rust registry constructor")
         entries.append(dict(code=json.loads(code), tier=tier, message=json.loads(message),
-                            since=json.loads(since) if since else "0.1.0",
+                            since=json.loads(since) if since else default_since,
                             severity="warning" if kind.startswith("warning") else "error"))
         if not re.fullmatch(r"[a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+", entries[-1]["code"]) or not entries[-1]["message"].strip() or not entries[-1]["since"].strip():
             raise ValueError("invalid diagnostic metadata")
