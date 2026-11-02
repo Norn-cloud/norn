@@ -234,34 +234,19 @@ mod host {
                 if model { "(get-model)\n" } else { "" }
             )
         };
-        let result = answer(
-            &run(
-                binary,
-                &["-in", "-smt2"],
-                &query(false),
-                deadline,
-                bound.bytes,
-            )?,
+        if answer(
+            &run(binary, &["-in", "-smt2"], &query(false), deadline, bound.bytes)?,
             &marker,
-        )?;
-        match result {
-            SmtResult::Sat(_) => match answer(
-                &run(
-                    binary,
-                    &["-in", "-smt2"],
-                    &query(true),
-                    deadline,
-                    bound.bytes,
-                )?,
-                &marker,
-            )? {
-                SmtResult::Sat(model) if !model.is_empty() => Ok(SmtResult::Sat(model)),
-                SmtResult::Sat(_) | SmtResult::Unsat | SmtResult::Unknown(_) => {
-                    Err("model_unavailable")
-                }
-            },
-            SmtResult::Unsat => Ok(SmtResult::Unsat),
-            SmtResult::Unknown(_) => Err("solver_unknown"),
+        )? == SmtResult::Unsat
+        {
+            return Ok(SmtResult::Unsat);
+        }
+        match answer(
+            &run(binary, &["-in", "-smt2"], &query(true), deadline, bound.bytes)?,
+            &marker,
+        )? {
+            SmtResult::Sat(model) if !model.is_empty() => Ok(SmtResult::Sat(model)),
+            SmtResult::Sat(_) | SmtResult::Unsat | SmtResult::Unknown(_) => Err("model_unavailable"),
         }
     }
 }
