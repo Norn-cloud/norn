@@ -17,6 +17,26 @@ import guarantees_matrix as matrix  # noqa: E402
 PACKS = {"jewelry": "registry/core/artifacts", "data": "registry/packs/demo-erpnext/artifacts"}
 
 
+def dependency_closure(available, roots):
+    """Select exact declared dependencies; native admission checks semantic closure."""
+    catalog = {(a["artifactId"], a["version"]): a for a in available}
+    if len(catalog) != len(available):
+        raise ValueError("ambiguous artifact identity in pack inputs")
+    selected, pending = {}, list(roots)
+    while pending:
+        artifact = pending.pop()
+        key = artifact["artifactId"], artifact["version"]
+        if key in selected:
+            continue
+        selected[key] = artifact
+        for dependency in artifact.get("dependencies", []):
+            target = catalog.get((dependency["artifactId"], dependency["version"]))
+            if target is None:
+                raise ValueError("pack dependency is not retained at its exact version")
+            pending.append(target)
+    return [selected[key] for key in sorted(selected)]
+
+
 def pack_rows(inventory, artifact_ids):
     """Only admitted LawIR owns law identities; scenarios cannot supply them."""
     rows = []
@@ -54,7 +74,10 @@ def main():
                         selections.setdefault(name, []).append(document["artifactId"])
     melt = subprocess.check_output(["bun", "tools/norn-ts/src/cli.ts", "compile",
         "scripts/demo/jewelry.source.ts", "--org", "org_demo", "--env", "dev"], cwd=ROOT)
-    artifacts.extend(json.loads(melt))
+    compiled = json.loads(melt)
+    roots = [a for a in artifacts if a.get("kind") == "law"
+             or a["artifactId"] == "std.value_types.entity"] + compiled
+    artifacts = dependency_closure(artifacts + compiled, roots)
     checked = subprocess.run(["cargo", "run", "--locked", "--quiet", "-p", "norn-checker",
         "--example", "pack_guarantees"], input=json.dumps(artifacts), text=True,
         stdout=subprocess.PIPE, cwd=ROOT, check=True)
