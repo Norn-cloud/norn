@@ -24,7 +24,7 @@ const GATE_FILES: [&str; 10] = [
 ];
 
 /// Exact opt-in contract: event payloads and arbitrary variables cannot select a runner.
-const MERGE_RUNNER: &str = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('[\"self-hosted\",\"norn-merge\",\"norn-run-{0}\"]', github.run_id)) || 'ubuntu-24.04' }}";
+const MERGE_RUNNER: &str = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}";
 
 fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
     matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
@@ -122,7 +122,7 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
                             job.get("runs-on").and_then(yaml::Value::as_str),
                         ) {
                             errors.push(format!(
-                                "{path}::{name}: runner must be hosted or the exact merge-only opt-in"
+                                "{path}::{name}: runner must be hosted or the exact merge-only Boat opt-in"
                             ));
                         }
                     }
@@ -519,8 +519,9 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn runner_routing_is_merge_only_opt_in_in_the_public_core_jobs() {
+    fn runner_routing_replaces_custom_labels_with_merge_only_boat() {
         let path = ".github/workflows/ci-policy.yml";
+        let legacy = r#"${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}"#;
         for job in ["core", "plan", "test", "phase", "full"] {
             assert!(super::runner_is_admitted(
                 path,
@@ -529,7 +530,7 @@ mod tests {
             ));
             for removed in [
                 "github.event_name == 'merge_group' && ",
-                "vars.NORN_MERGE_RUNNER == 'self-hosted' && ",
+                "vars.NORN_MERGE_RUNNER == 'boat' && ",
             ] {
                 let changed = super::MERGE_RUNNER.replace(removed, "");
                 assert!(!super::runner_is_admitted(path, job, Some(&changed)));
@@ -544,15 +545,16 @@ mod tests {
                 let changed = super::MERGE_RUNNER.replace("merge_group", event);
                 assert!(!super::runner_is_admitted(path, job, Some(&changed)));
             }
+            for runner in ["boat", "self-hosted", legacy] {
+                assert!(!super::runner_is_admitted(path, job, Some(runner)));
+            }
             for (before, after) in [
-                ("norn-run-{0}", "norn-run-123"),
-                ("github.run_id", "github.event.pull_request.number"),
-                ("norn-run-{0}", "norn-merge"),
+                ("== 'boat'", "== 'self-hosted'"),
+                ("|| 'ubuntu-24.04'", "|| 'boat'"),
             ] {
                 let changed = super::MERGE_RUNNER.replace(before, after);
                 assert!(!super::runner_is_admitted(path, job, Some(&changed)));
             }
-            assert!(!super::runner_is_admitted(path, job, Some("self-hosted")));
         }
         for job in ["trusted-policy", "unknown"] {
             assert!(!super::runner_is_admitted(

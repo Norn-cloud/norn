@@ -14,6 +14,9 @@ in base code (crates/norn-skeleton-guard), never in the workflow:
   by the base-owned workflow from the GitHub API, lets a same-repository head
   that an admin approved with `/approve-gates <head sha>` change workflows and
   gates.
+  Approval changes pinned contracts, not the runner boundary: only the exact
+  merge-group Boat opt-in is admitted, with a hosted fallback when unset.
+  Pull requests and trusted-policy stay hosted; custom runner labels are refused.
 """
 
 import argparse
