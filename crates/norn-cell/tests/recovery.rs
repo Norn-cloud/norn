@@ -582,7 +582,12 @@ fn versions_never_repeat_across_a_type_hierarchy() {
 
 /// A store with two committed rounds, in `dir`.
 fn seeded(dir: &Path, options: StoreOptions) -> CellStore {
-    let mut store = CellStore::open(&dir.join("cell.sqlite"), model(), options).expect("opens");
+    // Each image simulates the same logical cell, including its durable identity.
+    let identity =
+        norn_cell::cell_identity::CellId::try_from("00000000000000000000000000000001".to_owned())
+            .expect("fixture identity");
+    let mut store = CellStore::open_bound(&dir.join("cell.sqlite"), model(), options, &identity)
+        .expect("opens");
     store.commit(&batch(1, 5)).expect("commits");
     store.commit(&batch(2, 5)).expect("commits");
     store
