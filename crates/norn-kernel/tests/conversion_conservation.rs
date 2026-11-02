@@ -30,6 +30,13 @@ fn core_interface() -> InterfaceDef {
 
 fn cell() -> Cell {
     let interface = core_interface();
+    let process: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.Process.interface.json"
+    ))
+    .expect("generated parent interface");
+    let process = serde_json::from_value::<EntityInterfaceRootV2>(process["payload"].clone())
+        .expect("parent interface root")
+        .interface;
     let mut properties = vec![json!({"id":"batch", "type":{"kind":"text"}})];
     properties.extend(["input_quantity", "output_quantity", "loss_quantity"].map(|id|
         json!({"id":id,"type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}})));
@@ -40,7 +47,7 @@ fn cell() -> Cell {
     .expect("Melt declares required properties, never a conservation expression");
     MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone())
         .with_types(vec![melt])
-        .with_interfaces(vec![interface])
+        .with_interfaces(vec![process, interface])
 }
 
 fn measurement(id: &str, input: &str, output: &str, loss: &str) -> FactWrite {

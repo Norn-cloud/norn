@@ -1236,7 +1236,11 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
         .expect("exact payload"),
     )
     .expect("Melt");
-    let base = vec![interface, property_types, melt];
+    let process: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.Process.interface.json"
+    ))
+    .expect("generated parent interface");
+    let base = vec![process, interface, property_types, melt];
     assert_eq!(
         check_artifact_set(
             &base,

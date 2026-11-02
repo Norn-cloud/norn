@@ -203,10 +203,6 @@ export const Claim = Norn.interfaceType({
   ],
 })
 
-export const Conversion = Norn.interfaceType({
-  name: "core.Conversion", title: "Conversion", version: "0.1.0", role: "happening",
-  extends: [Process], properties: Schema.Struct({}),
-})
 export const Exchange = Norn.interfaceType({
   name: "core.Exchange", title: "Exchange", version: "0.1.0", role: "happening",
   extends: [Process], properties: Schema.Struct({}),
