@@ -145,13 +145,13 @@ const ITEMS_POINTER: &str = "/payload/outputSchema/properties/facts/items";
 
 /// The `facts` item schema of a decide graph's output schema: its
 /// `properties` and `required` members, when it is a list of records.
-struct FactSchema<'s> {
+pub(crate) struct FactSchema<'s> {
     properties: &'s BTreeMap<String, JsonValue>,
     required: Vec<&'s str>,
 }
 
 impl<'s> FactSchema<'s> {
-    fn of(output_schema: &'s JsonValue) -> Option<Self> {
+    pub(crate) fn of(output_schema: &'s JsonValue) -> Option<Self> {
         let facts = member(Some(output_schema), "properties")
             .and_then(|properties| member(Some(properties), "facts"))?;
         if type_of(Some(facts)) != Some("array") {
@@ -177,12 +177,12 @@ impl<'s> FactSchema<'s> {
     }
 
     /// The string `enum` of member `name`.
-    fn values(&self, name: &str) -> Option<Vec<&'s str>> {
+    pub(crate) fn values(&self, name: &str) -> Option<Vec<&'s str>> {
         string_enum(self.get(name))
     }
 
     /// The ops of the `op` enum that parse.
-    fn ops(&self) -> Vec<FactChangeOp> {
+    pub(crate) fn ops(&self) -> Vec<FactChangeOp> {
         self.values("op")
             .unwrap_or_default()
             .into_iter()
@@ -450,9 +450,13 @@ pub fn check_lifecycle_write_set(
     findings
 }
 
-fn fact_decisions(artifacts: &[ArtifactEnvelope]) -> Vec<(&ArtifactEnvelope, JsonValue)> {
+/// Every decide graph of `artifacts` whose output schema declares a `facts`
+/// list of records, with that output schema.
+pub(crate) fn fact_decisions<'a>(
+    artifacts: impl IntoIterator<Item = &'a ArtifactEnvelope>,
+) -> Vec<(&'a ArtifactEnvelope, JsonValue)> {
     artifacts
-        .iter()
+        .into_iter()
         .filter(|artifact| artifact.kind() == ArtifactKind::Rule)
         .filter_map(|artifact| {
             let payload = artifact.payload.to_json_value();
