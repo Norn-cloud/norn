@@ -9,6 +9,13 @@ transactional cell execution; the public CLI does not embed a product server.
 rule set and evaluates JSON-lines `{slice,event}` inputs through `norn-decisions`.
 It emits candidate effects as data under a bounded operation budget.
 
+CLI-EVAL-BATCH-1: every input line gets one JSON response on stdout, including
+refused records; evaluation continues after a refusal. Stderr reports
+`norn eval: N accepted, M refused`. Exit status is zero only when no records
+were refused (including an empty batch), and nonzero on any refusal or IO/setup
+failure. A blank line is malformed input, rather than an empty batch.
+The `eval-batch.test.ts` integration cases exercise the native binary in CI.
+
 `norn remote` discovers and calls an external Norn MCP endpoint using its live
 catalog, without a local action whitelist:
 
