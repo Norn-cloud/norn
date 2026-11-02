@@ -338,21 +338,7 @@ fn governed_activation_switches_all_slices_and_preserves_old_answers() {
     assert!(stale.stale);
     assert_eq!(stale.generation, old.generation);
     assert_eq!(week(&stale).totals[0].canonical(), "294");
-    let prepared = store
-        .prepare_restatement(build, requests(&plan, &context, k2), |_| Ok(true))
-        .expect("delta equals full recompute");
-    assert!(
-        store
-            .stage_restatement_probed(
-                prepared,
-                &mut |point| if point == CommitPoint::ReceiptWritten {
-                    Err(norn_cell::CellError::Engine("interrupted rebuild".into()))
-                } else {
-                    Ok(())
-                }
-            )
-            .is_err()
-    );
+    interrupt_staging(&mut store, build, &plan, &context, k2);
     drop(store);
     let mut store = open(&path, &model);
     assert_eq!(view(&store, &context).generation, old.generation);
@@ -387,6 +373,29 @@ fn governed_activation_switches_all_slices_and_preserves_old_answers() {
     activate(&path, &model, "K2");
     let store = open(&path, &model);
     assert_activated_showcase(&store, &context, &old, old_version, k2, &old_bytes);
+}
+fn interrupt_staging(
+    store: &mut CellStore,
+    build: norn_cell::compute::restatement::RestatementBuild,
+    plan: &QuestionPlan,
+    context: &QueryContext,
+    k2: KnowledgeCutoff,
+) {
+    let prepared = store
+        .prepare_restatement(build, requests(plan, context, k2), |_| Ok(true))
+        .expect("delta equals full recompute");
+    assert!(
+        store
+            .stage_restatement_probed(
+                prepared,
+                &mut |point| if point == CommitPoint::ReceiptWritten {
+                    Err(norn_cell::CellError::Engine("interrupted rebuild".into()))
+                } else {
+                    Ok(())
+                }
+            )
+            .is_err()
+    );
 }
 fn assert_activated_showcase(
     store: &CellStore,
@@ -597,20 +606,7 @@ fn generated_restatement_sequence(changes: Vec<(i64, u8, bool, bool, bool)>) {
         drop(store);
         activate(&path, &model, &format!("generation/{index}"));
         store = open(&path, &model);
-        let active = view(&store, &context);
-        let exact = store
-            .evaluate_question_known_at(&plan, context.clone(), point, |_| Ok(true))
-            .expect("same slice exact");
-        for (id, answer) in &active.outputs {
-            let expected = if id == "week" {
-                exact.clone()
-            } else {
-                store
-                    .evaluate_question_known_at(&loss_plan(), context.clone(), point, |_| Ok(true))
-                    .expect("loss recompute")
-            };
-            assert_eq!(&answer.result, &expected.result);
-        }
+        assert_same_slice(&store, &plan, &context, point);
         assert_eq!(
             serde_json::to_vec(
                 &store
@@ -620,6 +616,27 @@ fn generated_restatement_sequence(changes: Vec<(i64, u8, bool, bool, bool)>) {
             .expect("original"),
             original.clone()
         );
+    }
+}
+fn assert_same_slice(
+    store: &CellStore,
+    plan: &QuestionPlan,
+    context: &QueryContext,
+    point: KnowledgeCutoff,
+) {
+    let active = view(store, context);
+    let exact = store
+        .evaluate_question_known_at(plan, context.clone(), point, |_| Ok(true))
+        .expect("same slice exact");
+    for (id, answer) in &active.outputs {
+        let expected = if id == "week" {
+            exact.clone()
+        } else {
+            store
+                .evaluate_question_known_at(&loss_plan(), context.clone(), point, |_| Ok(true))
+                .expect("loss recompute")
+        };
+        assert_eq!(&answer.result, &expected.result);
     }
 }
 proptest::proptest! {
@@ -659,4 +676,56 @@ fn declared_restatement_law_and_reviewer_actions_are_admitted_together() {
     };
     let findings = norn_checker::check_artifact_set(&artifacts, &context);
     assert!(findings.is_empty(), "{findings:#?}");
+}
+
+#[test]
+fn prepared_candidates_stay_bound_to_their_native_host() {
+    let dir = tempfile::tempdir().expect("directory");
+    let (left, plan, context, _) = setup(&dir.path().join("left.sqlite"));
+    let (right, _, _, _) = setup(&dir.path().join("right.sqlite"));
+    let mut left: SqliteCell<FactEvent, JsonObject, JsonObject> =
+        SqliteCell::new(left, SCOPE, |c: &norn_kernel::Command<JsonObject>| {
+            c.payload.clone()
+        })
+        .expect("left host");
+    let mut right: SqliteCell<FactEvent, JsonObject, JsonObject> =
+        SqliteCell::new(right, SCOPE, |c: &norn_kernel::Command<JsonObject>| {
+            c.payload.clone()
+        })
+        .expect("right host");
+    let ids = BTreeSet::from(["week".into(), "loss".into()]);
+    let build = left
+        .begin_restatement(ID, context.clone(), 0, "native candidate", &ids)
+        .expect("left build");
+    let _right_build = right
+        .begin_restatement(ID, context.clone(), 0, "native candidate", &ids)
+        .expect("right build");
+    let point = cutoff(left.store(), &context);
+    assert!(
+        right
+            .store()
+            .prepare_restatement(build, requests(&plan, &context, point), |_| panic!(
+                "foreign build must refuse before reading"
+            ))
+            .is_err()
+    );
+    let build = left
+        .store()
+        .resume_restatement(ID, context.clone())
+        .expect("resume origin");
+    let prepared = left
+        .store()
+        .prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true))
+        .expect("complete origin");
+    assert!(right.stage_restatement(prepared).is_err());
+    let build = left
+        .store()
+        .resume_restatement(ID, context.clone())
+        .expect("resume origin");
+    let prepared = left
+        .store()
+        .prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true))
+        .expect("complete origin");
+    left.stage_restatement(prepared)
+        .expect("same host stages without reopen");
 }

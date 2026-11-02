@@ -18,6 +18,7 @@ use norn_ir::{ResourceLimitProfile, RuntimeValue};
 use norn_kernel::LogicalTime;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// Native concept whose declared actions own restatement approval and activation.
 pub const RESTATEMENT_TYPE: &str = "core.analytics.Restatement";
@@ -82,6 +83,7 @@ pub struct RestatementView {
 }
 /// Opaque writer token bound to the exact native slot incarnation.
 pub struct RestatementBuild {
+    instance: Arc<()>,
     id: String,
     context: QueryContext,
     version: u64,
@@ -92,6 +94,11 @@ pub struct PreparedRestatement {
     build: RestatementBuild,
     encoded: String,
     digest: String,
+}
+impl PreparedRestatement {
+    pub(crate) fn matches_context(&self, world: &str, scope: &str) -> bool {
+        self.build.context.world == world && self.build.context.scope == scope
+    }
 }
 fn text<'a>(values: &'a BTreeMap<String, RuntimeValue>, key: &str) -> Result<&'a str, CellError> {
     values
@@ -245,6 +252,7 @@ impl<E: SqlEngine> CellStore<E> {
             &mut |_| Ok(()),
         )?;
         Ok(RestatementBuild {
+            instance: Arc::clone(&self.instance_identity),
             id: id.into(),
             context,
             version,
@@ -267,6 +275,7 @@ impl<E: SqlEngine> CellStore<E> {
                 return Err(refused(INVALID));
             }
             Ok(RestatementBuild {
+                instance: Arc::clone(&self.instance_identity),
                 id: id.into(),
                 context,
                 version,
@@ -284,6 +293,9 @@ impl<E: SqlEngine> CellStore<E> {
         slices: Vec<RestatementSlice<'_>>,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<PreparedRestatement, CellError> {
+        if !Arc::ptr_eq(&self.instance_identity, &build.instance) {
+            return Err(refused(INVALID));
+        }
         let expected: BTreeSet<String> = serde_json::from_str(text(&build.values, "slice_ids")?)
             .map_err(|_invalid| refused(INVALID))?;
         if slices.len() != expected.len()
@@ -431,6 +443,9 @@ impl<E: SqlEngine> CellStore<E> {
         prepared: PreparedRestatement,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(), CellError> {
+        if !Arc::ptr_eq(&self.instance_identity, &prepared.build.instance) {
+            return Err(refused(INVALID));
+        }
         let PreparedRestatement {
             build,
             encoded,
