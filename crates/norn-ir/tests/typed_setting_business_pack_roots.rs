@@ -278,7 +278,7 @@ fn ontology_mapping_ratification_members() {
 /// decode the same way: omitted is valid, explicit `null` is an error.
 #[test]
 fn optional_members_may_be_omitted_but_not_null() {
-    let cases: [(&str, &[&str], &str, Decode); 12] = [
+    let cases: [(&str, &[&str], &str, Decode); 13] = [
         (SETTING_FIXTURE, &[], "effectiveTo", decodes::<SettingRoot>),
         (SETTING_FIXTURE, &[], "supersedes", decodes::<SettingRoot>),
         (
@@ -299,6 +299,7 @@ fn optional_members_may_be_omitted_but_not_null() {
             "reason",
             decodes::<SettingRoot>,
         ),
+        (COMPOSITION_FIXTURE, &[], "typeParameters", decodes::<CompositionPackRoot>),
         (
             COMPOSITION_FIXTURE,
             &[],

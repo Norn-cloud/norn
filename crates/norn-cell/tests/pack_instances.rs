@@ -415,10 +415,11 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
             .iter()
             .find(|a| a.action_id == action_id)
             .expect("governed action");
+        let exact_call = call(action, &all, id, values(input));
         let ActionOutcome::Committed { receipt, record } = commit_action(
             &mut cell,
             &catalog,
-            &call(action, &all, id, values(input)),
+            &exact_call,
             &Policy,
         )
         .expect("ordinary evaluator and atomic commit") else {
@@ -431,6 +432,8 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
             .expect("receipt lookup")
             .expect("durable receipt");
         assert_eq!(durable.body.definitions_version, installed.version);
+        assert_eq!(record.action_artifact_id.as_deref(), Some(exact_call.action_artifact_id));
+        assert_eq!(record.action_version.as_deref(), Some(exact_call.action_version));
         let posted = cell
             .load(&record.object)
             .expect("posted")
